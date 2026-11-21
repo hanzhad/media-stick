@@ -154,7 +154,7 @@ h2{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
 .btn.acc{background:var(--acc);border-color:var(--acc);font-weight:600}
 input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0f1b21}
 label{display:block;margin:12px 0 6px;color:var(--dim);font-size:14px}
-.msg{padding:10px 12px;border-radius:10px;background:#3a2020;margin-bottom:10px}
+.msg{padding:10px 12px;border-radius:10px;background:#1c2e38;border:1px solid var(--line);margin:10px 0}
 .row{display:flex;gap:8px}.row>*{flex:1}
 /* remote */
 .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:330px;margin:0 auto}
@@ -292,8 +292,18 @@ async function wifiConnect(){
 async function wifiChange(){
   const ssid=$('w-ssid').value; if(!ssid)return;
   if(!confirm('Переключить приставку на «'+ssid+'»? Если пароль неверный, она вернётся в режим настройки Wi-Fi.'))return;
-  show('w-msg','Переключаюсь… страница станет доступна в новой сети.');
-  api('/api/wifi/connect',{ssid,psk:$('w-psk').value}).catch(()=>{});
+  show('w-msg','Подключаюсь к «'+ssid+'»… до минуты.');
+  try{await api('/api/wifi/connect',{ssid,psk:$('w-psk').value})}
+  catch(e){show('w-msg','Не отправилось: '+e.message);return}
+  $('w-psk').value='';
+  for(let i=0;i<25;i++){
+    await new Promise(r=>setTimeout(r,3000));
+    try{const s=await api('/api/status');
+      if(s.wifi.ssid===ssid){show('w-msg','Подключено к «'+ssid+'». Адрес: '+(s.ip||[]).join(', '));return}
+      if(i>15&&!s.wifi.ssid){show('w-msg','Не получилось подключиться к «'+ssid+'». Проверьте пароль.');return}
+    }catch(e){}
+  }
+  show('w-msg','Нет ответа. Если приставка ушла в другую сеть, откройте http://mediastick.local из неё.');
 }
 function show(id,t){const m=$(id);m.textContent=t;m.classList.remove('hide')}
 
