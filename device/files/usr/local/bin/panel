@@ -424,6 +424,15 @@ class H(BaseHTTPRequestHandler):
         self.send("not found", "text/plain", 404)
 
 
+class DualStack(ThreadingHTTPServer):
+    """IPv6 and IPv4 on one socket: mediastick.local often resolves to IPv6 first."""
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
 if __name__ == "__main__":
     os.makedirs(SHOTS, exist_ok=True)
-    ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
+    DualStack(("::", PORT), H).serve_forever()
