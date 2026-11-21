@@ -12,6 +12,12 @@ Read README.md first. This file is what it does not say.
 - `provisioning/cloud-init/user-data` only clones the repo and runs bootstrap. Do not add logic there; it reaches the device only when a card is rewritten.
 - Quick fix loop: edit → `tools/deploy.sh --local` → `tools/doctor.sh` → `tools/screenshot.sh` → commit → `tools/deploy.sh`.
 
+## Self-update
+- The device pulls `main` on the schedule in `device/config.env` (`UPDATE_SCHEDULE`) and runs bootstrap; a failed bootstrap rolls back to the previous commit and leaves `/var/lib/media-stick/bad-commit`. It skips while Kodi is playing.
+- So a push to `main` reaches the TV by itself. Push only what has passed `deploy.sh --local` + `doctor.sh`.
+- Run it now: `ssh ... sudo media-stick-update --force`; log: `journalctl -u media-stick-update`.
+- A `deploy.sh --local` edit survives until the next commit lands on `main`, then the update resets it.
+
 ## Verifying
 - `tools/doctor.sh` must show no FAIL lines.
 - `tools/screenshot.sh` and look at the image: the UI should be on screen, not a console. Video on a hardware overlay plane can come out black in a screenshot — that is the capture, not playback.
