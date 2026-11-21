@@ -9,6 +9,10 @@ reboot_needed=0
 
 [ "$(id -u)" = 0 ] || exec sudo -E "$0" "$@"
 
+log "settings"
+set -a; . "$REPO/device/config.env"; [ -f /etc/media-stick/local.env ] && . /etc/media-stick/local.env; set +a
+install -d -m 0755 /var/lib/media-stick
+
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
 pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl
@@ -53,9 +57,19 @@ log "services"
 if [ ${#changed_units[@]} -gt 0 ]; then systemctl daemon-reload; fi
 systemctl disable --now getty@tty1.service 2>/dev/null || true
 nmcli radio wifi on 2>/dev/null || true
-for unit in kodi.service screen-view.service wifi-fallback.service; do
+for unit in kodi.service screen-view.service wifi-fallback.service media-stick-update.timer; do
   systemctl enable -q "$unit"
 done
+
+# Self-update schedule from UPDATE_SCHEDULE.
+dropin=/etc/systemd/system/media-stick-update.timer.d/schedule.conf
+want=$(printf '[Timer]\nOnCalendar=\nOnCalendar=%s\n' "$UPDATE_SCHEDULE")
+if [ "$(cat "$dropin" 2>/dev/null)" != "$want" ] || [[ " ${changed_units[*]-} " == *" media-stick-update.timer "* ]]; then
+  install -d "$(dirname "$dropin")"; printf '%s\n' "$want" > "$dropin"
+  systemctl daemon-reload; systemctl restart media-stick-update.timer
+  log "  update schedule: $UPDATE_SCHEDULE"
+fi
+systemctl is-active -q media-stick-update.timer || systemctl start media-stick-update.timer
 for unit in kodi.service screen-view.service; do
   if [[ " ${changed_units[*]-} " == *" $unit "* ]] || ! systemctl is-active -q "$unit"; then
     systemctl restart "$unit"

@@ -1,0 +1,34 @@
+#!/bin/bash
+# Pull origin/main and apply it. Rolls back to the previous commit if bootstrap fails.
+# Skips while Kodi is playing something, unless --force.
+#   media-stick-update [--force]
+set -uo pipefail
+REPO=/opt/media-stick
+exec 9>/run/media-stick-update.lock
+flock -n 9 || { echo "another update is running"; exit 0; }
+g() { runuser -u media -- git -C "$REPO" "$@"; }
+
+g fetch -q origin main || { echo "fetch failed"; exit 1; }
+cur=$(g rev-parse HEAD); new=$(g rev-parse origin/main)
+[ "$cur" = "$new" ] && exit 0
+
+if [ "${1:-}" != --force ] && kodi-rpc Player.GetActivePlayers 2>/dev/null | grep -q '"playerid"'; then
+  echo "kodi is playing; update to ${new:0:7} postponed"; exit 0
+fi
+
+echo "updating ${cur:0:7} -> ${new:0:7}: $(g log -1 --format=%s "$new")"
+g reset -q --hard "$new"
+out=$("$REPO/device/bootstrap.sh" 2>&1); rc=$?
+echo "$out" | grep '^\[bootstrap\]'
+if [ $rc -ne 0 ]; then
+  echo "bootstrap failed on ${new:0:7} (rc=$rc); rolling back to ${cur:0:7}"
+  echo "$out" | tail -20
+  g reset -q --hard "$cur"
+  "$REPO/device/bootstrap.sh" >/dev/null 2>&1
+  echo "$new" > /var/lib/media-stick/bad-commit
+  exit 1
+fi
+rm -f /var/lib/media-stick/bad-commit
+echo "updated to ${new:0:7}"
+echo "$out" | grep -q 'REBOOT NEEDED' && { echo "rebooting for boot config"; systemctl reboot; }
+exit 0

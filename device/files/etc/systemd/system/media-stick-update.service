@@ -1,0 +1,8 @@
+[Unit]
+Description=Pull media-stick main and apply it
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/media-stick-update

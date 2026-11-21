@@ -1,0 +1,10 @@
+[Unit]
+Description=Self-update schedule (set by UPDATE_SCHEDULE in device/config.env)
+
+[Timer]
+# Overridden by a drop-in that bootstrap.sh writes from UPDATE_SCHEDULE.
+OnCalendar=*-*-* 04:00
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target
