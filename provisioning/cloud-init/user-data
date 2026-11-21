@@ -1,0 +1,51 @@
+#cloud-config
+# First-boot config for the media stick. The key placeholder is filled in by prepare-bootfs.sh.
+hostname: mediastick
+manage_etc_hosts: true
+ssh_pwauth: false
+users:
+  - name: media
+    gecos: Media Stick
+    groups: [sudo, video, render, audio, input, plugdev, netdev]
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - "@SSH_PUBKEY@"
+write_files:
+  # Recovery: a public key dropped into authorized_keys on the boot partition
+  # (FAT, editable from any computer) is added for user media at every boot.
+  - path: /usr/local/sbin/mediastick-bootkeys
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      src=/boot/firmware/authorized_keys
+      dst=/home/media/.ssh/authorized_keys
+      [ -f "$src" ] || exit 0
+      install -d -m 700 -o media -g media /home/media/.ssh
+      touch "$dst"
+      tr -d '\r' < "$src" | grep -E '^(ssh-|ecdsa-|sk-)' | while read -r k; do
+        grep -qxF "$k" "$dst" || echo "$k" >> "$dst"
+      done
+      chown media:media "$dst"; chmod 600 "$dst"
+  - path: /etc/systemd/system/mediastick-bootkeys.service
+    content: |
+      [Unit]
+      Description=Add SSH keys from boot partition (recovery)
+      After=local-fs.target
+      Before=ssh.service
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/mediastick-bootkeys
+      [Install]
+      WantedBy=multi-user.target
+package_update: true
+packages: [git]
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now mediastick-bootkeys.service
+  - systemctl enable --now ssh
+  # Everything else lives in the repository; this file never needs to change.
+  - for i in $(seq 1 60); do git clone -q https://github.com/hanzhad/media-stick /opt/media-stick && break; sleep 10; done
+  - /opt/media-stick/device/bootstrap.sh > /var/log/media-stick-bootstrap.log 2>&1
+  - grep -q 'REBOOT NEEDED' /var/log/media-stick-bootstrap.log && reboot || true

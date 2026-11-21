@@ -1,0 +1,6 @@
+# Secrets and per-machine values never enter the repository.
+secrets.env
+*.local
+*.img
+*.img.xz
+.DS_Store
