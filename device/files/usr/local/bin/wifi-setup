@@ -144,11 +144,19 @@ def connect(ssid, psk, security, country):
     write_keyfile(ssid, psk, security)
     run("nmcli", "con", "reload")
     rc, _ = run("nmcli", "--wait", "40", "con", "up", "id", HOME_CON, timeout=50)
+    # Success means the Wi-Fi itself is up on this profile; a cable being online
+    # at the same time must not count.
     for _ in range(10):
-        if online():
+        if wlan_on(HOME_CON):
             return True
         time.sleep(2)
     return False
+
+
+def wlan_on(con):
+    rc, out = run("nmcli", "-g", "GENERAL.STATE,GENERAL.CONNECTION", "dev", "show", "wlan0")
+    lines = out.splitlines()
+    return len(lines) >= 2 and lines[0].startswith("100") and lines[1] == con
 
 
 # ---------- page ----------
