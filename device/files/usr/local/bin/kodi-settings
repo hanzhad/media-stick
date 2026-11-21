@@ -1,0 +1,51 @@
+#!/usr/bin/python3
+"""Set Kodi GUI settings by editing guisettings.xml directly.
+
+Usage: kodi-settings [--check] id=value ...
+  --check  change nothing; exit 1 if any value differs, 0 if all match.
+Without --check, writes the file (Kodi must be stopped: it rewrites the file on
+exit) and prints the ids it changed.
+
+Why not JSON-RPC: some settings (the web server among them) open a confirmation
+dialog on the TV when switched over RPC, and the RPC call then hangs until a
+person answers it.
+"""
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+PATH = "/home/media/.kodi/userdata/guisettings.xml"
+
+args = sys.argv[1:]
+check = bool(args) and args[0] == "--check"
+pairs = dict(a.split("=", 1) for a in args[check:])
+
+if os.path.exists(PATH):
+    tree = ET.parse(PATH)
+    root = tree.getroot()
+else:
+    root = ET.Element("settings", version="2")
+    tree = ET.ElementTree(root)
+
+by_id = {e.get("id"): e for e in root.iter("setting")}
+changed = []
+for sid, value in pairs.items():
+    e = by_id.get(sid)
+    if e is not None and (e.text or "") == value:
+        continue
+    changed.append(sid)
+    if check:
+        continue
+    if e is None:
+        e = ET.SubElement(root, "setting", id=sid)
+    e.attrib.pop("default", None)
+    e.text = value
+
+if check:
+    sys.exit(1 if changed else 0)
+if changed:
+    os.makedirs(os.path.dirname(PATH), exist_ok=True)
+    tmp = PATH + ".tmp"
+    tree.write(tmp, encoding="utf-8", xml_declaration=False)
+    os.replace(tmp, PATH)
+    print(" ".join(changed))

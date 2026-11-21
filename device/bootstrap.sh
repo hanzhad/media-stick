@@ -85,11 +85,42 @@ for unit in kodi.service panel.service; do
 done
 
 log "kodi settings"
-for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping | grep -q pong && break; sleep 2; done
-kodi-rpc Settings.SetSettingValue '{"setting":"debug.screenshotpath","value":"/run/media-stick/shots/"}' >/dev/null
+for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping 2>/dev/null | grep -q pong && break; sleep 2; done
+# kset <setting> <json value>: a failure is logged, never fatal (a setting can be
+# missing from this Kodi build, e.g. AirPlay).
+kset() {
+  kodi-rpc Settings.SetSettingValue "$(jq -nc --arg s "$1" --argjson v "$2" '{setting:$s,value:$v}')" >/dev/null \
+    || log "  kodi refused $1"
+}
+kset debug.screenshotpath '"/run/media-stick/shots/"'
 for a in inputstream.adaptive inputstream.ffmpegdirect; do
   kodi-rpc Addons.GetAddonDetails "{\"addonid\":\"$a\",\"properties\":[\"enabled\"]}" | grep -q '"enabled":true' \
-    || { kodi-rpc Addons.SetAddonEnabled "{\"addonid\":\"$a\",\"enabled\":true}" >/dev/null; kodi-rpc Input.Back >/dev/null; }
+    || { kodi-rpc Addons.SetAddonEnabled "{\"addonid\":\"$a\",\"enabled\":true}" >/dev/null || true; kodi-rpc Input.Back >/dev/null || true; }
+done
+# Casting and phone apps. Written into guisettings.xml with Kodi stopped, not over
+# RPC: switching some of these over RPC puts a confirmation dialog on the TV and
+# hangs the call.
+#  - UPnP/DLNA renderer: "Cast to device" on Windows, BubbleUPnP and the like
+#  - AirPlay from iOS, announced over zeroconf
+#  - Kodi's web server on :8080 for the Kodi phone apps (Kore, Official Kodi Remote,
+#    Yatse), always behind a password made on the device once and kept in
+#    secrets.env; read it with: sudo grep KODI_WEB /etc/media-stick/secrets.env
+SECRETS=/etc/media-stick/secrets.env
+grep -q '^KODI_WEB_PASSWORD=.' "$SECRETS" \
+  || echo "KODI_WEB_PASSWORD=$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" >> "$SECRETS"
+web_pass=$(sed -n 's/^KODI_WEB_PASSWORD=//p' "$SECRETS" | tail -1)
+kodi_wanted=(services.zeroconf=true services.upnp=true services.upnprenderer=true
+  services.airplay=true services.webserver=true services.webserverauthentication=true
+  services.webserverusername=kodi "services.webserverpassword=$web_pass")
+if ! kodi-settings --check "${kodi_wanted[@]}"; then
+  systemctl stop kodi
+  log "  kodi settings changed: $(setpriv --reuid=media --regid=media --init-groups kodi-settings "${kodi_wanted[@]}")"
+  systemctl start kodi
+  for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping 2>/dev/null | grep -q pong && break; sleep 2; done
+fi
+# Kodi drops a setting its build does not support; say so instead of retrying forever.
+for kv in "${kodi_wanted[@]:0:6}"; do
+  kodi-rpc Settings.GetSettingValue "{\"setting\":\"${kv%%=*}\"}" | grep -q '"value":true' || log "  kodi has ${kv%%=*} off"
 done
 
 chown -R media:media "$REPO"
