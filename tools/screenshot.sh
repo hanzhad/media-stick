@@ -1,9 +1,10 @@
 #!/bin/bash
-# Grab what the HDMI output shows right now into a PNG on this computer.
+# Save what Kodi shows right now as a PNG on this computer (Kodi renders it itself,
+# so it is the real picture at the real resolution).
 # Usage: screenshot.sh [out.png]
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); . "$here/common.sh"
 out=${1:-./screen.png}
-"${SSH[@]}" "sudo ffmpeg -loglevel error -y -f kmsgrab -i - -frames:v 1 -vf 'hwdownload,format=bgr0' /tmp/screen.png"
-scp -q -i "$KEY" -o IdentitiesOnly=yes "media@$HOST:/tmp/screen.png" "$out"
+remote=$("${SSH[@]}" 'rm -f ~/screenshots/*.png; kodi-rpc Input.ExecuteAction "{\"action\":\"screenshot\"}" >/dev/null; for i in 1 2 3 4 5 6 7 8 9 10; do f=$(ls ~/screenshots/*.png 2>/dev/null | head -1); [ -n "$f" ] && { sleep 0.5; echo "$f"; exit 0; }; sleep 0.5; done; exit 1')
+scp -q -i "$KEY" -o IdentitiesOnly=yes "media@$HOST:$remote" "$out"
 echo "$out"

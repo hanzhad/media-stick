@@ -11,7 +11,8 @@ reboot_needed=0
 
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
-pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl)
+pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl
+      fonts-noto-core fonts-noto-mono fonts-roboto-unhinted)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
 if [ ${#missing[@]} -gt 0 ]; then
@@ -43,6 +44,20 @@ if [ $changed = 1 ]; then systemctl daemon-reload; fi
 systemctl disable --now getty@tty1.service 2>/dev/null || true
 systemctl enable kodi.service >/dev/null
 if [ $changed = 1 ] || ! systemctl is-active -q kodi.service; then systemctl restart kodi.service; fi
+
+log "helpers"
+for f in usr/local/bin/kodi-rpc; do
+  cmp -s "$FILES/$f" "/$f" || install -m 0755 "$FILES/$f" "/$f"
+done
+
+log "kodi settings"
+for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping | grep -q pong && break; sleep 2; done
+install -d -o media -g media /home/media/screenshots
+kodi-rpc Settings.SetSettingValue '{"setting":"debug.screenshotpath","value":"/home/media/screenshots/"}' >/dev/null
+for a in inputstream.adaptive inputstream.ffmpegdirect; do
+  kodi-rpc Addons.GetAddonDetails "{\"addonid\":\"$a\",\"properties\":[\"enabled\"]}" | grep -q '"enabled":true' \
+    || { kodi-rpc Addons.SetAddonEnabled "{\"addonid\":\"$a\",\"enabled\":true}" >/dev/null; kodi-rpc Input.Back >/dev/null; }
+done
 
 chown -R media:media "$REPO"
 log "done"

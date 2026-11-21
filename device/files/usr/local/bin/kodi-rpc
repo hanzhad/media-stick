@@ -1,0 +1,9 @@
+#!/bin/bash
+# Send one JSON-RPC call to the local Kodi (TCP 9090, localhost only, no auth).
+# Usage: kodi-rpc Method '{"param":1}'
+set -euo pipefail
+m=${1:?method}; p=${2:-{\}}
+exec 3<>/dev/tcp/127.0.0.1/9090
+printf '{"jsonrpc":"2.0","id":1,"method":"%s","params":%s}' "$m" "$p" >&3
+timeout 2 head -c 65536 <&3 | head -1 || true
+exec 3>&-
