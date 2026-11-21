@@ -1,0 +1,15 @@
+# Kodi add-ons installed by bootstrap into /home/media/.kodi/addons, pinned by sha256.
+# Dependencies first: they are enabled in this order.
+# id  version  url  sha256
+script.module.six 1.16.0+matrix.1 https://mirrors.kodi.tv/addons/omega/script.module.six/script.module.six-1.16.0%2Bmatrix.1.zip 4197f7773f75ab9f16b3c920195acbb8b8b151b4b3c8c3e14fc4876e764e3860
+script.module.certifi 2023.5.7 https://mirrors.kodi.tv/addons/omega/script.module.certifi/script.module.certifi-2023.5.7.zip c16d4cd2efe6e57dbb5e8d71a9beb3af213b1e3d717e8b0b24f0cbdc4c645070
+script.module.chardet 5.1.0 https://mirrors.kodi.tv/addons/omega/script.module.chardet/script.module.chardet-5.1.0.zip d5010fc55a9523d86a306ae9e6a8dea0e3248fe079b9ed37280fe86110cd766a
+script.module.idna 3.10.0 https://mirrors.kodi.tv/addons/omega/script.module.idna/script.module.idna-3.10.0.zip c4ff34dbfab2736e9214a374d331bd6f558d8b3fea8eb7902e210749509242b3
+script.module.urllib3 2.2.3 https://mirrors.kodi.tv/addons/omega/script.module.urllib3/script.module.urllib3-2.2.3.zip 740b2d63bb50eee9fb35f01c567ec8d3588c5bbd548e2b8d280932be30d82f53
+script.module.requests 2.31.0 https://mirrors.kodi.tv/addons/omega/script.module.requests/script.module.requests-2.31.0.zip a5704f0fd7afb4154e1beea9b5f05a002bcd75fa581a1e5fd15ece39bf2bd38a
+script.module.routing 0.2.3+matrix.1 https://mirrors.kodi.tv/addons/omega/script.module.routing/script.module.routing-0.2.3%2Bmatrix.1.zip dc9110ffd2a5022feffafb22a710cd95aabe5722c52004f347d3a274f67d00f9
+script.module.iso8601 2.0.0 https://mirrors.kodi.tv/addons/omega/script.module.iso8601/script.module.iso8601-2.0.0.zip ab9641dcf00e41d02345fbca28a50624ae5e7450bb5a399895d9b1a8ca2f7775
+script.module.pysocks 1.7.0+matrix.1 https://mirrors.kodi.tv/addons/omega/script.module.pysocks/script.module.pysocks-1.7.0%2Bmatrix.1.zip fd043d04eecbd3f34e85a9ff35c4cdab57af8a6d6e6b90317806a0f72685c03b
+script.module.inputstreamhelper 0.8.6 https://mirrors.kodi.tv/addons/omega/script.module.inputstreamhelper/script.module.inputstreamhelper-0.8.6.zip 326ff6182802c7fc3967df254823c84ba39eedacae03b1349eb4acafcb231801
+# SWEET.TV: live channels and archive, login by code/QR on the TV (GPL-2, github.com/david-hazi/plugin.video.sweettv)
+plugin.video.sweettv 0.1.13 https://github.com/david-hazi/plugin.video.sweettv/releases/download/v0.1.13/plugin.video.sweettv-v0.1.13.zip 36e6ab37846e81d729fa380a4cac12c30f415f5e7c6ff2dceed2e43fe9f0c3c0

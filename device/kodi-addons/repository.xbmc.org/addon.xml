@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Kodi official add-on repository (the add-on browser inside Kodi). Debian leaves it
+     out of its kodi package; this is upstream xbmc/xbmc Omega addons/repository.xbmc.org,
+     translations trimmed. -->
+<addon id="repository.xbmc.org"
+		name="Kodi Add-on repository"
+		version="3.4.0"
+		provider-name="Team Kodi">
+  <requires>
+    <import addon="xbmc.addon" version="12.0.0"/>
+  </requires>
+	<extension point="xbmc.addon.repository">
+		<!-- Do not forget to bump add-on version when changing paths to force a repo refresh -->
+		<dir>
+			<info>https://mirrors.kodi.tv/addons/omega/addons.xml.gz</info>
+			<checksum verify="sha256">https://mirrors.kodi.tv/addons/omega/addons.xml.gz?sha256</checksum>
+			<datadir>https://mirrors.kodi.tv/addons/omega</datadir>
+			<artdir>https://mirrors.kodi.tv/addons/omega</artdir>
+			<hashes>sha256</hashes>
+		</dir>
+	</extension>
+	<extension point="xbmc.addon.metadata">
+		<platform>all</platform>
+		<assets>
+			<icon>icon.png</icon>
+		</assets>
+		<summary lang="en_GB">Install Add-ons from Kodi.tv</summary>
+		<description lang="en_GB">Download and install add-ons from the Official Kodi.tv add-on repository.[CR]  By using the official Repository you will be able to take advantage of our extensive file mirror service to help get you faster downloads from a region close to you.[CR]  All add-ons on this repository have under gone basic testing, if you find a broken or not working add-on please report it to Team Kodi so we can take any action needed.</description>
+		<disclaimer lang="en_GB">Team Kodi did not make all the add-ons on this repository and are not responsible for their content</disclaimer>
+	</extension>
+</addon>

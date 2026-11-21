@@ -15,7 +15,7 @@ install -d -m 0755 /var/lib/media-stick
 
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
-pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl
+pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl unzip
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
@@ -121,6 +121,49 @@ fi
 # Kodi drops a setting its build does not support; say so instead of retrying forever.
 for kv in "${kodi_wanted[@]:0:6}"; do
   kodi-rpc Settings.GetSettingValue "{\"setting\":\"${kv%%=*}\"}" | grep -q '"value":true' || log "  kodi has ${kv%%=*} off"
+done
+
+log "kodi add-ons"
+# Pinned zips from device/kodi-addons.list plus the folders in device/kodi-addons/.
+# Unpacked with Kodi stopped; Kodi then finds them disabled and they are enabled over RPC.
+ADDONS=/home/media/.kodi/addons
+CACHE=/var/cache/media-stick/addons
+install -d -o media -g media /home/media/.kodi "$ADDONS"
+install -d "$CACHE"
+addon_ids=() pending=()
+while read -r id ver url sum; do
+  [[ -z ${id:-} || $id == \#* ]] && continue
+  addon_ids+=("$id")
+  [ "$(cat "$ADDONS/$id/.media-stick" 2>/dev/null)" = "$ver $sum" ] && continue
+  f=$CACHE/$id-$ver.zip
+  echo "$sum  $f" | sha256sum -c --status 2>/dev/null || curl -fsSL --retry 3 -o "$f" "$url"
+  echo "$sum  $f" | sha256sum -c --status || { log "  checksum mismatch: $id"; exit 1; }
+  pending+=("$id|$f|$ver $sum")
+done < "$REPO/device/kodi-addons.list"
+local_changed=0
+for d in "$REPO"/device/kodi-addons/*/; do
+  id=$(basename "$d"); addon_ids+=("$id")
+  diff -rq "$d" "$ADDONS/$id" >/dev/null 2>&1 || local_changed=1
+done
+if [ ${#pending[@]} -gt 0 ] || [ $local_changed = 1 ]; then
+  systemctl stop kodi
+  for p in "${pending[@]}"; do
+    IFS='|' read -r id f mark <<<"$p"
+    rm -rf "${ADDONS:?}/$id"
+    unzip -q "$f" -d "$ADDONS"
+    echo "$mark" > "$ADDONS/$id/.media-stick"
+    log "  installed $id"
+  done
+  for d in "$REPO"/device/kodi-addons/*/; do
+    rm -rf "${ADDONS:?}/$(basename "$d")"; cp -r "$d" "$ADDONS/"
+  done
+  chown -R media:media "$ADDONS"
+  systemctl start kodi
+  for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping 2>/dev/null | grep -q pong && break; sleep 2; done
+fi
+for id in "${addon_ids[@]}"; do
+  kodi-rpc Addons.GetAddonDetails "{\"addonid\":\"$id\",\"properties\":[\"enabled\"]}" 2>/dev/null | grep -q '"enabled":true' && continue
+  kodi-rpc Addons.SetAddonEnabled "{\"addonid\":\"$id\",\"enabled\":true}" >/dev/null || log "  could not enable $id"
 done
 
 chown -R media:media "$REPO"
