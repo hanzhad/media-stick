@@ -9,6 +9,9 @@ key=$(cat "$PUB")
 sed "s|@SSH_PUBKEY@|$key|" "$here/cloud-init/user-data" > "$BOOT/user-data"
 cp "$here/cloud-init/network-config" "$BOOT/network-config"
 touch "$BOOT/ssh"
+# First-boot scripts: network setup (hotspot) and hand-over to the repository.
+mkdir -p "$BOOT/media-stick"
+cp "$here/firstboot/firstboot.sh" "$here/../device/files/usr/local/bin/wifi-setup" "$BOOT/media-stick/"
 # Fixed 1080p output even with no TV attached (D = force connector on).
 grep -q 'video=HDMI-A-1' "$BOOT/cmdline.txt" || \
   sed -i '' '1s|$| video=HDMI-A-1:1920x1080@60D|' "$BOOT/cmdline.txt"

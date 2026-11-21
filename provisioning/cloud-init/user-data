@@ -39,13 +39,10 @@ write_files:
       ExecStart=/usr/local/sbin/mediastick-bootkeys
       [Install]
       WantedBy=multi-user.target
-package_update: true
-packages: [git]
 runcmd:
   - systemctl daemon-reload
   - systemctl enable --now mediastick-bootkeys.service
   - systemctl enable --now ssh
-  # Everything else lives in the repository; this file never needs to change.
-  - for i in $(seq 1 60); do git clone -q https://github.com/hanzhad/media-stick /opt/media-stick && break; sleep 10; done
-  - /opt/media-stick/device/bootstrap.sh > /var/log/media-stick-bootstrap.log 2>&1
-  - grep -q 'REBOOT NEEDED' /var/log/media-stick-bootstrap.log && reboot || true
+  # Everything else is in /boot/firmware/media-stick (put there by prepare-bootfs.sh)
+  # and in the repository it clones; this file never needs to change.
+  - systemd-run --unit=media-stick-firstboot --no-block /bin/bash /boot/firmware/media-stick/firstboot.sh

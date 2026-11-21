@@ -1,0 +1,298 @@
+#!/usr/bin/python3
+"""Wi-Fi setup over the Pi's own hotspot.
+
+When the device has no network, it raises a WPA2 hotspot "mediastick-setup" with a
+fresh random password, shows the name, password and address on the TV, and serves a
+page where a phone picks the home network and types its password. The password goes
+straight into a NetworkManager keyfile (root-only); it is never logged or put on a
+command line.
+
+  wifi-setup --if-offline [--wait SECONDS]
+      exit at once if the device is already online (after waiting up to SECONDS for
+      a connection that is configured but not up yet); otherwise run the hotspot
+      until a home network connects.
+
+Standard library only: it must run on a fresh card before anything is installed.
+"""
+import argparse
+import html
+import http.server
+import json
+import os
+import re
+import secrets
+import socket
+import subprocess
+import threading
+import time
+import urllib.parse
+
+AP_CON = "ms-setup"
+AP_SSID = "mediastick-setup"
+AP_ADDR = "10.42.0.1"
+HOME_CON = "home-wifi"
+DNS_CONF = "/etc/NetworkManager/dnsmasq-shared.d/media-stick-captive.conf"
+KEYFILE = f"/etc/NetworkManager/system-connections/{HOME_CON}.nmconnection"
+
+
+def log(msg):
+    print(f"[wifi-setup] {msg}", flush=True)
+
+
+def run(*cmd, timeout=60):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout
+    except subprocess.TimeoutExpired:
+        return 124, ""
+
+
+def online():
+    rc, out = run("nmcli", "-t", "networking", "connectivity", "check", timeout=15)
+    return rc == 0 and out.strip() == "full"
+
+
+# ---------- telling the person in front of the TV ----------
+
+def kodi_rpc(method, params):
+    req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+    with socket.create_connection(("127.0.0.1", 9090), timeout=2) as s:
+        s.sendall(req.encode())
+        s.recv(4096)
+
+
+def tell(title, lines):
+    """Kodi notification if Kodi is up, otherwise big text on the console (tty1)."""
+    try:
+        kodi_rpc("GUI.ShowNotification",
+                 {"title": title, "message": "  ".join(lines), "displaytime": 600000})
+        return
+    except OSError:
+        pass
+    try:
+        run("setfont", "-C", "/dev/tty1", "/usr/share/consolefonts/Uni2-Terminus32x16.psf.gz")
+        with open("/dev/tty1", "w") as tty:
+            tty.write("\033[2J\033[H\n  " + title + "\n\n" + "".join(f"  {l}\n" for l in lines))
+    except OSError:
+        pass
+
+
+# ---------- radio ----------
+
+_split = re.compile(r"(?<!\\):")
+
+
+def scan():
+    run("nmcli", "radio", "wifi", "on")
+    time.sleep(2)
+    rc, out = run("nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list",
+                  "--rescan", "yes", timeout=30)
+    best = {}
+    for line in out.splitlines():
+        parts = [p.replace("\\:", ":") for p in _split.split(line)]
+        if len(parts) < 3 or not parts[0]:
+            continue
+        ssid, sig, sec = parts[0], int(parts[1] or 0), parts[2]
+        if ssid == AP_SSID:
+            continue
+        if ssid not in best or best[ssid][0] < sig:
+            best[ssid] = (sig, sec)
+    return sorted(((s, v[0], v[1]) for s, v in best.items()), key=lambda x: -x[1])
+
+
+def ap_up(password):
+    os.makedirs(os.path.dirname(DNS_CONF), exist_ok=True)
+    with open(DNS_CONF, "w") as f:  # every name resolves to us: phones pop the page up
+        f.write(f"address=/#/{AP_ADDR}\n")
+    run("nmcli", "con", "delete", AP_CON)
+    run("nmcli", "con", "add", "type", "wifi", "ifname", "wlan0", "con-name", AP_CON,
+        "autoconnect", "no", "ssid", AP_SSID, "802-11-wireless.mode", "ap",
+        "802-11-wireless.band", "bg", "ipv4.method", "shared",
+        "ipv4.addresses", f"{AP_ADDR}/24", "ipv6.method", "disabled",
+        "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password)
+    rc, _ = run("nmcli", "con", "up", AP_CON, timeout=45)
+    log(f"hotspot up rc={rc}")
+    return rc == 0
+
+
+def ap_down():
+    run("nmcli", "con", "down", AP_CON)
+    run("nmcli", "con", "delete", AP_CON)
+    try:
+        os.remove(DNS_CONF)
+    except FileNotFoundError:
+        pass
+
+
+def write_keyfile(ssid, psk, security):
+    lines = ["[connection]", f"id={HOME_CON}", "type=wifi", "autoconnect=true", "",
+             "[wifi]", "mode=infrastructure", f"ssid={ssid}", ""]
+    if psk:
+        mgmt = "sae" if ("WPA3" in security and "WPA2" not in security) else "wpa-psk"
+        lines += ["[wifi-security]", f"key-mgmt={mgmt}", f"psk={psk}", ""]
+    lines += ["[ipv4]", "method=auto", "", "[ipv6]", "method=auto", ""]
+    fd = os.open(KEYFILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(lines))
+    os.chmod(KEYFILE, 0o600)
+
+
+def connect(ssid, psk, security, country):
+    if re.fullmatch(r"[A-Z]{2}", country or ""):
+        run("raspi-config", "nonint", "do_wifi_country", country)
+    write_keyfile(ssid, psk, security)
+    run("nmcli", "con", "reload")
+    rc, _ = run("nmcli", "--wait", "40", "con", "up", "id", HOME_CON, timeout=50)
+    for _ in range(10):
+        if online():
+            return True
+        time.sleep(2)
+    return False
+
+
+# ---------- page ----------
+
+PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Media Stick: Wi-Fi</title>
+<style>
+body{{font:17px system-ui,sans-serif;margin:0;padding:20px;background:#0f1a20;color:#e8eef2}}
+h1{{font-size:22px;margin:0 0 16px}} label{{display:block;margin:14px 0 6px;color:#9fb3bf}}
+select,input,button{{width:100%;box-sizing:border-box;font-size:17px;padding:12px;border-radius:8px;border:1px solid #2c4350;background:#16252e;color:#e8eef2}}
+button{{background:#1a8fb3;border:0;margin-top:20px;font-weight:600}}
+.err{{background:#5a1f1f;padding:12px;border-radius:8px;margin-bottom:12px}}
+a{{color:#7cc7e0}} small{{color:#9fb3bf}}
+</style></head><body>
+<h1>Подключить Media Stick к Wi-Fi</h1>
+{error}
+<form method="post" action="/connect">
+<label>Сеть</label>
+<select name="ssid">{options}</select>
+<label>или имя сети вручную</label>
+<input name="manual" autocomplete="off" placeholder="если её нет в списке">
+<label>Пароль сети</label>
+<input name="psk" type="password" autocomplete="off">
+<label>Страна (две буквы, необязательно)</label>
+<input name="country" maxlength="2" placeholder="PL, UA, DE…" style="text-transform:uppercase">
+<button type="submit">Подключить</button>
+</form>
+<p><small>Нет нужной сети? <a href="/rescan">Пересканировать</a> — точка доступа на полминуты пропадёт, потом подключитесь к ней снова.</small></p>
+</body></html>"""
+
+DONE = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Media Stick</title>
+<style>body{{font:17px system-ui,sans-serif;padding:20px;background:#0f1a20;color:#e8eef2}}</style>
+</head><body><h1>{title}</h1><p>{text}</p></body></html>"""
+
+
+class State:
+    def __init__(self):
+        self.networks = []
+        self.error = ""
+        self.request = None  # ("connect", ssid, psk, sec, country) | ("rescan",)
+        self.event = threading.Event()
+
+
+def make_handler(state):
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):  # never log request bodies or queries
+            pass
+
+        def send(self, body, code=200):
+            data = body.encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            if self.path.startswith("/rescan"):
+                state.request = ("rescan",)
+                state.event.set()
+                return self.send(DONE.format(title="Сканирую…",
+                    text=f"Через полминуты снова подключитесь к сети {AP_SSID} и откройте http://{AP_ADDR}"))
+            opts = "".join(
+                f'<option value="{html.escape(s)}">{html.escape(s)} ({sig}%{", открытая" if not sec else ""})</option>'
+                for s, sig, sec in state.networks) or '<option value="">— сетей не найдено —</option>'
+            err = f'<div class="err">{html.escape(state.error)}</div>' if state.error else ""
+            self.send(PAGE.format(options=opts, error=err))
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            form = urllib.parse.parse_qs(self.rfile.read(min(n, 4096)).decode(errors="replace"))
+            get = lambda k: (form.get(k) or [""])[0]
+            ssid = get("manual").strip() or get("ssid")
+            if not ssid:
+                state.error = "Выберите сеть или впишите её имя."
+                return self.do_GET()
+            sec = next((s[2] for s in state.networks if s[0] == ssid), "WPA2")
+            state.request = ("connect", ssid, get("psk"), sec, get("country").strip().upper())
+            state.event.set()
+            self.send(DONE.format(title="Подключаюсь…",
+                text=f"Media Stick переходит на сеть «{html.escape(ssid)}». Смотрите на телевизор: "
+                     "если не получится, точка доступа появится снова с тем же паролем."))
+    return H
+
+
+def serve_portal():
+    state = State()
+    state.networks = scan()
+    password = "".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(8))
+
+    srv = http.server.ThreadingHTTPServer(("0.0.0.0", 80), make_handler(state))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def show(extra=None):
+        tell("Настройка Wi-Fi", [f"1. Подключите телефон к сети: {AP_SSID}",
+                                  f"2. Пароль: {password}",
+                                  f"3. Откройте: http://{AP_ADDR}"] + (extra or []))
+
+    ap_up(password)
+    show()
+    while True:
+        state.event.wait()
+        state.event.clear()
+        req, state.request = state.request, None
+        if not req:
+            continue
+        time.sleep(2)  # let the reply reach the phone before the hotspot goes away
+        ap_down()
+        if req[0] == "rescan":
+            state.networks = scan()
+        else:
+            _, ssid, psk, sec, country = req
+            tell("Настройка Wi-Fi", [f"Подключаюсь к «{ssid}»…"])
+            if connect(ssid, psk, sec, country):
+                log("connected")
+                tell("Wi-Fi подключён", [f"Сеть: {ssid}"])
+                srv.shutdown()
+                return
+            log("connect failed")
+            run("nmcli", "con", "delete", HOME_CON)
+            state.error = f"Не удалось подключиться к «{ssid}». Проверьте пароль."
+            state.networks = scan()
+        ap_up(password)
+        show([state.error] if state.error else None)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--if-offline", action="store_true")
+    ap.add_argument("--wait", type=int, default=0)
+    a = ap.parse_args()
+    if a.if_offline:
+        deadline = time.time() + a.wait
+        while True:
+            if online():
+                log("online, nothing to do")
+                return
+            if time.time() >= deadline:
+                break
+            time.sleep(3)
+    serve_portal()
+
+
+if __name__ == "__main__":
+    main()

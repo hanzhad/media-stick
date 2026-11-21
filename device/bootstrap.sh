@@ -33,27 +33,38 @@ log "secrets dir"
 install -d -m 0750 -o root -g media /etc/media-stick
 [ -f /etc/media-stick/secrets.env ] || install -m 0640 -o root -g media /dev/null /etc/media-stick/secrets.env
 
-log "services"
-changed=0
-for unit in kodi.service; do
-  if ! cmp -s "$FILES/etc/systemd/system/$unit" "/etc/systemd/system/$unit"; then
-    install -m 0644 "$FILES/etc/systemd/system/$unit" "/etc/systemd/system/$unit"; changed=1
+log "files"
+# Everything under device/files goes to the same path on the device.
+changed_units=()
+while IFS= read -r -d '' src; do
+  rel=${src#"$FILES"/}; dst=/$rel; mode=0644
+  [[ $rel == usr/local/bin/* ]] && mode=0755
+  if ! cmp -s "$src" "$dst"; then
+    install -D -m "$mode" "$src" "$dst"; log "  updated /$rel"
+    [[ $rel == etc/systemd/system/* ]] && changed_units+=("$(basename "$rel")")
+    # a program with a service of the same name: restart that service too
+    [[ $rel == usr/local/bin/* && -f "$FILES/etc/systemd/system/$(basename "$rel").service" ]] \
+      && changed_units+=("$(basename "$rel").service")
   fi
-done
-if [ $changed = 1 ]; then systemctl daemon-reload; fi
-systemctl disable --now getty@tty1.service 2>/dev/null || true
-systemctl enable kodi.service >/dev/null
-if [ $changed = 1 ] || ! systemctl is-active -q kodi.service; then systemctl restart kodi.service; fi
+done < <(find "$FILES" -type f -print0)
+systemd-tmpfiles --create /etc/tmpfiles.d/media-stick.conf
 
-log "helpers"
-for f in usr/local/bin/kodi-rpc; do
-  cmp -s "$FILES/$f" "/$f" || install -m 0755 "$FILES/$f" "/$f"
+log "services"
+if [ ${#changed_units[@]} -gt 0 ]; then systemctl daemon-reload; fi
+systemctl disable --now getty@tty1.service 2>/dev/null || true
+nmcli radio wifi on 2>/dev/null || true
+for unit in kodi.service screen-view.service wifi-fallback.service; do
+  systemctl enable -q "$unit"
+done
+for unit in kodi.service screen-view.service; do
+  if [[ " ${changed_units[*]-} " == *" $unit "* ]] || ! systemctl is-active -q "$unit"; then
+    systemctl restart "$unit"
+  fi
 done
 
 log "kodi settings"
 for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping | grep -q pong && break; sleep 2; done
-install -d -o media -g media /home/media/screenshots
-kodi-rpc Settings.SetSettingValue '{"setting":"debug.screenshotpath","value":"/home/media/screenshots/"}' >/dev/null
+kodi-rpc Settings.SetSettingValue '{"setting":"debug.screenshotpath","value":"/run/media-stick/shots/"}' >/dev/null
 for a in inputstream.adaptive inputstream.ffmpegdirect; do
   kodi-rpc Addons.GetAddonDetails "{\"addonid\":\"$a\",\"properties\":[\"enabled\"]}" | grep -q '"enabled":true' \
     || { kodi-rpc Addons.SetAddonEnabled "{\"addonid\":\"$a\",\"enabled\":true}" >/dev/null; kodi-rpc Input.Back >/dev/null; }
