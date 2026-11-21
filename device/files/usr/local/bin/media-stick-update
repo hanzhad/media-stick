@@ -6,7 +6,7 @@ set -uo pipefail
 REPO=/opt/media-stick
 exec 9>/run/media-stick-update.lock
 flock -n 9 || { echo "another update is running"; exit 0; }
-g() { runuser -u media -- git -C "$REPO" "$@"; }
+g() { HOME=/home/media setpriv --reuid=media --regid=media --init-groups git -C "$REPO" "$@"; }
 
 g fetch -q origin main || { echo "fetch failed"; exit 1; }
 cur=$(g rev-parse HEAD); new=$(g rev-parse origin/main)

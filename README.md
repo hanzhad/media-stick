@@ -6,7 +6,7 @@ A Raspberry Pi 3B+ as a media stick for a plain TV: Kodi full screen, phone as t
 
 1. SD card in the Mac → `provisioning/make-card.sh disk8` (find the disk with `diskutil list external physical`).
 2. Card in the Pi, HDMI to the TV, power on.
-3. No network configured → the Pi raises its own Wi-Fi `mediastick-setup`; the TV shows its password and address. Join it from a phone, pick the home network, type its password.
+3. No network configured → the Pi raises its own Wi-Fi `mediastick-setup`; the TV shows its password and address. Join it from a phone, pick the home network, type its password. The same happens later whenever the device boots and cannot reach any network.
 4. The Pi clones this repository and runs `device/bootstrap.sh`. Kodi is on screen in 10–15 minutes.
 
 A network cable (or the Mac's Internet Sharing) also works and skips step 3.
@@ -19,7 +19,21 @@ A network cable (or the Mac's Internet Sharing) also works and skips step 3.
 | ship an uncommitted edit | `tools/deploy.sh --local` |
 | device health | `tools/doctor.sh` |
 | what the TV shows, as a PNG | `tools/screenshot.sh out.png` |
-| what the TV shows, live in a browser | http://mediastick.local:8090 |
+| remote, live screen, device info, Wi-Fi | http://mediastick.local |
+
+## The page
+
+http://mediastick.local is the one place to use the device from:
+
+- hotspot up (no network) → Wi-Fi setup
+- phone → remote (d-pad, playback, volume, text into Kodi search); screen, info and settings behind tabs
+- wide screen → screen, remote, device info and settings side by side; the keyboard works as a remote
+
+Anyone on the home network can open it, like a Chromecast. A browser on another site cannot press its buttons (every change needs a custom header that cross-site requests cannot carry).
+
+## Self-update
+
+The device pulls `main` on the schedule in `device/config.env` (`UPDATE_SCHEDULE`, every 5 minutes while developing) and applies it; a failed update rolls back. Nothing is updated while Kodi is playing.
 
 ## Layout
 

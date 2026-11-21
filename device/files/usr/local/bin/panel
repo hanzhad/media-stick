@@ -1,0 +1,429 @@
+#!/usr/bin/python3
+"""The one page: http://mediastick.local
+
+  - hotspot up (no network yet)  -> Wi-Fi setup
+  - phone                         -> remote; screen, settings and info behind buttons
+  - wide screen                   -> screen, remote and device info side by side
+
+Runs as user media. Talks to Kodi over its local JSON-RPC socket (no Kodi password),
+and reaches root-only actions through `sudo -n` on a fixed list of commands, with any
+secret passed on stdin.
+
+Requests that change something must carry the header X-Panel: 1. A browser cannot add
+that header to a cross-site request without a preflight this server never answers, so
+another web page cannot press buttons here. The Host header is checked too, against
+DNS rebinding.
+"""
+import glob
+import json
+import os
+import re
+import socket
+import subprocess
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = int(os.environ.get("PANEL_PORT", "80"))
+REPO = "/opt/media-stick"
+SHOTS = "/run/media-stick/shots"
+HOST_OK = re.compile(r"^(mediastick(\.local)?|localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?$", re.I)
+
+# Kodi actions a button may send (Input.ExecuteAction names).
+ACTIONS = {"up", "down", "left", "right", "select", "back", "contextmenu", "info",
+           "playpause", "stop", "volumeup", "volumedown", "mute", "fastforward",
+           "rewind", "osd", "skipnext", "skipprevious", "fullscreen"}
+
+
+# ---------------- helpers ----------------
+
+def run(cmd, stdin=None, timeout=20):
+    try:
+        p = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return 124, ""
+
+
+def kodi(method, params=None, timeout=3):
+    req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
+    with socket.create_connection(("127.0.0.1", 9090), timeout=timeout) as s:
+        s.sendall(req.encode())
+        buf = b""
+        while True:  # Kodi sends one JSON object, no newline
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+            try:
+                return json.loads(buf).get("result")
+            except ValueError:
+                continue
+    return None
+
+
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+# ---------------- screen ----------------
+
+shot_lock = threading.Lock()
+last_shot = {"t": 0.0, "png": b""}
+
+
+def screenshot():
+    with shot_lock:
+        if time.time() - last_shot["t"] < 0.5 and last_shot["png"]:
+            return last_shot["png"]
+        for f in glob.glob(f"{SHOTS}/*.png"):
+            os.remove(f)
+        kodi("Input.ExecuteAction", {"action": "screenshot"})
+        for _ in range(80):
+            files = glob.glob(f"{SHOTS}/*.png")
+            if files:
+                with open(files[0], "rb") as fh:
+                    png = fh.read()
+                if png.endswith(b"IEND\xaeB`\x82"):
+                    os.remove(files[0])
+                    last_shot.update(t=time.time(), png=png)
+                    return png
+            time.sleep(0.05)
+        raise TimeoutError("no screenshot from Kodi")
+
+
+# ---------------- state ----------------
+
+def wifi_status():
+    rc, out = run(["sudo", "-n", "/usr/local/bin/wifi-setup", "status"])
+    try:
+        return json.loads(out)
+    except ValueError:
+        return {"online": False, "ap": False, "ssid": ""}
+
+
+def status():
+    s = {"time": time.strftime("%H:%M")}
+    s["wifi"] = wifi_status()
+    s["uptime"] = run(["uptime", "-p"])[1].replace("up ", "")
+    s["temp"] = run(["vcgencmd", "measure_temp"])[1].split("=")[-1]
+    t = run(["vcgencmd", "get_throttled"])[1].split("=")[-1]
+    s["throttled"] = t
+    s["power_ok"] = t == "0x0"
+    mem = dict(l.split(":", 1) for l in read("/proc/meminfo").splitlines() if ":" in l)
+    s["mem_free_mb"] = int(mem.get("MemAvailable", "0 kB").split()[0]) // 1024
+    st = os.statvfs("/")
+    s["disk_free_gb"] = round(st.f_bavail * st.f_frsize / 1e9, 1)
+    s["ip"] = run(["hostname", "-I"])[1].split()
+    s["commit"] = run(["git", "-C", REPO, "log", "-1", "--format=%h %s"])[1]
+    s["bad_commit"] = read("/var/lib/media-stick/bad-commit")[:7]
+    nxt = run(["systemctl", "show", "media-stick-update.timer", "-p", "NextElapseUSecRealtime", "--value"])[1]
+    s["next_update"] = nxt
+    try:
+        players = kodi("Player.GetActivePlayers") or []
+        s["kodi"] = "up"
+        if players:
+            item = kodi("Player.GetItem", {"playerid": players[0]["playerid"],
+                                           "properties": ["title", "showtitle"]}) or {}
+            it = item.get("item", {})
+            s["playing"] = it.get("title") or it.get("label") or ""
+    except OSError:
+        s["kodi"] = "down"
+    return s
+
+
+# ---------------- page ----------------
+
+PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#0d1418"><title>Media Stick</title>
+<style>
+:root{--bg:#0d1418;--card:#15222a;--line:#243641;--txt:#e6edf1;--dim:#8ea3af;--acc:#1f9bc4;--bad:#c0504d;--ok:#3fa66b}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--txt);font:16px system-ui,-apple-system,sans-serif}
+button,input,select{font:inherit;color:inherit}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+h2{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin:0 0 10px}
+.hide{display:none!important}
+.btn{background:#1c2e38;border:1px solid var(--line);border-radius:12px;padding:12px;cursor:pointer;user-select:none}
+.btn:active{background:var(--acc)}
+.btn.acc{background:var(--acc);border-color:var(--acc);font-weight:600}
+input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0f1b21}
+label{display:block;margin:12px 0 6px;color:var(--dim);font-size:14px}
+.msg{padding:10px 12px;border-radius:10px;background:#3a2020;margin-bottom:10px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+/* remote */
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:330px;margin:0 auto}
+.pad .btn{height:72px;font-size:24px;display:flex;align-items:center;justify-content:center}
+.pad .ok{border-radius:50%;background:var(--acc);border-color:var(--acc);font-size:18px;font-weight:700}
+.keys{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}
+.keys .btn{padding:14px 4px;font-size:18px;text-align:center}
+.screen img{width:100%;border-radius:8px;background:#000;display:block;aspect-ratio:4/3;object-fit:contain}
+dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:0;font-size:14px}
+dt{color:var(--dim)} dd{margin:0;word-break:break-word}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--ok)}
+.dot.bad{background:var(--bad)}
+/* phone */
+#app{max-width:440px;margin:0 auto;padding:14px 14px 90px}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.top b{font-size:18px}.top span{color:var(--dim);font-size:14px}
+.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:#0a1013;border-top:1px solid var(--line);padding:8px 8px calc(8px + env(safe-area-inset-bottom))}
+.tabs button{flex:1;background:none;border:0;color:var(--dim);padding:8px;font-size:13px}
+.tabs button.on{color:var(--txt)}
+section{margin-bottom:14px}
+/* wide screen: everything at once */
+@media (min-width:900px){
+  #app{max-width:1400px;display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:20px}
+  .top{grid-column:1/-1}
+  .tabs{display:none}
+  [data-tab]{display:block!important}
+  #t-screen{grid-column:1;grid-row:2/5}
+  #t-remote,#t-info,#t-settings{grid-column:2}
+  .screen img{aspect-ratio:auto;max-height:calc(100vh - 110px)}
+  .pad .btn{height:56px}
+}
+</style></head><body>
+
+<div id="setup" class="hide" style="max-width:440px;margin:0 auto;padding:18px">
+  <h1 style="font-size:22px">Подключить Media Stick к Wi-Fi</h1>
+  <div id="s-msg" class="msg hide"></div>
+  <div class="card">
+    <label>Сеть</label><select id="s-ssid"></select>
+    <label>или имя сети вручную</label><input id="s-manual" autocomplete="off" placeholder="если её нет в списке">
+    <label>Пароль сети</label><input id="s-psk" type="password" autocomplete="off">
+    <label>Страна (необязательно)</label><input id="s-country" maxlength="2" placeholder="PL, UA, DE…" style="text-transform:uppercase">
+    <button class="btn acc" style="width:100%;margin-top:16px" onclick="wifiConnect()">Подключить</button>
+  </div>
+  <p style="color:var(--dim);font-size:14px">После нажатия точка доступа пропадёт — следите за телевизором. Если не получится, она появится снова.</p>
+</div>
+
+<div id="app" class="hide">
+  <div class="top"><b>Media Stick</b><span id="hdr"></span></div>
+
+  <section id="t-remote" data-tab="remote">
+    <div class="card">
+      <div class="pad">
+        <div></div><div class="btn" data-a="up">▲</div><div></div>
+        <div class="btn" data-a="left">◀</div><div class="btn ok" data-a="select">OK</div><div class="btn" data-a="right">▶</div>
+        <div></div><div class="btn" data-a="down">▼</div><div></div>
+      </div>
+      <div class="keys">
+        <div class="btn" data-a="back">↩</div><div class="btn" data-a="home">⌂</div>
+        <div class="btn" data-a="contextmenu">☰</div><div class="btn" data-a="info">ⓘ</div>
+        <div class="btn" data-a="rewind">⏪</div><div class="btn" data-a="playpause">⏯</div>
+        <div class="btn" data-a="fastforward">⏩</div><div class="btn" data-a="stop">⏹</div>
+        <div class="btn" data-a="volumedown">🔉</div><div class="btn" data-a="mute">🔇</div>
+        <div class="btn" data-a="volumeup">🔊</div><div class="btn" data-a="osd">⚙︎</div>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <input id="txt" placeholder="Текст в поиск Kodi" enterkeyhint="send">
+        <button class="btn" style="flex:0 0 auto" onclick="sendText()">↵</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="t-screen" data-tab="screen" class="hide">
+    <div class="card screen"><h2>Экран</h2><img id="shot" alt=""><div id="shot-s" style="color:var(--dim);font-size:12px;margin-top:6px"></div></div>
+  </section>
+
+  <section id="t-info" data-tab="info" class="hide">
+    <div class="card"><h2>Устройство</h2><dl id="info"></dl></div>
+  </section>
+
+  <section id="t-settings" data-tab="settings" class="hide">
+    <div class="card"><h2>Действия</h2>
+      <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
+      <button class="btn" onclick="if(confirm('Перезагрузить приставку?'))act('reboot')">Перезагрузить</button></div>
+      <h2 style="margin-top:16px">Wi-Fi</h2>
+      <div id="w-msg" class="msg hide"></div>
+      <select id="w-ssid"></select>
+      <div class="row" style="margin-top:8px"><input id="w-psk" type="password" placeholder="Пароль" autocomplete="off">
+      <button class="btn" style="flex:0 0 auto" onclick="wifiChange()">Сменить</button></div>
+      <button class="btn" style="width:100%;margin-top:8px" onclick="loadNets('w-ssid')">Пересканировать</button>
+    </div>
+  </section>
+
+  <nav class="tabs">
+    <button data-go="remote" class="on">Пульт</button><button data-go="screen">Экран</button>
+    <button data-go="info">Инфо</button><button data-go="settings">Настройки</button>
+  </nav>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const wide=()=>matchMedia('(min-width:900px)').matches;
+async function api(path,body){
+  const o=body===undefined?{}:{method:'POST',headers:{'X-Panel':'1','Content-Type':'application/json'},body:JSON.stringify(body)};
+  const r=await fetch(path,o); if(!r.ok) throw new Error(await r.text()); return r.json();
+}
+function buzz(){if(navigator.vibrate)navigator.vibrate(12)}
+document.querySelectorAll('[data-a]').forEach(b=>b.addEventListener('click',()=>{buzz();api('/api/key',{action:b.dataset.a}).catch(()=>{})}));
+let tab='remote';
+document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{
+  tab=b.dataset.go;
+  document.querySelectorAll('[data-go]').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('[data-tab]').forEach(s=>s.classList.toggle('hide',s.dataset.tab!==tab));
+  if(tab==='settings')loadNets('w-ssid');
+}));
+function sendText(){const t=$('txt');if(!t.value)return;api('/api/text',{text:t.value}).then(()=>t.value='');}
+$('txt').addEventListener('keydown',e=>{if(e.key==='Enter')sendText()});
+// keyboard on a computer drives Kodi like a remote
+const KEYS={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Enter:'select',Backspace:'back',Escape:'back',' ':'playpause',c:'contextmenu',i:'info',h:'home','+':'volumeup','-':'volumedown',m:'mute'};
+document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;const a=KEYS[e.key];if(a){e.preventDefault();api('/api/key',{action:a}).catch(()=>{})}});
+
+function act(what){api('/api/'+what,{}).then(r=>alert(r.message||'ок')).catch(e=>alert(e.message))}
+
+async function loadNets(sel){
+  const s=$(sel); s.innerHTML='<option>сканирую…</option>';
+  try{const n=await api('/api/wifi/scan');
+    s.innerHTML=n.map(x=>`<option value="${x.ssid.replace(/"/g,'&quot;')}">${x.ssid.replace(/</g,'&lt;')} (${x.signal}%)</option>`).join('')||'<option value="">— не найдено —</option>';
+  }catch(e){s.innerHTML='<option value="">ошибка</option>'}
+}
+async function wifiConnect(){
+  const ssid=$('s-manual').value.trim()||$('s-ssid').value;
+  if(!ssid){show('s-msg','Выберите сеть');return}
+  show('s-msg','Подключаюсь… точка доступа пропадёт, смотрите на телевизор.');
+  api('/api/wifi/connect',{ssid,psk:$('s-psk').value,country:$('s-country').value}).catch(()=>{});
+}
+async function wifiChange(){
+  const ssid=$('w-ssid').value; if(!ssid)return;
+  if(!confirm('Переключить приставку на «'+ssid+'»? Если пароль неверный, она вернётся в режим настройки Wi-Fi.'))return;
+  show('w-msg','Переключаюсь… страница станет доступна в новой сети.');
+  api('/api/wifi/connect',{ssid,psk:$('w-psk').value}).catch(()=>{});
+}
+function show(id,t){const m=$(id);m.textContent=t;m.classList.remove('hide')}
+
+const fmt=s=>[
+ ['Сеть',(s.wifi.online?'<span class="dot"></span>':'<span class="dot bad"></span>')+(s.wifi.ssid||'кабель')+' · '+(s.ip||[]).join(', ')],
+ ['Kodi',s.kodi==='up'?(s.playing?'▶ '+s.playing:'работает'):'<span class="dot bad"></span>не отвечает'],
+ ['Температура',s.temp],
+ ['Питание',s.power_ok?'<span class="dot"></span>норма':'<span class="dot bad"></span>просадка '+s.throttled],
+ ['Память',s.mem_free_mb+' МБ свободно'],
+ ['Диск',s.disk_free_gb+' ГБ свободно'],
+ ['Работает',s.uptime],
+ ['Версия',s.commit+(s.bad_commit?' <span class="dot bad"></span>откат с '+s.bad_commit:'')],
+ ['Обновление',s.next_update||'—'],
+].map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+
+async function tick(){
+  try{const s=await api('/api/status');
+    if(s.wifi.ap){ if($('setup').classList.contains('hide')){$('app').classList.add('hide');$('setup').classList.remove('hide');loadNets('s-ssid')} }
+    else{$('setup').classList.add('hide');$('app').classList.remove('hide')}
+    $('hdr').textContent=s.temp+' · '+s.time; $('info').innerHTML=fmt(s);
+  }catch(e){$('hdr').textContent='нет связи'}
+}
+tick(); setInterval(tick,5000);
+
+let shotBusy=false;
+function shotLoop(){
+  const visible=wide()||tab==='screen';
+  if(!visible||shotBusy||document.hidden){setTimeout(shotLoop,500);return}
+  shotBusy=true; const t=Date.now(), im=new Image();
+  im.onload=()=>{$('shot').src=im.src;$('shot-s').textContent=(Date.now()-t)+' мс';shotBusy=false;setTimeout(shotLoop,300)};
+  im.onerror=()=>{$('shot-s').textContent='Kodi не отвечает';shotBusy=false;setTimeout(shotLoop,2000)};
+  im.src='/shot.png?'+t;
+}
+shotLoop();
+</script></body></html>"""
+
+
+# ---------------- server ----------------
+
+def json_body(h):
+    n = int(h.headers.get("Content-Length") or 0)
+    try:
+        return json.loads(h.rfile.read(min(n, 8192)) or b"{}")
+    except ValueError:
+        return {}
+
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):  # never log requests: bodies may carry a Wi-Fi password
+        pass
+
+    def send(self, body, ctype="application/json", code=200):
+        if isinstance(body, (dict, list)):
+            body = json.dumps(body)
+        if isinstance(body, str):
+            body = body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def host_ok(self):
+        return bool(HOST_OK.match(self.headers.get("Host", "")))
+
+    def do_GET(self):
+        if not self.host_ok():
+            # hotspot mode: every name resolves here, so phones' captive-portal checks
+            # land on us; send them to the page
+            if wifi_status().get("ap"):
+                self.send_response(302)
+                self.send_header("Location", "http://10.42.0.1/")
+                self.end_headers()
+                return
+            return self.send("bad host", "text/plain", 421)
+        p = self.path.split("?")[0]
+        if p == "/":
+            return self.send(PAGE, "text/html; charset=utf-8")
+        if p == "/api/status":
+            return self.send(status())
+        if p == "/api/wifi/scan":
+            rc, out = run(["sudo", "-n", "/usr/local/bin/wifi-setup", "scan"], timeout=40)
+            return self.send(out or "[]")
+        if p == "/shot.png":
+            try:
+                return self.send(screenshot(), "image/png")
+            except (OSError, TimeoutError) as e:
+                return self.send(str(e), "text/plain", 503)
+        # anything else (phone captive-portal probes on our own name): the page
+        self.send(PAGE, "text/html; charset=utf-8")
+
+    def do_POST(self):
+        if not self.host_ok() or self.headers.get("X-Panel") != "1":
+            return self.send("forbidden", "text/plain", 403)
+        p = self.path.split("?")[0]
+        b = json_body(self)
+        try:
+            if p == "/api/key":
+                a = b.get("action")
+                if a == "home":
+                    kodi("GUI.ActivateWindow", {"window": "home"})
+                elif a in ACTIONS:
+                    kodi("Input.ExecuteAction", {"action": a})
+                else:
+                    return self.send("unknown action", "text/plain", 400)
+                return self.send({"ok": True})
+            if p == "/api/text":
+                kodi("Input.SendText", {"text": str(b.get("text", ""))[:200], "done": True})
+                return self.send({"ok": True})
+        except OSError:
+            return self.send("Kodi не отвечает", "text/plain", 503)
+        if p == "/api/wifi/connect":
+            req = json.dumps({"ssid": b.get("ssid", ""), "psk": b.get("psk", ""),
+                              "country": b.get("country", "")})
+            # answer first: the connect takes the hotspot (and maybe this page) away
+            self.send({"ok": True, "message": "подключаюсь"})
+            threading.Thread(target=run, args=(["sudo", "-n", "/usr/local/bin/wifi-setup", "connect"],),
+                             kwargs={"stdin": req, "timeout": 120}, daemon=True).start()
+            return
+        if p == "/api/update":
+            subprocess.Popen(["sudo", "-n", "systemctl", "start", "--no-block", "media-stick-update.service"])
+            return self.send({"ok": True, "message": "Проверяю обновления. Если есть новая версия, она поставится за пару минут."})
+        if p == "/api/reboot":
+            self.send({"ok": True, "message": "Перезагружаюсь, вернусь через минуту."})
+            subprocess.Popen(["sudo", "-n", "systemctl", "reboot"])
+            return
+        self.send("not found", "text/plain", 404)
+
+
+if __name__ == "__main__":
+    os.makedirs(SHOTS, exist_ok=True)
+    ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

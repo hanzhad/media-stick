@@ -5,7 +5,7 @@ Wants=NetworkManager.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /usr/local/bin/wifi-setup --if-offline --wait 90
+ExecStart=/usr/bin/python3 /usr/local/bin/wifi-setup hotspot --wait 90
 Restart=no
 
 [Install]

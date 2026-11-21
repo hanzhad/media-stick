@@ -22,6 +22,7 @@ import os
 import re
 import secrets
 import socket
+import sys
 import subprocess
 import threading
 import time
@@ -277,20 +278,157 @@ def serve_portal():
         show([state.error] if state.error else None)
 
 
+AP_PASS_FILE = "/run/media-stick/ap-password"
+
+
+def ap_active():
+    rc, out = run("nmcli", "-t", "-f", "NAME", "con", "show", "--active")
+    return AP_CON in out.split()
+
+
+def new_ap_password():
+    pw = "".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(8))
+    os.makedirs(os.path.dirname(AP_PASS_FILE), exist_ok=True)
+    fd = os.open(AP_PASS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(pw)
+    return pw
+
+
+def ap_password():
+    try:
+        with open(AP_PASS_FILE) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return new_ap_password()
+
+
+def show_ap(extra=None):
+    tell("Настройка Wi-Fi", [f"1. Подключите телефон к сети: {AP_SSID}",
+                              f"2. Пароль: {ap_password()}",
+                              "3. Откройте: http://mediastick.local или http://" + AP_ADDR]
+         + (extra or []))
+
+
+def wait_online(seconds):
+    deadline = time.time() + seconds
+    while True:
+        if online():
+            return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(3)
+
+
+def hotspot(wait):
+    """Installed device: raise the hotspot when offline and keep it until a network
+    connects. The page itself is served by the panel, which calls `connect`."""
+    if wait_online(wait):
+        log("online, nothing to do")
+        return
+    cache_scan(scan())
+    ap_up(ap_password())
+    show_ap()
+    down_since = None
+    while not online():
+        if ap_active():
+            down_since = None
+        else:  # a connect attempt took the hotspot down; bring it back if it failed
+            down_since = down_since or time.time()
+            if time.time() - down_since > 70:
+                cache_scan(scan())
+                ap_up(ap_password())
+                show_ap(["Подключиться не удалось, попробуйте ещё раз."])
+                down_since = None
+        time.sleep(5)
+    ap_down()
+    tell("Wi-Fi подключён", [current_ssid() or ""])
+
+
+SCAN_CACHE = "/run/media-stick/wifi-scan.json"
+
+
+def cache_scan(nets):
+    os.makedirs(os.path.dirname(SCAN_CACHE), exist_ok=True)
+    with open(SCAN_CACHE, "w") as f:
+        json.dump([{"ssid": s, "signal": g, "security": c} for s, g, c in nets], f)
+    os.chmod(SCAN_CACHE, 0o644)
+
+
+def current_ssid():
+    rc, out = run("nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi")
+    for line in out.splitlines():
+        if line.startswith("yes:"):
+            return line[4:].replace("\\:", ":")
+    return ""
+
+
+def cmd_status():
+    print(json.dumps({"online": online(), "ap": ap_active(), "ap_ssid": AP_SSID,
+                      "ssid": current_ssid()}))
+
+
+def cmd_scan():
+    """While the hotspot is up the radio cannot scan; return the list taken before it."""
+    if ap_active():
+        try:
+            with open(SCAN_CACHE) as f:
+                print(f.read())
+                return
+        except FileNotFoundError:
+            print("[]")
+            return
+    nets = scan()
+    cache_scan(nets)
+    print(json.dumps([{"ssid": s, "signal": g, "security": c} for s, g, c in nets]))
+
+
+def cmd_connect():
+    """Reads {"ssid","psk","country"} as JSON on stdin, so the password is never on a
+    command line. Exit 0 when online."""
+    req = json.loads(sys.stdin.read(4096))
+    ssid = (req.get("ssid") or "").strip()
+    if not ssid:
+        sys.exit(2)
+    sec = "WPA2"
+    try:
+        with open(SCAN_CACHE) as f:
+            sec = next((n["security"] for n in json.load(f) if n["ssid"] == ssid), sec)
+    except (FileNotFoundError, ValueError):
+        pass
+    was_ap = ap_active()
+    if was_ap:
+        ap_down()
+    tell("Настройка Wi-Fi", [f"Подключаюсь к «{ssid}»…"])
+    if connect(ssid, req.get("psk") or "", sec, (req.get("country") or "").upper()):
+        tell("Wi-Fi подключён", [f"Сеть: {ssid}"])
+        sys.exit(0)
+    run("nmcli", "con", "delete", HOME_CON)
+    if was_ap:  # back to the hotspot so the phone can try again
+        ap_up(ap_password())
+        show_ap([f"Не удалось подключиться к «{ssid}». Проверьте пароль."])
+    sys.exit(1)
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("command", nargs="?", default="portal",
+                    choices=["portal", "hotspot", "status", "scan", "connect"])
     ap.add_argument("--if-offline", action="store_true")
     ap.add_argument("--wait", type=int, default=0)
     a = ap.parse_args()
-    if a.if_offline:
-        deadline = time.time() + a.wait
-        while True:
-            if online():
-                log("online, nothing to do")
-                return
-            if time.time() >= deadline:
-                break
-            time.sleep(3)
+    if a.command == "status":
+        return cmd_status()
+    if a.command == "scan":
+        return cmd_scan()
+    if a.command == "connect":
+        return cmd_connect()
+    if a.command == "hotspot":
+        return hotspot(a.wait)
+    # portal: a fresh card, nothing installed yet: hotspot and page in one process
+    if a.if_offline and wait_online(a.wait):
+        log("online, nothing to do")
+        return
     serve_portal()
 
 

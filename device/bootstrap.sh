@@ -57,7 +57,15 @@ log "services"
 if [ ${#changed_units[@]} -gt 0 ]; then systemctl daemon-reload; fi
 systemctl disable --now getty@tty1.service 2>/dev/null || true
 nmcli radio wifi on 2>/dev/null || true
-for unit in kodi.service screen-view.service wifi-fallback.service media-stick-update.timer; do
+# Retired pieces: gone from the repository, so remove them from the device too.
+for old in screen-view; do
+  if [ -e /etc/systemd/system/$old.service ]; then
+    systemctl disable --now $old.service 2>/dev/null || true
+    rm -f /etc/systemd/system/$old.service /usr/local/bin/$old; systemctl daemon-reload
+    log "  removed $old"
+  fi
+done
+for unit in kodi.service panel.service wifi-fallback.service media-stick-update.timer; do
   systemctl enable -q "$unit"
 done
 
@@ -70,7 +78,7 @@ if [ "$(cat "$dropin" 2>/dev/null)" != "$want" ] || [[ " ${changed_units[*]-} " 
   log "  update schedule: $UPDATE_SCHEDULE"
 fi
 systemctl is-active -q media-stick-update.timer || systemctl start media-stick-update.timer
-for unit in kodi.service screen-view.service; do
+for unit in kodi.service panel.service; do
   if [[ " ${changed_units[*]-} " == *" $unit "* ]] || ! systemctl is-active -q "$unit"; then
     systemctl restart "$unit"
   fi
