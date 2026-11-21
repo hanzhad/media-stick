@@ -125,12 +125,19 @@ def ap_down():
         pass
 
 
+def kf(value):
+    """GKeyFile value escaping: a raw newline would start a new key, a leading space is stripped."""
+    v = (value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
+         .replace("\t", "\\t"))
+    return "\\s" + v[1:] if v.startswith(" ") else v
+
+
 def write_keyfile(ssid, psk, security):
     lines = ["[connection]", f"id={HOME_CON}", "type=wifi", "autoconnect=true", "",
-             "[wifi]", "mode=infrastructure", f"ssid={ssid}", ""]
+             "[wifi]", "mode=infrastructure", f"ssid={kf(ssid)}", ""]
     if psk:
         mgmt = "sae" if ("WPA3" in security and "WPA2" not in security) else "wpa-psk"
-        lines += ["[wifi-security]", f"key-mgmt={mgmt}", f"psk={psk}", ""]
+        lines += ["[wifi-security]", f"key-mgmt={mgmt}", f"psk={kf(psk)}", ""]
     lines += ["[ipv4]", "method=auto", "", "[ipv6]", "method=auto", ""]
     fd = os.open(KEYFILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:

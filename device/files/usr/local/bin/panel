@@ -99,14 +99,33 @@ def screenshot():
 # ---------------- state ----------------
 
 def wifi_status():
-    rc, out = run(["sudo", "-n", "/usr/local/bin/wifi-setup", "status"])
-    try:
-        return json.loads(out)
-    except ValueError:
-        return {"online": False, "ap": False, "ssid": ""}
+    """Read-only nmcli calls: no sudo, so no PAM/polkit/logind work per poll."""
+    rc, out = run(["nmcli", "-t", "-f", "DEVICE,STATE,CONNECTION", "dev"])
+    wlan = next((l.split(":", 2) for l in out.splitlines() if l.startswith("wlan0:")), None)
+    con = wlan[2] if wlan and len(wlan) > 2 else ""
+    ap = con == "ms-setup"
+    ssid = ""
+    if con and not ap:
+        ssid = run(["nmcli", "-g", "802-11-wireless.ssid", "con", "show", con])[1]
+    online = run(["nmcli", "-t", "networking", "connectivity"])[1] == "full"
+    return {"online": online, "ap": ap, "ssid": ssid}
+
+
+status_cache = {"t": 0.0, "s": None}
+status_lock = threading.Lock()
 
 
 def status():
+    """Shared by every open page: computed at most once per 3 s."""
+    with status_lock:
+        if status_cache["s"] and time.time() - status_cache["t"] < 3:
+            return status_cache["s"]
+        s = _status()
+        status_cache.update(t=time.time(), s=s)
+        return s
+
+
+def _status():
     s = {"time": time.strftime("%H:%M")}
     s["wifi"] = wifi_status()
     s["uptime"] = run(["uptime", "-p"])[1].replace("up ", "")
@@ -227,7 +246,12 @@ section{margin-bottom:14px}
   </section>
 
   <section id="t-screen" data-tab="screen" class="hide">
-    <div class="card screen"><h2>Экран</h2><img id="shot" alt=""><div id="shot-s" style="color:var(--dim);font-size:12px;margin-top:6px"></div></div>
+    <div class="card screen">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h2 style="margin:0">Экран</h2>
+        <button id="live-btn" class="btn" style="padding:8px 14px" onclick="setLive(!live)">▶ Смотреть</button>
+      </div>
+      <img id="shot" alt=""><div id="shot-s" style="color:var(--dim);font-size:12px;margin-top:6px"></div></div>
   </section>
 
   <section id="t-info" data-tab="info" class="hide">
@@ -237,12 +261,13 @@ section{margin-bottom:14px}
   <section id="t-settings" data-tab="settings" class="hide">
     <div class="card"><h2>Действия</h2>
       <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
-      <button class="btn" onclick="if(confirm('Перезагрузить приставку?'))act('reboot')">Перезагрузить</button></div>
+      <button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз'))act('reboot')">Перезагрузить</button></div>
+      <div id="a-msg" class="msg hide"></div>
       <h2 style="margin-top:16px">Wi-Fi</h2>
       <div id="w-msg" class="msg hide"></div>
       <select id="w-ssid"></select>
       <div class="row" style="margin-top:8px"><input id="w-psk" type="password" placeholder="Пароль" autocomplete="off">
-      <button class="btn" style="flex:0 0 auto" onclick="wifiChange()">Сменить</button></div>
+      <button id="w-btn" class="btn" style="flex:0 0 auto" onclick="wifiChange()">Сменить</button></div>
       <button class="btn" style="width:100%;margin-top:8px" onclick="loadNets('w-ssid')">Пересканировать</button>
     </div>
   </section>
@@ -268,6 +293,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=
   document.querySelectorAll('[data-go]').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('[data-tab]').forEach(s=>s.classList.toggle('hide',s.dataset.tab!==tab));
   if(tab==='settings')loadNets('w-ssid');
+  setLive(tab==='screen');  // phone: the screen tab is the request to watch
 }));
 function sendText(){const t=$('txt');if(!t.value)return;api('/api/text',{text:t.value}).then(()=>t.value='');}
 $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')sendText()});
@@ -275,7 +301,14 @@ $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')sendText()});
 const KEYS={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Enter:'select',Backspace:'back',Escape:'back',' ':'playpause',c:'contextmenu',i:'info',h:'home','+':'volumeup','-':'volumedown',m:'mute'};
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;const a=KEYS[e.key];if(a){e.preventDefault();api('/api/key',{action:a}).catch(()=>{})}});
 
-function act(what){api('/api/'+what,{}).then(r=>alert(r.message||'ок')).catch(e=>alert(e.message))}
+function act(what){api('/api/'+what,{}).then(r=>show('a-msg',r.message||'ок')).catch(e=>show('a-msg',e.message))}
+// Two taps instead of confirm(): embedded browsers (the Claude app's included) refuse
+// dialogs silently, and a button that asks first would then do nothing.
+const armedAt={};
+function armed(id,label){const b=$(id),now=Date.now();
+  if(armedAt[id]&&now-armedAt[id]<4000){armedAt[id]=0;b.textContent=b.dataset.t;return true}
+  armedAt[id]=now;b.dataset.t=b.dataset.t||b.textContent;b.textContent=label;
+  setTimeout(()=>{if(armedAt[id]===now){armedAt[id]=0;b.textContent=b.dataset.t}},4000);return false}
 
 async function loadNets(sel){
   const s=$(sel); s.innerHTML='<option>сканирую…</option>';
@@ -291,9 +324,11 @@ async function wifiConnect(){
 }
 async function wifiChange(){
   const ssid=$('w-ssid').value; if(!ssid)return;
-  if(!confirm('Переключить приставку на «'+ssid+'»? Если пароль неверный, она вернётся в режим настройки Wi-Fi.'))return;
+  const psk=$('w-psk').value;
+  if(psk&&(psk.length<8||psk.length>63)){show('w-msg','Пароль Wi-Fi — от 8 до 63 символов.');return}
+  if(!armed('w-btn','Нажмите ещё раз')){show('w-msg','Приставка перейдёт на «'+ssid+'». Нажмите ещё раз, чтобы подтвердить.');return}
   show('w-msg','Подключаюсь к «'+ssid+'»… до минуты.');
-  try{await api('/api/wifi/connect',{ssid,psk:$('w-psk').value})}
+  try{await api('/api/wifi/connect',{ssid,psk})}
   catch(e){show('w-msg','Не отправилось: '+e.message);return}
   $('w-psk').value='';
   for(let i=0;i<25;i++){
@@ -328,16 +363,30 @@ async function tick(){
 }
 tick(); setInterval(tick,5000);
 
-let shotBusy=false;
-function shotLoop(){
-  const visible=wide()||tab==='screen';
-  if(!visible||shotBusy||document.hidden){setTimeout(shotLoop,500);return}
+// The screen costs Kodi a full-resolution render per frame, so it runs only when asked
+// for: the button (or opening the tab on a phone), about one frame a second, off again
+// after two minutes or when the page is hidden.
+const LIVE_MAX_MS=120000, FRAME_GAP_MS=1000;
+let live=false, liveSince=0, shotBusy=false, liveTimer=null;
+function setLive(on){
+  live=on; liveSince=Date.now();
+  $('live-btn').textContent=on?'■ Стоп':'▶ Смотреть';
+  if(!on)$('shot-s').textContent='Остановлено. Нажмите «Смотреть».';
+  if(on)frame();
+}
+function frame(){
+  if(shotBusy)return;
   shotBusy=true; const t=Date.now(), im=new Image();
-  im.onload=()=>{$('shot').src=im.src;$('shot-s').textContent=(Date.now()-t)+' мс';shotBusy=false;setTimeout(shotLoop,300)};
-  im.onerror=()=>{$('shot-s').textContent='Kodi не отвечает';shotBusy=false;setTimeout(shotLoop,2000)};
+  im.onload=()=>{$('shot').src=im.src;shotBusy=false;
+    if(live)$('shot-s').textContent=(Date.now()-t)+' мс';
+    clearTimeout(liveTimer);
+    if(live&&!document.hidden&&Date.now()-liveSince<LIVE_MAX_MS)liveTimer=setTimeout(frame,FRAME_GAP_MS);
+    else if(live)setLive(false)};
+  im.onerror=()=>{shotBusy=false;$('shot-s').textContent='Kodi не отвечает';if(live)liveTimer=setTimeout(frame,3000)};
   im.src='/shot.png?'+t;
 }
-shotLoop();
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&live)setLive(false)});
+if(wide())frame();  // one still frame on a computer, live only on request
 </script></body></html>"""
 
 
