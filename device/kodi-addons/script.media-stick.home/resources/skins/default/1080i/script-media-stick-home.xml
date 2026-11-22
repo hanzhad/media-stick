@@ -138,7 +138,7 @@
         <control type="list" id="100">
             <left>96</left>
             <top>740</top>
-            <width>1728</width>
+            <width>1824</width>
             <height>330</height>
             <orientation>horizontal</orientation>
             <scrolltime tween="cubic" easing="out">220</scrolltime>
