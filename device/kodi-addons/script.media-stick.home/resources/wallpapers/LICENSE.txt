@@ -1,0 +1,1 @@
+These wallpapers were generated procedurally for this repository by tools/make-launcher-art.py (numpy and Pillow, fixed random seeds) and contain no third-party material. They are released under CC0 1.0 Universal (public domain dedication): https://creativecommons.org/publicdomain/zero/1.0/

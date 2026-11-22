@@ -66,7 +66,11 @@ for old in screen-view; do
     log "  removed $old"
   fi
 done
-for unit in kodi.service panel.service wifi-fallback.service media-stick-update.timer; do
+# The favourites home is replaced by the launcher add-on.
+for old in /usr/local/bin/kodi-favourites /home/media/.kodi/media/web-apps; do
+  if [ -e "$old" ]; then rm -rf "$old"; log "  removed $old"; fi
+done
+for unit in kodi.service panel.service wifi-fallback.service media-stick-update.timer media-stick-wallpapers.timer; do
   systemctl enable -q "$unit"
 done
 
@@ -79,6 +83,7 @@ if [ "$(cat "$dropin" 2>/dev/null)" != "$want" ] || [[ " ${changed_units[*]-} " 
   log "  update schedule: $UPDATE_SCHEDULE"
 fi
 systemctl is-active -q media-stick-update.timer || systemctl start media-stick-update.timer
+systemctl is-active -q media-stick-wallpapers.timer || systemctl start media-stick-wallpapers.timer
 for unit in kodi.service panel.service; do
   # Kodi is stopped on purpose while a web app has the screen.
   [ $unit = kodi.service ] && systemctl is-active -q 'web-app@*' && continue
@@ -108,18 +113,26 @@ on_settings=(services.zeroconf services.upnp services.upnprenderer services.airp
   services.webserver services.webserverauthentication)
 kodi_wanted=("${on_settings[@]/%/=true}" services.webserverusername=kodi "services.webserverpassword=$web_pass"
   lookandfeel.skin=skin.ftv screensaver.mode=screensaver.bing screensaver.time=5 input.enablemouse=false
-  lookandfeel.startupwindow=10060
+  lookandfeel.startupwindow=10000
+  # 1080p60 explicitly; left alone Kodi picks the 1024x768 "DESKTOP" mode on the TV
+  videoscreen.screenmode=0192001080060.00000pstd
   debug.screenshotpath=/run/media-stick/shots/)
 as_media() { setpriv --reuid=media --regid=media --init-groups "$@"; }
-FAVS="$REPO/device/kodi-favourites.xml"
+# Retired add-ons: gone from device/kodi-addons/, so remove them from the device (Kodi stopped).
+retired_addons=(service.media-stick.qr)
 addons_ok=1; kodi-addons --check "$REPO" || addons_ok=0
 settings_ok=1; kodi-settings --check "${kodi_wanted[@]}" || settings_ok=0
-favs_ok=1; kodi-favourites --check "$FAVS" || favs_ok=0
-if [ $addons_ok = 0 ] || [ $settings_ok = 0 ] || [ $favs_ok = 0 ]; then
+retired_ok=1
+for old in "${retired_addons[@]}"; do
+  if [ -e "/home/media/.kodi/addons/$old" ]; then retired_ok=0; fi
+done
+if [ $addons_ok = 0 ] || [ $settings_ok = 0 ] || [ $retired_ok = 0 ]; then
   systemctl stop kodi
   [ $addons_ok = 1 ] || kodi-addons --install "$REPO"
   [ $settings_ok = 1 ] || log "  kodi settings changed: $(as_media kodi-settings "${kodi_wanted[@]}")"
-  [ $favs_ok = 1 ] || log "  home tiles changed: $(as_media kodi-favourites --apply "$FAVS")"
+  for old in "${retired_addons[@]}"; do
+    if [ -e "/home/media/.kodi/addons/$old" ]; then rm -rf "/home/media/.kodi/addons/$old"; log "  removed kodi add-on $old"; fi
+  done
   systemctl start kodi
   wait_kodi || log "  kodi did not come back"
 fi

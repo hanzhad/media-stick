@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+    <backgroundcolor>0xff000000</backgroundcolor>
+    <controls>
+        <!-- wallpaper: downloaded set if present, bundled otherwise -->
+        <control type="multiimage">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <imagepath>/var/cache/media-stick/wallpapers/</imagepath>
+            <timeperimage>45000</timeperimage>
+            <fadetime>1500</fadetime>
+            <randomize>true</randomize>
+            <loop>yes</loop>
+            <aspectratio>scale</aspectratio>
+            <visible>String.IsEqual(Window.Property(wallpaper),cache)</visible>
+        </control>
+        <control type="multiimage">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <imagepath>special://home/addons/script.media-stick.home/resources/wallpapers/</imagepath>
+            <timeperimage>45000</timeperimage>
+            <fadetime>1500</fadetime>
+            <randomize>true</randomize>
+            <loop>yes</loop>
+            <aspectratio>scale</aspectratio>
+            <visible>!String.IsEqual(Window.Property(wallpaper),cache)</visible>
+        </control>
+        <control type="image">
+            <left>0</left>
+            <top>480</top>
+            <width>1920</width>
+            <height>600</height>
+            <texture>gradient-bottom.png</texture>
+        </control>
+        <control type="image">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>220</height>
+            <texture>gradient-top.png</texture>
+        </control>
+
+        <!-- top right: network pill (sized and placed from Python, see Launcher.layout_pill) + clock -->
+        <control type="group" id="400">
+            <left>0</left>
+            <top>40</top>
+            <width>1920</width>
+            <height>80</height>
+            <visible>!String.IsEmpty(Window.Property(ip))</visible>
+            <control type="image" id="401">
+                <left>1380</left>
+                <top>0</top>
+                <width>252</width>
+                <height>80</height>
+                <texture border="40">pill-80.png</texture>
+                <colordiffuse>66000000</colordiffuse>
+            </control>
+            <control type="image" id="402">
+                <left>1404</left>
+                <top>20</top>
+                <width>40</width>
+                <height>40</height>
+                <texture>icon-phone.png</texture>
+            </control>
+            <control type="label" id="403">
+                <left>1456</left>
+                <top>0</top>
+                <width>140</width>
+                <height>80</height>
+                <font>Reg25</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(ip)]</label>
+            </control>
+            <control type="image" id="404">
+                <left>1572</left>
+                <top>22</top>
+                <width>36</width>
+                <height>36</height>
+                <texture>icon-wifi.png</texture>
+                <visible>String.IsEqual(Window.Property(net),wifi)</visible>
+            </control>
+            <control type="image" id="405">
+                <left>1572</left>
+                <top>22</top>
+                <width>36</width>
+                <height>36</height>
+                <texture>icon-ethernet.png</texture>
+                <visible>String.IsEqual(Window.Property(net),ethernet)</visible>
+            </control>
+        </control>
+        <control type="label">
+            <left>1656</left>
+            <top>40</top>
+            <width>200</width>
+            <height>80</height>
+            <font>Light60</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>right</align>
+            <aligny>center</aligny>
+            <label>$INFO[System.Time(hh:mm)]</label>
+        </control>
+
+        <!-- left-edge hint: the menu lives to the left of the first app -->
+        <control type="group">
+            <left>16</left>
+            <top>850</top>
+            <width>80</width>
+            <height>90</height>
+            <visible>Control.HasFocus(100) + Integer.IsEqual(Container(100).CurrentItem,1)</visible>
+            <animation effect="fade" time="250">Visible</animation>
+            <animation effect="fade" time="200">Hidden</animation>
+            <control type="image">
+                <left>22</left>
+                <top>0</top>
+                <width>36</width>
+                <height>36</height>
+                <texture>icon-chevron-left.png</texture>
+                <colordiffuse>80FFFFFF</colordiffuse>
+            </control>
+            <control type="label">
+                <left>0</left>
+                <top>42</top>
+                <width>80</width>
+                <height>32</height>
+                <font>Reg22</font>
+                <textcolor>80FFFFFF</textcolor>
+                <align>center</align>
+                <label>Menu</label>
+            </control>
+        </control>
+
+        <!-- app carousel -->
+        <control type="list" id="100">
+            <left>96</left>
+            <top>740</top>
+            <width>1728</width>
+            <height>330</height>
+            <orientation>horizontal</orientation>
+            <scrolltime tween="cubic" easing="out">220</scrolltime>
+            <onleft>201</onleft>
+            <itemlayout width="252" height="330">
+                <control type="image">
+                    <left>0</left>
+                    <top>30</top>
+                    <width>252</width>
+                    <height>252</height>
+                    <texture border="56">card-shadow.png</texture>
+                </control>
+                <control type="image">
+                    <left>16</left>
+                    <top>40</top>
+                    <width>220</width>
+                    <height>220</height>
+                    <texture diffuse="card-mask.png">white.png</texture>
+                    <colordiffuse>FF1F2633</colordiffuse>
+                </control>
+                <control type="image">
+                    <left>16</left>
+                    <top>40</top>
+                    <width>220</width>
+                    <height>220</height>
+                    <aspectratio scalediffuse="false">scale</aspectratio>
+                    <texture diffuse="card-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                    <colordiffuse>D0FFFFFF</colordiffuse>
+                </control>
+            </itemlayout>
+            <focusedlayout width="252" height="330">
+                <control type="group">
+                    <left>0</left>
+                    <top>0</top>
+                    <width>252</width>
+                    <height>300</height>
+                    <animation effect="zoom" start="100" end="112" time="220" tween="cubic" easing="out" center="auto">Focus</animation>
+                    <control type="image">
+                        <left>0</left>
+                        <top>30</top>
+                        <width>252</width>
+                        <height>252</height>
+                        <texture border="56">card-shadow.png</texture>
+                    </control>
+                    <control type="image">
+                        <left>0</left>
+                        <top>24</top>
+                        <width>252</width>
+                        <height>252</height>
+                        <texture border="56">card-glow.png</texture>
+                        <visible>Control.HasFocus(100)</visible>
+                    </control>
+                    <control type="image">
+                        <left>16</left>
+                        <top>40</top>
+                        <width>220</width>
+                        <height>220</height>
+                        <texture diffuse="card-mask.png">white.png</texture>
+                        <colordiffuse>FF1F2633</colordiffuse>
+                    </control>
+                    <control type="image">
+                        <left>16</left>
+                        <top>40</top>
+                        <width>220</width>
+                        <height>220</height>
+                        <aspectratio scalediffuse="false">scale</aspectratio>
+                        <texture diffuse="card-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                    </control>
+                </control>
+                <control type="label">
+                    <left>-20</left>
+                    <top>282</top>
+                    <width>292</width>
+                    <height>40</height>
+                    <font>Med28</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Label]</label>
+                    <visible>Control.HasFocus(100)</visible>
+                </control>
+            </focusedlayout>
+        </control>
+
+        <!-- drawer: dim + sliding panel -->
+        <control type="image">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <texture>white.png</texture>
+            <colordiffuse>B3000000</colordiffuse>
+            <visible>ControlGroup(200).HasFocus</visible>
+            <animation effect="fade" time="200">Visible</animation>
+            <animation effect="fade" time="200">Hidden</animation>
+        </control>
+        <control type="group" id="200">
+            <left>0</left>
+            <top>0</top>
+            <width>560</width>
+            <height>1080</height>
+            <visible allowhiddenfocus="true">ControlGroup(200).HasFocus</visible>
+            <animation effect="slide" start="-560,0" end="0,0" time="260" tween="cubic" easing="out">Visible</animation>
+            <animation effect="slide" start="0,0" end="-560,0" time="200" tween="cubic" easing="out">Hidden</animation>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>536</width>
+                <height>1080</height>
+                <texture>white.png</texture>
+                <colordiffuse>E6121620</colordiffuse>
+            </control>
+            <control type="image">
+                <left>536</left>
+                <top>0</top>
+                <width>24</width>
+                <height>1080</height>
+                <texture flipx="true">gradient-left.png</texture>
+            </control>
+            <control type="label">
+                <left>72</left>
+                <top>72</top>
+                <width>440</width>
+                <height>70</height>
+                <font>Light40</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>media stick</label>
+            </control>
+            <control type="list" id="201">
+                <left>36</left>
+                <top>200</top>
+                <width>470</width>
+                <height>480</height>
+                <orientation>vertical</orientation>
+                <scrolltime>200</scrolltime>
+                <onright>100</onright>
+                <onback>100</onback>
+                <itemlayout width="470" height="96">
+                    <control type="image">
+                        <left>32</left>
+                        <top>24</top>
+                        <width>48</width>
+                        <height>48</height>
+                        <texture>$INFO[ListItem.Art(icon)]</texture>
+                        <colordiffuse>B3FFFFFF</colordiffuse>
+                    </control>
+                    <control type="label">
+                        <left>108</left>
+                        <top>0</top>
+                        <width>350</width>
+                        <height>96</height>
+                        <font>Med32</font>
+                        <textcolor>B3FFFFFF</textcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="470" height="96">
+                    <control type="image">
+                        <left>0</left>
+                        <top>0</top>
+                        <width>470</width>
+                        <height>96</height>
+                        <texture border="47">pill.png</texture>
+                        <colordiffuse>33FFFFFF</colordiffuse>
+                    </control>
+                    <control type="image">
+                        <left>32</left>
+                        <top>24</top>
+                        <width>48</width>
+                        <height>48</height>
+                        <texture>$INFO[ListItem.Art(icon)]</texture>
+                    </control>
+                    <control type="label">
+                        <left>108</left>
+                        <top>0</top>
+                        <width>350</width>
+                        <height>96</height>
+                        <font>Med32</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                    </control>
+                </focusedlayout>
+            </control>
+            <control type="label">
+                <left>72</left>
+                <top>980</top>
+                <width>440</width>
+                <height>40</height>
+                <font>Reg22</font>
+                <textcolor>A9FFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(ip)]</label>
+            </control>
+        </control>
+    </controls>
+</window>

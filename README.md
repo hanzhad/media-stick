@@ -22,7 +22,7 @@ A network cable (or the Mac's Internet Sharing) also works and skips step 3.
 | remote, live screen, device info, Wi-Fi | http://mediastick.local |
 | cast a video from a phone or PC | "Cast to device" / any UPnP-DLNA app; AirPlay (audio) from iOS |
 | add a Kodi add-on for good | add its id to `device/kodi-addons.want`, run `python3 tools/kodi-addons-lock.py`, commit |
-| change the home-screen tiles | `device/kodi-favourites.xml` |
+| apps on the home screen | none to set: any installed video or program add-on appears by itself, last used first |
 | Kodi phone app (Kore, Official Kodi Remote, Yatse) | finds `mediastick` by itself; user `kodi`, password: `ssh … sudo grep KODI_WEB /etc/media-stick/secrets.env` |
 
 ## The page
@@ -37,7 +37,7 @@ Anyone on the home network can open it, like a Chromecast. A browser on another 
 
 ## On the TV
 
-Kodi opens on a row of tiles: SWEET.TV, YouTube, Netflix, Disney+, Prime Video, HBO Max, Plex, Add-ons. The look is the Fire TV–style skin `skin.ftv`; after 5 idle minutes the screensaver shows Bing photos. A QR code in the bottom-right corner of the home screen opens the device's page on a phone (by IP address: many Android phones cannot resolve `mediastick.local`). Kodi's own add-on catalogue (Add-ons tile) installs more.
+Kodi opens on the media-stick launcher: full-screen wallpapers that change every 45 s, Bing photos cached daily (a few bundled ones when offline). A row of apps sits along the bottom, most recently used first; any installed video or program add-on shows up there, and Netflix and the other web apps are in it. Left on the first app opens the menu: Search, Add-ons, Phone remote & network (with a QR code for the device's page, by IP address: many Android phones cannot resolve `mediastick.local`), Settings, Power. The clock and the remote address are top-right. The skin underneath is the Fire TV–style `skin.ftv`; after 5 idle minutes the screensaver shows Bing photos. Kodi's own add-on catalogue (menu, Add-ons) installs more.
 
 Netflix, Disney+, Prime Video and HBO Max are their websites in Chromium with Widevine, full screen, with Kodi stopped while they run (`web-app@<name>.service`). The page's remote types into the browser meanwhile; its Home button closes the browser and Kodi comes back. Expect 720p at most and a slower interface than Kodi: this is a Pi 3B+.
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Fetch Bing wallpapers for the Kodi home screen
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=media
+Group=media
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/usr/local/bin/media-stick-wallpapers

@@ -1,0 +1,33 @@
+#!/bin/bash
+# Cache the latest Bing photos of the day for the Kodi home screen. Offline is not an error.
+set -euo pipefail
+DIR=/var/cache/media-stick/wallpapers
+KEEP=24
+API='https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=en-US'
+log() { echo "media-stick-wallpapers: $*"; }
+
+mkdir -p "$DIR"
+json=$(curl -fsS --max-time 20 "$API") || { log "bing unreachable, keeping the cache"; exit 0; }
+urlbases=$(printf '%s' "$json" | jq -r '.images[].urlbase') || { log "unexpected answer from bing"; exit 0; }
+
+tmp=$(mktemp "$DIR/.part.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+while IFS= read -r urlbase; do
+  [ -n "$urlbase" ] || continue
+  name=${urlbase##*/}; name=${name#*id=}          # OHR.Name_EN-US123
+  name=$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_')
+  dst="$DIR/$name.jpg"
+  [ -s "$dst" ] && continue
+  if ! curl -fsS --max-time 60 -o "$tmp" "https://www.bing.com${urlbase}_1920x1080.jpg"; then
+    log "download failed: $name"; continue
+  fi
+  if [ "$(stat -c %s "$tmp")" -ge 51200 ] && [ "$(head -c 2 "$tmp" | od -An -tx1 | tr -d ' \n')" = ffd8 ]; then
+    chmod 0644 "$tmp"; mv "$tmp" "$dst"; tmp=$(mktemp "$DIR/.part.XXXXXX"); log "added $name"
+  else
+    log "not a usable JPEG: $name"
+  fi
+done <<< "$urlbases"
+
+# keep the newest $KEEP, drop the rest
+ls -t "$DIR"/*.jpg 2>/dev/null | tail -n +$((KEEP + 1)) | while IFS= read -r old; do rm -f "$old"; done
+exit 0
