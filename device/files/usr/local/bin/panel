@@ -58,7 +58,6 @@ WEB_KEYS = {"up": "Up", "down": "Down", "left": "Left", "right": "Right",
             "select": "Return", "back": "Escape", "playpause": "space",
             "fastforward": "Right", "rewind": "Left", "fullscreen": "f", "mute": "m"}
 
-
 # ---------------- helpers ----------------
 
 def run(cmd, stdin=None, timeout=20):
@@ -69,20 +68,16 @@ def run(cmd, stdin=None, timeout=20):
         return 124, ""
 
 
-
 def web_app_on():
     return run(["systemctl", "is-active", "-q", "web-app@*"])[0] == 0
-
 
 def wayland_env():
     rt = f"/run/user/{os.getuid()}"
     socks = sorted(glob.glob(f"{rt}/wayland-[0-9]"))
     return dict(os.environ, XDG_RUNTIME_DIR=rt, WAYLAND_DISPLAY=os.path.basename(socks[-1]) if socks else "wayland-0")
 
-
 def web_key(key):
     subprocess.run(["wtype", "-k", key], env=wayland_env(), timeout=5, capture_output=True)
-
 
 def web_type(text):
     subprocess.run(["wtype", "--", text], env=wayland_env(), timeout=10, capture_output=True)
@@ -103,7 +98,6 @@ def kodi(method, params=None, timeout=3):
                 continue
     return None
 
-
 def read(path, default=""):
     try:
         with open(path) as f:
@@ -111,9 +105,7 @@ def read(path, default=""):
     except OSError:
         return default
 
-
 _pub = {"mtime": None, "host": ""}
-
 
 def public_host():
     """<name>.duckdns.org from panel-url, or "". Read again when the file changes."""
@@ -127,14 +119,11 @@ def public_host():
         _pub.update(mtime=m, host=hit.group(1) if hit else "")
     return _pub["host"]
 
-
 def host_name(host):
     return re.sub(r":[0-9]+$", "", host.lower())
 
-
 https_cache = {"t": 0.0, "s": None}
 https_lock = threading.Lock()
-
 
 def https_status():
     """The helper's status (no secrets), asked at most every 2 s however many pages poll."""
@@ -154,18 +143,15 @@ def https_status():
         https_cache.update(t=time.time(), s=s)
         return s
 
-
 # ---------------- screen ----------------
 
 shot_lock = threading.Lock()
 last_shot = {"t": 0.0, "png": b"", "gen": 0}
 
-
 def forget_shot():
     """The screen has changed under us (a pointer action): the next frame must be new."""
     last_shot["gen"] += 1
     last_shot["t"] = 0.0
-
 
 def screenshot():
     with shot_lock:
@@ -187,7 +173,6 @@ def screenshot():
             time.sleep(0.05)
         raise TimeoutError("no screenshot from Kodi")
 
-
 # ---------------- pointer ----------------
 
 # A virtual mouse for Kodi (setting input.enablemouse is on): the page says where on the
@@ -200,10 +185,8 @@ SCREEN_W, SCREEN_H = 1920, 1080
 POINTER_NAME = "media-stick-pointer"
 POINTER_ACTIONS = {"click", "right", "move", "move_by", "scroll"}
 
-
 class PointerUnavailable(Exception):
     pass
-
 
 class Pointer:
     SETTLE_S = 2.2   # Kodi picks up a new input device after about 2 s
@@ -316,9 +299,7 @@ class Pointer:
                 self.close()   # made again on the next action
                 raise PointerUnavailable("устройство пропало (%s)" % (e.strerror or e))
 
-
 POINTER = Pointer()
-
 
 # ---------------- state ----------------
 
@@ -334,10 +315,8 @@ def wifi_status():
     online = run(["nmcli", "-t", "networking", "connectivity"])[1] == "full"
     return {"online": online, "ap": ap, "ssid": ssid}
 
-
 status_cache = {"t": 0.0, "s": None}
 status_lock = threading.Lock()
-
 
 def status():
     """Shared by every open page: computed at most once per 3 s."""
@@ -347,7 +326,6 @@ def status():
         s = _status()
         status_cache.update(t=time.time(), s=s)
         return s
-
 
 def _status():
     s = {"time": time.strftime("%H:%M")}
@@ -379,7 +357,6 @@ def _status():
     except OSError:
         s["kodi"] = "down"
     return s
-
 
 # ---------------- page ----------------
 
@@ -494,22 +471,28 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 /* remote card: reaches down to the tab bar like the air card (144px = header and tab bar); the
    key rows keep their size and the D-pad takes whatever height is left, as large as the card is
    wide at most, so it grows on tall phones and shrinks on short ones and nothing scrolls. */
-.rc{padding:14px;display:flex;flex-direction:column;height:calc(100vh - 144px);min-height:400px}
+.rc{position:relative;padding:14px;display:flex;flex-direction:column;height:calc(100vh - 144px);min-height:400px}
 @supports (height:1svh){.rc{height:calc(100svh - 144px - env(safe-area-inset-bottom))}}
 .dwrap{position:relative;flex:1 1 0;min-height:120px}
 .dwrap .dpad{position:absolute;inset:0;width:100%;height:100%}
 .rc .row input,.rc .row .btn{min-height:48px!important}
 .rc .row.gap{margin-top:8px}
-/* air tab: one big pad down to the tab bar (144px = header and tab bar) */
-#t-air .card{display:flex;flex-direction:column;height:calc(100vh - 144px);min-height:320px}
-@supports (height:1svh){#t-air .card{height:calc(100svh - 144px - env(safe-area-inset-bottom))}}
-#air{display:flex;flex-direction:column;flex:1;min-height:0;gap:10px}
-.airk{display:flex;align-items:center;gap:12px}
+/* the round button in the card's corner swaps the D-pad for the air pad in the same place, so
+   the key rows below do not move; the sensitivity row sits beside the button */
+.mode{position:absolute;top:10px;right:10px;z-index:1;width:44px;height:44px;min-height:0;padding:0;border-radius:50%}
+.mode.on{background:#fff;color:var(--bg)}
+.dwrap.air .dpad{display:none}
+#air,#air-no{position:absolute;inset:0}
+#air{display:flex;flex-direction:column;gap:8px}
+#air-no{overflow:auto;padding:4px 52px 4px 4px}
+.airk{display:flex;align-items:center;gap:12px;min-height:34px;padding-right:46px}
 .airk label{margin:0;white-space:nowrap;font-size:14px}
 .airk input{min-height:36px}
 #air .cap{margin:0}
-#air .grp{margin-top:0}
 .pad small{font-size:13px;opacity:.7}
+/* a short pad (small phone) keeps only its main line */
+#air .pad{container-type:size;overflow:hidden}
+@container (max-height:110px){.pad .i,.pad small{display:none}}
 #air-no .row{flex-direction:column}
 /* wide screen: preview left, remote right, info and actions below */
 @media (min-width:900px){
@@ -521,7 +504,9 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   #t-screen{grid-area:screen}#t-remote{grid-area:remote}#t-info{grid-area:info}#t-settings{grid-area:settings}#t-https{grid-area:https}
   .rc{height:auto;min-height:0}
   .dwrap{flex:1 0 250px}
-  #t-air{display:none!important}   /* computers have no motion sensor */
+  .mode{display:none}   /* computers have no motion sensor */
+  .dwrap.air .dpad{display:block}
+  .dwrap #air,.dwrap #air-no{display:none!important}
 }
 </style></head><body>
 
@@ -569,13 +554,30 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 
   <section id="t-remote" data-tab="remote">
     <div class="card rc">
-      <div class="dwrap"><svg class="dpad" viewBox="0 0 240 240" role="group" aria-label="Навигация">
+      <button id="mode" class="btn mode" aria-label="Аэромышь" aria-pressed="false"><svg class="i"><use href="#i-air"/></svg></button>
+      <div class="dwrap" id="stage"><svg class="dpad" viewBox="0 0 240 240" role="group" aria-label="Навигация">
         <g class="seg" data-a="up" role="button" aria-label="Вверх"><path d="M38 38A116 116 0 0 1 202 38L154 86A48 48 0 0 0 86 86Z"/><use href="#i-up" x="108" y="50" width="24" height="24"/></g>
         <g class="seg" data-a="right" role="button" aria-label="Вправо"><path d="M202 38A116 116 0 0 1 202 202L154 154A48 48 0 0 0 154 86Z"/><use href="#i-right" x="166" y="108" width="24" height="24"/></g>
         <g class="seg" data-a="down" role="button" aria-label="Вниз"><path d="M202 202A116 116 0 0 1 38 202L86 154A48 48 0 0 0 154 154Z"/><use href="#i-down" x="108" y="166" width="24" height="24"/></g>
         <g class="seg" data-a="left" role="button" aria-label="Влево"><path d="M38 202A116 116 0 0 1 38 38L86 86A48 48 0 0 0 86 154Z"/><use href="#i-left" x="50" y="108" width="24" height="24"/></g>
         <g class="seg ok" data-a="select" role="button" aria-label="OK"><circle cx="120" cy="120" r="40"/><text x="120" y="129">OK</text></g>
-      </svg></div>
+      </svg>
+      <div id="air" class="hide">
+        <div class="airk"><label for="air-k">Чувствительность</label><input id="air-k" type="range" min="1" max="10" step="1" value="5"></div>
+        <div id="air-pad" class="pad" role="button" aria-label="Аэромышь: удерживайте и наводите телефон на телевизор"><svg class="i"><use href="#i-air"/></svg><span id="air-pt">Удерживайте и наводите телефон на&nbsp;телевизор</span><small id="air-ps">Короткое касание — клик</small></div>
+        <div id="air-h" class="cap"></div>
+      </div>
+      <div id="air-no" class="hide">
+        <h2>Аэромышь</h2>
+        <p id="air-nt" class="expl"></p>
+        <ol id="air-steps" class="steps hide">
+          <li>Нажмите «Открыть новый адрес» — он откроется в браузере.</li>
+          <li>Там: «Поделиться» → «На экран „Домой“».</li>
+          <li>Этот старый значок удалите.</li>
+        </ol>
+        <div class="row gap"><a id="air-a" class="btn acc" href="#https">Настроить</a><button id="air-copy" class="btn hide" onclick="airCopy()">Скопировать адрес</button></div>
+      </div>
+      </div>
       <div class="grp">
         <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
         <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
@@ -597,32 +599,6 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <div class="row gap">
         <input id="txt" placeholder="Текст в поиск Kodi" enterkeyhint="send">
         <button class="btn fit" style="min-height:52px" onclick="sendText()" aria-label="Отправить"><svg class="i"><use href="#i-send"/></svg></button>
-      </div>
-    </div>
-  </section>
-
-  <section id="t-air" data-tab="air" class="hide">
-    <div class="card">
-      <div id="air" class="hide">
-        <div id="air-pad" class="pad" role="button" aria-label="Аэромышь: удерживайте и наводите телефон на телевизор"><svg class="i"><use href="#i-air"/></svg><span id="air-pt">Удерживайте и наводите телефон на&nbsp;телевизор</span><small id="air-ps">Короткое касание — клик</small></div>
-        <div class="airk"><label for="air-k">Чувствительность</label><input id="air-k" type="range" min="1" max="10" step="1" value="5"></div>
-        <div id="air-h" class="cap"></div>
-        <div class="grp">
-        <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
-        <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
-        <button class="btn" data-a="contextmenu" aria-label="Меню"><svg class="i"><use href="#i-menu"/></svg></button>
-        <button class="btn" data-a="playpause" aria-label="Пауза"><svg class="i"><use href="#i-pp"/></svg></button>
-      </div>
-      </div>
-      <div id="air-no" class="hide">
-        <h2>Аэромышь</h2>
-        <p id="air-nt" class="expl"></p>
-        <ol id="air-steps" class="steps hide">
-          <li>Нажмите «Открыть новый адрес» — он откроется в браузере.</li>
-          <li>Там: «Поделиться» → «На экран „Домой“».</li>
-          <li>Этот старый значок удалите.</li>
-        </ol>
-        <div class="row gap"><a id="air-a" class="btn acc" href="#https">Настроить</a><button id="air-copy" class="btn hide" onclick="airCopy()">Скопировать адрес</button></div>
       </div>
     </div>
   </section>
@@ -702,7 +678,6 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 
   <nav class="tabs">
     <button data-go="remote" class="on"><span class="pb"><svg class="i"><use href="#i-remote"/></svg></span>Пульт</button>
-    <button data-go="air"><span class="pb"><svg class="i"><use href="#i-air"/></svg></span>Аэромышь</button>
     <button data-go="screen"><span class="pb"><svg class="i"><use href="#i-screen"/></svg></span>Экран</button>
     <button data-go="info"><span class="pb"><svg class="i"><use href="#i-info"/></svg></span>Инфо</button>
     <button data-go="settings"><span class="pb"><svg class="i"><use href="#i-sliders"/></svg></span>Настройки</button>
@@ -726,7 +701,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=
   tab=b.dataset.go;
   document.querySelectorAll('[data-go]').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('[data-tab]').forEach(s=>s.classList.toggle('hide',s.dataset.tab!==tab));
-  if(tab!=='air')airStop(true);
+  if(tab!=='remote')airStop(true);
   try{localStorage.setItem('tab',tab)}catch(e){}
   if(tab==='settings'){loadNets('w-ssid');httpsLoad()}
   setLive(tab==='screen');  // phone: the screen tab is the request to watch
@@ -1034,7 +1009,7 @@ function httpsOff(){
 }
 // Deep link from the TV: /#https opens the card, /#https?sub=<name> also fills the name.
 function hashGo(){
-  if(location.hash==='#air'){document.querySelector('[data-go=air]').click();return}
+  if(location.hash==='#air'){document.querySelector('[data-go=remote]').click();airSet(true);return}
   if(location.hash.slice(0,6)!=='#https')return;
   const m=location.hash.match(/[?&]sub=([a-z0-9-]+)/i);
   hDeep=m?m[1].toLowerCase():'';
@@ -1079,7 +1054,7 @@ function httpsCheck(){
   httpsFor=httpsUrl;httpsOk=null;
   const base=httpsBase(), ctl=new AbortController(), t=setTimeout(()=>ctl.abort(),5000);
   fetch(base+'api/https',{mode:'no-cors',cache:'no-store',signal:ctl.signal})
-    .then(()=>{httpsOk=true;if(first&&!standalone){location.replace(base+(location.hash||(tab==='air'?'#air':'')));return}airUi()},
+    .then(()=>{httpsOk=true;if(first&&!standalone){location.replace(base+(location.hash||(airMode?'#air':'')));return}airUi()},
           ()=>{httpsOk=false;airUi()})
     .finally(()=>clearTimeout(t))
 }
@@ -1091,9 +1066,22 @@ function airCopy(){
   try{if(document.execCommand('copy'))done()}catch(e){}
   t.remove()
 }
+// The round button on the remote swaps the D-pad for the air pad (remembered).
+let airMode=false;
+try{airMode=localStorage.getItem('airmode')==='1'||localStorage.getItem('tab')==='air'}catch(e){}
+function airSet(on){
+  airMode=on;if(!on)airStop(true);
+  try{localStorage.setItem('airmode',on?'1':'0');if(localStorage.getItem('tab')==='air')localStorage.setItem('tab','remote')}catch(e){}
+  airUi()
+}
+$('mode').addEventListener('click',()=>{buzz();airSet(!airMode)});
 function airUi(){
-  $('air').classList.toggle('hide',!airOk);
-  $('air-no').classList.toggle('hide',airOk);
+  const m=$('mode');
+  $('stage').classList.toggle('air',airMode);
+  m.classList.toggle('on',airMode);m.setAttribute('aria-pressed',String(airMode));
+  m.setAttribute('aria-label',airMode?'Кнопки':'Аэромышь');
+  $('air').classList.toggle('hide',!airMode||!airOk);
+  $('air-no').classList.toggle('hide',!airMode||airOk);
   if(!$('air-h').textContent)airNote('');
   if(airOk)return;
   const nt=$('air-nt'), a=$('air-a'), cp=$('air-copy'), st=$('air-steps');
@@ -1202,13 +1190,11 @@ pad.addEventListener('pointercancel',()=>airStop(true));
 pad.addEventListener('contextmenu',e=>e.preventDefault());
 document.addEventListener('visibilitychange',()=>{if(document.hidden)airStop(true)});
 airUi();
-try{if(localStorage.getItem('tab')==='air'&&!location.hash)document.querySelector('[data-go=air]').click()}catch(e){}
 document.addEventListener('gesturestart',e=>e.preventDefault());
 document.addEventListener('dblclick',e=>e.preventDefault());
 </script></body></html>"""
 PAGE_VER = hashlib.sha256(PAGE.encode()).hexdigest()[:12]
 PAGE = PAGE.replace("@@PAGE_VER@@", PAGE_VER)
-
 
 # ---------------- server ----------------
 
@@ -1218,7 +1204,6 @@ def json_body(h):
         return json.loads(h.rfile.read(min(n, 8192)) or b"{}")
     except ValueError:
         return {}
-
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):  # never log requests: bodies may carry a Wi-Fi password
@@ -1399,7 +1384,6 @@ class H(BaseHTTPRequestHandler):
             return
         self.send("not found", "text/plain", 404)
 
-
 class DualStack(ThreadingHTTPServer):
     """IPv6 and IPv4 on one socket: mediastick.local often resolves to IPv6 first."""
     address_family = socket.AF_INET6
@@ -1407,7 +1391,6 @@ class DualStack(ThreadingHTTPServer):
     def server_bind(self):
         self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
         super().server_bind()
-
 
 class TLSServer(DualStack):
     """The same handler over TLS. The handshake runs in the request's own thread, not in
@@ -1428,10 +1411,8 @@ class TLSServer(DualStack):
             except OSError:
                 pass
 
-
 class HTTPSHandler(H):
     secure = True
-
 
 def start_https():
     """Serve HTTPS on 443 too when media-stick-cert has published a certificate. Any
@@ -1449,7 +1430,6 @@ def start_https():
     srv.ctx = ctx
     https_state["up"] = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-
 
 if __name__ == "__main__":
     os.makedirs(SHOTS, exist_ok=True)
