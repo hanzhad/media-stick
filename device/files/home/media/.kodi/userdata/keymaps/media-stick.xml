@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- media-stick keymap: overrides on top of Kodi's system keymaps (merged by button and window).
+     Rules: power keys open our Power menu (skin shutdownmenu, only Restart Kodi / Reboot / Power
+     off), never ShutDown()/Quit; every key that opens a section we do not keep (music, pictures,
+     TV/radio/guide, weather, favourites, programs, teletext, playlists, player info) is noop.
+     Kept as in Kodi: home, back, menu/context, info, playback, volume, mute, mouse (right click
+     is used by the phone panel), Escape/backspace/backslash. -->
+<keymap>
+  <global>
+    <remote>
+      <power>ActivateWindow(shutdownmenu)</power>
+      <myvideo>noop</myvideo>
+      <mymusic>noop</mymusic>
+      <mypictures>noop</mypictures>
+      <mytv>noop</mytv>
+      <guide>noop</guide>
+      <livetv>noop</livetv>
+      <liveradio>noop</liveradio>
+      <recordedtv>noop</recordedtv>
+      <epgsearch>noop</epgsearch>
+      <red>noop</red>
+      <green>noop</green>
+      <yellow>noop</yellow>
+      <blue>noop</blue>
+    </remote>
+    <keyboard>
+      <s>ActivateWindow(shutdownmenu)</s>
+      <power>ActivateWindow(shutdownmenu)</power>
+      <sleep>ActivateWindow(shutdownmenu)</sleep>
+      <n mod="ctrl">noop</n>
+      <e>noop</e>
+      <epg>noop</epg>
+      <h>noop</h>
+      <j>noop</j>
+      <k>noop</k>
+      <b>noop</b>
+      <red>noop</red>
+      <green>noop</green>
+      <yellow>noop</yellow>
+      <blue>noop</blue>
+      <browser_favorites>noop</browser_favorites>
+      <favorites>noop</favorites>
+      <launch_media_select>noop</launch_media_select>
+      <launch_app1_pc_icon>noop</launch_app1_pc_icon>
+      <launch_app2_pc_icon>noop</launch_app2_pc_icon>
+      <g mod="ctrl">noop</g>
+      <m mod="ctrl">noop</m>
+      <i mod="ctrl">noop</i>
+      <e mod="ctrl">noop</e>
+      <o mod="ctrl">noop</o>
+      <t mod="ctrl">noop</t>
+      <t mod="ctrl,shift">noop</t>
+      <a mod="ctrl">noop</a>
+    </keyboard>
+    <appcommand>
+      <browser_favorites>noop</browser_favorites>
+      <launch_media_select>noop</launch_media_select>
+      <launch_app1>noop</launch_app1>
+      <launch_app2>noop</launch_app2>
+    </appcommand>
+    <!-- legacy EventServer gamepad (not the joystick add-on) -->
+    <gamepad>
+      <start>ActivateWindow(Home)</start>
+      <rightthumbbutton>noop</rightthumbbutton>
+    </gamepad>
+    <joystick profile="game.controller.default">
+      <a>Select</a>
+      <b>Back</b>
+      <x>ContextMenu</x>
+      <y>Info</y>
+      <start>ActivateWindow(Home)</start>
+      <back>Back</back>
+      <guide>ActivateWindow(shutdownmenu)</guide>
+      <rightthumb>noop</rightthumb>
+    </joystick>
+  </global>
+  <Home>
+    <remote>
+      <clear>noop</clear>
+      <hash>noop</hash>
+    </remote>
+    <keyboard>
+      <end mod="ctrl">noop</end>
+    </keyboard>
+  </Home>
+  <LoginScreen>
+    <keyboard>
+      <end mod="ctrl">noop</end>
+    </keyboard>
+  </LoginScreen>
+  <FullscreenVideo>
+    <remote>
+      <title>noop</title>
+      <guide>noop</guide>
+      <teletext>noop</teletext>
+      <playlist>noop</playlist>
+    </remote>
+    <keyboard>
+      <c>noop</c>
+      <v>noop</v>
+      <text>noop</text>
+    </keyboard>
+  </FullscreenVideo>
+  <FullscreenInfo>
+    <remote>
+      <title>noop</title>
+    </remote>
+  </FullscreenInfo>
+  <Videos>
+    <keyboard>
+      <n>noop</n>
+    </keyboard>
+  </Videos>
+  <!-- Start must not open PlayerControls; keep Back/Info from Kodi in the window itself -->
+  <PlayerControls>
+    <joystick profile="game.controller.default">
+      <start>Back</start>
+    </joystick>
+  </PlayerControls>
+  <!-- the skin dialog: B closes it, as in Kodi -->
+  <shutdownmenu>
+    <joystick profile="game.controller.default">
+      <b>PreviousMenu</b>
+      <leftthumb>PreviousMenu</leftthumb>
+      <guide>PreviousMenu</guide>
+    </joystick>
+  </shutdownmenu>
+</keymap>

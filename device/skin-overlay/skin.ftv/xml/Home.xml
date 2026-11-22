@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<!-- home -->
+	<!--
+		media-stick overlay. Differs from upstream skin.ftv Home.xml:
+		- Draws nothing. The visible home screen is the script.media-stick.home launcher window,
+		  which covers this one, so the menu, widgets, weather label, favourites list and the
+		  BackgroundColour fill are gone (no flash, no weather fetch, no favourites query).
+		- Home.xml defines no <include name=...>, so nothing else in the skin depends on its body.
+		- The heavy onload work runs once per Kodi session instead of on every return to Home
+		  (guard: Window(Home).Property(MediaStickSetup), cleared on Kodi restart):
+		  * script.skinvariables buildviews generates script-skinviewtypes-includes.xml, which
+		    Includes.xml pulls into every view of the Videos window (YouTube/SWEET.TV/Plex lists)
+		    and which is lost when the skin is reinstalled, so it must still run, but not each time.
+		  * script.skinshortcuts buildxml generates script-skinshortcuts-includes.xml (included by
+		    Includes.xml); only the hidden Home and the shutdown dialog used it, the shutdown
+		    dialog is now static (DialogButtonMenu.xml overlay). Kept once so a fresh install
+		    still gets the file Includes.xml references.
+		  * TMDbHelper.Service and its two skin strings are skin settings; setting them once suffices.
+		- The cheap property clean-up still runs on every load; AddonBrowser reads WindowPreviousHome.
+	-->
+	<defaultcontrol>99</defaultcontrol>
+	<onload>ClearProperty(BounceRight,Home)</onload>
+	<onload>ClearProperty(WindowPrevious,home)</onload>
+	<onload condition="String.IsEmpty(Window(Home).Property(MediaStickSetup))">Skin.SetBool(TMDbHelper.Service)</onload>
+	<onload condition="String.IsEmpty(Window(Home).Property(MediaStickSetup))">Skin.SetString(TMDbHelper.MonitorContainer,99950)</onload>
+	<onload condition="String.IsEmpty(Window(Home).Property(MediaStickSetup))">Skin.SetString(TMDbHelper.Date.Format,%d %B %Y)</onload>
+	<onload condition="String.IsEmpty(Window(Home).Property(MediaStickSetup))">RunScript(script.skinvariables,action=buildviews)</onload>
+	<onload condition="String.IsEmpty(Window(Home).Property(MediaStickSetup)) + System.HasAddon(script.skinshortcuts)">RunScript(script.skinshortcuts,type=buildxml&amp;mainmenuID=99&amp;levels=0&amp;group=mainmenu|shutdown)</onload>
+	<onload>SetProperty(MediaStickSetup,true,Home)</onload>
+	<onunload condition="Window.Next(addonbrowser)">SetProperty(WindowPreviousHome,true,home)</onunload>
+	<onunload condition="!Window.Next(addonbrowser)">ClearProperty(WindowPreviousHome,home)</onunload>
+	<controls>
+		<!-- Invisible focus target so the window has a valid default control -->
+		<control type="button" id="99">
+			<include>HiddenControl</include>
+		</control>
+	</controls>
+</window>

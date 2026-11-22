@@ -22,7 +22,7 @@ fi
 
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
-pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl unzip
+pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect kodi-peripheral-joystick ffmpeg git jq curl unzip
       chromium libwidevinecdm0 cage wtype grim qrencode
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted
       python3-evdev lego
@@ -50,12 +50,16 @@ install -d -m 0750 -o root -g media /etc/media-stick
 log "files"
 # Everything under device/files goes to the same path on the device.
 changed_units=()
+# Kodi's own folders stay media's: on a fresh card they do not exist yet, and install -D
+# below would make them root's (the keymap lives in userdata/keymaps).
+install -d -o media -g media /home/media/.kodi /home/media/.kodi/userdata /home/media/.kodi/userdata/keymaps
 while IFS= read -r -d '' src; do
   rel=${src#"$FILES"/}; dst=/$rel; mode=0644
   [[ $rel == usr/local/bin/* ]] && mode=0755
   if ! cmp -s "$src" "$dst"; then
     install -D -m "$mode" "$src" "$dst"; log "  updated /$rel"
     [[ $rel == etc/systemd/system/* ]] && changed_units+=("$(basename "$rel")")
+    [[ $rel == home/media/.kodi/* ]] && changed_units+=(kodi.service)   # keymaps load at start
     # a program with a service of the same name: restart that service too
     [[ $rel == usr/local/bin/* && -f "$FILES/etc/systemd/system/$(basename "$rel").service" ]] \
       && changed_units+=("$(basename "$rel").service")
@@ -190,7 +194,7 @@ if [ $addons_ok = 0 ] || [ $settings_ok = 0 ] || [ $retired_ok = 0 ] || [ $overl
   wait_kodi || log "  kodi did not come back"
 fi
 # First install on a fresh card: Kodi had no add-on database yet, so enable over RPC.
-addon_ids=(inputstream.adaptive inputstream.ffmpegdirect $(awk '!/^#/ && NF==4 {print $1}' "$REPO/device/kodi-addons.list"))
+addon_ids=(inputstream.adaptive inputstream.ffmpegdirect peripheral.joystick $(awk '!/^#/ && NF==4 {print $1}' "$REPO/device/kodi-addons.list"))
 for d in "$REPO"/device/kodi-addons/*/; do addon_ids+=("$(basename "$d")"); done
 for id in "${addon_ids[@]}"; do
   kodi-rpc Addons.GetAddonDetails "{\"addonid\":\"$id\",\"properties\":[\"enabled\"]}" 2>/dev/null | grep -q '"enabled":true' && continue

@@ -1,0 +1,19 @@
+<!-- media-stick overlay of skin.ftv 8.0.1 colors/defaults.xml. Changed vs upstream:
+     FocusedColour ffffaf37 -> ffffffff, OSDFocusColour fff6a42f -> ffffffff (launcher white focus),
+     OSDNotFocusColour ffffffff -> 99ffffff (so OSD icons still differ from the white focused one),
+     DialogBackColour ff242628 -> f2141922 (launcher dialog panel),
+     DialogHeadingColour ff404347 -> 01000000 (Kodi reads 00000000 as no tint, i.e. white) (heading strip is only used by DialogBack; hidden so the rounded panel has no square corners). -->
+<colors>
+	<!-- Default colours -->
+	<color name="BackgroundColour">ff12161b</color>
+	<color name="DialogBackColour">f2141922</color>
+	<color name="DialogHeadingColour">01000000</color>
+	<color name="FocusedColour">ffffffff</color>
+	<color name="NotFocusedColour">ff555555</color>
+	<color name="ShadowColour">88000000</color>
+	<color name="DisabledColour">80000000</color>
+	<color name="InvalidColour">ffa10000</color>
+	<color name="OSDFocusColour">ffffffff</color>
+	<color name="OSDNotFocusColour">99ffffff</color>
+	<color name="SelectedColour">ffffffff</color>
+</colors>
