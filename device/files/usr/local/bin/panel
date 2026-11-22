@@ -913,12 +913,20 @@ function hView(s){
   }else show('h-msg',H_TEXT[s.state]||'Настраиваю…');
   hLoaded=true
 }
+// hWait: a restart of the panel is expected (it restarts itself the moment the certificate is
+// ready, and after «Отключить»), so a failed request then means "wait", not "broken".
+let hWait=false, hFails=0, hWaitMsg='Панель перезапускается…';
 async function httpsLoad(){
   clearTimeout(hTimer);
   try{
-    const s=await api('/api/https');hView(s);
-    if(s.state==='updating-dns'||s.state==='issuing')hTimer=setTimeout(httpsLoad,3000)
-  }catch(e){show('h-msg','Нет связи с панелью: '+e.message)}
+    const s=await api('/api/https');hFails=0;hView(s);
+    hWait=s.state==='updating-dns'||s.state==='issuing';
+    if(hWait)hWaitMsg='Сертификат готов, панель перезапускается…';
+    if(hWait)hTimer=setTimeout(httpsLoad,3000)
+  }catch(e){
+    if(hWait&&++hFails<=20){show('h-msg',hWaitMsg);hTimer=setTimeout(httpsLoad,3000);return}
+    hWait=false;show('h-msg','Нет связи с панелью: '+e.message)
+  }
 }
 async function httpsSet(){
   const domain=subOf($('h-dom').value), token=$('h-tok').value.trim();
@@ -926,14 +934,14 @@ async function httpsSet(){
   $('h-btn').disabled=true;show('h-msg','Отправляю…');
   try{await api('/api/https',{domain,token})}
   catch(e){show('h-msg','Не получилось: '+e.message.split(token).join('***'));hCheck();return}
-  $('h-tok').value='';hCheck();httpsLoad()
+  $('h-tok').value='';hCheck();hWait=true;hFails=0;httpsLoad()
 }
 function httpsOff(){
   if(!armed('h-off','Нажмите ещё раз, чтобы отключить'))return;
   api('/api/https/clear',{}).then(()=>{
     clearTimeout(hTimer);$('h-open').classList.add('hide');$('h-off').classList.add('hide');
     show('h-msg','HTTPS отключён, панель перезапускается.'+(location.protocol==='https:'?' Эта страница перестанет открываться: зайдите по адресу http://mediastick.local':''));
-    setTimeout(httpsLoad,5000)
+    hWait=true;hFails=0;hWaitMsg='Панель перезапускается…';hTimer=setTimeout(httpsLoad,5000)
   }).catch(e=>show('h-msg',e.message))
 }
 // Deep link from the TV: /#https opens the card, /#https?sub=<name> also fills the name.
