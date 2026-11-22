@@ -25,7 +25,8 @@ export DEBIAN_FRONTEND=noninteractive
 pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl unzip
       chromium libwidevinecdm0 cage wtype grim qrencode
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted
-      python3-evdev lego)
+      python3-evdev lego
+      uxplay gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-alsa gstreamer1.0-tools)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
 if [ ${#missing[@]} -gt 0 ]; then
@@ -93,7 +94,7 @@ done
 # HTTPS: media-stick-cert.timer runs the service daily and a minute after boot. Bootstrap
 # never issues a certificate itself, and the service does nothing until DUCKDNS_DOMAIN and
 # DUCKDNS_TOKEN are in secrets.env (the panel's HTTPS card writes them).
-for unit in kodi.service panel.service wifi-fallback.service media-stick-update.timer media-stick-wallpapers.timer media-stick-cert.timer; do
+for unit in kodi.service panel.service airplay.service wifi-fallback.service media-stick-update.timer media-stick-wallpapers.timer media-stick-cert.timer; do
   systemctl enable -q "$unit"
 done
 
@@ -108,11 +109,15 @@ fi
 systemctl is-active -q media-stick-update.timer || systemctl start media-stick-update.timer
 systemctl is-active -q media-stick-wallpapers.timer || systemctl start media-stick-wallpapers.timer
 systemctl is-active -q media-stick-cert.timer || systemctl start media-stick-cert.timer
-for unit in kodi.service panel.service; do
-  # Kodi is stopped on purpose while a web app has the screen.
+# AirPlay first: a restarted receiver lets go of the screen, and Kodi then restarts to get
+# it back (Kodi keeps running without a picture when something else holds the screen).
+for unit in airplay.service kodi.service panel.service; do
+  # Kodi is stopped on purpose while a web app or an AirPlay phone has the screen.
   [ $unit = kodi.service ] && systemctl is-active -q 'web-app@*' && continue
+  [ $unit = kodi.service ] && [ -e /run/media-stick/airplay ] && continue
   if [[ " ${changed_units[*]-} " == *" $unit "* ]] || ! systemctl is-active -q "$unit"; then
     systemctl restart "$unit"
+    [ $unit = airplay.service ] && changed_units+=(kodi.service)
   fi
 done
 
@@ -123,7 +128,8 @@ wait_kodi || log "  kodi is not answering"
 # not done over RPC: switching some settings over RPC puts a confirmation dialog on
 # the TV and hangs the call, and an add-on dropped in while Kodi runs comes up disabled.
 #  - look: Fire TV-style skin, Bing photos as the screensaver after 5 idle minutes
-#  - casting: UPnP/DLNA renderer ("Cast to device", BubbleUPnP), AirPlay over zeroconf
+#  - casting: UPnP/DLNA renderer ("Cast to device", BubbleUPnP); Kodi's own AirPlay is off:
+#    UxPlay (airplay.service) receives AirPlay, screen mirroring included, which Kodi cannot
 #  - Kodi's web server on :8080 for the Kodi phone apps (Kore, Official Kodi Remote,
 #    Yatse), always behind a password made on the device once and kept in
 #    secrets.env; read it with: sudo grep KODI_WEB /etc/media-stick/secrets.env
@@ -135,9 +141,9 @@ SECRETS=/etc/media-stick/secrets.env
 grep -q '^KODI_WEB_PASSWORD=.' "$SECRETS" \
   || echo "KODI_WEB_PASSWORD=$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" >> "$SECRETS"
 web_pass=$(sed -n 's/^KODI_WEB_PASSWORD=//p' "$SECRETS" | tail -1)
-on_settings=(services.zeroconf services.upnp services.upnprenderer services.airplay
+on_settings=(services.zeroconf services.upnp services.upnprenderer
   services.webserver services.webserverauthentication)
-kodi_wanted=("${on_settings[@]/%/=true}" services.webserverusername=kodi "services.webserverpassword=$web_pass"
+kodi_wanted=("${on_settings[@]/%/=true}" services.airplay=false services.webserverusername=kodi "services.webserverpassword=$web_pass"
   lookandfeel.skin=skin.ftv screensaver.mode=screensaver.bing screensaver.time=5
   lookandfeel.startupwindow=10000 input.enablemouse=true
   # 1080p60 explicitly; left alone Kodi picks the 1024x768 "DESKTOP" mode on the TV
@@ -191,10 +197,13 @@ for id in "${addon_ids[@]}"; do
   kodi-rpc Addons.SetAddonEnabled "{\"addonid\":\"$id\",\"enabled\":true}" >/dev/null || log "  could not enable $id"
 done
 # Kodi drops a setting its build does not support; say so instead of retrying forever.
-for s in "${on_settings[@]}"; do
-  kodi-rpc Settings.GetSettingValue "{\"setting\":\"$s\"}" | grep -q '"value":true' || log "  kodi has $s off"
-done
-kodi-rpc Settings.GetSettingValue '{"setting":"lookandfeel.skin"}' | grep -q skin.ftv || log "  kodi is not on skin.ftv"
+# (Not while a web app or an AirPlay phone has the screen: Kodi is stopped then.)
+if systemctl is-active -q kodi.service; then
+  for s in "${on_settings[@]}"; do
+    kodi-rpc Settings.GetSettingValue "{\"setting\":\"$s\"}" | grep -q '"value":true' || log "  kodi has $s off"
+  done
+  kodi-rpc Settings.GetSettingValue '{"setting":"lookandfeel.skin"}' | grep -q skin.ftv || log "  kodi is not on skin.ftv"
+fi
 
 chown -R media:media "$REPO"
 log "done"

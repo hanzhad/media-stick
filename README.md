@@ -20,7 +20,8 @@ A network cable (or the Mac's Internet Sharing) also works and skips step 3.
 | device health | `tools/doctor.sh` |
 | what the TV shows, as a PNG | `tools/screenshot.sh out.png` |
 | remote, live screen, device info, Wi-Fi | http://mediastick.local |
-| cast a video from a phone or PC | "Cast to device" / any UPnP-DLNA app; AirPlay (audio) from iOS |
+| cast a video from a phone or PC | "Cast to device" / any UPnP-DLNA app |
+| show an iPhone, iPad or Mac screen on the TV | Screen Mirroring → Media Stick (AirPlay by UxPlay, `airplay.service`; sound too); Kodi comes back when the phone stops |
 | add a Kodi add-on for good | add its id to `device/kodi-addons.want`, run `python3 tools/kodi-addons-lock.py`, commit |
 | apps on the home screen | none to set: any installed video or program add-on appears by itself, last used first |
 | Kodi phone app (Kore, Official Kodi Remote, Yatse) | finds `mediastick` by itself; user `kodi`, password: `ssh … sudo grep KODI_WEB /etc/media-stick/secrets.env` |

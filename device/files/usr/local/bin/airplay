@@ -1,0 +1,288 @@
+#!/usr/bin/python3
+"""AirPlay receiver: screen mirroring and audio from an iPhone, iPad or Mac, by UxPlay.
+
+The screen belongs to whoever holds DRM master, and the first program to open it while
+nobody does gets it: so UxPlay never touches it. It sends the decoded picture to a local
+TCP port (GDP, which carries caps and timestamps; every new reader gets the caps first), and
+only once a phone has connected and Kodi (or a web app) is stopped does a small drawer
+(tcpclientsrc ! kmssink) open the screen. Not shared memory: logind removes a user's shared
+memory when that user's last login ends, and UxPlay runs as media.
+
+Without Kodi the TV falls back to the console's mode, 1024x768 when the TV was off at boot,
+so before the drawer starts the TV is set to 1080p with a black picture (kmssink keeps the
+mode it finds), and the screen is let go for the drawer. When the phone lets go, the drawer
+stops and Kodi comes back. Run by airplay.service as root; UxPlay and the drawer run as
+media. While the screen is taken, /run/media-stick/airplay exists: bootstrap leaves Kodi
+alone then.
+"""
+import ctypes
+import fcntl
+import os
+import queue
+import re
+import subprocess
+import threading
+import time
+
+RUN = "/run/media-stick"
+FLAG = RUN + "/airplay"
+PORT = 47011   # the picture, on 127.0.0.1 only
+LOG = RUN + "/airplay.log"   # UxPlay's own debug output, for looking into problems
+LOG_MAX = 4 << 20
+DRAW_LOG = RUN + "/airplay-draw.log"   # the drawer's GStreamer warnings and errors
+CARD = "/dev/dri/card0"
+NAME = os.environ.get("AIRPLAY_NAME") or "Media Stick"
+AS_MEDIA = ["setpriv", "--reuid=media", "--regid=media", "--init-groups", "env", "HOME=/home/media"]
+UXPLAY = AS_MEDIA + [
+    "stdbuf", "-oL", "-eL", "uxplay", "-n", NAME, "-nh",
+    "-bt709",   # hardware decoding (v4l2) shows wrong colours without it
+    # UxPlay appends " name=... sync=..." to this, which lands on tcpserversink
+    "-vs", "gdppay ! tcpserversink host=127.0.0.1 port=%d" % PORT,
+    "-as", "alsasink",
+    "-vsync", "no",   # no waiting to line the picture up with the sound: much less delay
+    # no -hls: UxPlay 1.71's YouTube mode takes the video but never starts playing it (the
+    # app shows "Something went wrong"); without it the YouTube app mirrors instead
+    "-d"]       # the connection lines below are debug-level
+# a phone really connecting (not just listing receivers): its pairing request
+START = re.compile(r"connection request from|Begin streaming|changed audio connection")
+# UxPlay's own count of open connections, logged on every accept and close
+OPEN = re.compile(r"Open connections: (\d+)")
+BACK_AFTER = 4.0   # seconds with no connection left before Kodi comes back
+
+
+def say(*a):
+    print("[airplay]", *a, flush=True)
+    try:    # the journal is root's to read: the same lines go next to the drawer's
+        with open(DRAW_LOG, "a") as out:
+            out.write("[airplay %s] %s\n" % (time.strftime("%H:%M:%S"), " ".join(map(str, a))))
+    except OSError:
+        pass
+
+
+def systemctl(*args):
+    return subprocess.run(["systemctl", *args], capture_output=True, text=True)
+
+
+def drawer():
+    """tcpclientsrc ! kmssink: kmssink scales the picture to the TV's current mode, centred
+    with its shape kept (a phone held upright gets black bars at the sides)."""
+    return AS_MEDIA + [
+        "GST_DEBUG=2,bufferpool:1", "gst-launch-1.0", "tcpclientsrc", "host=127.0.0.1", "port=%d" % PORT,
+        "!", "gdpdepay", "!", "queue", "max-size-buffers=3", "leaky=downstream",
+        "!", "kmssink", "sync=false"]
+
+
+# --- libdrm, just enough to light the TV at 1080p with a black picture ---
+c_u16, c_u32, c_u64, c_int = ctypes.c_uint16, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_int
+
+
+class ModeInfo(ctypes.Structure):
+    _fields_ = [("clock", c_u32), ("hdisplay", c_u16), ("hsync_start", c_u16),
+                ("hsync_end", c_u16), ("htotal", c_u16), ("hskew", c_u16),
+                ("vdisplay", c_u16), ("vsync_start", c_u16), ("vsync_end", c_u16),
+                ("vtotal", c_u16), ("vscan", c_u16), ("vrefresh", c_u32),
+                ("flags", c_u32), ("type", c_u32), ("name", ctypes.c_char * 32)]
+
+
+class Resources(ctypes.Structure):
+    _fields_ = [("count_fbs", c_int), ("fbs", ctypes.POINTER(c_u32)),
+                ("count_crtcs", c_int), ("crtcs", ctypes.POINTER(c_u32)),
+                ("count_connectors", c_int), ("connectors", ctypes.POINTER(c_u32)),
+                ("count_encoders", c_int), ("encoders", ctypes.POINTER(c_u32)),
+                ("min_width", c_u32), ("max_width", c_u32),
+                ("min_height", c_u32), ("max_height", c_u32)]
+
+
+class Connector(ctypes.Structure):
+    _fields_ = [("connector_id", c_u32), ("encoder_id", c_u32), ("connector_type", c_u32),
+                ("connector_type_id", c_u32), ("connection", c_int), ("mmWidth", c_u32),
+                ("mmHeight", c_u32), ("subpixel", c_int), ("count_modes", c_int),
+                ("modes", ctypes.POINTER(ModeInfo)), ("count_props", c_int),
+                ("props", ctypes.POINTER(c_u32)), ("prop_values", ctypes.POINTER(c_u64)),
+                ("count_encoders", c_int), ("encoders", ctypes.POINTER(c_u32))]
+
+
+class Encoder(ctypes.Structure):
+    _fields_ = [("encoder_id", c_u32), ("encoder_type", c_u32), ("crtc_id", c_u32),
+                ("possible_crtcs", c_u32), ("possible_clones", c_u32)]
+
+
+class CreateDumb(ctypes.Structure):
+    _fields_ = [("height", c_u32), ("width", c_u32), ("bpp", c_u32), ("flags", c_u32),
+                ("handle", c_u32), ("pitch", c_u32), ("size", c_u64)]
+
+
+DRM_IOCTL_MODE_CREATE_DUMB = 0xC02064B2   # _IOWR('d', 0xB2, struct drm_mode_create_dumb)
+DRM_MODE_CONNECTED = 1
+DRM_MODE_FLAG_INTERLACE = 1 << 4
+DRM_MODE_TYPE_PREFERRED = 1 << 3
+
+
+def light_screen():
+    """Set the connected TV to 1920x1080 (or its preferred mode) showing black, then give up
+    DRM master so the drawer, opening the screen next, gets it. Returns the open card (the
+    black picture lasts while it is open) and the mode's size."""
+    drm = ctypes.CDLL("libdrm.so.2", use_errno=True)
+    drm.drmModeGetResources.restype = ctypes.POINTER(Resources)
+    drm.drmModeGetConnector.restype = ctypes.POINTER(Connector)
+    drm.drmModeGetEncoder.restype = ctypes.POINTER(Encoder)
+    fd = os.open(CARD, os.O_RDWR | os.O_CLOEXEC)
+    try:
+        # right after Kodi stops the screen can still be held for a moment (logind lets go
+        # of Kodi's session after it exits): become master once nobody is
+        for _ in range(25):
+            if drm.drmSetMaster(fd) == 0:
+                break
+            time.sleep(0.2)
+        else:
+            raise OSError(ctypes.get_errno(), "the screen stays held by another program")
+        res = drm.drmModeGetResources(fd)
+        if not res:
+            raise OSError(ctypes.get_errno(), "no DRM resources")
+        r = res.contents
+        for i in range(r.count_connectors):
+            conn = drm.drmModeGetConnector(fd, r.connectors[i])
+            if conn and conn.contents.connection == DRM_MODE_CONNECTED and conn.contents.count_modes:
+                break
+            if conn:
+                drm.drmModeFreeConnector(conn)
+        else:
+            raise OSError("no screen connected")
+        c = conn.contents
+        modes = [c.modes[i] for i in range(c.count_modes)]
+        best = max(modes, key=lambda m: (m.hdisplay == 1920 and m.vdisplay == 1080,
+                                         not m.flags & DRM_MODE_FLAG_INTERLACE,
+                                         m.vrefresh == 60, bool(m.type & DRM_MODE_TYPE_PREFERRED)))
+        mode = ModeInfo.from_buffer_copy(best)
+        crtc = 0
+        if c.encoder_id:
+            enc = drm.drmModeGetEncoder(fd, c.encoder_id)
+            if enc:
+                crtc = enc.contents.crtc_id
+                drm.drmModeFreeEncoder(enc)
+        crtc = crtc or r.crtcs[0]
+        dumb = CreateDumb(height=mode.vdisplay, width=mode.hdisplay, bpp=32)
+        fcntl.ioctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, dumb)   # zero filled: black
+        fb = c_u32()
+        if drm.drmModeAddFB(fd, mode.hdisplay, mode.vdisplay, 24, 32, dumb.pitch, dumb.handle,
+                            ctypes.byref(fb)):
+            raise OSError(ctypes.get_errno(), "drmModeAddFB")
+        conn_id = c_u32(c.connector_id)
+        if drm.drmModeSetCrtc(fd, crtc, fb.value, 0, 0, ctypes.byref(conn_id), 1, ctypes.byref(mode)):
+            raise OSError(ctypes.get_errno(), "drmModeSetCrtc")
+        drm.drmDropMaster(fd)
+        drm.drmModeFreeConnector(conn)
+        drm.drmModeFreeResources(res)
+        return fd, mode.hdisplay, mode.vdisplay
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+class Screen:
+    def __init__(self):
+        self.drawer = None
+        self.card = None
+        self.size = (1920, 1080)
+
+    @property
+    def taken(self):
+        return os.path.exists(FLAG)
+
+    def take(self):
+        open(FLAG, "w").close()
+        apps = systemctl("list-units", "--state=active", "--plain", "--no-legend", "web-app@*").stdout.split()
+        for unit in [u for u in apps if u.startswith("web-app@")]:
+            systemctl("stop", unit)    # its own stop starts Kodi again, stopped next line
+        systemctl("stop", "kodi.service")
+        try:
+            self.card, w, h = light_screen()
+            self.size = (w, h)
+        except (OSError, AttributeError) as e:
+            say("could not set the TV mode:", e)
+        self.draw()
+        say("screen taken from Kodi at %dx%d" % self.size)
+
+    def draw(self):
+        """(Re)start the drawer; it may die if it came up before the first frame."""
+        if self.drawer is None or self.drawer.poll() is not None:
+            if self.drawer is not None:
+                say("drawer exited with", self.drawer.returncode)
+            big = os.path.exists(DRAW_LOG) and os.path.getsize(DRAW_LOG) > LOG_MAX
+            with open(DRAW_LOG, "w" if big else "a") as out:
+                out.write("--- %s\n" % time.strftime("%H:%M:%S"))
+                out.flush()
+                self.drawer = subprocess.Popen(drawer(), stdout=out, stderr=subprocess.STDOUT)
+
+    def give_back(self):
+        if self.drawer is not None:
+            self.drawer.terminate()
+            try:
+                self.drawer.wait(5)
+            except subprocess.TimeoutExpired:
+                self.drawer.kill()
+            self.drawer = None
+        if self.card is not None:
+            os.close(self.card)
+            self.card = None
+        try:
+            os.remove(FLAG)
+        except FileNotFoundError:
+            pass
+        systemctl("start", "--no-block", "kodi.service")
+        say("screen given back to Kodi")
+
+
+def main():
+    os.makedirs(RUN, exist_ok=True)
+    screen = Screen()
+    if screen.taken:            # left over from a crash
+        screen.give_back()
+    proc = subprocess.Popen(UXPLAY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, errors="replace", bufsize=1)
+    lines = queue.Queue()
+
+    def reader():
+        for line in proc.stdout:
+            lines.put(line.rstrip("\n"))
+        lines.put(None)
+    threading.Thread(target=reader, daemon=True).start()
+
+    log = open(LOG, "w")
+    open_now, empty_since = 0, None
+    try:
+        while True:
+            try:
+                line = lines.get(timeout=1)
+            except queue.Empty:
+                line = ""
+            if line is None:
+                break
+            if line:
+                if log.tell() < LOG_MAX:
+                    log.write(line + "\n")
+                    log.flush()
+                if not line.startswith("GStreamer") and ("onnect" in line or "stream" in line or "rror" in line):
+                    print(line, flush=True)
+                m = OPEN.search(line)
+                if m:
+                    open_now = int(m.group(1))
+                if START.search(line) and not screen.taken:
+                    screen.take()
+            if screen.taken:
+                screen.draw()
+                if open_now:
+                    empty_since = None
+                elif empty_since is None:
+                    empty_since = time.monotonic()
+                elif time.monotonic() - empty_since > BACK_AFTER:
+                    screen.give_back()
+                    empty_since = None
+    finally:
+        if screen.taken:
+            screen.give_back()
+    raise SystemExit(proc.wait())
+
+
+if __name__ == "__main__":
+    main()
