@@ -12,13 +12,20 @@ reboot_needed=0
 log "settings"
 set -a; . "$REPO/device/config.env"; [ -f /etc/media-stick/local.env ] && . /etc/media-stick/local.env; set +a
 install -d -m 0755 /var/lib/media-stick
+# A subdomain proposed for DuckDNS (the panel's HTTPS card and the TV dialog show it). Made
+# once per device and never changed; world-readable, it is only a name.
+if [ ! -s /var/lib/media-stick/https-suggest ]; then
+  suffix=$(head -c 8 /dev/urandom | base32 | tr '[:upper:]' '[:lower:]' | tr -dc 'a-z2-7')
+  printf 'mediastick-%s\n' "${suffix:0:5}" > /var/lib/media-stick/https-suggest
+  chmod 0644 /var/lib/media-stick/https-suggest
+fi
 
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
 pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl unzip
       chromium libwidevinecdm0 cage wtype grim qrencode
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted
-      python3-evdev)
+      python3-evdev lego)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
 if [ ${#missing[@]} -gt 0 ]; then
@@ -83,7 +90,10 @@ done
 for old in /usr/local/bin/kodi-favourites /home/media/.kodi/media/web-apps; do
   if [ -e "$old" ]; then rm -rf "$old"; log "  removed $old"; fi
 done
-for unit in kodi.service panel.service wifi-fallback.service media-stick-update.timer media-stick-wallpapers.timer; do
+# HTTPS: media-stick-cert.timer runs the service daily and a minute after boot. Bootstrap
+# never issues a certificate itself, and the service does nothing until DUCKDNS_DOMAIN and
+# DUCKDNS_TOKEN are in secrets.env (the panel's HTTPS card writes them).
+for unit in kodi.service panel.service wifi-fallback.service media-stick-update.timer media-stick-wallpapers.timer media-stick-cert.timer; do
   systemctl enable -q "$unit"
 done
 
@@ -97,6 +107,7 @@ if [ "$(cat "$dropin" 2>/dev/null)" != "$want" ] || [[ " ${changed_units[*]-} " 
 fi
 systemctl is-active -q media-stick-update.timer || systemctl start media-stick-update.timer
 systemctl is-active -q media-stick-wallpapers.timer || systemctl start media-stick-wallpapers.timer
+systemctl is-active -q media-stick-cert.timer || systemctl start media-stick-cert.timer
 for unit in kodi.service panel.service; do
   # Kodi is stopped on purpose while a web app has the screen.
   [ $unit = kodi.service ] && systemctl is-active -q 'web-app@*' && continue

@@ -1,0 +1,123 @@
+#!/bin/bash
+# Trusted HTTPS for the panel. The user's DuckDNS name is pointed at the device's LAN
+# address, and Let's Encrypt issues the certificate by the DNS-01 challenge: lego puts a TXT
+# record through the DuckDNS API, so nothing is opened to the internet.
+#
+# Inert until /etc/media-stick/secrets.env has DUCKDNS_DOMAIN (the subdomain without
+# .duckdns.org) and DUCKDNS_TOKEN; without them it only removes panel-url and exits 0.
+# Run by media-stick-cert.service: from the daily timer, at boot, and from the panel's
+# "Подключить" button (through media-stick-https). Progress and the last error go to
+# /var/lib/media-stick/https-status.json, which holds no secret. The token reaches curl on
+# stdin and lego through the environment, never through argv, and is scrubbed from messages.
+set -uo pipefail
+
+SECRETS=/etc/media-stick/secrets.env
+STATE=/var/lib/media-stick
+LEGO_DIR=$STATE/lego
+TLS=/etc/media-stick/tls              # what the panel (user media) reads
+PANEL_URL=$STATE/panel-url            # world-readable; absent = https is not usable
+STATUS=$STATE/https-status.json
+LAST_IP=$STATE/duckdns-ip             # "<domain> <ip>" of the last successful DNS update
+RENEW_DAYS=30
+
+log() { echo "media-stick-cert: $*"; }
+get() { sed -n "s/^$1=//p" "$SECRETS" 2>/dev/null | tail -n 1 | tr -d '\r'; }
+
+install -d -m 0755 "$STATE"
+exec 9>"$STATE/media-stick-cert.lock"
+flock -n 9 || { log "another run is in progress"; exit 0; }
+
+DOMAIN=$(get DUCKDNS_DOMAIN)
+TOKEN=$(get DUCKDNS_TOKEN)
+
+scrub() { local m=$1; [ -n "$TOKEN" ] && m=${m//"$TOKEN"/***}; printf '%s' "$m"; }
+set_status() {   # state [message]
+  jq -n --arg s "$1" --arg m "$(scrub "${2-}")" --arg t "$(date +%s)" \
+    '{state:$s, message:$m, time:($t|tonumber)}' > "$STATUS.new" \
+    && chmod 0644 "$STATUS.new" && mv -f "$STATUS.new" "$STATUS"
+}
+fail() { log "error: $(scrub "$*")"; set_status error "$*"; exit 1; }
+days_left() {    # whole days until a certificate file expires; fails if unreadable
+  local end
+  end=$(openssl x509 -noout -enddate -in "$1" 2>/dev/null | cut -d= -f2)
+  [ -n "$end" ] || return 1
+  echo $(( ( $(date -d "$end" +%s) - $(date +%s) ) / 86400 ))
+}
+
+if [ -z "$DOMAIN" ] || [ -z "$TOKEN" ]; then
+  rm -f "$PANEL_URL" "$STATUS"
+  log "DUCKDNS_DOMAIN/DUCKDNS_TOKEN not set: nothing to do"
+  exit 0
+fi
+if ! [[ $DOMAIN =~ ^[a-z0-9-]{1,63}$ ]] \
+   || ! [[ $TOKEN =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+  rm -f "$PANEL_URL"
+  fail "в secrets.env неверное имя поддомена или токен"
+fi
+FQDN=$DOMAIN.duckdns.org
+CRT=$LEGO_DIR/certificates/$FQDN.crt   # lego's .crt already holds the chain
+KEY=$LEGO_DIR/certificates/$FQDN.key
+
+# ---- 1. A record -> current LAN address, only when it changed ----
+ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}')
+[[ $ip =~ ^[0-9]+([.][0-9]+){3}$ ]] || fail "нет адреса в локальной сети (проверьте Wi-Fi или кабель)"
+if [ "$(cat "$LAST_IP" 2>/dev/null)" != "$DOMAIN $ip" ]; then
+  set_status updating-dns "Обновляю адрес в DuckDNS"
+  # the URL carries the token, so it goes to curl as a config on stdin, not as an argument
+  resp=$(printf 'url = "https://www.duckdns.org/update?domains=%s&token=%s&ip=%s"\n' "$DOMAIN" "$TOKEN" "$ip" \
+         | curl -sS --max-time 30 -K - 2>&1)
+  [ "$resp" = OK ] || fail "DuckDNS не принял имя или токен (ответ: ${resp:0:80})"
+  echo "$DOMAIN $ip" > "$LAST_IP"
+  log "DNS updated: $FQDN -> $ip"
+fi
+
+# ---- 2. issue or renew ----
+left=-1
+[ -s "$CRT" ] && [ -s "$KEY" ] && left=$(days_left "$CRT" || echo -1)
+if [ "$left" -lt "$RENEW_DAYS" ]; then
+  set_status issuing "Получаю сертификат, это занимает 1-3 минуты"
+  if [ "$left" -lt 0 ]; then action=(run); else action=(renew --days "$RENEW_DAYS"); fi
+  # lego 4.9 refuses to register without --email, so give it a throwaway role address on
+  # our own name (the A record exists by now); the owner's personal address stays out.
+  # TXT records on DuckDNS can be slow: wait up to 5 min, poll every 10 s, and ask 1.1.1.1
+  # so the router's resolver cache does not hold the check back.
+  out=$( export DUCKDNS_TOKEN="$TOKEN" DUCKDNS_PROPAGATION_TIMEOUT=300 DUCKDNS_POLLING_INTERVAL=10 DUCKDNS_TTL=60
+         lego --path "$LEGO_DIR" --accept-tos --email "media-stick@$FQDN" \
+              --dns duckdns --dns.resolvers 1.1.1.1:53 --domains "$FQDN" "${action[@]}" 2>&1 )
+  rc=$?
+  if [ $rc -ne 0 ]; then
+    tail=$(printf '%s\n' "$out" | tail -n 3 | tr '\n' ' ')
+    rm -f "$PANEL_URL"
+    [ -s "$CRT" ] && [ "$(days_left "$CRT" || echo -1)" -gt 0 ] && [ -f "$TLS/fullchain.pem" ] && printf 'https://%s/\n' "$FQDN" > "$PANEL_URL"
+    fail "lego не получил сертификат: ${tail:0:300}"
+  fi
+  log "lego finished"
+fi
+if [ ! -s "$CRT" ] || [ ! -s "$KEY" ]; then fail "сертификата нет после выпуска"; fi
+
+# ---- 3. publish for the panel; restart it only when something changed ----
+changed=0
+install -d -m 0750 -o root -g media "$TLS"
+publish() {   # src dst mode
+  if ! cmp -s "$1" "$2"; then
+    install -m "$3" -o root -g media "$1" "$2.new" && mv -f "$2.new" "$2" && changed=1
+  fi
+}
+publish "$CRT" "$TLS/fullchain.pem" 0644
+publish "$KEY" "$TLS/key.pem" 0640
+left=$(days_left "$TLS/fullchain.pem" || echo -1)
+if [ "$left" -le 0 ]; then
+  rm -f "$PANEL_URL"
+  fail "сертификат просрочен или не читается"
+fi
+want="https://$FQDN/"
+if [ "$(cat "$PANEL_URL" 2>/dev/null)" != "$want" ]; then
+  printf '%s\n' "$want" > "$PANEL_URL.new" && chmod 0644 "$PANEL_URL.new" && mv -f "$PANEL_URL.new" "$PANEL_URL"
+  changed=1
+fi
+if [ $changed = 1 ]; then
+  log "certificate or address changed: restarting the panel"
+  systemctl restart panel.service
+fi
+set_status ok ""
+log "ok: $want, $left days left"

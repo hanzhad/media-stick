@@ -20,7 +20,9 @@ import math
 import os
 import re
 import socket
+import ssl
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +31,20 @@ PORT = int(os.environ.get("PANEL_PORT", "80"))
 REPO = "/opt/media-stick"
 SHOTS = "/run/media-stick/shots"
 HOST_OK = re.compile(r"^(mediastick(\.local)?|localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?$", re.I)
+
+# Trusted HTTPS (see media-stick-cert, media-stick-https). Everything here is inert until
+# media-stick-cert has published a certificate: no TLS files, no listener, no redirect.
+# The environment overrides exist for tests.
+HTTPS_PORT = int(os.environ.get("PANEL_HTTPS_PORT", "443"))
+TLS_CRT = os.environ.get("PANEL_TLS_CRT", "/etc/media-stick/tls/fullchain.pem")
+TLS_KEY = os.environ.get("PANEL_TLS_KEY", "/etc/media-stick/tls/key.pem")
+STATE_DIR = os.environ.get("PANEL_STATE_DIR", "/var/lib/media-stick")
+PANEL_URL = STATE_DIR + "/panel-url"        # https://<name>.duckdns.org/ once a certificate exists
+SUGGEST = STATE_DIR + "/https-suggest"      # the subdomain bootstrap proposed for this device
+HTTPS_HELPER = ["sudo", "-n", "/usr/local/bin/media-stick-https"]
+PUBLIC_RE = re.compile(r"^https://([a-z0-9-]{1,63}[.]duckdns[.]org)/?$")
+TOKEN_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+https_state = {"up": False}                 # the HTTPS listener is running
 
 # Kodi actions a button may send (Input.ExecuteAction names).
 ACTIONS = {"up", "down", "left", "right", "select", "back", "contextmenu", "info",
@@ -95,6 +111,49 @@ def read(path, default=""):
         return default
 
 
+_pub = {"mtime": None, "host": ""}
+
+
+def public_host():
+    """<name>.duckdns.org from panel-url, or "". Read again when the file changes."""
+    try:
+        m = os.stat(PANEL_URL).st_mtime_ns
+    except OSError:
+        _pub.update(mtime=None, host="")
+        return ""
+    if m != _pub["mtime"]:
+        hit = PUBLIC_RE.match(read(PANEL_URL).lower())
+        _pub.update(mtime=m, host=hit.group(1) if hit else "")
+    return _pub["host"]
+
+
+def host_name(host):
+    return re.sub(r":[0-9]+$", "", host.lower())
+
+
+https_cache = {"t": 0.0, "s": None}
+https_lock = threading.Lock()
+
+
+def https_status():
+    """The helper's status (no secrets), asked at most every 2 s however many pages poll."""
+    with https_lock:
+        if https_cache["s"] and time.time() - https_cache["t"] < 2:
+            return https_cache["s"]
+        rc, out = run(HTTPS_HELPER + ["status"], timeout=15)
+        try:
+            s = json.loads(out)
+            if not isinstance(s, dict):
+                raise ValueError
+        except ValueError:
+            s = {"configured": False, "domain": "", "state": "error", "cert_days_left": None, "url": "",
+                 "message": "Помощник HTTPS не отвечает"}
+        s["message"] = TOKEN_RE.sub("***", str(s.get("message", "")))
+        s["suggest"] = read(SUGGEST)
+        https_cache.update(t=time.time(), s=s)
+        return s
+
+
 # ---------------- screen ----------------
 
 shot_lock = threading.Lock()
@@ -138,7 +197,7 @@ def screenshot():
 # panel keeps working and /api/pointer answers 503.
 SCREEN_W, SCREEN_H = 1920, 1080
 POINTER_NAME = "media-stick-pointer"
-POINTER_ACTIONS = {"click", "right", "move", "scroll"}
+POINTER_ACTIONS = {"click", "right", "move", "move_by", "scroll"}
 
 
 class PointerUnavailable(Exception):
@@ -221,7 +280,7 @@ class Pointer:
         time.sleep(settle if moved else 0.02)
 
     def move_by(self, dfx, dfy):
-        """Relative move in screen fractions: for an air mouse later (not on any endpoint)."""
+        """Relative move in screen fractions: the air mouse (POST /api/pointer move_by)."""
         fx = 0.5 if self.x is None else self.x
         fy = 0.5 if self.y is None else self.y
         self.move_to(min(1.0, max(0.0, fx + dfx)), min(1.0, max(0.0, fy + dfy)), 0.0)
@@ -236,6 +295,8 @@ class Pointer:
                 ev = self.ev
                 if action == "move":
                     self.move_to(fx, fy, 0.0)
+                elif action == "move_by":   # fx, fy are the deltas here
+                    self.move_by(fx, fy)
                 elif action in ("click", "right"):
                     self.move_to(fx, fy)
                     btn = ev.BTN_LEFT if action == "click" else ev.BTN_RIGHT
@@ -300,6 +361,7 @@ def _status():
     st = os.statvfs("/")
     s["disk_free_gb"] = round(st.f_bavail * st.f_frsize / 1e9, 1)
     s["ip"] = run(["hostname", "-I"])[1].split()
+    s["https_url"] = read(PANEL_URL)
     s["commit"] = run(["git", "-C", REPO, "log", "-1", "--format=%h %s"])[1]
     s["bad_commit"] = read("/var/lib/media-stick/bad-commit")[:7]
     nxt = run(["systemctl", "show", "media-stick-update.timer", "-p", "NextElapseUSecRealtime", "--value"])[1]
@@ -394,14 +456,28 @@ dt:nth-last-child(2),dd:last-child{border-bottom:0}
 .tabs .pb{display:flex;padding:4px 18px;border-radius:999px}
 .tabs button.on{color:#fff}.tabs button.on .pb{background:rgba(255,255,255,.14)}
 section{margin-bottom:16px}
+/* air mouse, HTTPS card */
+a{color:#8ab4ff}
+a.btn{text-decoration:none;color:inherit}
+a.btn.acc{color:var(--bg)}
+.btn:disabled{opacity:.4;cursor:default}
+input[type=range]{padding:0;min-height:36px;border:0;background:transparent;accent-color:#fff}
+.pad{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;height:150px;border-radius:24px;background:var(--card2);color:var(--dim);text-align:center;padding:12px;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;transition:background .08s,color .08s}
+.pad.on{background:#fff;color:var(--bg)}
+.steps{margin:0 0 4px;padding-left:22px;color:var(--dim);font-size:15px}
+.steps li{margin:8px 0}
+.sub{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0 4px;padding:10px 12px;border-radius:14px;background:var(--bg);color:#fff;font-size:19px;font-weight:600}
+.sub span{min-width:0;overflow-wrap:anywhere}
+.sub .btn{font-size:14px;font-weight:400;white-space:nowrap;flex:0 0 auto}
+.expl{margin:0 0 10px;color:var(--dim);font-size:15px}
 /* wide screen: preview left, remote right, info and actions below */
 @media (min-width:900px){
-  #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "screen remote" "info settings";gap:20px;padding:28px}
+  #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "screen remote" "info settings" "https https";gap:20px;padding:28px}
   .top{grid-area:top;margin-bottom:0}
   .tabs{display:none}
   [data-tab]{display:block!important;margin:0}
   [data-tab]>.card{height:100%}
-  #t-screen{grid-area:screen}#t-remote{grid-area:remote}#t-info{grid-area:info}#t-settings{grid-area:settings}
+  #t-screen{grid-area:screen}#t-remote{grid-area:remote}#t-info{grid-area:info}#t-settings{grid-area:settings}#t-https{grid-area:https}
   .dpad{width:250px}
 }
 </style></head><body>
@@ -427,6 +503,7 @@ section{margin-bottom:16px}
 <symbol id="i-send" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
 <symbol id="i-remote" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></symbol>
 <symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+<symbol id="i-air" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/></symbol>
 </defs></svg>
 
 <div id="setup" class="hide" style="max-width:440px;margin:0 auto;padding:20px 16px">
@@ -476,6 +553,14 @@ section{margin-bottom:16px}
         <input id="txt" placeholder="Текст в поиск Kodi" enterkeyhint="send">
         <button class="btn fit" style="min-height:52px" onclick="sendText()" aria-label="Отправить"><svg class="i"><use href="#i-send"/></svg></button>
       </div>
+      <div id="air" class="hide">
+        <h2 style="margin:22px 0 12px">Аэромышь</h2>
+        <div id="air-pad" class="pad" role="button" aria-label="Аэромышь: удерживайте и наводите телефон на телевизор"><svg class="i"><use href="#i-air"/></svg><span>Удерживайте и наводите</span></div>
+        <label for="air-k">Чувствительность</label>
+        <input id="air-k" type="range" min="1" max="10" step="1" value="5">
+        <div id="air-h" class="cap"></div>
+      </div>
+      <div id="air-no" class="msg hide">Аэромышь (указка по наклону телефона) работает только по HTTPS. <a id="air-a" href="#https">Настроить в «Настройки»</a></div>
     </div>
   </section>
 
@@ -509,6 +594,33 @@ section{margin-bottom:16px}
     </div>
   </section>
 
+  <section id="t-https" data-tab="settings" class="hide">
+    <div id="h-card" class="card" tabindex="-1" style="outline:none">
+      <h2>Защищённое подключение (HTTPS)</h2>
+      <p class="expl">Нужно для аэромыши (указка по наклону телефона) и чтобы установить пульт как приложение. Бесплатный сертификат Let's Encrypt; в интернет ничего не открывается.</p>
+      <div id="h-setup">
+        <ol class="steps">
+          <li>Откройте <a href="https://www.duckdns.org" target="_blank" rel="noopener">duckdns.org</a> и войдите.</li>
+          <li><span id="h-s2">Добавьте любой свободный поддомен.</span>
+            <div id="h-sugbox" class="sub hide"><span id="h-sug"></span><button id="h-copy" class="btn sm fit" onclick="copySug()">Скопировать</button></div></li>
+          <li>Скопируйте «token» с верха страницы и вставьте ниже.</li>
+        </ol>
+        <label for="h-dom">Поддомен</label>
+        <input id="h-dom" placeholder="например, mediastick-ab3cd" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <label for="h-tok">Токен DuckDNS</label>
+        <div class="row"><input id="h-tok" type="password" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false">
+        <button id="h-paste" class="btn fit hide" style="min-height:52px" onclick="pasteTok()">Вставить</button></div>
+        <div id="h-th" class="cap"></div>
+        <button id="h-btn" class="btn acc wide gap" onclick="httpsSet()" disabled>Подключить</button>
+      </div>
+      <div id="h-msg" class="msg hide"></div>
+      <div id="h-open" class="hide">
+        <a id="h-link" class="btn acc wide gap" href="#">Открыть по HTTPS</a>
+      </div>
+      <button id="h-off" class="btn wide gap hide" onclick="httpsOff()">Отключить</button>
+    </div>
+  </section>
+
   <nav class="tabs">
     <button data-go="remote" class="on"><span class="pb"><svg class="i"><use href="#i-remote"/></svg></span>Пульт</button>
     <button data-go="screen"><span class="pb"><svg class="i"><use href="#i-screen"/></svg></span>Экран</button>
@@ -528,12 +640,12 @@ async function api(path,body){
 function buzz(){if(navigator.vibrate)navigator.vibrate(12)}
 document.querySelectorAll('[data-a]').forEach(b=>b.addEventListener('click',()=>{buzz();api('/api/key',{action:b.dataset.a}).catch(()=>{})}));
 document.addEventListener('touchstart',()=>{},{passive:true});  // iOS: enables :active
-let tab='remote';
+let tab='remote', httpsUrl='';
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{
   tab=b.dataset.go;
   document.querySelectorAll('[data-go]').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('[data-tab]').forEach(s=>s.classList.toggle('hide',s.dataset.tab!==tab));
-  if(tab==='settings')loadNets('w-ssid');
+  if(tab==='settings'){loadNets('w-ssid');httpsLoad()}
   setLive(tab==='screen');  // phone: the screen tab is the request to watch
 }));
 function sendText(){const t=$('txt');if(!t.value)return;api('/api/text',{text:t.value}).then(()=>t.value='');}
@@ -602,6 +714,7 @@ async function tick(){
     if(s.wifi.ap){ if($('setup').classList.contains('hide')){$('app').classList.add('hide');$('setup').classList.remove('hide');loadNets('s-ssid')} }
     else{$('setup').classList.add('hide');$('app').classList.remove('hide')}
     header(s.wifi.online,(s.wifi.ssid||'кабель')+' · '+s.temp+' · '+s.time); $('info').innerHTML=fmt(s);
+    httpsUrl=s.https_url||''; airUi();
   }catch(e){header(false,'нет связи')}
 }
 tick(); setInterval(tick,5000);
@@ -705,6 +818,196 @@ box.addEventListener('pointerup',e=>endGesture(e,false));
 box.addEventListener('pointercancel',e=>endGesture(e,true));
 box.addEventListener('contextmenu',e=>{e.preventDefault();if(lastType==='mouse')tap('right',e.clientX,e.clientY)});
 if(wide()){shotState('Загрузка…');frame()}  // one still frame on a computer, live only on request
+
+// ---- HTTPS card (Настройки). The helper does the work as root; the token is typed here,
+// goes to the panel once and is never shown again, not even while the card is configured.
+const TOKRE=/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i, SUBRE=/^[a-z0-9-]{1,63}$/;
+const TOKFORM='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx';
+const subOf=v=>v.trim().toLowerCase().replace(/^https?:[/][/]/,'').replace(/[/]$/,'').replace(/[.]duckdns[.]org$/,'');
+let hSug='', hTimer=null, hDeep='', hLoaded=false;
+function hCheck(){
+  const tok=$('h-tok').value.trim(), ok=TOKRE.test(tok), th=$('h-th');
+  th.textContent=!tok?'Токен — длинный код вида '+TOKFORM:ok?'Токен похож на настоящий':'Это не похоже на токен DuckDNS: он выглядит как '+TOKFORM;
+  th.classList.toggle('bad',!!tok&&!ok);
+  $('h-btn').disabled=!(SUBRE.test(subOf($('h-dom').value))&&ok)
+}
+$('h-dom').addEventListener('input',hCheck);$('h-tok').addEventListener('input',hCheck);
+if(navigator.clipboard&&navigator.clipboard.readText)$('h-paste').classList.remove('hide');
+function pasteTok(){
+  navigator.clipboard.readText().then(t=>{$('h-tok').value=t.trim();hCheck()})
+    .catch(()=>{$('h-th').textContent='Браузер не дал прочитать буфер: вставьте токен в поле вручную';$('h-th').classList.add('bad')})
+}
+// On plain http navigator.clipboard does not exist: a hidden textarea and execCommand do the copy.
+function copyText(t){
+  if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(t).then(()=>true,()=>false);
+  const a=document.createElement('textarea');
+  a.value=t;a.setAttribute('readonly','');a.style.cssText='position:fixed;left:-9999px;top:0;opacity:0';
+  document.body.appendChild(a);a.select();a.setSelectionRange(0,t.length);
+  let ok=false;try{ok=document.execCommand('copy')}catch(e){}
+  a.remove();return Promise.resolve(ok)
+}
+function copySug(){
+  const b=$('h-copy');buzz();
+  copyText(hSug).then(ok=>{b.textContent=ok?'Скопировано':'Выделите имя вручную';setTimeout(()=>b.textContent='Скопировать',1800)})
+}
+function hSuggest(name){
+  hSug=name;
+  $('h-sugbox').classList.toggle('hide',!name);$('h-sug').textContent=name;
+  $('h-s2').textContent=name?'Добавьте на duckdns.org поддомен:':'Добавьте любой свободный поддомен.'
+}
+const H_TEXT={'updating-dns':'Обновляю адрес в DuckDNS…','issuing':'Получаю сертификат. Это занимает 1–3 минуты, можно подождать на этой странице.'};
+function hView(s){
+  const cfg=!!s.configured;
+  hSuggest(s.suggest||'');
+  $('h-setup').classList.toggle('hide',cfg);
+  $('h-off').classList.toggle('hide',!cfg);
+  const open=cfg&&s.state==='ok'&&/^https:[/][/][a-z0-9.-]+[/]?$/.test(s.url||'');
+  $('h-open').classList.toggle('hide',!open);
+  if(open)$('h-link').href=s.url;
+  if(!cfg){
+    if(!$('h-dom').value)$('h-dom').value=hDeep||s.suggest||'';
+    if(!hLoaded)$('h-msg').classList.add('hide');
+    hCheck()
+  }else if(s.state==='ok'){
+    const d=s.cert_days_left;
+    show('h-msg','Работает: '+s.url+(d==null?'':'. Сертификат действует ещё '+d+' дн., продлевается сам.'))
+  }else if(s.state==='error'){
+    show('h-msg','Не получилось: '+(s.message||'неизвестная ошибка')+'. Повторю сам в течение суток; можно «Отключить» и начать заново.')
+  }else show('h-msg',H_TEXT[s.state]||'Настраиваю…');
+  hLoaded=true
+}
+async function httpsLoad(){
+  clearTimeout(hTimer);
+  try{
+    const s=await api('/api/https');hView(s);
+    if(s.state==='updating-dns'||s.state==='issuing')hTimer=setTimeout(httpsLoad,3000)
+  }catch(e){show('h-msg','Нет связи с панелью: '+e.message)}
+}
+async function httpsSet(){
+  const domain=subOf($('h-dom').value), token=$('h-tok').value.trim();
+  if(!SUBRE.test(domain)||!TOKRE.test(token))return;
+  $('h-btn').disabled=true;show('h-msg','Отправляю…');
+  try{await api('/api/https',{domain,token})}
+  catch(e){show('h-msg','Не получилось: '+e.message.split(token).join('***'));hCheck();return}
+  $('h-tok').value='';hCheck();httpsLoad()
+}
+function httpsOff(){
+  if(!armed('h-off','Нажмите ещё раз, чтобы отключить'))return;
+  api('/api/https/clear',{}).then(()=>{
+    clearTimeout(hTimer);$('h-open').classList.add('hide');$('h-off').classList.add('hide');
+    show('h-msg','HTTPS отключён, панель перезапускается.'+(location.protocol==='https:'?' Эта страница перестанет открываться: зайдите по адресу http://mediastick.local':''));
+    setTimeout(httpsLoad,5000)
+  }).catch(e=>show('h-msg',e.message))
+}
+// Deep link from the TV: /#https opens the card, /#https?sub=<name> also fills the name.
+function hashGo(){
+  if(location.hash.slice(0,6)!=='#https')return;
+  const m=location.hash.match(/[?&]sub=([a-z0-9-]+)/i);
+  hDeep=m?m[1].toLowerCase():'';
+  if(hDeep&&!$('h-dom').value)$('h-dom').value=hDeep;
+  document.querySelector('[data-go=settings]').click();
+  setTimeout(()=>{$('t-https').scrollIntoView({behavior:'smooth',block:'start'});
+    $('h-card').focus({preventScroll:true});
+    if(!$('h-setup').classList.contains('hide'))$(hDeep?'h-tok':'h-dom').focus({preventScroll:true})},150)
+}
+addEventListener('hashchange',hashGo);
+hCheck();
+if(wide())httpsLoad();
+hashGo();
+
+// ---- Air mouse: hold the pad and aim the phone at the TV like a remote. ----
+// Phone in portrait, top edge towards the TV, screen towards you, tilted up to about 45
+// degrees. devicemotion rotationRate (deg/s): alpha turns about the screen's normal, which
+// is close to the vertical when the phone lies flat-ish, so turning left/right = yaw;
+// beta turns about the short axis, so raising/lowering the top edge = pitch.
+// Turn left -> alpha>0 -> pointer left; raise the top edge -> beta>0 -> pointer up.
+// Deltas are summed and sent at most every AIR_GAP_MS, one request in flight, as screen
+// fractions (the same unit as /api/pointer). A short press without motion is a click.
+const airOk=window.isSecureContext&&'DeviceMotionEvent' in window;
+const AIR_GAP_MS=33, AIR_MAX=0.25, AIR_DZ=2.5, AIR_SMOOTH=0.5, AIR_DEG_FULL=45, TAP_MS=350, TAP_DEG=5;
+const AIR_HINT='Короткое касание — клик. Отпустите, чтобы остановить.';
+let airHeld=false, airOn=false, airK=5, airAcc={x:0,y:0}, airSm={x:0,y:0}, airBusy=false, airLast=0,
+    airTimer=null, airClick=false, airPerm=null, airT0=0, airTPrev=0, airMoved=0, airGot=false, airChk=null, airNoteT=null;
+try{const v=parseInt(localStorage.getItem('airk'),10);if(v>=1&&v<=10)airK=v}catch(e){}
+$('air-k').value=airK;
+$('air-k').addEventListener('input',e=>{airK=+e.target.value;try{localStorage.setItem('airk',String(airK))}catch(_){}});
+function airUi(){
+  $('air').classList.toggle('hide',!airOk);
+  if(!$('air-h').textContent)airNote('');
+  const no=$('air-no'), a=$('air-a');
+  if(window.isSecureContext){no.classList.add('hide');return}  // secure but no motion API: nothing to offer
+  no.classList.remove('hide');
+  if(/^https:[/][/][a-z0-9.-]+[/]?$/.test(httpsUrl)){a.href=httpsUrl;a.textContent='Открыть по HTTPS'}
+  else{a.href='#https';a.textContent='Настроить в «Настройки»'}
+}
+function airNote(t,bad){
+  const h=$('air-h');h.textContent=t||AIR_HINT;h.classList.toggle('bad',!!bad);
+  clearTimeout(airNoteT);if(t)airNoteT=setTimeout(()=>airNote(''),5000)
+}
+function airPump(){
+  if(airBusy)return;
+  const wait=AIR_GAP_MS-(performance.now()-airLast);
+  if(wait>0){if(!airTimer)airTimer=setTimeout(()=>{airTimer=null;airPump()},wait);return}
+  const cl=v=>Math.max(-AIR_MAX,Math.min(AIR_MAX,v));
+  let body=null;
+  if(Math.abs(airAcc.x)>1e-5||Math.abs(airAcc.y)>1e-5){
+    const dx=cl(airAcc.x), dy=cl(airAcc.y);airAcc.x-=dx;airAcc.y-=dy;
+    body={action:'move_by',dx,dy}
+  }else if(airClick){airClick=false;body={action:'click',here:true}}
+  if(!body)return;
+  airBusy=true;airLast=performance.now();
+  api('/api/pointer',body).then(()=>{if(body.action==='click'&&live)setTimeout(frame,REFRESH_MS)})
+    .catch(e=>{airAcc.x=airAcc.y=0;airClick=false;airLast=performance.now()+1000;airNote(e.message||'Не получилось',1)})
+    .finally(()=>{airBusy=false;if(airClick||Math.abs(airAcc.x)>1e-5||Math.abs(airAcc.y)>1e-5)airPump()})
+}
+function onMotion(e){
+  const r=e.rotationRate;
+  if(!airHeld||!r||r.alpha==null||r.beta==null)return;
+  const now=performance.now();airGot=true;
+  let dt=airTPrev?(now-airTPrev)/1000:0;airTPrev=now;
+  if(dt<=0)return;if(dt>0.1)dt=0.1;
+  const dz=v=>Math.abs(v)<AIR_DZ?0:v-Math.sign(v)*AIR_DZ;
+  airSm.x+=AIR_SMOOTH*(-dz(r.alpha)-airSm.x);   // deg/s; left and up are negative
+  airSm.y+=AIR_SMOOTH*(-dz(r.beta)-airSm.y);
+  const k=Math.pow(1.3,airK-5)/AIR_DEG_FULL;   // screen widths per degree
+  airAcc.x+=airSm.x*dt*k;airAcc.y+=airSm.y*dt*k*(16/9);   // the same angle is more of a short side
+  airMoved+=Math.hypot(airSm.x,airSm.y)*dt;
+  airPump()
+}
+function airAsk(){  // iOS 13+: ask inside the user's gesture; elsewhere there is nothing to ask
+  const D=window.DeviceMotionEvent;
+  if(!D||typeof D.requestPermission!=='function'){airPerm=true;return Promise.resolve(true)}
+  if(airPerm!==null)return Promise.resolve(airPerm);
+  return D.requestPermission().then(r=>airPerm=(r==='granted'),()=>airPerm=false)
+}
+function airStop(cancel){
+  if(!airHeld)return;
+  airHeld=false;$('air-pad').classList.remove('on');
+  if(airOn){removeEventListener('devicemotion',onMotion);airOn=false}
+  clearTimeout(airChk);airAcc.x=airAcc.y=0;   // releasing stops the pointer
+  if(!cancel&&performance.now()-airT0<TAP_MS&&airMoved<TAP_DEG){airClick=true;buzz();airPump()}
+}
+const pad=$('air-pad');
+pad.addEventListener('pointerdown',e=>{
+  if(airHeld||(e.pointerType==='mouse'&&e.button!==0))return;
+  e.preventDefault();
+  try{pad.setPointerCapture(e.pointerId)}catch(_){}
+  airHeld=true;airT0=performance.now();airTPrev=0;airMoved=0;airGot=false;airSm.x=airSm.y=0;
+  pad.classList.add('on');buzz();
+  const first=airPerm===null&&window.DeviceMotionEvent&&typeof DeviceMotionEvent.requestPermission==='function';
+  airAsk().then(ok=>{
+    if(!ok){airStop(true);airNote('Нет доступа к датчикам движения: разрешите его в настройках браузера.',1);return}
+    if(first){airStop(true);airNote('Доступ разрешён. Теперь удерживайте площадку и наводите телефон.');return}
+    if(!airHeld||airOn)return;
+    addEventListener('devicemotion',onMotion);airOn=true;
+    airChk=setTimeout(()=>{if(airHeld&&!airGot)airNote('Датчик движения не отвечает на этом устройстве.',1)},1500)
+  })
+});
+pad.addEventListener('pointerup',()=>airStop(false));
+pad.addEventListener('pointercancel',()=>airStop(true));
+pad.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('visibilitychange',()=>{if(document.hidden)airStop(true)});
+airUi();
 </script></body></html>"""
 
 
@@ -734,8 +1037,38 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    secure = False   # True in the HTTPS listener's handler class
+
     def host_ok(self):
-        return bool(HOST_OK.match(self.headers.get("Host", "")))
+        host = self.headers.get("Host", "")
+        if HOST_OK.match(host):
+            return True
+        pub = public_host()
+        return bool(pub) and host_name(host) == pub
+
+    def redirect_to_https(self):
+        """Plain http addressed by our public name -> the same path on https, but only
+        while the HTTPS listener is really up (else the redirect would lead nowhere)."""
+        pub = public_host()
+        if self.secure or not pub or not https_state["up"] or host_name(self.headers.get("Host", "")) != pub:
+            return False
+        path = self.path if self.path.startswith("/") else "/"
+        self.send_response(301 if self.command in ("GET", "HEAD") else 308)
+        self.send_header("Location", "https://" + pub + path)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
+
+    def https_set(self, b):
+        """POST /api/https {domain, token}: the helper validates and stores them."""
+        if not isinstance(b, dict):
+            return self.send("bad request", "text/plain", 400)
+        req = json.dumps({"domain": str(b.get("domain", "")), "token": str(b.get("token", ""))})
+        rc, out = run(HTTPS_HELPER + ["set"], stdin=req, timeout=20)
+        https_cache["t"] = 0.0
+        if rc != 0:
+            return self.send(TOKEN_RE.sub("***", out) or "Не получилось сохранить", "text/plain", 400)
+        return self.send({"ok": True})
 
     def pointer_post(self, b):
         """POST /api/pointer {action, x, y, dy}: x and y are fractions 0..1 of the screen."""
@@ -749,13 +1082,21 @@ class H(BaseHTTPRequestHandler):
             ok = isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
             return float(v) if ok else None
 
-        fx, fy = num(b.get("x")), num(b.get("y"))
-        has_xy = "x" in b or "y" in b
-        if (has_xy or a != "scroll") and (fx is None or fy is None):
-            return self.send("x and y: numbers 0..1", "text/plain", 400)
-        if fx is not None:
-            fx, fy = min(1.0, max(0.0, fx)), min(1.0, max(0.0, fy))
         wheel = 0
+        if a == "move_by":   # air mouse: dx, dy are fractions of the screen, at most 0.25 per call
+            dx, dy = num(b.get("dx")), num(b.get("dy"))
+            if dx is None or dy is None:
+                return self.send("dx and dy: numbers", "text/plain", 400)
+            fx, fy = min(0.25, max(-0.25, dx)), min(0.25, max(-0.25, dy))
+        else:
+            fx, fy = num(b.get("x")), num(b.get("y"))
+            has_xy = "x" in b or "y" in b
+            # {"here": true} clicks where the pointer already is (the air mouse's tap)
+            here = b.get("here") is True and a in ("click", "right") and not has_xy
+            if not here and (has_xy or a != "scroll") and (fx is None or fy is None):
+                return self.send("x and y: numbers 0..1", "text/plain", 400)
+            if fx is not None:
+                fx, fy = min(1.0, max(0.0, fx)), min(1.0, max(0.0, fy))
         if a == "scroll":
             dy = num(b.get("dy"))
             if dy is None:
@@ -769,6 +1110,8 @@ class H(BaseHTTPRequestHandler):
         return self.send({"ok": True})
 
     def do_GET(self):
+        if self.redirect_to_https():
+            return
         if not self.host_ok():
             # hotspot mode: every name resolves here, so phones' captive-portal checks
             # land on us; send them to the page
@@ -783,6 +1126,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(PAGE, "text/html; charset=utf-8")
         if p == "/api/status":
             return self.send(status())
+        if p == "/api/https":
+            return self.send(https_status())
         if p == "/api/wifi/scan":
             rc, out = run(["sudo", "-n", "/usr/local/bin/wifi-setup", "scan"], timeout=40)
             return self.send(out or "[]")
@@ -795,6 +1140,8 @@ class H(BaseHTTPRequestHandler):
         self.send(PAGE, "text/html; charset=utf-8")
 
     def do_POST(self):
+        if self.redirect_to_https():
+            return
         if not self.host_ok() or self.headers.get("X-Panel") != "1":
             return self.send("forbidden", "text/plain", 403)
         p = self.path.split("?")[0]
@@ -827,6 +1174,15 @@ class H(BaseHTTPRequestHandler):
                 return self.send({"ok": True})
         except OSError:
             return self.send("Kodi не отвечает", "text/plain", 503)
+        if p == "/api/https":
+            return self.https_set(b)
+        if p == "/api/https/clear":
+            # answer first: the helper restarts this very panel
+            self.send({"ok": True, "message": "HTTPS отключён, панель перезапускается."})
+            https_cache["t"] = 0.0
+            threading.Thread(target=run, args=(HTTPS_HELPER + ["clear"],), kwargs={"timeout": 60},
+                             daemon=True).start()
+            return
         if p == "/api/wifi/connect":
             req = json.dumps({"ssid": b.get("ssid", ""), "psk": b.get("psk", ""),
                               "country": b.get("country", "")})
@@ -854,7 +1210,50 @@ class DualStack(ThreadingHTTPServer):
         super().server_bind()
 
 
+class TLSServer(DualStack):
+    """The same handler over TLS. The handshake runs in the request's own thread, not in
+    accept(), so a client that stalls in it cannot hold up the others."""
+    ctx = None
+
+    def finish_request(self, request, client_address):
+        request.settimeout(15)
+        try:
+            tls = self.ctx.wrap_socket(request, server_side=True)
+        except (ssl.SSLError, OSError):
+            return
+        try:
+            self.RequestHandlerClass(tls, client_address, self)
+        finally:
+            try:
+                tls.close()
+            except OSError:
+                pass
+
+
+class HTTPSHandler(H):
+    secure = True
+
+
+def start_https():
+    """Serve HTTPS on 443 too when media-stick-cert has published a certificate. Any
+    failure leaves port 80 as it was."""
+    if not (os.path.isfile(TLS_CRT) and os.path.isfile(TLS_KEY)):
+        return
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(TLS_CRT, TLS_KEY)
+        srv = TLSServer(("::", HTTPS_PORT), HTTPSHandler)
+    except (OSError, ssl.SSLError) as e:
+        print("panel: HTTPS not started: %s" % e, file=sys.stderr, flush=True)
+        return
+    srv.ctx = ctx
+    https_state["up"] = True
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+
 if __name__ == "__main__":
     os.makedirs(SHOTS, exist_ok=True)
     POINTER.start()
+    start_https()
     DualStack(("::", PORT), H).serve_forever()

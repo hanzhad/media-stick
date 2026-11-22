@@ -5,6 +5,7 @@ here=$(cd "$(dirname "$0")" && pwd); . "$here/common.sh"
 "${SSH[@]}" 'bash -s' <<'R'
 ok()   { printf "OK    %s\n" "$*"; }
 bad()  { printf "FAIL  %s\n" "$*"; }
+warn() { printf "WARN  %s\n" "$*"; }
 chk()  { if eval "$2" >/dev/null 2>&1; then ok "$1"; else bad "$1"; fi; }
 echo "host $(hostname)  up $(uptime -p)  $(cd /opt/media-stick 2>/dev/null && git log -1 --format='%h %s' 2>/dev/null)"
 chk "kodi.service active"        "systemctl is-active -q kodi.service"
@@ -15,6 +16,17 @@ chk "launcher add-on enabled"    "kodi-rpc Addons.GetAddonDetails '{\"addonid\":
 chk "python3-evdev installed"    'python3 -c "import evdev"'
 chk "/dev/uinput group input 0660" 'test "$(stat -c %G%a /dev/uinput)" = input660'
 echo "      wallpapers cached $(ls /var/cache/media-stick/wallpapers/*.jpg 2>/dev/null | wc -l)"
+if [ -s /var/lib/media-stick/panel-url ]; then
+  end=$(openssl x509 -noout -enddate -in /etc/media-stick/tls/fullchain.pem 2>/dev/null | cut -d= -f2)
+  if [ -z "$end" ]; then bad "https: certificate unreadable ($(cat /var/lib/media-stick/panel-url))"
+  else
+    days=$(( ( $(date -d "$end" +%s) - $(date +%s) ) / 86400 ))
+    msg="https certificate: $days days left ($(cat /var/lib/media-stick/panel-url))"
+    if [ "$days" -lt 7 ]; then bad "$msg"; elif [ "$days" -lt 20 ]; then warn "$msg"; else ok "$msg"; fi
+  fi
+else
+  echo "      https not configured"
+fi
 chk "internet"                   "curl -sfI --max-time 5 https://github.com"
 echo "      next update $(systemctl list-timers media-stick-update.timer --no-legend | awk '{print $1, $2, $3}')"
 [ -f /var/lib/media-stick/bad-commit ] && bad "last update rolled back: $(cut -c1-7 /var/lib/media-stick/bad-commit)"

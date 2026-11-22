@@ -15,6 +15,9 @@
             <top>310</top>
             <width>920</width>
             <height>460</height>
+            <animation type="Conditional" condition="!String.IsEmpty(Window.Property(airsetup))">
+                <effect type="slide" end="0,-190" time="0"/>
+            </animation>
             <control type="image">
                 <left>-40</left>
                 <top>-30</top>
@@ -65,7 +68,20 @@
                 <font>Bold34</font>
                 <textcolor>FFFFFFFF</textcolor>
                 <aligny>center</aligny>
-                <label>$INFO[Window.Property(url)]</label>
+                <visible>String.IsEmpty(Window.Property(urllong))</visible>
+                <label>$INFO[Window.Property(shown)]</label>
+            </control>
+            <control type="label">
+                <left>460</left>
+                <top>110</top>
+                <width>420</width>
+                <height>50</height>
+                <font>Reg25</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <scroll>true</scroll>
+                <visible>!String.IsEmpty(Window.Property(urllong))</visible>
+                <label>$INFO[Window.Property(shown)]</label>
             </control>
             <control type="textbox">
                 <left>460</left>
@@ -95,6 +111,111 @@
                 <textcolor>99FFFFFF</textcolor>
                 <aligny>center</aligny>
                 <label>$INFO[Window.Property(ip),IP address: ]</label>
+            </control>
+            <control type="label">
+                <left>460</left>
+                <top>404</top>
+                <width>420</width>
+                <height>36</height>
+                <font>Reg25</font>
+                <textcolor>CCFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <scroll>true</scroll>
+                <label>$INFO[Window.Property(airline)]</label>
+            </control>
+        </control>
+        <!-- Air mouse needs HTTPS and is not set up yet: three steps and a second, smaller QR
+             that opens the phone page on the HTTPS card with the proposed name filled in. -->
+        <control type="group">
+            <left>500</left>
+            <top>790</top>
+            <width>920</width>
+            <height>320</height>
+            <visible>!String.IsEmpty(Window.Property(airsetup))</visible>
+            <animation type="Conditional" condition="!String.IsEmpty(Window.Property(airsetup))">
+                <effect type="slide" end="0,-190" time="0"/>
+            </animation>
+            <control type="image">
+                <left>-40</left>
+                <top>-30</top>
+                <width>1000</width>
+                <height>380</height>
+                <texture border="56">card-shadow.png</texture>
+            </control>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>920</width>
+                <height>320</height>
+                <texture border="47">pill.png</texture>
+                <colordiffuse>F2141922</colordiffuse>
+            </control>
+            <control type="label">
+                <left>40</left>
+                <top>24</top>
+                <width>550</width>
+                <height>50</height>
+                <font>Bold34</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>Air mouse (HTTPS)</label>
+            </control>
+            <control type="label">
+                <left>40</left>
+                <top>92</top>
+                <width>550</width>
+                <height>36</height>
+                <font>Reg25</font>
+                <textcolor>CCFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>1. Sign in at duckdns.org</label>
+            </control>
+            <control type="label">
+                <left>40</left>
+                <top>134</top>
+                <width>550</width>
+                <height>36</height>
+                <font>Reg25</font>
+                <textcolor>CCFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>2. Add the subdomain</label>
+            </control>
+            <control type="label">
+                <left>40</left>
+                <top>172</top>
+                <width>550</width>
+                <height>50</height>
+                <font>Bold34</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(airsub)]</label>
+            </control>
+            <control type="label">
+                <left>40</left>
+                <top>232</top>
+                <width>550</width>
+                <height>36</height>
+                <font>Reg25</font>
+                <textcolor>CCFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>3. Scan this code, paste the token</label>
+            </control>
+            <control type="image">
+                <left>610</left>
+                <top>15</top>
+                <width>290</width>
+                <height>290</height>
+                <texture border="47">pill.png</texture>
+                <colordiffuse>FFFFFFFF</colordiffuse>
+            </control>
+            <control type="image">
+                <left>630</left>
+                <top>35</top>
+                <width>250</width>
+                <height>250</height>
+                <aspectratio>keep</aspectratio>
+                <texture>$INFO[Window.Property(airqr)]</texture>
+                <visible>!String.IsEmpty(Window.Property(airqr))</visible>
             </control>
         </control>
         <control type="button" id="300">

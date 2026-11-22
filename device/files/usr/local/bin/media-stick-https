@@ -1,0 +1,191 @@
+#!/usr/bin/python3
+"""Root helper for the panel's "Защищённое подключение (HTTPS)" card.
+
+  media-stick-https set     JSON {"domain","token"} on stdin: store the DuckDNS name and
+                            token in /etc/media-stick/secrets.env and start the certificate
+                            service (media-stick-cert) without waiting for it
+  media-stick-https status  JSON without secrets: configured, domain, state
+                            (idle | updating-dns | issuing | ok | error), message,
+                            cert_days_left, url
+  media-stick-https clear   forget the name and token, the certificate, the lego account and
+                            panel-url, then restart the panel (it stops serving HTTPS)
+
+The panel (user media) calls it as `sudo -n /usr/local/bin/media-stick-https <cmd>`; the
+token only ever travels on stdin and is never printed. On a bad request it prints one line
+of text to stdout and exits 2. Standard library only.
+"""
+import calendar
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+SECRETS = "/etc/media-stick/secrets.env"
+STATE = "/var/lib/media-stick"
+STATUS = STATE + "/https-status.json"
+PANEL_URL = STATE + "/panel-url"
+TLS = "/etc/media-stick/tls"
+LEGO = STATE + "/lego"
+LAST_IP = STATE + "/duckdns-ip"
+KEYS = ("DUCKDNS_DOMAIN", "DUCKDNS_TOKEN")
+DOMAIN_RE = re.compile(r"^[a-z0-9-]{1,63}$")
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+UUID_ANY = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+
+
+def die(msg):
+    print(msg)
+    sys.exit(2)
+
+
+def read_lines():
+    try:
+        with open(SECRETS) as f:
+            return f.read().splitlines()
+    except FileNotFoundError:
+        return []
+
+
+def secret(name):
+    val = ""
+    for line in read_lines():
+        if line.startswith(name + "="):
+            val = line[len(name) + 1:].strip()
+    return val
+
+
+def write_secrets(lines):
+    """Replace secrets.env atomically, keeping its owner and mode."""
+    try:
+        st = os.stat(SECRETS)
+        mode, uid, gid = st.st_mode & 0o7777, st.st_uid, st.st_gid
+    except FileNotFoundError:
+        mode, uid, gid = 0o600, 0, 0
+    tmp = SECRETS + ".new"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("".join(l + chr(10) for l in lines))
+        f.flush()
+        os.fsync(f.fileno())
+    os.chown(tmp, uid, gid)
+    os.chmod(tmp, mode)
+    os.replace(tmp, SECRETS)
+
+
+def scrub(text):
+    token = secret("DUCKDNS_TOKEN")
+    if token:
+        text = text.replace(token, "***")
+    return UUID_ANY.sub("***", text)
+
+
+def write_status(state, message=""):
+    tmp = STATUS + ".new"
+    with open(tmp, "w") as f:
+        json.dump({"state": state, "message": message, "time": int(time.time())}, f)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, STATUS)
+
+
+def days_left(path):
+    try:
+        out = subprocess.run(["openssl", "x509", "-noout", "-enddate", "-in", path],
+                             capture_output=True, text=True, timeout=10).stdout
+        end = out.strip().split("=", 1)[1]
+        end = " ".join(end.split())
+        t = calendar.timegm(time.strptime(end, "%b %d %H:%M:%S %Y GMT"))
+        return int((t - time.time()) // 86400)
+    except (OSError, IndexError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def cert_running():
+    out = subprocess.run(["systemctl", "show", "-p", "ActiveState", "--value", "media-stick-cert.service"],
+                         capture_output=True, text=True).stdout.strip()
+    return out in ("activating", "active", "reloading")
+
+
+def cmd_set():
+    try:
+        req = json.loads(sys.stdin.read(4096) or "{}")
+        domain = str(req.get("domain", "")).strip().lower()
+        token = str(req.get("token", "")).strip().lower()
+    except (ValueError, AttributeError):
+        die("Неверный запрос")
+    if domain.startswith("https://") or domain.startswith("http://"):
+        domain = domain.split("//", 1)[1]
+    domain = domain.rstrip("/")
+    if domain.endswith(".duckdns.org"):
+        domain = domain[:-len(".duckdns.org")]
+    if not DOMAIN_RE.match(domain):
+        die("Поддомен: только латинские буквы, цифры и дефис (например my-tv)")
+    if not UUID_RE.match(token):
+        die("Токен DuckDNS выглядит как xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+    lines = [l for l in read_lines() if not l.startswith(tuple(k + "=" for k in KEYS))]
+    lines += ["DUCKDNS_DOMAIN=" + domain, "DUCKDNS_TOKEN=" + token]
+    write_secrets(lines)
+    try:
+        os.remove(LAST_IP)   # new name or token: the A record must be sent again
+    except FileNotFoundError:
+        pass
+    write_status("updating-dns", "Запускаю")
+    # restart, not start: a run still going with the old values must not be kept
+    subprocess.run(["systemctl", "restart", "--no-block", "media-stick-cert.service"], check=False)
+    print(json.dumps({"ok": True}))
+
+
+def cmd_status():
+    domain, token = secret("DUCKDNS_DOMAIN"), secret("DUCKDNS_TOKEN")
+    configured = bool(domain and token)
+    st = {}
+    try:
+        with open(STATUS) as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        pass
+    state, message = st.get("state", "idle"), st.get("message", "")
+    if not configured:
+        state, message = "idle", ""
+    elif (state in ("updating-dns", "issuing") and time.time() - st.get("time", 0) > 20
+          and not cert_running()):   # a fresh status may precede the unit's start by a moment
+        state, message = "error", message or "Выпуск прервался. Подробности: journalctl -u media-stick-cert"
+    url = ""
+    try:
+        with open(PANEL_URL) as f:
+            url = f.read().strip()
+    except OSError:
+        pass
+    left = days_left(TLS + "/fullchain.pem") if url else None
+    print(json.dumps({"configured": configured, "domain": domain, "state": state,
+                      "message": scrub(message), "cert_days_left": left, "url": url}))
+
+
+def cmd_clear():
+    subprocess.run(["systemctl", "stop", "media-stick-cert.service"], check=False)
+    keep = [l for l in read_lines() if not l.startswith(tuple(k + "=" for k in KEYS))]
+    if os.path.exists(SECRETS):
+        write_secrets(keep)
+    for path in (PANEL_URL, LAST_IP, STATUS):
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+    shutil.rmtree(TLS, ignore_errors=True)
+    shutil.rmtree(LEGO, ignore_errors=True)
+    # no wait: the panel that called us is restarted, and so is this process with it
+    subprocess.run(["systemctl", "restart", "--no-block", "panel.service"], check=False)
+    print(json.dumps({"ok": True}))
+
+
+def main():
+    if os.geteuid() != 0:
+        die("нужен root")
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    {"set": cmd_set, "status": cmd_status, "clear": cmd_clear}.get(cmd, lambda: die("set | status | clear"))()
+
+
+if __name__ == "__main__":
+    main()
