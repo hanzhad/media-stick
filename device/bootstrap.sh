@@ -17,7 +17,8 @@ log "packages"
 export DEBIAN_FRONTEND=noninteractive
 pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl unzip
       chromium libwidevinecdm0 cage wtype grim qrencode
-      fonts-noto-core fonts-noto-mono fonts-roboto-unhinted)
+      fonts-noto-core fonts-noto-mono fonts-roboto-unhinted
+      python3-evdev)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
 if [ ${#missing[@]} -gt 0 ]; then
@@ -53,6 +54,18 @@ while IFS= read -r -d '' src; do
   fi
 done < <(find "$FILES" -type f -print0)
 systemd-tmpfiles --create /etc/tmpfiles.d/media-stick.conf
+
+log "uinput"
+# The panel makes a virtual mouse through /dev/uinput (tap on the picture of the TV).
+# modules-load.d loads the module at boot; load it now if this boot has not yet. The udev
+# rule makes the node group input, mode 0660 (the panel runs as media, in group input).
+[ -e /dev/uinput ] || modprobe uinput 2>/dev/null || log "  uinput module is not available"
+if [ -e /dev/uinput ] && [ "$(stat -c '%G %a' /dev/uinput)" != "input 660" ]; then
+  udevadm control --reload
+  udevadm trigger --action=add --subsystem-match=misc --sysname-match=uinput
+  udevadm settle --timeout=10 || true
+  log "  /dev/uinput is $(stat -c '%G %a' /dev/uinput)"
+fi
 
 log "services"
 if [ ${#changed_units[@]} -gt 0 ]; then systemctl daemon-reload; fi
@@ -104,6 +117,8 @@ wait_kodi || log "  kodi is not answering"
 #    Yatse), always behind a password made on the device once and kept in
 #    secrets.env; read it with: sudo grep KODI_WEB /etc/media-stick/secrets.env
 #  - screenshots to tmpfs for the page and tools/screenshot.sh
+#  - the mouse on: the page's tap-on-picture is a virtual mouse (panel, /dev/uinput); its
+#    pointer is the dot from device/skin-overlay, since the skin's own is a warning badge
 # Add-ons: device/kodi-addons.list (from tools/kodi-addons-lock.py) and device/kodi-addons/.
 SECRETS=/etc/media-stick/secrets.env
 grep -q '^KODI_WEB_PASSWORD=.' "$SECRETS" \
@@ -112,23 +127,44 @@ web_pass=$(sed -n 's/^KODI_WEB_PASSWORD=//p' "$SECRETS" | tail -1)
 on_settings=(services.zeroconf services.upnp services.upnprenderer services.airplay
   services.webserver services.webserverauthentication)
 kodi_wanted=("${on_settings[@]/%/=true}" services.webserverusername=kodi "services.webserverpassword=$web_pass"
-  lookandfeel.skin=skin.ftv screensaver.mode=screensaver.bing screensaver.time=5 input.enablemouse=false
-  lookandfeel.startupwindow=10000
+  lookandfeel.skin=skin.ftv screensaver.mode=screensaver.bing screensaver.time=5
+  lookandfeel.startupwindow=10000 input.enablemouse=true
   # 1080p60 explicitly; left alone Kodi picks the 1024x768 "DESKTOP" mode on the TV
   videoscreen.screenmode=0192001080060.00000pstd
   debug.screenshotpath=/run/media-stick/shots/)
 as_media() { setpriv --reuid=media --regid=media --init-groups "$@"; }
+# Files kept in device/skin-overlay/<addon>/ are copied over the installed add-on of that
+# name, after any (re)install, since an install replaces the whole folder. Kodi stopped.
+OVERLAY="$REPO/device/skin-overlay"
+overlay_ok() {
+  local f rel
+  while IFS= read -r -d '' f; do
+    rel=${f#"$OVERLAY"/}
+    [ -d "/home/media/.kodi/addons/${rel%%/*}" ] || continue  # not installed: the install applies it
+    cmp -s "$f" "/home/media/.kodi/addons/$rel" || return 1
+  done < <(find "$OVERLAY" -type f -print0)
+}
+overlay_apply() {
+  local f rel
+  while IFS= read -r -d '' f; do
+    rel=${f#"$OVERLAY"/}
+    [ -d "/home/media/.kodi/addons/${rel%%/*}" ] || continue
+    install -D -o media -g media -m 0644 "$f" "/home/media/.kodi/addons/$rel"
+  done < <(find "$OVERLAY" -type f -print0)
+}
 # Retired add-ons: gone from device/kodi-addons/, so remove them from the device (Kodi stopped).
 retired_addons=(service.media-stick.qr)
 addons_ok=1; kodi-addons --check "$REPO" || addons_ok=0
 settings_ok=1; kodi-settings --check "${kodi_wanted[@]}" || settings_ok=0
+overlay_fresh=1; overlay_ok || overlay_fresh=0
 retired_ok=1
 for old in "${retired_addons[@]}"; do
   if [ -e "/home/media/.kodi/addons/$old" ]; then retired_ok=0; fi
 done
-if [ $addons_ok = 0 ] || [ $settings_ok = 0 ] || [ $retired_ok = 0 ]; then
+if [ $addons_ok = 0 ] || [ $settings_ok = 0 ] || [ $retired_ok = 0 ] || [ $overlay_fresh = 0 ]; then
   systemctl stop kodi
   [ $addons_ok = 1 ] || kodi-addons --install "$REPO"
+  overlay_apply; [ $overlay_fresh = 1 ] || log "  skin overlay applied"
   [ $settings_ok = 1 ] || log "  kodi settings changed: $(as_media kodi-settings "${kodi_wanted[@]}")"
   for old in "${retired_addons[@]}"; do
     if [ -e "/home/media/.kodi/addons/$old" ]; then rm -rf "/home/media/.kodi/addons/$old"; log "  removed kodi add-on $old"; fi

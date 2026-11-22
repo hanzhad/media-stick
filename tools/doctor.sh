@@ -12,6 +12,8 @@ chk "ssh password login off"     "sudo sshd -T | grep -qx 'passwordauthenticatio
 t=$(vcgencmd get_throttled | cut -d= -f2); [ "$t" = 0x0 ] && ok "power/throttle $t" || bad "power/throttle $t (undervoltage or heat)"
 echo "      temp $(vcgencmd measure_temp | cut -d= -f2)  mem $(free -m | awk '/Mem/{print $7" MB free"}')  disk $(df -h / | awk 'NR==2{print $4" free"}')"
 chk "launcher add-on enabled"    "kodi-rpc Addons.GetAddonDetails '{\"addonid\":\"script.media-stick.home\",\"properties\":[\"enabled\"]}' | grep -q '\"enabled\":true'"
+chk "python3-evdev installed"    'python3 -c "import evdev"'
+chk "/dev/uinput group input 0660" 'test "$(stat -c %G%a /dev/uinput)" = input660'
 echo "      wallpapers cached $(ls /var/cache/media-stick/wallpapers/*.jpg 2>/dev/null | wc -l)"
 chk "internet"                   "curl -sfI --max-time 5 https://github.com"
 echo "      next update $(systemctl list-timers media-stick-update.timer --no-legend | awk '{print $1, $2, $3}')"

@@ -16,6 +16,7 @@ DNS rebinding.
 """
 import glob
 import json
+import math
 import os
 import re
 import socket
@@ -97,13 +98,20 @@ def read(path, default=""):
 # ---------------- screen ----------------
 
 shot_lock = threading.Lock()
-last_shot = {"t": 0.0, "png": b""}
+last_shot = {"t": 0.0, "png": b"", "gen": 0}
+
+
+def forget_shot():
+    """The screen has changed under us (a pointer action): the next frame must be new."""
+    last_shot["gen"] += 1
+    last_shot["t"] = 0.0
 
 
 def screenshot():
     with shot_lock:
         if time.time() - last_shot["t"] < 0.5 and last_shot["png"]:
             return last_shot["png"]
+        gen = last_shot["gen"]
         for f in glob.glob(f"{SHOTS}/*.png"):
             os.remove(f)
         kodi("Input.ExecuteAction", {"action": "screenshot"})
@@ -114,10 +122,140 @@ def screenshot():
                     png = fh.read()
                 if png.endswith(b"IEND\xaeB`\x82"):
                     os.remove(files[0])
-                    last_shot.update(t=time.time(), png=png)
+                    last_shot.update(t=time.time() if last_shot["gen"] == gen else 0.0, png=png)
                     return png
             time.sleep(0.05)
         raise TimeoutError("no screenshot from Kodi")
+
+
+# ---------------- pointer ----------------
+
+# A virtual mouse for Kodi (setting input.enablemouse is on): the page says where on the
+# picture of the TV a finger landed, positions are fractions 0..1 of the screen. One
+# absolute-position uinput device, made in the background when the panel starts (Kodi
+# needs about 2 s to notice a new device) and reused; /dev/uinput is group input by a
+# udev rule and the panel's user is in that group. Without access every other part of the
+# panel keeps working and /api/pointer answers 503.
+SCREEN_W, SCREEN_H = 1920, 1080
+POINTER_NAME = "media-stick-pointer"
+POINTER_ACTIONS = {"click", "right", "move", "scroll"}
+
+
+class PointerUnavailable(Exception):
+    pass
+
+
+class Pointer:
+    SETTLE_S = 2.2   # Kodi picks up a new input device after about 2 s
+    RETRY_S = 5.0    # do not hammer /dev/uinput while it is not usable
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.ui = None
+        self.ev = None
+        self.ready_at = 0.0
+        self.tried = 0.0
+        self.err = ""
+        self.x = None    # last position, fractions of the screen; None until first move
+        self.y = None
+
+    def _open(self):
+        """Make the device if there is none. Lock held."""
+        if self.ui is not None or time.time() - self.tried < self.RETRY_S:
+            return
+        self.tried = time.time()
+        try:
+            from evdev import AbsInfo, UInput, ecodes
+        except ImportError:
+            self.err = "не установлен python3-evdev"
+            return
+        caps = {ecodes.EV_KEY: [ecodes.BTN_LEFT, ecodes.BTN_RIGHT],
+                ecodes.EV_REL: [ecodes.REL_WHEEL],
+                ecodes.EV_ABS: [(ecodes.ABS_X, AbsInfo(0, 0, SCREEN_W - 1, 0, 0, 0)),
+                                (ecodes.ABS_Y, AbsInfo(0, 0, SCREEN_H - 1, 0, 0, 0))]}
+        try:
+            self.ui = UInput(caps, name=POINTER_NAME)
+        except OSError as e:
+            self.err = "нет доступа к /dev/uinput (%s)" % (e.strerror or e)
+            return
+        self.ev = ecodes
+        self.err = ""
+        self.x = self.y = None
+        self.ready_at = time.time() + self.SETTLE_S
+
+    def start(self):
+        """Make the device now, in the background, so the first tap need not wait."""
+        def go():
+            with self.lock:
+                self._open()
+        threading.Thread(target=go, daemon=True).start()
+
+    def close(self):
+        with self.lock:
+            try:
+                if self.ui is not None:
+                    self.ui.close()
+            except OSError:
+                pass
+            self.ui = None
+            self.tried = 0.0
+
+    def _ready(self):
+        self._open()
+        if self.ui is None:
+            raise PointerUnavailable(self.err or "устройство не создано")
+        wait = self.ready_at - time.time()
+        if wait > 0:
+            time.sleep(wait)
+
+    def _abs(self, fx, fy):
+        self.ui.write(self.ev.EV_ABS, self.ev.ABS_X, round(fx * (SCREEN_W - 1)))
+        self.ui.write(self.ev.EV_ABS, self.ev.ABS_Y, round(fy * (SCREEN_H - 1)))
+        self.ui.syn()
+
+    def move_to(self, fx, fy, settle=0.08):
+        """Absolute move; waits `settle` s after a real move so Kodi registers the hover."""
+        moved = self.x is None or abs(fx - self.x) > 1e-4 or abs(fy - self.y) > 1e-4
+        self._abs(fx, fy)
+        self.x, self.y = fx, fy
+        time.sleep(settle if moved else 0.02)
+
+    def move_by(self, dfx, dfy):
+        """Relative move in screen fractions: for an air mouse later (not on any endpoint)."""
+        fx = 0.5 if self.x is None else self.x
+        fy = 0.5 if self.y is None else self.y
+        self.move_to(min(1.0, max(0.0, fx + dfx)), min(1.0, max(0.0, fy + dfy)), 0.0)
+
+    def act(self, action, fx=None, fy=None, wheel=0):
+        with self.lock:
+            self._ready()
+            try:
+                if fx is None:   # scroll without a position: where the pointer already is
+                    fx = 0.5 if self.x is None else self.x
+                    fy = 0.5 if self.y is None else self.y
+                ev = self.ev
+                if action == "move":
+                    self.move_to(fx, fy, 0.0)
+                elif action in ("click", "right"):
+                    self.move_to(fx, fy)
+                    btn = ev.BTN_LEFT if action == "click" else ev.BTN_RIGHT
+                    self.ui.write(ev.EV_KEY, btn, 1)
+                    self.ui.syn()
+                    time.sleep(0.05)
+                    self.ui.write(ev.EV_KEY, btn, 0)
+                    self.ui.syn()
+                elif action == "scroll":
+                    self.move_to(fx, fy, 0.03)
+                    for _ in range(abs(wheel)):   # one notch per event; + is up, like a wheel
+                        self.ui.write(ev.EV_REL, ev.REL_WHEEL, 1 if wheel > 0 else -1)
+                        self.ui.syn()
+                        time.sleep(0.01)
+            except OSError as e:
+                self.close()   # made again on the next action
+                raise PointerUnavailable("устройство пропало (%s)" % (e.strerror or e))
+
+
+POINTER = Pointer()
 
 
 # ---------------- state ----------------
@@ -229,6 +367,12 @@ label{display:block;margin:14px 0 6px;color:var(--dim);font-size:14px}
 .shotbox.has #shot-s{display:none}
 .cap{color:var(--faint);font-size:12px;margin-top:8px;min-height:1.4em}
 .cap.bad{color:var(--bad)}
+.shotbox{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.shotbox.has{cursor:pointer}
+.shotbox img{pointer-events:none;-webkit-user-drag:none}
+.rip{position:absolute;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;border:2px solid #fff;background:rgba(255,255,255,.25);pointer-events:none;animation:rip .55s ease-out forwards}
+.rip.r{border-color:var(--ok);background:rgba(76,195,138,.25);animation-duration:.8s}
+@keyframes rip{from{transform:scale(.3);opacity:.95}to{transform:scale(1.5);opacity:0}}
 .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
 .head h2{margin:0}
 /* device info */
@@ -343,6 +487,7 @@ section{margin-bottom:16px}
       </div>
       <div id="shot-box" class="shotbox"><img id="shot" alt=""><div id="shot-s">Нажмите «Смотреть»</div></div>
       <div id="shot-ms" class="cap"></div>
+      <div id="shot-h" class="cap" title="Удерживайте — контекстное меню; проведите пальцем вверх или вниз — прокрутка">Нажмите на картинку, чтобы кликнуть на телевизоре</div>
     </div>
   </section>
 
@@ -465,7 +610,7 @@ tick(); setInterval(tick,5000);
 // for: the button (or opening the tab on a phone), about one frame a second, off again
 // after two minutes or when the page is hidden.
 const LIVE_MAX_MS=120000, FRAME_GAP_MS=1000;
-let live=false, liveSince=0, shotBusy=false, liveTimer=null, gotFrame=false, failed=0;
+let live=false, liveSince=0, shotBusy=false, liveTimer=null, gotFrame=false, failed=0, redo=false;
 function shotState(t,bad){ // over the placeholder until a frame exists, under the picture after
   if(!gotFrame)$('shot-s').textContent=t;
   const c=$('shot-ms'); c.textContent=gotFrame?t:''; c.classList.toggle('bad',!!bad)
@@ -478,20 +623,87 @@ function setLive(on){
   else{clearTimeout(liveTimer);shotState(gotFrame?'Остановлено':'Нажмите «Смотреть»')}
 }
 function frame(){
-  if(shotBusy)return;
+  if(shotBusy){redo=true;return}
   shotBusy=true; const t=Date.now(), im=new Image();
   im.onload=()=>{shotBusy=false;failed=0;gotFrame=true;$('shot').src=im.src;$('shot-box').classList.add('has');
     if(live)shotState((Date.now()-t)+' мс');
     clearTimeout(liveTimer);
     if(live&&!document.hidden&&Date.now()-liveSince<LIVE_MAX_MS)liveTimer=setTimeout(frame,FRAME_GAP_MS);
-    else if(live)setLive(false)};
+    else if(live)setLive(false);
+    if(redo){redo=false;setTimeout(frame,0)}};
   // the first frame after idle can be slow or fail once: retry before giving up
-  im.onerror=()=>{shotBusy=false;
+  im.onerror=()=>{shotBusy=false;redo=false;
     if(!gotFrame&&failed++<1){shotState('Загрузка…');setTimeout(frame,800);return}
     shotState('Kodi не отвечает',true);if(live)liveTimer=setTimeout(frame,3000)};
   im.src='/shot.png?'+t;
 }
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&live)setLive(false)});
+
+// Tap on the picture = click at that spot on the TV; hold = right click (Kodi's context
+// menu); drag up or down = scroll. Spots are fractions of the picture itself, not of its box
+// (object-fit leaves bars). A fresh frame follows each action, live or not.
+const LONG_MS=500, SLOP_PX=10, STEP_PX=36, REFRESH_MS=380;
+const HINT=$('shot-h').textContent, box=$('shot-box');
+let ptrNote=null, g=null, lastType='', spend=0, sbusy=false, spos=null;
+const ptr=(action,x,y,dy)=>api('/api/pointer',dy===undefined?{action,x,y}:{action,x,y,dy});
+function ptrErr(e){
+  const h=$('shot-h'); h.textContent=e.message||'Не получилось'; h.classList.add('bad');
+  clearTimeout(ptrNote); ptrNote=setTimeout(()=>{h.textContent=HINT;h.classList.remove('bad')},4000)
+}
+function spot(cx,cy){
+  const im=$('shot'), w=im.naturalWidth, h=im.naturalHeight;
+  if(!gotFrame||!w||!h)return null;
+  const r=im.getBoundingClientRect(), k=Math.min(r.width/w,r.height/h), dw=w*k, dh=h*k,
+        x=(cx-r.left-(r.width-dw)/2)/dw, y=(cy-r.top-(r.height-dh)/2)/dh;
+  return x<0||x>1||y<0||y>1?null:{x,y}
+}
+function ripple(cx,cy,cls){
+  const b=box.getBoundingClientRect(), d=document.createElement('i');
+  d.className='rip'+(cls?' '+cls:''); d.style.left=(cx-b.left)+'px'; d.style.top=(cy-b.top)+'px';
+  box.appendChild(d); setTimeout(()=>d.remove(),900)
+}
+function tap(action,cx,cy){
+  const p=spot(cx,cy); if(!p)return;
+  buzz(); ripple(cx,cy,action==='right'?'r':'');
+  if(!live)setLive(true);  // the first tap also starts the live picture (same limits as the button)
+  ptr(action,p.x,p.y).then(()=>setTimeout(frame,REFRESH_MS)).catch(ptrErr)
+}
+function flushScroll(){
+  if(sbusy||!spend||!spos)return;
+  const d=spend; spend=0; sbusy=true;
+  ptr('scroll',spos.x,spos.y,d).then(()=>setTimeout(frame,REFRESH_MS)).catch(ptrErr)
+    .finally(()=>{sbusy=false;flushScroll()})
+}
+box.addEventListener('pointerdown',e=>{
+  lastType=e.pointerType;
+  if(g||(e.pointerType==='mouse'&&e.button!==0))return;
+  g={id:e.pointerId,x:e.clientX,y:e.clientY,ly:e.clientY,acc:0,moved:false,scroll:false,long:false,t:0};
+  try{box.setPointerCapture(e.pointerId)}catch(_){}
+  // a mouse has its own right button (contextmenu below); only a finger needs the hold
+  if(e.pointerType!=='mouse')g.t=setTimeout(()=>{if(g&&!g.moved){g.long=true;tap('right',g.x,g.y)}},LONG_MS)
+});
+box.addEventListener('pointermove',e=>{
+  if(!g||e.pointerId!==g.id)return;
+  const dx=e.clientX-g.x, dy=e.clientY-g.y;
+  if(!g.moved&&Math.hypot(dx,dy)>SLOP_PX){
+    g.moved=true; clearTimeout(g.t);
+    const p=Math.abs(dy)>Math.abs(dx)?spot(g.x,g.y):null;
+    if(p){g.scroll=true;spos=p;if(!live)setLive(true)}
+  }
+  if(g.scroll){  // finger down = wheel up (the view follows the finger)
+    g.acc+=e.clientY-g.ly; g.ly=e.clientY;
+    const n=Math.trunc(g.acc/STEP_PX);
+    if(n){g.acc-=n*STEP_PX;spend+=n;flushScroll()}
+  }
+});
+function endGesture(e,cancel){
+  if(!g||e.pointerId!==g.id)return;
+  clearTimeout(g.t); const s=g; g=null;
+  if(!cancel&&!s.moved&&!s.long)tap('click',s.x,s.y)
+}
+box.addEventListener('pointerup',e=>endGesture(e,false));
+box.addEventListener('pointercancel',e=>endGesture(e,true));
+box.addEventListener('contextmenu',e=>{e.preventDefault();if(lastType==='mouse')tap('right',e.clientX,e.clientY)});
 if(wide()){shotState('Загрузка…');frame()}  // one still frame on a computer, live only on request
 </script></body></html>"""
 
@@ -525,6 +737,37 @@ class H(BaseHTTPRequestHandler):
     def host_ok(self):
         return bool(HOST_OK.match(self.headers.get("Host", "")))
 
+    def pointer_post(self, b):
+        """POST /api/pointer {action, x, y, dy}: x and y are fractions 0..1 of the screen."""
+        if not isinstance(b, dict):
+            return self.send("bad request", "text/plain", 400)
+        a = b.get("action", "click")
+        if a not in POINTER_ACTIONS:
+            return self.send("unknown action", "text/plain", 400)
+
+        def num(v):
+            ok = isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+            return float(v) if ok else None
+
+        fx, fy = num(b.get("x")), num(b.get("y"))
+        has_xy = "x" in b or "y" in b
+        if (has_xy or a != "scroll") and (fx is None or fy is None):
+            return self.send("x and y: numbers 0..1", "text/plain", 400)
+        if fx is not None:
+            fx, fy = min(1.0, max(0.0, fx)), min(1.0, max(0.0, fy))
+        wheel = 0
+        if a == "scroll":
+            dy = num(b.get("dy"))
+            if dy is None:
+                return self.send("dy: a number", "text/plain", 400)
+            wheel = int(max(-10, min(10, round(dy))))
+        try:
+            POINTER.act(a, fx, fy, wheel)
+        except PointerUnavailable as e:
+            return self.send("Указатель недоступен: %s" % e, "text/plain", 503)
+        forget_shot()
+        return self.send({"ok": True})
+
     def do_GET(self):
         if not self.host_ok():
             # hotspot mode: every name resolves here, so phones' captive-portal checks
@@ -556,6 +799,8 @@ class H(BaseHTTPRequestHandler):
             return self.send("forbidden", "text/plain", 403)
         p = self.path.split("?")[0]
         b = json_body(self)
+        if p == "/api/pointer":
+            return self.pointer_post(b)
         try:
             if p == "/api/key":
                 a = b.get("action")
@@ -611,4 +856,5 @@ class DualStack(ThreadingHTTPServer):
 
 if __name__ == "__main__":
     os.makedirs(SHOTS, exist_ok=True)
+    POINTER.start()
     DualStack(("::", PORT), H).serve_forever()
