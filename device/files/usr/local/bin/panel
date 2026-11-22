@@ -352,7 +352,7 @@ def _status():
     s = {"time": time.strftime("%H:%M")}
     s["wifi"] = wifi_status()
     s["uptime"] = run(["uptime", "-p"])[1].replace("up ", "")
-    s["temp"] = run(["vcgencmd", "measure_temp"])[1].split("=")[-1]
+    s["temp"] = run(["vcgencmd", "measure_temp"])[1].split("=")[-1].strip().replace("'C", "°C")
     t = run(["vcgencmd", "get_throttled"])[1].split("=")[-1]
     s["throttled"] = t
     s["power_ok"] = t == "0x0"
@@ -408,7 +408,7 @@ label{display:block;margin:14px 0 6px;color:var(--dim);font-size:14px}
 .row{display:flex;gap:8px}.row>*{flex:1}.row>.fit{flex:0 0 auto}
 .gap{margin-top:12px}
 /* remote */
-.dpad{display:block;width:min(100%,280px);height:auto;margin:0 auto;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;user-select:none;-webkit-user-select:none}
+.dpad{display:block;width:min(100%,var(--d));height:auto;margin:0 auto;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;user-select:none;-webkit-user-select:none}
 .dpad .seg{cursor:pointer;outline:none}
 .dpad .seg path,.dpad .seg circle{fill:var(--card2);stroke:var(--card);stroke-width:4;transition:fill .08s}
 .dpad .seg use{pointer-events:none}
@@ -417,7 +417,8 @@ label{display:block;margin:14px 0 6px;color:var(--dim);font-size:14px}
 .dpad .ok circle{fill:#fff}
 .dpad .ok:active circle{fill:#cfd6e4}
 .dpad .ok text{fill:var(--bg);stroke:none;font:700 24px system-ui,sans-serif;text-anchor:middle;pointer-events:none}
-.grp{display:flex;gap:4px;background:var(--bg);border-radius:20px;padding:4px;margin-top:12px}
+.grp{display:flex;gap:4px;background:var(--bg);border-radius:20px;padding:4px;margin-top:8px}
+.grp .btn{min-height:48px}
 .grp .btn{flex:1;min-width:0;padding:0;background:transparent;border-radius:16px}
 .grp .btn:active{background:#fff}
 @media (hover:hover){.grp .btn:hover{background:rgba(255,255,255,.1)}.grp .btn:active{background:#fff}}
@@ -446,8 +447,8 @@ dt:nth-last-child(2),dd:last-child{border-bottom:0}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--ok)}
 .dot.bad{background:var(--bad)}
 /* page */
-#app{max-width:440px;margin:0 auto;padding:16px 16px calc(96px + env(safe-area-inset-bottom))}
-.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px}
+#app{max-width:440px;margin:0 auto;padding:12px 16px calc(84px + env(safe-area-inset-bottom))}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px}
 .top b{font-size:20px;font-weight:600}
 .pill{display:inline-flex;align-items:center;min-width:0;padding:8px 14px;border-radius:999px;background:rgba(255,255,255,.08);color:var(--dim);font-size:14px;white-space:nowrap}
 .pill span{overflow:hidden;text-overflow:ellipsis}
@@ -455,14 +456,14 @@ dt:nth-last-child(2),dd:last-child{border-bottom:0}
 .tabs button{flex:1;max-width:110px;display:flex;flex-direction:column;align-items:center;gap:4px;background:none;border:0;color:var(--faint);padding:2px 0;font-size:12px}
 .tabs .pb{display:flex;padding:4px 18px;border-radius:999px}
 .tabs button.on{color:#fff}.tabs button.on .pb{background:rgba(255,255,255,.14)}
-section{margin-bottom:16px}
+section{margin-bottom:0}
 /* air mouse, HTTPS card */
 a{color:#8ab4ff}
 a.btn{text-decoration:none;color:inherit}
 a.btn.acc{color:var(--bg)}
 .btn:disabled{opacity:.4;cursor:default}
 input[type=range]{padding:0;min-height:36px;border:0;background:transparent;accent-color:#fff}
-.pad{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;height:150px;border-radius:24px;background:var(--card2);color:var(--dim);text-align:center;padding:12px;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;transition:background .08s,color .08s}
+.pad{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;flex:1;min-height:0;border-radius:24px;background:var(--card2);color:var(--dim);text-align:center;padding:12px;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;transition:background .08s,color .08s}
 .pad.on{background:#fff;color:var(--bg)}
 .steps{margin:0 0 4px;padding-left:22px;color:var(--dim);font-size:15px}
 .steps li{margin:8px 0}
@@ -470,6 +471,23 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 .sub span{min-width:0;overflow-wrap:anywhere}
 .sub .btn{font-size:14px;font-weight:400;white-space:nowrap;flex:0 0 auto}
 .expl{margin:0 0 10px;color:var(--dim);font-size:15px}
+/* remote card: --d is the D-pad size, shrunk on short screens so the whole remote fits above
+   the tab bar (420px is everything else: header, key rows, text row, tab bar). The air pad takes
+   the D-pad's place, so switching does not move the buttons. */
+.rc{position:relative;padding:14px;--d:260px}
+@supports (height:1svh){.rc{--d:clamp(140px,calc(100svh - 420px - env(safe-area-inset-bottom)),280px)}}
+.rc .row input,.rc .row .btn{min-height:48px!important}
+.rc .row.gap{margin-top:8px}
+.mode{position:absolute;top:10px;right:10px;z-index:1;width:44px;height:44px;min-height:0;padding:0;border-radius:50%}
+.mode.on{background:#fff;color:var(--bg)}
+.stage{display:flex;justify-content:center}
+#air,#air-no{width:100%;height:var(--d);margin:0}
+#air{display:flex;flex-direction:column;gap:6px;padding-top:54px}
+#air-no{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:54px 16px 16px}
+#air label{margin:0;font-size:13px}
+#air input[type=range]{min-height:28px}
+#air .cap{margin:0}
+.stage.air .dpad{display:none}
 /* wide screen: preview left, remote right, info and actions below */
 @media (min-width:900px){
   #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "screen remote" "info settings" "https https";gap:20px;padding:28px}
@@ -478,7 +496,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   [data-tab]{display:block!important;margin:0}
   [data-tab]>.card{height:100%}
   #t-screen{grid-area:screen}#t-remote{grid-area:remote}#t-info{grid-area:info}#t-settings{grid-area:settings}#t-https{grid-area:https}
-  .dpad{width:250px}
+  .rc{--d:250px}
 }
 </style></head><body>
 
@@ -523,7 +541,9 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   <div class="top"><b>Media Stick</b><div class="pill" id="hdr"><i class="dot" id="hdr-dot"></i><span id="hdr-t"></span></div></div>
 
   <section id="t-remote" data-tab="remote">
-    <div class="card">
+    <div class="card rc">
+      <button id="mode" class="btn mode" aria-label="Аэромышь" aria-pressed="false"><svg class="i"><use href="#i-air"/></svg></button>
+      <div id="stage" class="stage">
       <svg class="dpad" viewBox="0 0 240 240" role="group" aria-label="Навигация">
         <g class="seg" data-a="up" role="button" aria-label="Вверх"><path d="M38 38A116 116 0 0 1 202 38L154 86A48 48 0 0 0 86 86Z"/><use href="#i-up" x="108" y="50" width="24" height="24"/></g>
         <g class="seg" data-a="right" role="button" aria-label="Вправо"><path d="M202 38A116 116 0 0 1 202 202L154 154A48 48 0 0 0 154 86Z"/><use href="#i-right" x="166" y="108" width="24" height="24"/></g>
@@ -531,6 +551,14 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         <g class="seg" data-a="left" role="button" aria-label="Влево"><path d="M38 202A116 116 0 0 1 38 38L86 86A48 48 0 0 0 86 154Z"/><use href="#i-left" x="50" y="108" width="24" height="24"/></g>
         <g class="seg ok" data-a="select" role="button" aria-label="OK"><circle cx="120" cy="120" r="40"/><text x="120" y="129">OK</text></g>
       </svg>
+      <div id="air" class="hide">
+        <div id="air-pad" class="pad" role="button" aria-label="Аэромышь: удерживайте и наводите телефон на телевизор"><svg class="i"><use href="#i-air"/></svg><span>Удерживайте и наводите</span></div>
+        <label for="air-k">Чувствительность</label>
+        <input id="air-k" type="range" min="1" max="10" step="1" value="5">
+        <div id="air-h" class="cap"></div>
+      </div>
+      <div id="air-no" class="msg hide"><span id="air-nt">Аэромышь (указка по наклону телефона) работает только по HTTPS.</span><a id="air-a" class="btn sm" href="#https">Настроить в «Настройки»</a></div>
+      </div>
       <div class="grp">
         <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
         <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
@@ -553,14 +581,6 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         <input id="txt" placeholder="Текст в поиск Kodi" enterkeyhint="send">
         <button class="btn fit" style="min-height:52px" onclick="sendText()" aria-label="Отправить"><svg class="i"><use href="#i-send"/></svg></button>
       </div>
-      <div id="air" class="hide">
-        <h2 style="margin:22px 0 12px">Аэромышь</h2>
-        <div id="air-pad" class="pad" role="button" aria-label="Аэромышь: удерживайте и наводите телефон на телевизор"><svg class="i"><use href="#i-air"/></svg><span>Удерживайте и наводите</span></div>
-        <label for="air-k">Чувствительность</label>
-        <input id="air-k" type="range" min="1" max="10" step="1" value="5">
-        <div id="air-h" class="cap"></div>
-      </div>
-      <div id="air-no" class="msg hide">Аэромышь (указка по наклону телефона) работает только по HTTPS. <a id="air-a" href="#https">Настроить в «Настройки»</a></div>
     </div>
   </section>
 
@@ -931,12 +951,25 @@ let airHeld=false, airOn=false, airK=5, airAcc={x:0,y:0}, airSm={x:0,y:0}, airBu
 try{const v=parseInt(localStorage.getItem('airk'),10);if(v>=1&&v<=10)airK=v}catch(e){}
 $('air-k').value=airK;
 $('air-k').addEventListener('input',e=>{airK=+e.target.value;try{localStorage.setItem('airk',String(airK))}catch(_){}});
+// The round button on the remote swaps the D-pad for the air pad, in the same place.
+let airMode=false;
+try{airMode=localStorage.getItem('airmode')==='1'}catch(e){}
+$('mode').addEventListener('click',()=>{
+  airMode=!airMode;if(!airMode)airStop(true);
+  try{localStorage.setItem('airmode',airMode?'1':'0')}catch(e){}
+  buzz();airUi()
+});
 function airUi(){
-  $('air').classList.toggle('hide',!airOk);
+  const m=$('mode');
+  $('stage').classList.toggle('air',airMode);
+  m.classList.toggle('on',airMode);m.setAttribute('aria-pressed',String(airMode));
+  m.setAttribute('aria-label',airMode?'Кнопки':'Аэромышь');
+  $('air').classList.toggle('hide',!airMode||!airOk);
+  $('air-no').classList.toggle('hide',!airMode||airOk);
   if(!$('air-h').textContent)airNote('');
-  const no=$('air-no'), a=$('air-a');
-  if(window.isSecureContext){no.classList.add('hide');return}  // secure but no motion API: nothing to offer
-  no.classList.remove('hide');
+  const a=$('air-a');
+  if(window.isSecureContext){  // secure but no motion API
+    $('air-nt').textContent='На этом устройстве нет датчика движения.';a.classList.add('hide');return}
   if(/^https:[/][/][a-z0-9.-]+[/]?$/.test(httpsUrl)){a.href=httpsUrl;a.textContent='Открыть по HTTPS'}
   else{a.href='#https';a.textContent='Настроить в «Настройки»'}
 }
