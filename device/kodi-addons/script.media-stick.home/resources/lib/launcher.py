@@ -1,6 +1,7 @@
 """The home launcher window: wallpaper, app carousel (100) and side drawer (201)."""
 import os
 import subprocess
+import threading
 from urllib.parse import quote_plus
 
 import xbmc
@@ -13,7 +14,11 @@ from resources.lib.remote import RemoteDialog
 LOG = "[script.media-stick.home]"
 ACTION_PREVIOUS_MENU = 10
 ACTION_NAV_BACK = 92
+NAV_ACTIONS = {1, 2, 3, 4, 7}            # left, right, up, down, select
 CAROUSEL, DRAWER = 100, 201
+EDGE_LEFT, EDGE_RIGHT = 301, 302         # mouse-only strips at the screen edges
+EDGE_STEP_S = 0.35                       # one card per step while the pointer rests there
+CARDS_IN_VIEW = 7                        # whole 252 px cards in the 1824 px row
 PILL_RIGHT, PILL_PAD = 1632, 24          # right edge and padding of the status pill
 PILL_DIGIT, PILL_DOT = 14, 7             # approximate Reg25 glyph widths in px
 WALLPAPER_CACHE = "/var/cache/media-stick/wallpapers/"
@@ -141,7 +146,44 @@ class Launcher(xbmcgui.WindowXML):
         control.reset()
         control.addItems(items)
 
+    def _focus(self):
+        try:
+            return self.getFocusId()
+        except RuntimeError:
+            return 0                 # no control has focus (the mouse left it nowhere)
+
+    def onFocus(self, controlId):
+        if controlId in (EDGE_LEFT, EDGE_RIGHT):
+            threading.Thread(target=self._edge, args=(controlId,), daemon=True).start()
+
+    def _edge(self, edge):
+        """While the pointer rests on an edge strip, step the row one card at a time; the
+        left strip at the row's start opens the menu instead."""
+        row = self.getControl(CAROUSEL)
+        while self._focus() == edge:
+            try:
+                current = int(xbmc.getInfoLabel(f"Container({CAROUSEL}).CurrentItem") or 0)
+                pos = int(xbmc.getInfoLabel(f"Container({CAROUSEL}).Position") or 0)
+            except ValueError:
+                return
+            first = current - 1 - pos            # index of the first card in view
+            if edge == EDGE_LEFT:
+                if first <= 0:
+                    self.setFocusId(DRAWER)
+                    return
+                row.selectItem(first - 1)
+            else:
+                if first + CARDS_IN_VIEW >= row.size():
+                    return                        # the last card is in view already
+                row.selectItem(first + CARDS_IN_VIEW)
+            xbmc.sleep(int(EDGE_STEP_S * 1000))
+
     def onAction(self, action):
+        # after the mouse, focus can be nowhere or on an edge strip, where keys lead nowhere:
+        # the first arrow or OK then brings it back to the row
+        if action.getId() in NAV_ACTIONS and self._focus() not in (CAROUSEL, DRAWER):
+            self.setFocusId(CAROUSEL)
+            return
         if action.getId() in (ACTION_NAV_BACK, ACTION_PREVIOUS_MENU):
             try:
                 if self.getFocusId() == DRAWER:

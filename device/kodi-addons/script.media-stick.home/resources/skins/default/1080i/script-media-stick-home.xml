@@ -244,6 +244,30 @@
             </focusedlayout>
         </control>
 
+        <!-- mouse edges (the phone's air mouse): invisible strips, never reached by keys. The
+             left one goes on to the left like the Left key: it scrolls the row back to its start,
+             then opens the menu; the right one scrolls the row on. launcher.py does the moving. -->
+        <control type="button" id="301">
+            <left>0</left>
+            <top>0</top>
+            <width>56</width>
+            <height>1080</height>
+            <texturefocus />
+            <texturenofocus />
+            <label />
+            <visible>!ControlGroup(200).HasFocus</visible>
+        </control>
+        <control type="button" id="302">
+            <left>1864</left>
+            <top>740</top>
+            <width>56</width>
+            <height>330</height>
+            <texturefocus />
+            <texturenofocus />
+            <label />
+            <visible>!ControlGroup(200).HasFocus</visible>
+        </control>
+
         <!-- drawer: dim + sliding panel -->
         <control type="image">
             <left>0</left>
