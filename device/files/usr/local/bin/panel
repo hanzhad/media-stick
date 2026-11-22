@@ -383,10 +383,13 @@ def _status():
 
 PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#121620"><title>Media Stick</title>
+<meta name="theme-color" content="#121620">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Media Stick"><title>Media Stick</title>
 <style>
 :root{--bg:#121620;--card:#1F2633;--card2:#2a3344;--line:rgba(255,255,255,.08);--dim:rgba(255,255,255,.7);--faint:rgba(255,255,255,.45);--bad:#ff6b6b;--ok:#4cc38a;color-scheme:dark}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+/* a remote, not a document: no double-tap zoom, no rubber-band bounce */
+html{touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:#fff;font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 button,input,select{font:inherit;color:inherit}
 button{cursor:pointer}
@@ -474,20 +477,20 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 /* remote card: --d is the D-pad size, shrunk on short screens so the whole remote fits above
    the tab bar (420px is everything else: header, key rows, text row, tab bar). The air pad takes
    the D-pad's place, so switching does not move the buttons. */
-.rc{position:relative;padding:14px;--d:260px}
+.rc{padding:14px;--d:260px}
 @supports (height:1svh){.rc{--d:clamp(140px,calc(100svh - 420px - env(safe-area-inset-bottom)),280px)}}
 .rc .row input,.rc .row .btn{min-height:48px!important}
 .rc .row.gap{margin-top:8px}
-.mode{position:absolute;top:10px;right:10px;z-index:1;width:44px;height:44px;min-height:0;padding:0;border-radius:50%}
-.mode.on{background:#fff;color:var(--bg)}
-.stage{display:flex;justify-content:center}
-#air,#air-no{width:100%;height:var(--d);margin:0}
-#air{display:flex;flex-direction:column;gap:6px;padding-top:54px}
-#air-no{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:54px 16px 16px}
-#air label{margin:0;font-size:13px}
-#air input[type=range]{min-height:28px}
+/* air tab: one big pad down to the tab bar (144px = header and tab bar) */
+#t-air .card{display:flex;flex-direction:column;height:calc(100vh - 144px);min-height:320px}
+@supports (height:1svh){#t-air .card{height:calc(100svh - 144px - env(safe-area-inset-bottom))}}
+#air{display:flex;flex-direction:column;flex:1;min-height:0;gap:10px}
+.airk{display:flex;align-items:center;gap:12px}
+.airk label{margin:0;white-space:nowrap;font-size:14px}
+.airk input{min-height:36px}
 #air .cap{margin:0}
-.stage.air .dpad{display:none}
+.pad small{font-size:13px;opacity:.7}
+#air-no .row{flex-direction:column}
 /* wide screen: preview left, remote right, info and actions below */
 @media (min-width:900px){
   #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "screen remote" "info settings" "https https";gap:20px;padding:28px}
@@ -497,6 +500,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   [data-tab]>.card{height:100%}
   #t-screen{grid-area:screen}#t-remote{grid-area:remote}#t-info{grid-area:info}#t-settings{grid-area:settings}#t-https{grid-area:https}
   .rc{--d:250px}
+  #t-air{display:none!important}   /* computers have no motion sensor */
 }
 </style></head><body>
 
@@ -542,8 +546,6 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 
   <section id="t-remote" data-tab="remote">
     <div class="card rc">
-      <button id="mode" class="btn mode" aria-label="Аэромышь" aria-pressed="false"><svg class="i"><use href="#i-air"/></svg></button>
-      <div id="stage" class="stage">
       <svg class="dpad" viewBox="0 0 240 240" role="group" aria-label="Навигация">
         <g class="seg" data-a="up" role="button" aria-label="Вверх"><path d="M38 38A116 116 0 0 1 202 38L154 86A48 48 0 0 0 86 86Z"/><use href="#i-up" x="108" y="50" width="24" height="24"/></g>
         <g class="seg" data-a="right" role="button" aria-label="Вправо"><path d="M202 38A116 116 0 0 1 202 202L154 154A48 48 0 0 0 154 86Z"/><use href="#i-right" x="166" y="108" width="24" height="24"/></g>
@@ -551,14 +553,6 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         <g class="seg" data-a="left" role="button" aria-label="Влево"><path d="M38 202A116 116 0 0 1 38 38L86 86A48 48 0 0 0 86 154Z"/><use href="#i-left" x="50" y="108" width="24" height="24"/></g>
         <g class="seg ok" data-a="select" role="button" aria-label="OK"><circle cx="120" cy="120" r="40"/><text x="120" y="129">OK</text></g>
       </svg>
-      <div id="air" class="hide">
-        <div id="air-pad" class="pad" role="button" aria-label="Аэромышь: удерживайте и наводите телефон на телевизор"><svg class="i"><use href="#i-air"/></svg><span>Удерживайте и наводите</span></div>
-        <label for="air-k">Чувствительность</label>
-        <input id="air-k" type="range" min="1" max="10" step="1" value="5">
-        <div id="air-h" class="cap"></div>
-      </div>
-      <div id="air-no" class="msg hide"><span id="air-nt">Аэромышь (указка по наклону телефона) работает только по HTTPS.</span><a id="air-a" class="btn sm" href="#https">Настроить в «Настройки»</a></div>
-      </div>
       <div class="grp">
         <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
         <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
@@ -580,6 +574,26 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <div class="row gap">
         <input id="txt" placeholder="Текст в поиск Kodi" enterkeyhint="send">
         <button class="btn fit" style="min-height:52px" onclick="sendText()" aria-label="Отправить"><svg class="i"><use href="#i-send"/></svg></button>
+      </div>
+    </div>
+  </section>
+
+  <section id="t-air" data-tab="air" class="hide">
+    <div class="card">
+      <div id="air" class="hide">
+        <div id="air-pad" class="pad" role="button" aria-label="Аэромышь: удерживайте и наводите телефон на телевизор"><svg class="i"><use href="#i-air"/></svg><span>Удерживайте и наводите телефон на&nbsp;телевизор</span><small>Короткое касание — клик</small></div>
+        <div class="airk"><label for="air-k">Чувствительность</label><input id="air-k" type="range" min="1" max="10" step="1" value="5"></div>
+        <div id="air-h" class="cap"></div>
+      </div>
+      <div id="air-no" class="hide">
+        <h2>Аэромышь</h2>
+        <p id="air-nt" class="expl"></p>
+        <ol id="air-steps" class="steps hide">
+          <li>Нажмите «Открыть новый адрес» — он откроется в браузере.</li>
+          <li>Там: «Поделиться» → «На экран „Домой“».</li>
+          <li>Этот старый значок удалите.</li>
+        </ol>
+        <div class="row gap"><a id="air-a" class="btn acc" href="#https">Настроить</a><button id="air-copy" class="btn hide" onclick="airCopy()">Скопировать адрес</button></div>
       </div>
     </div>
   </section>
@@ -643,6 +657,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 
   <nav class="tabs">
     <button data-go="remote" class="on"><span class="pb"><svg class="i"><use href="#i-remote"/></svg></span>Пульт</button>
+    <button data-go="air"><span class="pb"><svg class="i"><use href="#i-air"/></svg></span>Аэромышь</button>
     <button data-go="screen"><span class="pb"><svg class="i"><use href="#i-screen"/></svg></span>Экран</button>
     <button data-go="info"><span class="pb"><svg class="i"><use href="#i-info"/></svg></span>Инфо</button>
     <button data-go="settings"><span class="pb"><svg class="i"><use href="#i-sliders"/></svg></span>Настройки</button>
@@ -665,6 +680,8 @@ document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=
   tab=b.dataset.go;
   document.querySelectorAll('[data-go]').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('[data-tab]').forEach(s=>s.classList.toggle('hide',s.dataset.tab!==tab));
+  if(tab!=='air')airStop(true);
+  try{localStorage.setItem('tab',tab)}catch(e){}
   if(tab==='settings'){loadNets('w-ssid');httpsLoad()}
   setLive(tab==='screen');  // phone: the screen tab is the request to watch
 }));
@@ -734,7 +751,7 @@ async function tick(){
     if(s.wifi.ap){ if($('setup').classList.contains('hide')){$('app').classList.add('hide');$('setup').classList.remove('hide');loadNets('s-ssid')} }
     else{$('setup').classList.add('hide');$('app').classList.remove('hide')}
     header(s.wifi.online,(s.wifi.ssid||'кабель')+' · '+s.temp+' · '+s.time); $('info').innerHTML=fmt(s);
-    httpsUrl=s.https_url||''; airUi();
+    httpsUrl=s.https_url||''; httpsCheck(); airUi();
   }catch(e){header(false,'нет связи')}
 }
 tick(); setInterval(tick,5000);
@@ -921,6 +938,7 @@ function httpsOff(){
 }
 // Deep link from the TV: /#https opens the card, /#https?sub=<name> also fills the name.
 function hashGo(){
+  if(location.hash==='#air'){document.querySelector('[data-go=air]').click();return}
   if(location.hash.slice(0,6)!=='#https')return;
   const m=location.hash.match(/[?&]sub=([a-z0-9-]+)/i);
   hDeep=m?m[1].toLowerCase():'';
@@ -945,33 +963,66 @@ hashGo();
 // fractions (the same unit as /api/pointer). A short press without motion is a click.
 const airOk=window.isSecureContext&&'DeviceMotionEvent' in window;
 const AIR_GAP_MS=33, AIR_MAX=0.25, AIR_DZ=2.5, AIR_SMOOTH=0.5, AIR_DEG_FULL=45, TAP_MS=350, TAP_DEG=5;
-const AIR_HINT='Короткое касание — клик. Отпустите, чтобы остановить.';
+const AIR_HINT='Отпустите — указка остановится.';
 let airHeld=false, airOn=false, airK=5, airAcc={x:0,y:0}, airSm={x:0,y:0}, airBusy=false, airLast=0,
     airTimer=null, airClick=false, airPerm=null, airT0=0, airTPrev=0, airMoved=0, airGot=false, airChk=null, airNoteT=null;
 try{const v=parseInt(localStorage.getItem('airk'),10);if(v>=1&&v<=10)airK=v}catch(e){}
 $('air-k').value=airK;
 $('air-k').addEventListener('input',e=>{airK=+e.target.value;try{localStorage.setItem('airk',String(airK))}catch(_){}});
-// The round button on the remote swaps the D-pad for the air pad, in the same place.
-let airMode=false;
-try{airMode=localStorage.getItem('airmode')==='1'}catch(e){}
-$('mode').addEventListener('click',()=>{
-  airMode=!airMode;if(!airMode)airStop(true);
-  try{localStorage.setItem('airmode',airMode?'1':'0')}catch(e){}
-  buzz();airUi()
-});
+// The air tab says what is missing when the pad cannot work here. The http page first checks
+// that the https address really opens from this phone: a browser tab then moves there by
+// itself (once, on load); a home-screen app saved with the old http address cannot change
+// its address, so it explains how to add it again.
+const HTTPS_RE=/^https:[/][/][a-z0-9.-]+[/]?$/;
+const standalone=navigator.standalone===true||matchMedia('(display-mode: standalone)').matches;
+let httpsOk=null, httpsFor='', statusSeen=false;
+const httpsBase=()=>httpsUrl.replace(/[/]?$/,'/');
+function httpsCheck(){
+  const first=!statusSeen;statusSeen=true;
+  if(location.protocol==='https:'||!HTTPS_RE.test(httpsUrl)||httpsFor===httpsUrl)return;
+  httpsFor=httpsUrl;httpsOk=null;
+  const base=httpsBase(), ctl=new AbortController(), t=setTimeout(()=>ctl.abort(),5000);
+  fetch(base+'api/https',{mode:'no-cors',cache:'no-store',signal:ctl.signal})
+    .then(()=>{httpsOk=true;if(first&&!standalone){location.replace(base+(location.hash||(tab==='air'?'#air':'')));return}airUi()},
+          ()=>{httpsOk=false;airUi()})
+    .finally(()=>clearTimeout(t))
+}
+function airCopy(){
+  const u=httpsBase(), done=()=>{$('air-nt').textContent='Адрес скопирован: '+u};
+  if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(u).then(done,()=>{});return}
+  const t=document.createElement('textarea');t.value=u;t.setAttribute('readonly','');t.style.position='fixed';t.style.opacity='0';
+  document.body.appendChild(t);t.select();t.setSelectionRange(0,u.length);
+  try{if(document.execCommand('copy'))done()}catch(e){}
+  t.remove()
+}
 function airUi(){
-  const m=$('mode');
-  $('stage').classList.toggle('air',airMode);
-  m.classList.toggle('on',airMode);m.setAttribute('aria-pressed',String(airMode));
-  m.setAttribute('aria-label',airMode?'Кнопки':'Аэромышь');
-  $('air').classList.toggle('hide',!airMode||!airOk);
-  $('air-no').classList.toggle('hide',!airMode||airOk);
+  $('air').classList.toggle('hide',!airOk);
+  $('air-no').classList.toggle('hide',airOk);
   if(!$('air-h').textContent)airNote('');
-  const a=$('air-a');
-  if(window.isSecureContext){  // secure but no motion API
-    $('air-nt').textContent='На этом устройстве нет датчика движения.';a.classList.add('hide');return}
-  if(/^https:[/][/][a-z0-9.-]+[/]?$/.test(httpsUrl)){a.href=httpsUrl;a.textContent='Открыть по HTTPS'}
-  else{a.href='#https';a.textContent='Настроить в «Настройки»'}
+  if(airOk)return;
+  const nt=$('air-nt'), a=$('air-a'), cp=$('air-copy'), st=$('air-steps');
+  let steps=false, copy=false;
+  a.classList.remove('hide');a.removeAttribute('target');
+  if(window.isSecureContext){
+    nt.textContent='На этом устройстве нет датчика движения. Откройте пульт на телефоне.';a.classList.add('hide');
+  }else if(!HTTPS_RE.test(httpsUrl)){
+    nt.textContent='Указка по наклону телефона. Телефон даёт датчики только защищённой странице (HTTPS), а она ещё не настроена — это пара минут.';
+    a.href='#https';a.textContent='Настроить HTTPS';
+  }else{
+    const host=httpsUrl.replace(/^https:[/][/]/,'').replace(/[/]$/,'');
+    a.href=httpsBase()+'#air';copy=true;
+    if(httpsOk===false){
+      nt.textContent='HTTPS настроен ('+host+'), но с этого телефона адрес не открылся. Телефон должен быть в той же Wi-Fi, что и приставка.';
+      a.textContent='Попробовать открыть';a.target='_blank';
+    }else if(standalone){
+      nt.textContent='HTTPS уже настроен, но этот значок на экране «Домой» сохранён со старым адресом (http), а аэромыши нужен новый: '+host+'. Сам значок адрес не сменит — добавьте его заново:';
+      a.textContent='Открыть новый адрес';a.target='_blank';steps=true;
+    }else{
+      nt.textContent='HTTPS настроен: аэромышь работает по адресу '+host+'.';
+      a.textContent='Перейти на HTTPS';
+    }
+  }
+  st.classList.toggle('hide',!steps);cp.classList.toggle('hide',!copy);
 }
 function airNote(t,bad){
   const h=$('air-h');h.textContent=t||AIR_HINT;h.classList.toggle('bad',!!bad);
@@ -1041,6 +1092,9 @@ pad.addEventListener('pointercancel',()=>airStop(true));
 pad.addEventListener('contextmenu',e=>e.preventDefault());
 document.addEventListener('visibilitychange',()=>{if(document.hidden)airStop(true)});
 airUi();
+try{if(localStorage.getItem('tab')==='air'&&!location.hash)document.querySelector('[data-go=air]').click()}catch(e){}
+document.addEventListener('gesturestart',e=>e.preventDefault());
+document.addEventListener('dblclick',e=>e.preventDefault());
 </script></body></html>"""
 
 
