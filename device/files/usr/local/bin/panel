@@ -98,6 +98,80 @@ def kodi(method, params=None, timeout=3):
                 continue
     return None
 
+class FocusWatch:
+    """What has focus on the TV, as a counter that goes up each time it changes, so the phone
+    can buzz when something really moved there (a key press that reached the edge does not).
+    One kept-open JSON-RPC connection, asked at most every 80 ms however many pages poll."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.sock = None
+        self.buf = b""
+        self.rid = 0
+        self.sig = None
+        self.n = 0
+        self.t = 0.0
+
+    def _close(self):
+        try:
+            if self.sock:
+                self.sock.close()
+        except OSError:
+            pass
+        self.sock, self.buf = None, b""
+
+    def _call(self, method, params):
+        if self.sock is None:
+            self.sock = socket.create_connection(("127.0.0.1", 9090), timeout=1.0)
+        self.rid += 1
+        self.sock.sendall(json.dumps({"jsonrpc": "2.0", "id": self.rid, "method": method,
+                                      "params": params}).encode())
+        dec = json.JSONDecoder()
+        while True:   # replies and Kodi's own notifications come back to back, no separator
+            try:
+                text = self.buf.decode("utf-8")
+                obj, end = dec.raw_decode(text.lstrip())
+            except (UnicodeDecodeError, ValueError):
+                chunk = self.sock.recv(65536)
+                if not chunk:
+                    raise OSError("kodi closed the connection")
+                self.buf += chunk
+                continue
+            used = len(text) - len(text.lstrip()) + end
+            self.buf = text[used:].encode("utf-8")
+            if obj.get("id") == self.rid:
+                return obj.get("result") or {}
+
+    def poll(self, max_age=0.08):
+        with self.lock:
+            now = time.monotonic()
+            if now - self.t < max_age:
+                return self.n
+            for attempt in (1, 2):
+                try:
+                    r = self._call("GUI.GetProperties", {"properties": ["currentwindow", "currentcontrol"]})
+                    break
+                except (OSError, ValueError):
+                    self._close()
+                    if attempt == 2:
+                        return self.n
+            sig = "%s|%s" % ((r.get("currentwindow") or {}).get("id"), (r.get("currentcontrol") or {}).get("label"))
+            if self.sig is not None and sig != self.sig:
+                self.n += 1
+            self.sig, self.t = sig, time.monotonic()
+            return self.n
+
+    def after(self, before):
+        """After a key: Kodi runs actions on its own thread, so look a few times."""
+        n = before
+        for wait in (0.04, 0.05, 0.08):
+            time.sleep(wait)
+            n = self.poll(0)
+            if n != before:
+                break
+        return n
+
+FOCUS = FocusWatch()
+
 def read(path, default=""):
     try:
         with open(path) as f:
@@ -702,8 +776,21 @@ async function api(path,body){
   const o=body===undefined?{}:{method:'POST',headers:{'X-Panel':'1','Content-Type':'application/json'},body:JSON.stringify(body)};
   const r=await fetch(path,o); if(!r.ok) throw new Error(await r.text()); return r.json();
 }
-function buzz(){if(navigator.vibrate)navigator.vibrate(12)}
-document.querySelectorAll('[data-a]').forEach(b=>b.addEventListener('click',()=>{buzz();api('/api/key',{action:b.dataset.a}).catch(()=>{})}));
+// Haptics. Android: navigator.vibrate. iPhone has no vibrate for pages, but since iOS 18 a
+// switch-style checkbox ticks when it flips, so a hidden one is flipped instead.
+const hapEl=(()=>{const l=document.createElement('label');l.setAttribute('aria-hidden','true');
+  l.style.cssText='position:fixed;left:-200px;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
+  const i=document.createElement('input');i.type='checkbox';i.setAttribute('switch','');i.tabIndex=-1;
+  l.appendChild(i);document.body.appendChild(l);return l})();
+function buzz(){if(navigator.vibrate){navigator.vibrate(12);return}try{hapEl.click()}catch(e){}}
+// The panel counts focus changes on the TV (fc). Arrows and swipes buzz only when the focus
+// really moved there (none at the end of a row); the other keys buzz on the tap itself.
+let fcSeen=null;
+function fcNote(r){if(!r||typeof r.fc!=='number')return;if(fcSeen!==null&&r.fc!==fcSeen)buzz();fcSeen=r.fc}
+const NAV=new Set(['up','down','left','right']);
+document.querySelectorAll('[data-a]').forEach(b=>b.addEventListener('click',()=>{
+  const a=b.dataset.a, nav=NAV.has(a);if(!nav)buzz();
+  api('/api/key',{action:a}).then(r=>{if(nav)fcNote(r);else if(r&&typeof r.fc==='number')fcSeen=r.fc}).catch(()=>{})}));
 document.addEventListener('touchstart',()=>{},{passive:true});  // iOS: enables :active
 let tab='remote', httpsUrl='';
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{
@@ -917,7 +1004,7 @@ let kpend=0, kbusy=false;   // >0: right presses owed, <0: left
 function flushKeys(){
   if(kbusy||!kpend)return;
   const right=kpend>0; kpend+=right?-1:1; kbusy=true;
-  api('/api/key',{action:right?'right':'left'}).then(()=>setTimeout(frame,REFRESH_MS)).catch(ptrErr)
+  api('/api/key',{action:right?'right':'left'}).then(r=>{fcNote(r);if(tab==='screen'||full)setTimeout(frame,REFRESH_MS)}).catch(ptrErr)
     .finally(()=>{kbusy=false;flushKeys()})
 }
 function cardPx(){   // one home-screen card (about 252 of 1920 px) in picture pixels
@@ -950,7 +1037,7 @@ box.addEventListener('pointermove',e=>{
   if(g.side){  // finger left = the row moves left = the next card (right key)
     g.acc+=q.x-g.lx; g.lx=q.x;
     const c=cardPx(), n=Math.trunc(g.acc/c);
-    if(n){g.acc-=n*c;kpend-=n;buzz();flushKeys()}
+    if(n){g.acc-=n*c;kpend-=n;flushKeys()}
   }
   if(g.scroll){  // finger down = wheel up (the view follows the finger)
     g.acc+=q.y-g.ly; g.ly=q.y;
@@ -1082,9 +1169,9 @@ hashGo();
 // Deltas are summed and sent at most every AIR_GAP_MS, one request in flight, as screen
 // fractions (the same unit as /api/pointer). A short press without motion is a click.
 const airOk=window.isSecureContext&&'DeviceMotionEvent' in window;
-const AIR_GAP_MS=33, AIR_MAX=0.25, AIR_DZ=2.5, AIR_SMOOTH=0.5, AIR_DEG_FULL=45, TAP_MS=350, TAP_DEG=5;
+const AIR_GAP_MS=33, AIR_MAX=0.25, AIR_DZ=2, AIR_SMOOTH=0.5, AIR_DEG_FULL=45, TAP_MS=350, TAP_DEG=5;
 const AIR_HINT='Отпустите — указка остановится.';
-let airG=null, airGs=1;   // smoothed gravity while held, and its sign
+let airG=null, airGs=1, airSw=null, airPx=0, airPy=0, airFT=null;   // smoothed gravity while held, and its sign
 let airHeld=false, airOn=false, airK=5, airAcc={x:0,y:0}, airSm={x:0,y:0}, airBusy=false, airLast=0,
     airTimer=null, airClick=false, airPerm=null, airT0=0, airTPrev=0, airMoved=0, airGot=false, airChk=null, airNoteT=null;
 try{const v=parseInt(localStorage.getItem('airk2'),10);if(v>=1&&v<=10)airK=v}catch(e){}
@@ -1182,6 +1269,7 @@ function onMotion(e){
   const r=e.rotationRate;
   if(!airHeld||!r||r.alpha==null||r.beta==null||r.gamma==null)return;
   const now=performance.now();airGot=true;
+  if(airSw){airTPrev=now;return}   // the thumb is scrolling: the dot stays put
   let dt=airTPrev?(now-airTPrev)/1000:0;airTPrev=now;
   if(dt<=0)return;if(dt>0.1)dt=0.1;
   const dz=v=>Math.abs(v)<AIR_DZ?0:v-Math.sign(v)*AIR_DZ;
@@ -1211,9 +1299,16 @@ function onMotion(e){
     }
   }
   if(xr===undefined){xr=-w[2];yr=w[0]}              // no gravity (or aimed straight up): own axes
-  airSm.x+=AIR_SMOOTH*(dz(xr)-airSm.x);             // deg/s; left and up are negative
-  airSm.y+=AIR_SMOOTH*(-dz(yr)-airSm.y);
-  const k=Math.pow(1.3,airK-9)/AIR_DEG_FULL;   // screen widths per degree; 5 = the old lowest
+  const tx=dz(xr), ty=-dz(yr), sp=Math.hypot(tx,ty);   // deg/s; left and up are negative
+  // Shake filter: smoothing follows the speed (a "1 euro" filter in spirit): a hand held
+  // nearly still is smoothed hard, so the dot does not tremble; a quick swing almost not,
+  // so it does not lag.
+  const al=Math.min(0.8,0.12+sp/150);
+  airSm.x+=al*(tx-airSm.x);airSm.y+=al*(ty-airSm.y);
+  // Acceleration: slow turns move the dot less (precise), fast swings more (across the TV
+  // without turning far); 0.6 below 8 deg/s up to 1.8 above 120, smoothly.
+  const v=Math.hypot(airSm.x,airSm.y), q=Math.min(1,Math.max(0,(v-8)/112)), gain=0.6+1.2*q*q*(3-2*q);
+  const k=gain*Math.pow(1.3,airK-9)/AIR_DEG_FULL;   // screen widths per degree
   airAcc.x+=airSm.x*dt*k;airAcc.y+=airSm.y*dt*k*(16/9);   // the same angle is more of a short side
   airMoved+=Math.hypot(airSm.x,airSm.y)*dt;
   airPump()
@@ -1227,7 +1322,7 @@ function airPadUi(){
   const ask=airAskNeeded&&airPerm!==true;
   $('air-pad').classList.toggle('ask',ask);
   $('air-pt').textContent=ask?'Нажмите, чтобы включить датчик движения':'Удерживайте и наводите телефон на телевизор';
-  $('air-ps').textContent=ask?(airPerm===false?'Доступ был запрещён':'Телефон спросит разрешение'):'Короткое касание — клик';
+  $('air-ps').textContent=ask?(airPerm===false?'Доступ был запрещён':'Телефон спросит разрешение'):'Касание — клик, провести пальцем — листать';
 }
 function airAsk(){   // inside a click handler only
   DeviceMotionEvent.requestPermission().then(r=>{
@@ -1239,6 +1334,8 @@ function airAsk(){   // inside a click handler only
 function airStop(cancel){
   if(!airHeld)return;
   airHeld=false;$('air-pad').classList.remove('on');
+  clearInterval(airFT);airFT=null;
+  if(airSw){cancel=true;airSw=null}
   if(airOn){removeEventListener('devicemotion',onMotion);airOn=false}
   clearTimeout(airChk);airAcc.x=airAcc.y=0;   // releasing stops the pointer
   if(!cancel&&performance.now()-airT0<TAP_MS&&airMoved<TAP_DEG){airClick=true;buzz();airPump()}
@@ -1251,11 +1348,38 @@ pad.addEventListener('pointerdown',e=>{
   e.preventDefault();
   try{pad.setPointerCapture(e.pointerId)}catch(_){}
   airHeld=true;airT0=performance.now();airTPrev=0;airMoved=0;airGot=false;airSm.x=airSm.y=0;airG=null;
+  airSw=null;airPx=e.clientX;airPy=e.clientY;
+  let fb=false;   // while held, ask what has focus on the TV: a new item under the dot buzzes
+  clearInterval(airFT);airFT=setInterval(()=>{if(fb)return;fb=true;api('/api/focus').then(fcNote,()=>{}).finally(()=>fb=false)},120);
   pad.classList.add('on');buzz();
   addEventListener('devicemotion',onMotion);airOn=true;
   airChk=setTimeout(()=>{if(airHeld&&!airGot)airNote('Датчик движения не отвечает на этом устройстве.',1)},1500)
 });
 pad.addEventListener('pointerup',()=>airStop(false));
+// Slide the thumb on the pad = scroll, like a wheel: sideways = left/right keys (the home row,
+// one card per 40 px; thumb left = the next card), up/down = the mouse wheel where the dot is.
+const SW_SLOP=16, SW_KEY_PX=40, SW_WHEEL_PX=30;
+let wpend=0, wbusy=false;
+function flushWheel(){
+  if(wbusy||!wpend)return;
+  const d=wpend;wpend=0;wbusy=true;
+  api('/api/pointer',{action:'scroll',dy:d}).then(()=>api('/api/focus')).then(fcNote).catch(e=>airNote(e.message||'Не получилось',1))
+    .finally(()=>{wbusy=false;flushWheel()})
+}
+pad.addEventListener('pointermove',e=>{
+  if(!airHeld)return;
+  if(!airSw){
+    const dx=e.clientX-airPx, dy=e.clientY-airPy;
+    if(Math.hypot(dx,dy)<SW_SLOP)return;
+    airSw={side:Math.abs(dx)>Math.abs(dy),last:Math.abs(dx)>Math.abs(dy)?e.clientX:e.clientY,acc:0};
+    airAcc.x=airAcc.y=0;airSm.x=airSm.y=0;   // what the hand did meanwhile is dropped
+  }
+  const c=airSw.side?e.clientX:e.clientY;airSw.acc+=c-airSw.last;airSw.last=c;
+  const step=airSw.side?SW_KEY_PX:SW_WHEEL_PX, n=Math.trunc(airSw.acc/step);
+  if(!n)return;
+  airSw.acc-=n*step;
+  if(airSw.side){kpend-=n;flushKeys()}else{wpend+=n;flushWheel()}
+});
 airPadUi();
 pad.addEventListener('pointercancel',()=>airStop(true));
 pad.addEventListener('contextmenu',e=>e.preventDefault());
@@ -1383,6 +1507,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(status())
         if p == "/api/https":
             return self.send(https_status())
+        if p == "/api/focus":   # polled by the air pad while it is held
+            return self.send({"fc": FOCUS.poll()})
         if p == "/api/wifi/scan":
             rc, out = run(["sudo", "-n", "/usr/local/bin/wifi-setup", "scan"], timeout=40)
             return self.send(out or "[]")
@@ -1414,13 +1540,14 @@ class H(BaseHTTPRequestHandler):
                     elif a not in ACTIONS:
                         return self.send("unknown action", "text/plain", 400)
                     return self.send({"ok": True})
+                if a != "home" and a not in ACTIONS:
+                    return self.send("unknown action", "text/plain", 400)
+                before = FOCUS.poll(0)
                 if a == "home":
                     kodi("GUI.ActivateWindow", {"window": "home"})
-                elif a in ACTIONS:
-                    kodi("Input.ExecuteAction", {"action": a})
                 else:
-                    return self.send("unknown action", "text/plain", 400)
-                return self.send({"ok": True})
+                    kodi("Input.ExecuteAction", {"action": a})
+                return self.send({"ok": True, "fc": FOCUS.after(before)})
             if p == "/api/text" and web_app_on():
                 web_type(str(b.get("text", ""))[:200])
                 return self.send({"ok": True})
