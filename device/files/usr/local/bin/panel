@@ -1043,11 +1043,12 @@ function frame(){
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&live)setLive(false)});
 
 // Tap on the picture = click at that spot on the TV; hold = right click (Kodi's context
-// menu); drag up or down = scroll (wheel at that spot); drag sideways = left/right keys, one
-// per card width (the wheel is no good on the home carousel: Kodi focuses whatever card is
-// under the cursor). Spots are fractions of the picture itself, not of its box (object-fit
-// leaves bars). A fresh frame follows each action, live or not.
-const LONG_MS=500, SLOP_PX=10, STEP_PX=36, REFRESH_MS=380;
+// menu); drag up or down = scroll (wheel at that spot, a step per 18 px); drag sideways =
+// left/right keys, one per half a card, so a short flick goes far (the wheel is no good on
+// the home carousel: Kodi focuses whatever card is under the cursor). Spots are fractions
+// of the picture itself, not of its box (object-fit leaves bars). A fresh frame follows
+// each action, live or not.
+const LONG_MS=500, SLOP_PX=10, STEP_PX=18, REFRESH_MS=380;
 const HINT=$('shot-h').textContent, box=$('shot-box');
 let ptrNote=null, g=null, lastType='', spend=0, sbusy=false, spos=null;
 const ptr=(action,x,y,dy)=>api('/api/pointer',dy===undefined?{action,x,y}:{action,x,y,dy});
@@ -1088,8 +1089,8 @@ function flushKeys(){
   api('/api/key',{action:right?'right':'left'}).then(r=>{fcNote(r);if(tab==='screen'||full)setTimeout(frame,REFRESH_MS)}).catch(ptrErr)
     .finally(()=>{kbusy=false;flushKeys()})
 }
-function cardPx(){   // one home-screen card (about 252 of 1920 px) in picture pixels
-  return Math.max(28,Math.min(box.clientWidth,box.clientHeight*16/9)*252/1920)
+function cardPx(){   // half a home-screen card (a card is about 252 of 1920 px) in picture pixels
+  return Math.max(16,Math.min(box.clientWidth,box.clientHeight*16/9)*126/1920)
 }
 function flushScroll(){
   if(sbusy||!spend||!spos)return;
