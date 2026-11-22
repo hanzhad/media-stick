@@ -413,7 +413,7 @@ label{display:block;margin:14px 0 6px;color:var(--dim);font-size:14px}
 .row{display:flex;gap:8px}.row>*{flex:1}.row>.fit{flex:0 0 auto}
 .gap{margin-top:12px}
 /* remote */
-.dpad{display:block;width:min(100%,var(--d));height:auto;margin:0 auto;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;user-select:none;-webkit-user-select:none}
+.dpad{display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;user-select:none;-webkit-user-select:none}
 .dpad .seg{cursor:pointer;outline:none}
 .dpad .seg path,.dpad .seg circle{fill:var(--card2);stroke:var(--card);stroke-width:4;transition:fill .08s}
 .dpad .seg use{pointer-events:none}
@@ -491,11 +491,13 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 .sub span{min-width:0;overflow-wrap:anywhere}
 .sub .btn{font-size:14px;font-weight:400;white-space:nowrap;flex:0 0 auto}
 .expl{margin:0 0 10px;color:var(--dim);font-size:15px}
-/* remote card: --d is the D-pad size, shrunk on short screens so the whole remote fits above
-   the tab bar (420px is everything else: header, key rows, text row, tab bar). The air pad takes
-   the D-pad's place, so switching does not move the buttons. */
-.rc{padding:14px;--d:260px}
-@supports (height:1svh){.rc{--d:clamp(140px,calc(100svh - 420px - env(safe-area-inset-bottom)),280px)}}
+/* remote card: reaches down to the tab bar like the air card (144px = header and tab bar); the
+   key rows keep their size and the D-pad takes whatever height is left, as large as the card is
+   wide at most, so it grows on tall phones and shrinks on short ones and nothing scrolls. */
+.rc{padding:14px;display:flex;flex-direction:column;height:calc(100vh - 144px);min-height:400px}
+@supports (height:1svh){.rc{height:calc(100svh - 144px - env(safe-area-inset-bottom))}}
+.dwrap{position:relative;flex:1 1 0;min-height:120px}
+.dwrap .dpad{position:absolute;inset:0;width:100%;height:100%}
 .rc .row input,.rc .row .btn{min-height:48px!important}
 .rc .row.gap{margin-top:8px}
 /* air tab: one big pad down to the tab bar (144px = header and tab bar) */
@@ -517,7 +519,8 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   [data-tab]{display:block!important;margin:0}
   [data-tab]>.card{height:100%}
   #t-screen{grid-area:screen}#t-remote{grid-area:remote}#t-info{grid-area:info}#t-settings{grid-area:settings}#t-https{grid-area:https}
-  .rc{--d:250px}
+  .rc{height:auto;min-height:0}
+  .dwrap{flex:1 0 250px}
   #t-air{display:none!important}   /* computers have no motion sensor */
 }
 </style></head><body>
@@ -566,13 +569,13 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 
   <section id="t-remote" data-tab="remote">
     <div class="card rc">
-      <svg class="dpad" viewBox="0 0 240 240" role="group" aria-label="Навигация">
+      <div class="dwrap"><svg class="dpad" viewBox="0 0 240 240" role="group" aria-label="Навигация">
         <g class="seg" data-a="up" role="button" aria-label="Вверх"><path d="M38 38A116 116 0 0 1 202 38L154 86A48 48 0 0 0 86 86Z"/><use href="#i-up" x="108" y="50" width="24" height="24"/></g>
         <g class="seg" data-a="right" role="button" aria-label="Вправо"><path d="M202 38A116 116 0 0 1 202 202L154 154A48 48 0 0 0 154 86Z"/><use href="#i-right" x="166" y="108" width="24" height="24"/></g>
         <g class="seg" data-a="down" role="button" aria-label="Вниз"><path d="M202 202A116 116 0 0 1 38 202L86 154A48 48 0 0 0 154 154Z"/><use href="#i-down" x="108" y="166" width="24" height="24"/></g>
         <g class="seg" data-a="left" role="button" aria-label="Влево"><path d="M38 202A116 116 0 0 1 38 38L86 86A48 48 0 0 0 86 154Z"/><use href="#i-left" x="50" y="108" width="24" height="24"/></g>
         <g class="seg ok" data-a="select" role="button" aria-label="OK"><circle cx="120" cy="120" r="40"/><text x="120" y="129">OK</text></g>
-      </svg>
+      </svg></div>
       <div class="grp">
         <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
         <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
