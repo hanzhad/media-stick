@@ -540,9 +540,11 @@ body.rotm .fbar{top:calc(12px + env(safe-area-inset-top));bottom:auto}
 body.rot .fhint{display:none}
 #f-flip{display:none}body.rot #f-flip{display:inline-flex}
 body.fs{overflow:hidden}
-.kb{position:fixed;z-index:60;left:50%;top:calc(12px + env(safe-area-inset-top));transform:translateX(-50%);width:min(520px,calc(100% - 24px));display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:20px;background:var(--card);box-shadow:0 12px 40px rgba(0,0,0,.55);border:1px solid var(--line)}
-.kbh{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:14px}
-.kbh span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kb{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;justify-content:center;gap:12px;padding:16px;border-radius:20px;background:var(--card)}
+.kb input{min-height:58px;font-size:18px;-webkit-appearance:none;appearance:none}
+.kbh{display:flex;align-items:center;gap:8px;font-size:17px;font-weight:600}
+.kbh span{flex:1;min-width:0;overflow-wrap:anywhere}
+.rc.kbon .mode,.rc.kbon #air,.rc.kbon #air-no,.rc.kbon .dpad{visibility:hidden}
 .kb .row .btn{flex:1}
 .fbar{position:fixed;z-index:51;left:50%;bottom:calc(12px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:4px;padding:4px;border-radius:22px;background:rgba(18,22,32,.85)}
 .fbar .btn{min-height:48px;width:60px;padding:0;background:transparent}
@@ -698,6 +700,11 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         </ol>
         <div class="row gap"><a id="air-a" class="btn acc" href="#https">Настроить</a><button id="air-copy" class="btn hide" onclick="airCopy()">Скопировать адрес</button></div>
       </div>
+      <div id="kb" class="kb hide" role="dialog" aria-label="Ввод текста на телевизоре">
+        <div class="kbh"><span id="kb-t">Ввод на телевизоре</span><button class="btn sm" id="kb-x" style="min-height:32px;padding:0 12px">Пульт</button></div>
+        <input id="kb-in" type="search" name="tvq" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="Текст для телевизора" aria-label="Текст для телевизора">
+        <div class="row gap"><button class="btn sm" id="kb-c">Отмена</button><button class="btn sm acc" id="kb-ok">Готово</button></div>
+      </div>
       </div>
       <div class="grp">
         <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
@@ -723,12 +730,6 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       </div>
     </div>
   </section>
-
-  <div id="kb" class="kb hide" role="dialog" aria-label="Клавиатура на телевизоре">
-    <div class="kbh"><span id="kb-t">Ввод на телевизоре</span><button class="btn sm" id="kb-x" style="min-height:32px;padding:0 10px">Скрыть</button></div>
-    <input id="kb-in" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="Нажмите сюда и печатайте">
-    <div class="row gap"><button class="btn sm" id="kb-c">Отмена</button><button class="btn sm acc" id="kb-ok">Готово</button></div>
-  </div>
 
   <div id="fbar" class="fbar hide">
     <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
@@ -842,32 +843,39 @@ document.querySelectorAll('[data-a]').forEach(b=>b.addEventListener('click',()=>
   api('/api/key',{action:a}).then(r=>{if(nav)fcNote(r);else if(r&&typeof r.fc==='number')fcSeen=r.fc;if(r&&r.kb)kbUi(r.kb)}).catch(()=>{});
   clearTimeout(tickSoon);tickSoon=setTimeout(tick,1200)}));   // playback may have started or stopped
 // Kodi's on-screen keyboard is slow to type on with a remote. While it is up the phone shows
-// its own field on top: what is typed there shows in Kodi's field as it goes, Done or the
-// phone's Enter confirms it on the TV, Cancel closes it there. Hide = type with the remote.
-let kbOpen=false, kbHid=false, kbT=null, kbSent='', kbQuiet=0;
+// its own text box in the air pad's place: what is typed there shows in Kodi's field as it
+// goes (and what is typed on the TV shows here), Done or the phone's Enter confirms it on the
+// TV, Cancel closes it there. «Пульт» = back to the pad, type with the remote.
+let kbOpen=false, kbHid=false, kbT=null, kbSent='', kbQuiet=0, kbTyped=0, kbPoll=null, kbPb=false;
+function kbPolling(on){
+  clearInterval(kbPoll);kbPoll=null;
+  if(on)kbPoll=setInterval(()=>{if(kbPb||document.hidden)return;kbPb=true;
+    api('/api/focus').then(r=>kbUi(r&&r.kb||null)).catch(()=>{}).finally(()=>kbPb=false)},700)
+}
 function kbUi(k){
   if(performance.now()<kbQuiet)return;   // a reply from before Done / Cancel
   const box=$('kb'), inp=$('kb-in');
   if(!k){
     if(kbOpen&&document.activeElement===inp)inp.blur();
-    kbOpen=kbHid=false;box.classList.add('hide');return
+    kbOpen=kbHid=false;box.classList.add('hide');box.closest('.rc').classList.remove('kbon');kbPolling(false);return
   }
   if(kbHid)return;
-  $('kb-t').textContent=k.title?'На телевизоре: '+k.title:'Ввод на телевизоре';
+  $('kb-t').textContent=k.title||'Ввод на телевизоре';
   inp.inputMode=k.num?'numeric':'text';
-  if(!kbOpen){kbOpen=true;inp.value=kbSent=k.text||'';box.classList.remove('hide')}
+  if(!kbOpen){kbOpen=true;inp.value=kbSent=k.text||'';box.classList.remove('hide');box.closest('.rc').classList.add('kbon');kbPolling(true)}
+  else if((k.text||'')!==inp.value&&!kbT&&performance.now()-kbTyped>1200)inp.value=kbSent=k.text||''
 }
 function kbSend(done){
-  clearTimeout(kbT);const v=$('kb-in').value;
+  clearTimeout(kbT);kbT=null;const v=$('kb-in').value;
   if(!done&&v===kbSent)return;kbSent=v;
   api('/api/text',{text:v,done:!!done}).catch(()=>{})
 }
 function kbClose(){kbUi(null);kbQuiet=performance.now()+1500;clearTimeout(tickSoon);tickSoon=setTimeout(tick,1600)}
-$('kb-in').addEventListener('input',()=>{clearTimeout(kbT);kbT=setTimeout(()=>kbSend(false),150)});
+$('kb-in').addEventListener('input',()=>{kbTyped=performance.now();clearTimeout(kbT);kbT=setTimeout(()=>kbSend(false),150)});
 $('kb-in').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();buzz();kbSend(true);kbClose()}});
 $('kb-ok').addEventListener('click',()=>{buzz();kbSend(true);kbClose()});
 $('kb-c').addEventListener('click',()=>{buzz();clearTimeout(kbT);api('/api/key',{action:'back'}).catch(()=>{});kbClose()});
-$('kb-x').addEventListener('click',()=>{kbHid=true;$('kb-in').blur();$('kb').classList.add('hide')});
+$('kb-x').addEventListener('click',()=>{kbHid=true;$('kb-in').blur();$('kb').classList.add('hide');$('kb').closest('.rc').classList.remove('kbon');kbPolling(false)});
 function keysUi(dead){
   const d=new Set(dead||[]);
   document.querySelectorAll('button[data-a]').forEach(b=>{b.disabled=d.has(b.dataset.a)})
