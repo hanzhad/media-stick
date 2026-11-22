@@ -420,6 +420,8 @@ def _status():
     s["bad_commit"] = read("/var/lib/media-stick/bad-commit")[:7]
     nxt = run(["systemctl", "show", "media-stick-update.timer", "-p", "NextElapseUSecRealtime", "--value"])[1]
     s["next_update"] = nxt
+    s["playing"] = ""
+    players = []
     try:
         players = kodi("Player.GetActivePlayers") or []
         s["kodi"] = "up"
@@ -430,6 +432,14 @@ def _status():
             s["playing"] = it.get("title") or it.get("label") or ""
     except OSError:
         s["kodi"] = "down"
+    # keys that do nothing now, greyed out on the page: in a web app only its own keys work;
+    # in Kodi the playback keys need something playing
+    if web_app_on():
+        s["dead"] = sorted(ACTIONS - set(WEB_KEYS) - {"home"})
+    elif not players:
+        s["dead"] = ["fastforward", "osd", "playpause", "rewind", "stop"]
+    else:
+        s["dead"] = []
     return s
 
 # ---------------- page ----------------
@@ -788,9 +798,18 @@ function buzz(){if(navigator.vibrate){navigator.vibrate(12);return}try{hapEl.cli
 let fcSeen=null;
 function fcNote(r){if(!r||typeof r.fc!=='number')return;if(fcSeen!==null&&r.fc!==fcSeen)buzz();fcSeen=r.fc}
 const NAV=new Set(['up','down','left','right']);
+// iPhone ticks only inside the tap itself (a tick after the reply is dropped), so there
+// every key ticks on the tap; Android ticks arrows only when the focus really moved.
+const late=!!navigator.vibrate;
+let tickSoon=null;
 document.querySelectorAll('[data-a]').forEach(b=>b.addEventListener('click',()=>{
-  const a=b.dataset.a, nav=NAV.has(a);if(!nav)buzz();
-  api('/api/key',{action:a}).then(r=>{if(nav)fcNote(r);else if(r&&typeof r.fc==='number')fcSeen=r.fc}).catch(()=>{})}));
+  const a=b.dataset.a, nav=late&&NAV.has(a);if(!nav)buzz();
+  api('/api/key',{action:a}).then(r=>{if(nav)fcNote(r);else if(r&&typeof r.fc==='number')fcSeen=r.fc}).catch(()=>{});
+  clearTimeout(tickSoon);tickSoon=setTimeout(tick,1200)}));   // playback may have started or stopped
+function keysUi(dead){
+  const d=new Set(dead||[]);
+  document.querySelectorAll('button[data-a]').forEach(b=>{b.disabled=d.has(b.dataset.a)})
+}
 document.addEventListener('touchstart',()=>{},{passive:true});  // iOS: enables :active
 let tab='remote', httpsUrl='';
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{
@@ -879,7 +898,7 @@ async function tick(){
     if(s.wifi.ap){ if($('setup').classList.contains('hide')){$('app').classList.add('hide');$('setup').classList.remove('hide');loadNets('s-ssid')} }
     else{$('setup').classList.add('hide');$('app').classList.remove('hide')}
     header(s.wifi.online,(s.wifi.ssid||'кабель')+' · '+s.temp+' · '+s.time); $('info').innerHTML=fmt(s);
-    httpsUrl=s.https_url||''; httpsCheck(); airUi();
+    httpsUrl=s.https_url||''; httpsCheck(); airUi(); keysUi(s.dead);
     pageCheck(s.page);
   }catch(e){header(false,'нет связи')}
 }
@@ -1395,12 +1414,21 @@ PAGE = PAGE.replace("@@PAGE_VER@@", PAGE_VER)
 
 def json_body(h):
     n = int(h.headers.get("Content-Length") or 0)
+    if n > 8192:   # not read to the end: this connection cannot carry another request
+        h.close_connection = True
     try:
         return json.loads(h.rfile.read(min(n, 8192)) or b"{}")
     except ValueError:
         return {}
 
 class H(BaseHTTPRequestHandler):
+    # Keep-alive: the air mouse sends ~30 requests a second and the focus poll ~8; with
+    # HTTP/1.0 each was a new connection and, over HTTPS, a new TLS handshake, which is real
+    # work for a Pi 3. Every reply carries Content-Length; an idle connection is dropped
+    # after 20 s.
+    protocol_version = "HTTP/1.1"
+    timeout = 20
+
     def log_message(self, *a):  # never log requests: bodies may carry a Wi-Fi password
         pass
 
@@ -1497,6 +1525,7 @@ class H(BaseHTTPRequestHandler):
             if wifi_status().get("ap"):
                 self.send_response(302)
                 self.send_header("Location", "http://10.42.0.1/")
+                self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
             return self.send("bad host", "text/plain", 421)
@@ -1543,6 +1572,7 @@ class H(BaseHTTPRequestHandler):
                 if a != "home" and a not in ACTIONS:
                     return self.send("unknown action", "text/plain", 400)
                 before = FOCUS.poll(0)
+                status_cache["t"] = 0   # what plays may change: the next status looks again
                 if a == "home":
                     kodi("GUI.ActivateWindow", {"window": "home"})
                 else:
