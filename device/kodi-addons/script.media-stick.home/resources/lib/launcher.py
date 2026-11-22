@@ -152,13 +152,24 @@ class Launcher(xbmcgui.WindowXML):
         except RuntimeError:
             return 0                 # no control has focus (the mouse left it nowhere)
 
+    _edging = False
+
     def onFocus(self, controlId):
-        if controlId in (EDGE_LEFT, EDGE_RIGHT):
+        if controlId in (EDGE_LEFT, EDGE_RIGHT) and not self._edging:
+            self._edging = True
             threading.Thread(target=self._edge, args=(controlId,), daemon=True).start()
 
     def _edge(self, edge):
+        try:
+            self._edge_loop(edge)
+        finally:
+            self.setProperty("edgemenu", "")
+            self._edging = False
+
+    def _edge_loop(self, edge):
         """While the pointer rests on an edge strip, step the row one card at a time; the
-        left strip at the row's start opens the menu instead."""
+        left strip at the row's start shows the menu instead (the strip keeps the focus, so
+        the pointer resting there does not make Kodi drop it and close the menu again)."""
         row = self.getControl(CAROUSEL)
         while self._focus() == edge:
             try:
@@ -169,8 +180,9 @@ class Launcher(xbmcgui.WindowXML):
             first = current - 1 - pos            # index of the first card in view
             if edge == EDGE_LEFT:
                 if first <= 0:
-                    self.setFocusId(DRAWER)
-                    return
+                    self.setProperty("edgemenu", "1")
+                    xbmc.sleep(100)
+                    continue
                 row.selectItem(first - 1)
             else:
                 if first + CARDS_IN_VIEW >= row.size():
@@ -182,7 +194,7 @@ class Launcher(xbmcgui.WindowXML):
         # after the mouse, focus can be nowhere or on an edge strip, where keys lead nowhere:
         # the first arrow or OK then brings it back to the row
         if action.getId() in NAV_ACTIONS and self._focus() not in (CAROUSEL, DRAWER):
-            self.setFocusId(CAROUSEL)
+            self.setFocusId(DRAWER if self.getProperty("edgemenu") else CAROUSEL)
             return
         if action.getId() in (ACTION_NAV_BACK, ACTION_PREVIOUS_MENU):
             try:
