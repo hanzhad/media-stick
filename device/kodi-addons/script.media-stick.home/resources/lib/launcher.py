@@ -14,6 +14,7 @@ from resources.lib.remote import RemoteDialog
 LOG = "[script.media-stick.home]"
 ACTION_PREVIOUS_MENU = 10
 ACTION_NAV_BACK = 92
+ACTION_CONTEXT_MENU = 117
 NAV_ACTIONS = {1, 2, 3, 4, 7}            # left, right, up, down, select
 CAROUSEL, DRAWER = 100, 201
 EDGE_LEFT, EDGE_RIGHT = 301, 302         # mouse-only strips at the screen edges
@@ -203,6 +204,9 @@ class Launcher(xbmcgui.WindowXML):
             except RuntimeError:
                 pass                 # no control has focus
             return                   # Home never closes itself
+        if action.getId() == ACTION_CONTEXT_MENU:   # the remote's menu key: menu in, menu out
+            self.setFocusId(CAROUSEL if self._focus() == DRAWER else DRAWER)
+            return
         super().onAction(action)
 
     def onClick(self, controlId):
