@@ -14,6 +14,7 @@ that header to a cross-site request without a preflight this server never answer
 another web page cannot press buttons here. The Host header is checked too, against
 DNS rebinding.
 """
+import hashlib
 import glob
 import json
 import math
@@ -362,6 +363,7 @@ def _status():
     s["disk_free_gb"] = round(st.f_bavail * st.f_frsize / 1e9, 1)
     s["ip"] = run(["hostname", "-I"])[1].split()
     s["https_url"] = read(PANEL_URL)
+    s["page"] = PAGE_VER
     s["commit"] = run(["git", "-C", REPO, "log", "-1", "--format=%h %s"])[1]
     s["bad_commit"] = read("/var/lib/media-stick/bad-commit")[:7]
     nxt = run(["systemctl", "show", "media-stick-update.timer", "-p", "NextElapseUSecRealtime", "--value"])[1]
@@ -705,6 +707,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 </div>
 
 <script>
+const PAGE_VER='@@PAGE_VER@@';   // filled in by the server: a hash of this page
 const $=id=>document.getElementById(id);
 const wide=()=>matchMedia('(min-width:900px)').matches;
 const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -786,12 +789,24 @@ const fmt=s=>[
 ].map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
 
 function header(ok,text){$('hdr-dot').className='dot'+(ok?'':' bad');$('hdr-t').textContent=text}
+// A phone keeps a page (above all a home-screen app) in memory for days, so after an update
+// it would go on running the old code. The status carries the hash of the page the panel
+// serves now; when it differs, reload, but not while a finger is on the air pad or the
+// keyboard is open, and at most once a minute.
+function pageCheck(v){
+  if(!v||v===PAGE_VER||PAGE_VER.charAt(0)==='@'||airHeld)return;
+  const a=document.activeElement;if(a&&(a.tagName==='INPUT'||a.tagName==='SELECT'))return;
+  try{const t=+sessionStorage.getItem('reloadAt')||0;if(Date.now()-t<60000)return;sessionStorage.setItem('reloadAt',String(Date.now()))}catch(e){}
+  location.reload()
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick()});   // back to the app: check at once
 async function tick(){
   try{const s=await api('/api/status');
     if(s.wifi.ap){ if($('setup').classList.contains('hide')){$('app').classList.add('hide');$('setup').classList.remove('hide');loadNets('s-ssid')} }
     else{$('setup').classList.add('hide');$('app').classList.remove('hide')}
     header(s.wifi.online,(s.wifi.ssid||'кабель')+' · '+s.temp+' · '+s.time); $('info').innerHTML=fmt(s);
     httpsUrl=s.https_url||''; httpsCheck(); airUi();
+    pageCheck(s.page);
   }catch(e){header(false,'нет связи')}
 }
 tick(); setInterval(tick,5000);
@@ -1169,6 +1184,8 @@ try{if(localStorage.getItem('tab')==='air'&&!location.hash)document.querySelecto
 document.addEventListener('gesturestart',e=>e.preventDefault());
 document.addEventListener('dblclick',e=>e.preventDefault());
 </script></body></html>"""
+PAGE_VER = hashlib.sha256(PAGE.encode()).hexdigest()[:12]
+PAGE = PAGE.replace("@@PAGE_VER@@", PAGE_VER)
 
 
 # ---------------- server ----------------
