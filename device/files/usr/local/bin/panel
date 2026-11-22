@@ -1084,6 +1084,7 @@ hashGo();
 const airOk=window.isSecureContext&&'DeviceMotionEvent' in window;
 const AIR_GAP_MS=33, AIR_MAX=0.25, AIR_DZ=2.5, AIR_SMOOTH=0.5, AIR_DEG_FULL=45, TAP_MS=350, TAP_DEG=5;
 const AIR_HINT='Отпустите — указка остановится.';
+let airG=null, airGs=1;   // smoothed gravity while held, and its sign
 let airHeld=false, airOn=false, airK=5, airAcc={x:0,y:0}, airSm={x:0,y:0}, airBusy=false, airLast=0,
     airTimer=null, airClick=false, airPerm=null, airT0=0, airTPrev=0, airMoved=0, airGot=false, airChk=null, airNoteT=null;
 try{const v=parseInt(localStorage.getItem('airk2'),10);if(v>=1&&v<=10)airK=v}catch(e){}
@@ -1184,13 +1185,34 @@ function onMotion(e){
   let dt=airTPrev?(now-airTPrev)/1000:0;airTPrev=now;
   if(dt<=0)return;if(dt>0.1)dt=0.1;
   const dz=v=>Math.abs(v)<AIR_DZ?0:v-Math.sign(v)*AIR_DZ;
-  // rotationRate per the spec (Chrome): alpha about the screen normal (yaw), beta about the
-  // short axis (pitch), gamma about the long axis (roll). iOS Safari labels them alpha = short
-  // axis, beta = long axis, gamma = normal. Horizontal follows both the roll and the yaw
-  // (tilt or turn left = left), vertical the pitch (top up = up). deg/s; left and up negative.
-  const ios=airAskNeeded, pitch=ios?r.alpha:r.beta, roll=ios?r.beta:r.gamma, yaw=ios?r.gamma:r.alpha;
-  airSm.x+=AIR_SMOOTH*(dz(roll)-dz(yaw)-airSm.x);
-  airSm.y+=AIR_SMOOTH*(-dz(pitch)-airSm.y);
+  // rotationRate per the spec (Chrome): alpha about the screen normal (z), beta about the
+  // short axis (x), gamma about the long axis (y). iOS Safari labels them alpha = x, beta = y,
+  // gamma = z. w = the turn rate as a vector in the phone's own frame, deg/s.
+  const ios=airAskNeeded, w=ios?[r.alpha,r.beta,r.gamma]:[r.beta,r.gamma,r.alpha];
+  // Like a laser pointer: the dot follows the aim, the line out of the top edge p = (0,1,0).
+  // It swings at v = w x p = (-wz, 0, wx); a twist about the aim (wy) drops out, whatever
+  // angle the phone is held at. v is split along the room's horizontal across the aim
+  // (right = p x up) and the vertical across it (q = right x p). "Up" in the phone's frame
+  // comes from gravity (smoothed accelerationIncludingGravity); its sign differs between
+  // browsers, so it is fixed at each press from the screen side: while aiming, the screen
+  // faces up or towards you, never the floor.
+  let xr, yr;
+  const a=e.accelerationIncludingGravity;
+  if(a&&a.x!=null&&a.y!=null&&a.z!=null){
+    const v=[a.x,a.y,a.z];
+    if(!airG){airG=v;airGs=a.z<0?-1:1}else for(let i=0;i<3;i++)airG[i]+=0.15*(v[i]-airG[i]);
+    const n=Math.hypot(airG[0],airG[1],airG[2]);
+    if(n>3){
+      const u=airG.map(c=>c*airGs/n);               // up, unit vector, phone frame
+      let rx=u[2], rz=-u[0]; const rn=Math.hypot(rx,rz);   // right = top edge (0,1,0) x up
+      if(rn>0.2){rx/=rn;rz/=rn;
+        xr=w[0]*rz-w[2]*rx;                         // v.right, + = right
+        yr=w[0]*rx+w[2]*rz}                         // v.q, + = up
+    }
+  }
+  if(xr===undefined){xr=-w[2];yr=w[0]}              // no gravity (or aimed straight up): own axes
+  airSm.x+=AIR_SMOOTH*(dz(xr)-airSm.x);             // deg/s; left and up are negative
+  airSm.y+=AIR_SMOOTH*(-dz(yr)-airSm.y);
   const k=Math.pow(1.3,airK-9)/AIR_DEG_FULL;   // screen widths per degree; 5 = the old lowest
   airAcc.x+=airSm.x*dt*k;airAcc.y+=airSm.y*dt*k*(16/9);   // the same angle is more of a short side
   airMoved+=Math.hypot(airSm.x,airSm.y)*dt;
@@ -1228,7 +1250,7 @@ pad.addEventListener('pointerdown',e=>{
   if(airHeld||(e.pointerType==='mouse'&&e.button!==0))return;
   e.preventDefault();
   try{pad.setPointerCapture(e.pointerId)}catch(_){}
-  airHeld=true;airT0=performance.now();airTPrev=0;airMoved=0;airGot=false;airSm.x=airSm.y=0;
+  airHeld=true;airT0=performance.now();airTPrev=0;airMoved=0;airGot=false;airSm.x=airSm.y=0;airG=null;
   pad.classList.add('on');buzz();
   addEventListener('devicemotion',onMotion);airOn=true;
   airChk=setTimeout(()=>{if(airHeld&&!airGot)airNote('Датчик движения не отвечает на этом устройстве.',1)},1500)
