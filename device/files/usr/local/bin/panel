@@ -648,7 +648,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         <button class="btn" data-a="playpause" aria-label="Пауза"><svg class="i"><use href="#i-pp"/></svg></button>
       </div>
       <div id="shot-ms" class="cap"></div>
-      <div id="shot-h" class="cap" title="Удерживайте — контекстное меню; проведите пальцем вверх или вниз — прокрутка">Нажмите на картинку, чтобы кликнуть на телевизоре</div>
+      <div id="shot-h" class="cap" title="Удерживайте — контекстное меню; проведите пальцем вверх или вниз — прокрутка, влево или вправо — по карточкам">Нажмите на картинку, чтобы кликнуть на телевизоре</div>
     </div>
   </section>
 
@@ -856,8 +856,10 @@ function frame(){
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&live)setLive(false)});
 
 // Tap on the picture = click at that spot on the TV; hold = right click (Kodi's context
-// menu); drag up or down = scroll. Spots are fractions of the picture itself, not of its box
-// (object-fit leaves bars). A fresh frame follows each action, live or not.
+// menu); drag up or down = scroll (wheel at that spot); drag sideways = left/right keys, one
+// per card width (the wheel is no good on the home carousel: Kodi focuses whatever card is
+// under the cursor). Spots are fractions of the picture itself, not of its box (object-fit
+// leaves bars). A fresh frame follows each action, live or not.
 const LONG_MS=500, SLOP_PX=10, STEP_PX=36, REFRESH_MS=380;
 const HINT=$('shot-h').textContent, box=$('shot-box');
 let ptrNote=null, g=null, lastType='', spend=0, sbusy=false, spos=null;
@@ -884,6 +886,17 @@ function tap(action,cx,cy){
   if(!live)setLive(true);  // the first tap also starts the live picture (same limits as the button)
   ptr(action,p.x,p.y).then(()=>setTimeout(frame,REFRESH_MS)).catch(ptrErr)
 }
+let kpend=0, kbusy=false;   // >0: right presses owed, <0: left
+function flushKeys(){
+  if(kbusy||!kpend)return;
+  const right=kpend>0; kpend+=right?-1:1; kbusy=true;
+  api('/api/key',{action:right?'right':'left'}).then(()=>setTimeout(frame,REFRESH_MS)).catch(ptrErr)
+    .finally(()=>{kbusy=false;flushKeys()})
+}
+function cardPx(){   // one home-screen card (about 252 of 1920 px) in picture pixels
+  const r=$('shot').getBoundingClientRect();
+  return Math.max(28,Math.min(r.width,r.height*16/9)*252/1920)
+}
 function flushScroll(){
   if(sbusy||!spend||!spos)return;
   const d=spend; spend=0; sbusy=true;
@@ -893,7 +906,7 @@ function flushScroll(){
 box.addEventListener('pointerdown',e=>{
   lastType=e.pointerType;
   if(g||(e.pointerType==='mouse'&&e.button!==0))return;
-  g={id:e.pointerId,x:e.clientX,y:e.clientY,ly:e.clientY,acc:0,moved:false,scroll:false,long:false,t:0};
+  g={id:e.pointerId,x:e.clientX,y:e.clientY,lx:e.clientX,ly:e.clientY,acc:0,moved:false,scroll:false,side:false,long:false,t:0};
   try{box.setPointerCapture(e.pointerId)}catch(_){}
   // a mouse has its own right button (contextmenu below); only a finger needs the hold
   if(e.pointerType!=='mouse')g.t=setTimeout(()=>{if(g&&!g.moved){g.long=true;tap('right',g.x,g.y)}},LONG_MS)
@@ -903,8 +916,14 @@ box.addEventListener('pointermove',e=>{
   const dx=e.clientX-g.x, dy=e.clientY-g.y;
   if(!g.moved&&Math.hypot(dx,dy)>SLOP_PX){
     g.moved=true; clearTimeout(g.t);
-    const p=Math.abs(dy)>Math.abs(dx)?spot(g.x,g.y):null;
-    if(p){g.scroll=true;spos=p;if(!live)setLive(true)}
+    const p=spot(g.x,g.y);
+    if(p&&Math.abs(dy)>Math.abs(dx)){g.scroll=true;spos=p;if(!live)setLive(true)}
+    else if(p){g.side=true;g.lx=g.x;if(!live)setLive(true)}
+  }
+  if(g.side){  // finger left = the row moves left = the next card (right key)
+    g.acc+=e.clientX-g.lx; g.lx=e.clientX;
+    const c=cardPx(), n=Math.trunc(g.acc/c);
+    if(n){g.acc-=n*c;kpend-=n;buzz();flushKeys()}
   }
   if(g.scroll){  // finger down = wheel up (the view follows the finger)
     g.acc+=e.clientY-g.ly; g.ly=e.clientY;
