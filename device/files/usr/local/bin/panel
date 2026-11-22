@@ -468,6 +468,7 @@ a.btn.acc{color:var(--bg)}
 input[type=range]{padding:0;min-height:36px;border:0;background:transparent;accent-color:#fff}
 .pad{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;flex:1;min-height:0;border-radius:24px;background:var(--card2);color:var(--dim);text-align:center;padding:12px;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;transition:background .08s,color .08s}
 .pad.on{background:#fff;color:var(--bg)}
+.pad.ask{border:2px dashed rgba(255,255,255,.25)}
 .steps{margin:0 0 4px;padding-left:22px;color:var(--dim);font-size:15px}
 .steps li{margin:8px 0}
 .sub{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0 4px;padding:10px 12px;border-radius:14px;background:var(--bg);color:#fff;font-size:19px;font-weight:600}
@@ -581,7 +582,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   <section id="t-air" data-tab="air" class="hide">
     <div class="card">
       <div id="air" class="hide">
-        <div id="air-pad" class="pad" role="button" aria-label="Аэромышь: удерживайте и наводите телефон на телевизор"><svg class="i"><use href="#i-air"/></svg><span>Удерживайте и наводите телефон на&nbsp;телевизор</span><small>Короткое касание — клик</small></div>
+        <div id="air-pad" class="pad" role="button" aria-label="Аэромышь: удерживайте и наводите телефон на телевизор"><svg class="i"><use href="#i-air"/></svg><span id="air-pt">Удерживайте и наводите телефон на&nbsp;телевизор</span><small id="air-ps">Короткое касание — клик</small></div>
         <div class="airk"><label for="air-k">Чувствительность</label><input id="air-k" type="range" min="1" max="10" step="1" value="5"></div>
         <div id="air-h" class="cap"></div>
       </div>
@@ -1066,11 +1067,23 @@ function onMotion(e){
   airMoved+=Math.hypot(airSm.x,airSm.y)*dt;
   airPump()
 }
-function airAsk(){  // iOS 13+: ask inside the user's gesture; elsewhere there is nothing to ask
-  const D=window.DeviceMotionEvent;
-  if(!D||typeof D.requestPermission!=='function'){airPerm=true;return Promise.resolve(true)}
-  if(airPerm!==null)return Promise.resolve(airPerm);
-  return D.requestPermission().then(r=>airPerm=(r==='granted'),()=>airPerm=false)
+// iOS 13+ gives motion data only after DeviceMotionEvent.requestPermission(), and shows its
+// prompt only when that call comes from a tap ("click"/"touchend"): from pointerdown it is
+// refused silently. So on iOS the pad first works as a button that asks, and only after
+// "granted" as the hold-and-aim pad. A refusal iOS keeps until the page is opened anew.
+const airAskNeeded=!!(window.DeviceMotionEvent&&typeof DeviceMotionEvent.requestPermission==='function');
+function airPadUi(){
+  const ask=airAskNeeded&&airPerm!==true;
+  $('air-pad').classList.toggle('ask',ask);
+  $('air-pt').textContent=ask?'Нажмите, чтобы включить датчик движения':'Удерживайте и наводите телефон на телевизор';
+  $('air-ps').textContent=ask?(airPerm===false?'Доступ был запрещён':'Телефон спросит разрешение'):'Короткое касание — клик';
+}
+function airAsk(){   // inside a click handler only
+  DeviceMotionEvent.requestPermission().then(r=>{
+    airPerm=(r==='granted');airPadUi();
+    if(airPerm){buzz();airNote('Готово. Теперь удерживайте площадку и наводите телефон.')}
+    else airNote('Телефон не дал доступ к датчику движения. Закройте эту вкладку (или приложение) и откройте пульт заново — запрос появится снова.',1)
+  },e=>airNote('Запрос не прошёл: '+(e&&e.message||e),1))
 }
 function airStop(cancel){
   if(!airHeld)return;
@@ -1080,22 +1093,19 @@ function airStop(cancel){
   if(!cancel&&performance.now()-airT0<TAP_MS&&airMoved<TAP_DEG){airClick=true;buzz();airPump()}
 }
 const pad=$('air-pad');
+pad.addEventListener('click',()=>{if(airAskNeeded&&airPerm!==true)airAsk()});
 pad.addEventListener('pointerdown',e=>{
+  if(airAskNeeded&&airPerm!==true)return;     // the click that follows asks
   if(airHeld||(e.pointerType==='mouse'&&e.button!==0))return;
   e.preventDefault();
   try{pad.setPointerCapture(e.pointerId)}catch(_){}
   airHeld=true;airT0=performance.now();airTPrev=0;airMoved=0;airGot=false;airSm.x=airSm.y=0;
   pad.classList.add('on');buzz();
-  const first=airPerm===null&&window.DeviceMotionEvent&&typeof DeviceMotionEvent.requestPermission==='function';
-  airAsk().then(ok=>{
-    if(!ok){airStop(true);airNote('Нет доступа к датчикам движения: разрешите его в настройках браузера.',1);return}
-    if(first){airStop(true);airNote('Доступ разрешён. Теперь удерживайте площадку и наводите телефон.');return}
-    if(!airHeld||airOn)return;
-    addEventListener('devicemotion',onMotion);airOn=true;
-    airChk=setTimeout(()=>{if(airHeld&&!airGot)airNote('Датчик движения не отвечает на этом устройстве.',1)},1500)
-  })
+  addEventListener('devicemotion',onMotion);airOn=true;
+  airChk=setTimeout(()=>{if(airHeld&&!airGot)airNote('Датчик движения не отвечает на этом устройстве.',1)},1500)
 });
 pad.addEventListener('pointerup',()=>airStop(false));
+airPadUi();
 pad.addEventListener('pointercancel',()=>airStop(true));
 pad.addEventListener('contextmenu',e=>e.preventDefault());
 document.addEventListener('visibilitychange',()=>{if(document.hidden)airStop(true)});
