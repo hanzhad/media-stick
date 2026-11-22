@@ -16,7 +16,7 @@ install -d -m 0755 /var/lib/media-stick
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
 pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl unzip
-      chromium libwidevinecdm0 cage wtype grim
+      chromium libwidevinecdm0 cage wtype grim qrencode
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done

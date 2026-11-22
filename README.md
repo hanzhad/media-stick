@@ -37,7 +37,7 @@ Anyone on the home network can open it, like a Chromecast. A browser on another 
 
 ## On the TV
 
-Kodi opens on a row of tiles: SWEET.TV, YouTube, Netflix, Disney+, Prime Video, HBO Max, Plex, Add-ons. The look is the Fire TV–style skin `skin.ftv`; after 5 idle minutes the screensaver shows Bing photos. Kodi's own add-on catalogue (Add-ons tile) installs more.
+Kodi opens on a row of tiles: SWEET.TV, YouTube, Netflix, Disney+, Prime Video, HBO Max, Plex, Add-ons. The look is the Fire TV–style skin `skin.ftv`; after 5 idle minutes the screensaver shows Bing photos. A QR code in the bottom-right corner of the home screen opens the device's page on a phone (by IP address: many Android phones cannot resolve `mediastick.local`). Kodi's own add-on catalogue (Add-ons tile) installs more.
 
 Netflix, Disney+, Prime Video and HBO Max are their websites in Chromium with Widevine, full screen, with Kodi stopped while they run (`web-app@<name>.service`). The page's remote types into the browser meanwhile; its Home button closes the browser and Kodi comes back. Expect 720p at most and a slower interface than Kodi: this is a Pi 3B+.
 
