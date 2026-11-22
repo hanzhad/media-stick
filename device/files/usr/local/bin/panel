@@ -108,6 +108,7 @@ class FocusWatch:
         self.buf = b""
         self.rid = 0
         self.sig = None
+        self.win = None
         self.n = 0
         self.t = 0.0
 
@@ -154,7 +155,8 @@ class FocusWatch:
                     self._close()
                     if attempt == 2:
                         return self.n
-            sig = "%s|%s" % ((r.get("currentwindow") or {}).get("id"), (r.get("currentcontrol") or {}).get("label"))
+            self.win = (r.get("currentwindow") or {}).get("id")
+            sig = "%s|%s" % (self.win, (r.get("currentcontrol") or {}).get("label"))
             if self.sig is not None and sig != self.sig:
                 self.n += 1
             self.sig, self.t = sig, time.monotonic()
@@ -171,6 +173,27 @@ class FocusWatch:
         return n
 
 FOCUS = FocusWatch()
+
+KB_WINDOWS = {10103, 10109}   # Kodi's on-screen keyboard and its number pad
+
+def kb_state(win=None):
+    """Kodi's on-screen keyboard while it is up: its heading and the text typed so far, so the
+    phone can offer its own keyboard instead. None when no keyboard is up."""
+    if win is None:
+        win = ((kodi("GUI.GetProperties", {"properties": ["currentwindow"]}) or {})
+               .get("currentwindow") or {}).get("id")
+    if win not in KB_WINDOWS:
+        return None
+    r = kodi("XBMC.GetInfoLabels", {"labels": ["Control.GetLabel(311)", "Control.GetLabel(312).index(1)"]}) or {}
+    return {"title": r.get("Control.GetLabel(311)", ""), "text": r.get("Control.GetLabel(312).index(1)", ""),
+            "num": win == 10109}
+
+def kb_now():
+    """kb_state from the window FocusWatch last saw: nothing more is asked unless it is a keyboard."""
+    try:
+        return kb_state(FOCUS.win) if FOCUS.win in KB_WINDOWS else None
+    except OSError:
+        return None
 
 def read(path, default=""):
     try:
@@ -421,6 +444,7 @@ def _status():
     nxt = run(["systemctl", "show", "media-stick-update.timer", "-p", "NextElapseUSecRealtime", "--value"])[1]
     s["next_update"] = nxt
     s["playing"] = ""
+    s["kb"] = None
     players = []
     try:
         players = kodi("Player.GetActivePlayers") or []
@@ -430,6 +454,7 @@ def _status():
                                            "properties": ["title", "showtitle"]}) or {}
             it = item.get("item", {})
             s["playing"] = it.get("title") or it.get("label") or ""
+        s["kb"] = kb_state()
     except OSError:
         s["kodi"] = "down"
     # keys that do nothing now, greyed out on the page: in a web app only its own keys work;
@@ -515,6 +540,10 @@ body.rotm .fbar{top:calc(12px + env(safe-area-inset-top));bottom:auto}
 body.rot .fhint{display:none}
 #f-flip{display:none}body.rot #f-flip{display:inline-flex}
 body.fs{overflow:hidden}
+.kb{position:fixed;z-index:60;left:50%;top:calc(12px + env(safe-area-inset-top));transform:translateX(-50%);width:min(520px,calc(100% - 24px));display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:20px;background:var(--card);box-shadow:0 12px 40px rgba(0,0,0,.55);border:1px solid var(--line)}
+.kbh{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:14px}
+.kbh span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kb .row .btn{flex:1}
 .fbar{position:fixed;z-index:51;left:50%;bottom:calc(12px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:4px;padding:4px;border-radius:22px;background:rgba(18,22,32,.85)}
 .fbar .btn{min-height:48px;width:60px;padding:0;background:transparent}
 .fbar .btn:active{background:#fff}
@@ -695,6 +724,12 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
     </div>
   </section>
 
+  <div id="kb" class="kb hide" role="dialog" aria-label="Клавиатура на телевизоре">
+    <div class="kbh"><span id="kb-t">Ввод на телевизоре</span><button class="btn sm" id="kb-x" style="min-height:32px;padding:0 10px">Скрыть</button></div>
+    <input id="kb-in" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="Нажмите сюда и печатайте">
+    <div class="row gap"><button class="btn sm" id="kb-c">Отмена</button><button class="btn sm acc" id="kb-ok">Готово</button></div>
+  </div>
+
   <div id="fbar" class="fbar hide">
     <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
     <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
@@ -796,7 +831,7 @@ function buzz(){if(navigator.vibrate){navigator.vibrate(12);return}try{hapEl.cli
 // The panel counts focus changes on the TV (fc). Arrows and swipes buzz only when the focus
 // really moved there (none at the end of a row); the other keys buzz on the tap itself.
 let fcSeen=null;
-function fcNote(r){if(!r||typeof r.fc!=='number')return;if(fcSeen!==null&&r.fc!==fcSeen)buzz();fcSeen=r.fc}
+function fcNote(r){if(r&&r.kb)kbUi(r.kb);if(!r||typeof r.fc!=='number')return;if(fcSeen!==null&&r.fc!==fcSeen)buzz();fcSeen=r.fc}
 const NAV=new Set(['up','down','left','right']);
 // iPhone ticks only inside the tap itself (a tick after the reply is dropped), so there
 // every key ticks on the tap; Android ticks arrows only when the focus really moved.
@@ -804,8 +839,35 @@ const late=!!navigator.vibrate;
 let tickSoon=null;
 document.querySelectorAll('[data-a]').forEach(b=>b.addEventListener('click',()=>{
   const a=b.dataset.a, nav=late&&NAV.has(a);if(!nav)buzz();
-  api('/api/key',{action:a}).then(r=>{if(nav)fcNote(r);else if(r&&typeof r.fc==='number')fcSeen=r.fc}).catch(()=>{});
+  api('/api/key',{action:a}).then(r=>{if(nav)fcNote(r);else if(r&&typeof r.fc==='number')fcSeen=r.fc;if(r&&r.kb)kbUi(r.kb)}).catch(()=>{});
   clearTimeout(tickSoon);tickSoon=setTimeout(tick,1200)}));   // playback may have started or stopped
+// Kodi's on-screen keyboard is slow to type on with a remote. While it is up the phone shows
+// its own field on top: what is typed there shows in Kodi's field as it goes, Done or the
+// phone's Enter confirms it on the TV, Cancel closes it there. Hide = type with the remote.
+let kbOpen=false, kbHid=false, kbT=null, kbSent='', kbQuiet=0;
+function kbUi(k){
+  if(performance.now()<kbQuiet)return;   // a reply from before Done / Cancel
+  const box=$('kb'), inp=$('kb-in');
+  if(!k){
+    if(kbOpen&&document.activeElement===inp)inp.blur();
+    kbOpen=kbHid=false;box.classList.add('hide');return
+  }
+  if(kbHid)return;
+  $('kb-t').textContent=k.title?'На телевизоре: '+k.title:'Ввод на телевизоре';
+  inp.inputMode=k.num?'numeric':'text';
+  if(!kbOpen){kbOpen=true;inp.value=kbSent=k.text||'';box.classList.remove('hide')}
+}
+function kbSend(done){
+  clearTimeout(kbT);const v=$('kb-in').value;
+  if(!done&&v===kbSent)return;kbSent=v;
+  api('/api/text',{text:v,done:!!done}).catch(()=>{})
+}
+function kbClose(){kbUi(null);kbQuiet=performance.now()+1500;clearTimeout(tickSoon);tickSoon=setTimeout(tick,1600)}
+$('kb-in').addEventListener('input',()=>{clearTimeout(kbT);kbT=setTimeout(()=>kbSend(false),150)});
+$('kb-in').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();buzz();kbSend(true);kbClose()}});
+$('kb-ok').addEventListener('click',()=>{buzz();kbSend(true);kbClose()});
+$('kb-c').addEventListener('click',()=>{buzz();clearTimeout(kbT);api('/api/key',{action:'back'}).catch(()=>{});kbClose()});
+$('kb-x').addEventListener('click',()=>{kbHid=true;$('kb-in').blur();$('kb').classList.add('hide')});
 function keysUi(dead){
   const d=new Set(dead||[]);
   document.querySelectorAll('button[data-a]').forEach(b=>{b.disabled=d.has(b.dataset.a)})
@@ -898,7 +960,7 @@ async function tick(){
     if(s.wifi.ap){ if($('setup').classList.contains('hide')){$('app').classList.add('hide');$('setup').classList.remove('hide');loadNets('s-ssid')} }
     else{$('setup').classList.add('hide');$('app').classList.remove('hide')}
     header(s.wifi.online,(s.wifi.ssid||'кабель')+' · '+s.temp+' · '+s.time); $('info').innerHTML=fmt(s);
-    httpsUrl=s.https_url||''; httpsCheck(); airUi(); keysUi(s.dead);
+    httpsUrl=s.https_url||''; httpsCheck(); airUi(); keysUi(s.dead);kbUi(s.kb);
     pageCheck(s.page);
   }catch(e){header(false,'нет связи')}
 }
@@ -1280,7 +1342,7 @@ function airPump(){
   }else if(airClick){airClick=false;body={action:'click',here:true}}
   if(!body)return;
   airBusy=true;airLast=performance.now();
-  api('/api/pointer',body).then(()=>{if(body.action==='click'&&live)setTimeout(frame,REFRESH_MS)})
+  api('/api/pointer',body).then(()=>{if(body.action==='click'){if(live)setTimeout(frame,REFRESH_MS);clearTimeout(tickSoon);tickSoon=setTimeout(tick,1200)}})
     .catch(e=>{airAcc.x=airAcc.y=0;airClick=false;airLast=performance.now()+1000;airNote(e.message||'Не получилось',1)})
     .finally(()=>{airBusy=false;if(airClick||Math.abs(airAcc.x)>1e-5||Math.abs(airAcc.y)>1e-5)airPump()})
 }
@@ -1538,7 +1600,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/https":
             return self.send(https_status())
         if p == "/api/focus":   # polled by the air pad while it is held
-            return self.send({"fc": FOCUS.poll()})
+            return self.send({"fc": FOCUS.poll(), "kb": kb_now()})
         if p == "/api/wifi/scan":
             rc, out = run(["sudo", "-n", "/usr/local/bin/wifi-setup", "scan"], timeout=40)
             return self.send(out or "[]")
@@ -1578,12 +1640,13 @@ class H(BaseHTTPRequestHandler):
                     kodi("GUI.ActivateWindow", {"window": "home"})
                 else:
                     kodi("Input.ExecuteAction", {"action": a})
-                return self.send({"ok": True, "fc": FOCUS.after(before)})
+                return self.send({"ok": True, "fc": FOCUS.after(before), "kb": kb_now()})
             if p == "/api/text" and web_app_on():
                 web_type(str(b.get("text", ""))[:200])
                 return self.send({"ok": True})
             if p == "/api/text":
-                kodi("Input.SendText", {"text": str(b.get("text", ""))[:200], "done": True})
+                # done false: the text shows in Kodi's keyboard as it is typed on the phone
+                kodi("Input.SendText", {"text": str(b.get("text", ""))[:200], "done": b.get("done", True) is not False})
                 return self.send({"ok": True})
         except OSError:
             return self.send("Kodi не отвечает", "text/plain", 503)
