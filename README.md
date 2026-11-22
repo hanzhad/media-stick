@@ -21,6 +21,8 @@ A network cable (or the Mac's Internet Sharing) also works and skips step 3.
 | what the TV shows, as a PNG | `tools/screenshot.sh out.png` |
 | remote, live screen, device info, Wi-Fi | http://mediastick.local |
 | cast a video from a phone or PC | "Cast to device" / any UPnP-DLNA app; AirPlay (audio) from iOS |
+| add a Kodi add-on for good | add its id to `device/kodi-addons.want`, run `python3 tools/kodi-addons-lock.py`, commit |
+| change the home-screen tiles | `device/kodi-favourites.xml` |
 | Kodi phone app (Kore, Official Kodi Remote, Yatse) | finds `mediastick` by itself; user `kodi`, password: `ssh … sudo grep KODI_WEB /etc/media-stick/secrets.env` |
 
 ## The page
@@ -32,6 +34,12 @@ http://mediastick.local is the one place to use the device from:
 - wide screen → screen, remote, device info and settings side by side; the keyboard works as a remote
 
 Anyone on the home network can open it, like a Chromecast. A browser on another site cannot press its buttons (every change needs a custom header that cross-site requests cannot carry).
+
+## On the TV
+
+Kodi opens on a row of tiles: SWEET.TV, YouTube, Netflix, Disney+, Prime Video, HBO Max, Plex, Add-ons. The look is the Fire TV–style skin `skin.ftv`; after 5 idle minutes the screensaver shows Bing photos. Kodi's own add-on catalogue (Add-ons tile) installs more.
+
+Netflix, Disney+, Prime Video and HBO Max are their websites in Chromium with Widevine, full screen, with Kodi stopped while they run (`web-app@<name>.service`). The page's remote types into the browser meanwhile; its Home button closes the browser and Kodi comes back. Expect 720p at most and a slower interface than Kodi: this is a Pi 3B+.
 
 ## Self-update
 

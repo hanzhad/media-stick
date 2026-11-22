@@ -16,6 +16,7 @@ install -d -m 0755 /var/lib/media-stick
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
 pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect ffmpeg git jq curl unzip
+      chromium libwidevinecdm0 cage wtype grim
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
@@ -79,92 +80,61 @@ if [ "$(cat "$dropin" 2>/dev/null)" != "$want" ] || [[ " ${changed_units[*]-} " 
 fi
 systemctl is-active -q media-stick-update.timer || systemctl start media-stick-update.timer
 for unit in kodi.service panel.service; do
+  # Kodi is stopped on purpose while a web app has the screen.
+  [ $unit = kodi.service ] && systemctl is-active -q 'web-app@*' && continue
   if [[ " ${changed_units[*]-} " == *" $unit "* ]] || ! systemctl is-active -q "$unit"; then
     systemctl restart "$unit"
   fi
 done
 
-log "kodi settings"
-for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping 2>/dev/null | grep -q pong && break; sleep 2; done
-# kset <setting> <json value>: a failure is logged, never fatal (a setting can be
-# missing from this Kodi build, e.g. AirPlay).
-kset() {
-  kodi-rpc Settings.SetSettingValue "$(jq -nc --arg s "$1" --argjson v "$2" '{setting:$s,value:$v}')" >/dev/null \
-    || log "  kodi refused $1"
-}
-kset debug.screenshotpath '"/run/media-stick/shots/"'
-for a in inputstream.adaptive inputstream.ffmpegdirect; do
-  kodi-rpc Addons.GetAddonDetails "{\"addonid\":\"$a\",\"properties\":[\"enabled\"]}" | grep -q '"enabled":true' \
-    || { kodi-rpc Addons.SetAddonEnabled "{\"addonid\":\"$a\",\"enabled\":true}" >/dev/null || true; kodi-rpc Input.Back >/dev/null || true; }
-done
-# Casting and phone apps. Written into guisettings.xml with Kodi stopped, not over
-# RPC: switching some of these over RPC puts a confirmation dialog on the TV and
-# hangs the call.
-#  - UPnP/DLNA renderer: "Cast to device" on Windows, BubbleUPnP and the like
-#  - AirPlay from iOS, announced over zeroconf
+log "kodi settings and add-ons"
+wait_kodi() { for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping 2>/dev/null | grep -q pong && return 0; sleep 2; done; return 1; }
+wait_kodi || log "  kodi is not answering"
+# Settings are written into guisettings.xml and add-ons unpacked with Kodi stopped,
+# not done over RPC: switching some settings over RPC puts a confirmation dialog on
+# the TV and hangs the call, and an add-on dropped in while Kodi runs comes up disabled.
+#  - look: Fire TV-style skin, Bing photos as the screensaver after 5 idle minutes
+#  - casting: UPnP/DLNA renderer ("Cast to device", BubbleUPnP), AirPlay over zeroconf
 #  - Kodi's web server on :8080 for the Kodi phone apps (Kore, Official Kodi Remote,
 #    Yatse), always behind a password made on the device once and kept in
 #    secrets.env; read it with: sudo grep KODI_WEB /etc/media-stick/secrets.env
+#  - screenshots to tmpfs for the page and tools/screenshot.sh
+# Add-ons: device/kodi-addons.list (from tools/kodi-addons-lock.py) and device/kodi-addons/.
 SECRETS=/etc/media-stick/secrets.env
 grep -q '^KODI_WEB_PASSWORD=.' "$SECRETS" \
   || echo "KODI_WEB_PASSWORD=$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" >> "$SECRETS"
 web_pass=$(sed -n 's/^KODI_WEB_PASSWORD=//p' "$SECRETS" | tail -1)
-kodi_wanted=(services.zeroconf=true services.upnp=true services.upnprenderer=true
-  services.airplay=true services.webserver=true services.webserverauthentication=true
-  services.webserverusername=kodi "services.webserverpassword=$web_pass")
-if ! kodi-settings --check "${kodi_wanted[@]}"; then
+on_settings=(services.zeroconf services.upnp services.upnprenderer services.airplay
+  services.webserver services.webserverauthentication)
+kodi_wanted=("${on_settings[@]/%/=true}" services.webserverusername=kodi "services.webserverpassword=$web_pass"
+  lookandfeel.skin=skin.ftv screensaver.mode=screensaver.bing screensaver.time=5 input.enablemouse=false
+  lookandfeel.startupwindow=10060
+  debug.screenshotpath=/run/media-stick/shots/)
+as_media() { setpriv --reuid=media --regid=media --init-groups "$@"; }
+FAVS="$REPO/device/kodi-favourites.xml"
+addons_ok=1; kodi-addons --check "$REPO" || addons_ok=0
+settings_ok=1; kodi-settings --check "${kodi_wanted[@]}" || settings_ok=0
+favs_ok=1; kodi-favourites --check "$FAVS" || favs_ok=0
+if [ $addons_ok = 0 ] || [ $settings_ok = 0 ] || [ $favs_ok = 0 ]; then
   systemctl stop kodi
-  log "  kodi settings changed: $(setpriv --reuid=media --regid=media --init-groups kodi-settings "${kodi_wanted[@]}")"
+  [ $addons_ok = 1 ] || kodi-addons --install "$REPO"
+  [ $settings_ok = 1 ] || log "  kodi settings changed: $(as_media kodi-settings "${kodi_wanted[@]}")"
+  [ $favs_ok = 1 ] || log "  home tiles changed: $(as_media kodi-favourites --apply "$FAVS")"
   systemctl start kodi
-  for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping 2>/dev/null | grep -q pong && break; sleep 2; done
+  wait_kodi || log "  kodi did not come back"
 fi
-# Kodi drops a setting its build does not support; say so instead of retrying forever.
-for kv in "${kodi_wanted[@]:0:6}"; do
-  kodi-rpc Settings.GetSettingValue "{\"setting\":\"${kv%%=*}\"}" | grep -q '"value":true' || log "  kodi has ${kv%%=*} off"
-done
-
-log "kodi add-ons"
-# Pinned zips from device/kodi-addons.list plus the folders in device/kodi-addons/.
-# Unpacked with Kodi stopped; Kodi then finds them disabled and they are enabled over RPC.
-ADDONS=/home/media/.kodi/addons
-CACHE=/var/cache/media-stick/addons
-install -d -o media -g media /home/media/.kodi "$ADDONS"
-install -d "$CACHE"
-addon_ids=() pending=()
-while read -r id ver url sum; do
-  [[ -z ${id:-} || $id == \#* ]] && continue
-  addon_ids+=("$id")
-  [ "$(cat "$ADDONS/$id/.media-stick" 2>/dev/null)" = "$ver $sum" ] && continue
-  f=$CACHE/$id-$ver.zip
-  echo "$sum  $f" | sha256sum -c --status 2>/dev/null || curl -fsSL --retry 3 -o "$f" "$url"
-  echo "$sum  $f" | sha256sum -c --status || { log "  checksum mismatch: $id"; exit 1; }
-  pending+=("$id|$f|$ver $sum")
-done < "$REPO/device/kodi-addons.list"
-local_changed=0
-for d in "$REPO"/device/kodi-addons/*/; do
-  id=$(basename "$d"); addon_ids+=("$id")
-  diff -rq "$d" "$ADDONS/$id" >/dev/null 2>&1 || local_changed=1
-done
-if [ ${#pending[@]} -gt 0 ] || [ $local_changed = 1 ]; then
-  systemctl stop kodi
-  for p in "${pending[@]}"; do
-    IFS='|' read -r id f mark <<<"$p"
-    rm -rf "${ADDONS:?}/$id"
-    unzip -q "$f" -d "$ADDONS"
-    echo "$mark" > "$ADDONS/$id/.media-stick"
-    log "  installed $id"
-  done
-  for d in "$REPO"/device/kodi-addons/*/; do
-    rm -rf "${ADDONS:?}/$(basename "$d")"; cp -r "$d" "$ADDONS/"
-  done
-  chown -R media:media "$ADDONS"
-  systemctl start kodi
-  for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping 2>/dev/null | grep -q pong && break; sleep 2; done
-fi
+# First install on a fresh card: Kodi had no add-on database yet, so enable over RPC.
+addon_ids=(inputstream.adaptive inputstream.ffmpegdirect $(awk '!/^#/ && NF==4 {print $1}' "$REPO/device/kodi-addons.list"))
+for d in "$REPO"/device/kodi-addons/*/; do addon_ids+=("$(basename "$d")"); done
 for id in "${addon_ids[@]}"; do
   kodi-rpc Addons.GetAddonDetails "{\"addonid\":\"$id\",\"properties\":[\"enabled\"]}" 2>/dev/null | grep -q '"enabled":true' && continue
   kodi-rpc Addons.SetAddonEnabled "{\"addonid\":\"$id\",\"enabled\":true}" >/dev/null || log "  could not enable $id"
 done
+# Kodi drops a setting its build does not support; say so instead of retrying forever.
+for s in "${on_settings[@]}"; do
+  kodi-rpc Settings.GetSettingValue "{\"setting\":\"$s\"}" | grep -q '"value":true' || log "  kodi has $s off"
+done
+kodi-rpc Settings.GetSettingValue '{"setting":"lookandfeel.skin"}' | grep -q skin.ftv || log "  kodi is not on skin.ftv"
 
 chown -R media:media "$REPO"
 log "done"

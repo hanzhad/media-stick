@@ -15,6 +15,9 @@ cur=$(g rev-parse HEAD); new=$(g rev-parse origin/main)
 if [ "${1:-}" != --force ] && kodi-rpc Player.GetActivePlayers 2>/dev/null | grep -q '"playerid"'; then
   echo "kodi is playing; update to ${new:0:7} postponed"; exit 0
 fi
+if [ "${1:-}" != --force ] && systemctl is-active -q 'web-app@*'; then
+  echo "a web app is on screen; update to ${new:0:7} postponed"; exit 0
+fi
 
 echo "updating ${cur:0:7} -> ${new:0:7}: $(g log -1 --format=%s "$new")"
 g reset -q --hard "$new"

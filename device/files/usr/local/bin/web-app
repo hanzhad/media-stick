@@ -1,0 +1,27 @@
+#!/bin/bash
+# Run one web service full screen on the TV: Chromium in kiosk mode inside cage
+# (a single-window Wayland compositor), with Widevine for DRM video.
+# Started by web-app@<name>.service, which stops Kodi first and starts it again after.
+# Usage: web-app <name>
+set -euo pipefail
+case "${1:?name}" in
+  netflix) url=https://www.netflix.com/browse ;;
+  disney)  url=https://www.disneyplus.com/ ;;
+  prime)   url=https://www.primevideo.com/ ;;
+  max)     url=https://play.max.com/ ;;
+  youtube) url=https://www.youtube.com/tv ;;
+  *) echo "unknown web app: $1" >&2; exit 2 ;;
+esac
+# One browser profile for all of them: logins and cookies survive between runs.
+profile=/home/media/.config/web-apps
+mkdir -p "$profile"
+# A clean exit from last time, so no "restore pages?" bar.
+sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' "$profile/Default/Preferences" 2>/dev/null || true
+exec cage -d -- chromium \
+  --user-data-dir="$profile" \
+  --kiosk --app="$url" \
+  --ozone-platform=wayland \
+  --noerrdialogs --disable-infobars --no-first-run \
+  --disable-session-crashed-bubble --disable-features=Translate \
+  --autoplay-policy=no-user-gesture-required \
+  --password-store=basic

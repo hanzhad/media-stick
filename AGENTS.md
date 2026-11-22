@@ -25,7 +25,7 @@ Read README.md first. This file is what it does not say.
 
 ## Hardware limits (Pi 3B+, 1 GB)
 - Hardware decode is H.264 only, up to 1080p. HEVC/H.265 and 4K are not targets.
-- Do not add a desktop or a browser-based UI on the TV; memory is the bottleneck.
+- No desktop, and no browser running next to Kodi; memory is the bottleneck. The web services (Netflix and the like) run in Chromium only on demand, with Kodi stopped: `web-app@<name>.service` conflicts with `kodi.service` and starts it again on exit.
 
 ## Secrets
 - Never commit a value. Names go in `secrets.example.env`; values in `/etc/media-stick/secrets.env` on the device.

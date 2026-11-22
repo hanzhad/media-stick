@@ -1,0 +1,119 @@
+#!/usr/bin/python3
+"""Install the pinned Kodi add-ons. Run by bootstrap as root.
+
+Usage: kodi-addons --check <repo>     exit 1 if anything needs installing
+       kodi-addons --install <repo>   install it (Kodi must be stopped)
+
+<repo>/device/kodi-addons.list   pinned zips (made by tools/kodi-addons-lock.py)
+<repo>/device/kodi-addons/<id>/  add-ons kept in this repository as folders
+
+An add-on is (re)installed when its list line changed since the last install or
+its folder is gone. Updates Kodi makes on its own afterwards are left alone.
+Installed add-ons are written into Kodi's add-on database as enabled; otherwise
+Kodi treats a dropped-in add-on as disabled and asks on the TV before using it.
+"""
+import filecmp
+import glob
+import hashlib
+import json
+import os
+import shutil
+import sqlite3
+import sys
+import time
+import urllib.request
+import zipfile
+
+HOME = "/home/media/.kodi"
+ADDONS = f"{HOME}/addons"
+CACHE = "/var/cache/media-stick/addons"
+STATE = "/var/lib/media-stick/kodi-addons.json"
+OFFICIAL = "https://mirrors.kodi.tv/"
+
+mode, repo = sys.argv[1], sys.argv[2]
+
+
+def read_list():
+    items = []
+    for line in open(f"{repo}/device/kodi-addons.list"):
+        f = line.split()
+        if len(f) == 4 and not f[0].startswith("#"):
+            items.append(f)
+    return items
+
+
+def local_dirs():
+    return sorted(glob.glob(f"{repo}/device/kodi-addons/*/"))
+
+
+def same_tree(a, b):
+    if not os.path.isdir(b):
+        return False
+    c = filecmp.dircmp(a, b)
+    if c.left_only or c.diff_files or c.funny_files:
+        return False
+    # dircmp compares only by stat; check contents of every common file.
+    _, mismatch, errors = filecmp.cmpfiles(a, b, c.common_files, shallow=False)
+    return not mismatch and not errors and all(same_tree(os.path.join(a, d), os.path.join(b, d)) for d in c.common_dirs)
+
+
+state = json.load(open(STATE)) if os.path.exists(STATE) else {}
+todo = [f for f in read_list() if state.get(f[0]) != " ".join(f[1:]) or not os.path.isdir(f"{ADDONS}/{f[0]}")]
+todo_local = [d for d in local_dirs() if not same_tree(d, f"{ADDONS}/{os.path.basename(d.rstrip('/'))}")]
+
+if mode == "--check":
+    sys.exit(1 if todo or todo_local else 0)
+
+os.makedirs(CACHE, exist_ok=True)
+os.makedirs(ADDONS, exist_ok=True)
+done = []
+for aid, ver, url, sha in todo:
+    path = f"{CACHE}/{aid}-{ver}.zip"
+    ok = lambda: os.path.exists(path) and hashlib.sha256(open(path, "rb").read()).hexdigest() == sha
+    for attempt in range(3):
+        if ok():
+            break
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "media-stick"})
+            with urllib.request.urlopen(req, timeout=120) as r, open(path, "wb") as out:
+                shutil.copyfileobj(r, out)
+        except OSError as e:
+            print(f"  download failed ({e}), retrying", flush=True)
+            time.sleep(5)
+    if not ok():
+        sys.exit(f"{aid}: download failed or sha256 mismatch")
+    z = zipfile.ZipFile(path)
+    if any(not n.startswith(f"{aid}/") or ".." in n.split("/") for n in z.namelist()):
+        sys.exit(f"{aid}: zip has files outside {aid}/")
+    shutil.rmtree(f"{ADDONS}/{aid}", ignore_errors=True)
+    z.extractall(ADDONS)
+    state[aid] = f"{ver} {url} {sha}"
+    done.append((aid, "repository.xbmc.org" if url.startswith(OFFICIAL) else ""))
+    print(f"  installed {aid} {ver}", flush=True)
+
+for d in todo_local:
+    aid = os.path.basename(d.rstrip("/"))
+    shutil.rmtree(f"{ADDONS}/{aid}", ignore_errors=True)
+    shutil.copytree(d, f"{ADDONS}/{aid}")
+    done.append((aid, ""))
+    print(f"  installed {aid} (from the repository)", flush=True)
+
+os.makedirs(os.path.dirname(STATE), exist_ok=True)
+json.dump(state, open(STATE, "w"), indent=1)
+for root, dirs, files in os.walk(ADDONS):
+    for n in dirs + files:
+        shutil.chown(os.path.join(root, n), "media", "media")
+
+dbs = sorted(glob.glob(f"{HOME}/userdata/Database/Addons*.db"))
+if dbs:
+    db = sqlite3.connect(dbs[-1])
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    for aid, origin in done:
+        if db.execute("select 1 from installed where addonID=?", (aid,)).fetchone():
+            db.execute("update installed set enabled=1, disabledReason=0 where addonID=?", (aid,))
+        else:
+            db.execute("insert into installed (addonID, enabled, installDate, origin, disabledReason) "
+                       "values (?, 1, ?, ?, 0)", (aid, now, origin))
+    db.commit()
+else:
+    print("  no Kodi add-on database yet; add-ons get enabled over RPC", flush=True)

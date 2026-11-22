@@ -34,6 +34,12 @@ ACTIONS = {"up", "down", "left", "right", "select", "back", "contextmenu", "info
            "playpause", "stop", "volumeup", "volumedown", "mute", "fastforward",
            "rewind", "osd", "skipnext", "skipprevious", "fullscreen"}
 
+# While a web app (Chromium, see web-app) has the screen, the same buttons become
+# keys typed into the browser; "home" closes it and brings Kodi back.
+WEB_KEYS = {"up": "Up", "down": "Down", "left": "Left", "right": "Right",
+            "select": "Return", "back": "Escape", "playpause": "space",
+            "fastforward": "Right", "rewind": "Left", "fullscreen": "f", "mute": "m"}
+
 
 # ---------------- helpers ----------------
 
@@ -44,6 +50,24 @@ def run(cmd, stdin=None, timeout=20):
     except (subprocess.TimeoutExpired, OSError):
         return 124, ""
 
+
+
+def web_app_on():
+    return run(["systemctl", "is-active", "-q", "web-app@*"])[0] == 0
+
+
+def wayland_env():
+    rt = f"/run/user/{os.getuid()}"
+    socks = sorted(glob.glob(f"{rt}/wayland-[0-9]"))
+    return dict(os.environ, XDG_RUNTIME_DIR=rt, WAYLAND_DISPLAY=os.path.basename(socks[-1]) if socks else "wayland-0")
+
+
+def web_key(key):
+    subprocess.run(["wtype", "-k", key], env=wayland_env(), timeout=5, capture_output=True)
+
+
+def web_type(text):
+    subprocess.run(["wtype", "--", text], env=wayland_env(), timeout=10, capture_output=True)
 
 def kodi(method, params=None, timeout=3):
     req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
@@ -453,12 +477,23 @@ class H(BaseHTTPRequestHandler):
         try:
             if p == "/api/key":
                 a = b.get("action")
+                if web_app_on():
+                    if a == "home":
+                        run(["sudo", "-n", "systemctl", "stop", "web-app@*"])
+                    elif a in WEB_KEYS:
+                        web_key(WEB_KEYS[a])
+                    elif a not in ACTIONS:
+                        return self.send("unknown action", "text/plain", 400)
+                    return self.send({"ok": True})
                 if a == "home":
                     kodi("GUI.ActivateWindow", {"window": "home"})
                 elif a in ACTIONS:
                     kodi("Input.ExecuteAction", {"action": a})
                 else:
                     return self.send("unknown action", "text/plain", 400)
+                return self.send({"ok": True})
+            if p == "/api/text" and web_app_on():
+                web_type(str(b.get("text", ""))[:200])
                 return self.send({"ok": True})
             if p == "/api/text":
                 kodi("Input.SendText", {"text": str(b.get("text", ""))[:200], "done": True})

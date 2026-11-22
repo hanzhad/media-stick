@@ -1,0 +1,12 @@
+# Add-ons the device should have. Edit, then run: python3 tools/kodi-addons-lock.py
+# A bare id comes from Kodi's official repository; four fields pin a zip from elsewhere.
+
+# Look: Fire TV-style home screen, Bing photos as the screensaver
+skin.ftv
+screensaver.bing
+
+# Services
+plugin.video.youtube
+script.plex
+# SWEET.TV: live channels and archive, login by code/QR (GPL-2, github.com/david-hazi/plugin.video.sweettv)
+plugin.video.sweettv 0.1.13 https://github.com/david-hazi/plugin.video.sweettv/releases/download/v0.1.13/plugin.video.sweettv-v0.1.13.zip 36e6ab37846e81d729fa380a4cac12c30f415f5e7c6ff2dceed2e43fe9f0c3c0
