@@ -1025,9 +1025,9 @@ const AIR_GAP_MS=33, AIR_MAX=0.25, AIR_DZ=2.5, AIR_SMOOTH=0.5, AIR_DEG_FULL=45, 
 const AIR_HINT='Отпустите — указка остановится.';
 let airHeld=false, airOn=false, airK=5, airAcc={x:0,y:0}, airSm={x:0,y:0}, airBusy=false, airLast=0,
     airTimer=null, airClick=false, airPerm=null, airT0=0, airTPrev=0, airMoved=0, airGot=false, airChk=null, airNoteT=null;
-try{const v=parseInt(localStorage.getItem('airk'),10);if(v>=1&&v<=10)airK=v}catch(e){}
+try{const v=parseInt(localStorage.getItem('airk2'),10);if(v>=1&&v<=10)airK=v}catch(e){}
 $('air-k').value=airK;
-$('air-k').addEventListener('input',e=>{airK=+e.target.value;try{localStorage.setItem('airk',String(airK))}catch(_){}});
+$('air-k').addEventListener('input',e=>{airK=+e.target.value;try{localStorage.setItem('airk2',String(airK))}catch(_){}});
 // The air tab says what is missing when the pad cannot work here. The http page first checks
 // that the https address really opens from this phone: a browser tab then moves there by
 // itself (once, on load); a home-screen app saved with the old http address cannot change
@@ -1105,14 +1105,19 @@ function airPump(){
 }
 function onMotion(e){
   const r=e.rotationRate;
-  if(!airHeld||!r||r.alpha==null||r.beta==null)return;
+  if(!airHeld||!r||r.alpha==null||r.beta==null||r.gamma==null)return;
   const now=performance.now();airGot=true;
   let dt=airTPrev?(now-airTPrev)/1000:0;airTPrev=now;
   if(dt<=0)return;if(dt>0.1)dt=0.1;
   const dz=v=>Math.abs(v)<AIR_DZ?0:v-Math.sign(v)*AIR_DZ;
-  airSm.x+=AIR_SMOOTH*(-dz(r.alpha)-airSm.x);   // deg/s; left and up are negative
-  airSm.y+=AIR_SMOOTH*(-dz(r.beta)-airSm.y);
-  const k=Math.pow(1.3,airK-5)/AIR_DEG_FULL;   // screen widths per degree
+  // rotationRate per the spec (Chrome): alpha about the screen normal (yaw), beta about the
+  // short axis (pitch), gamma about the long axis (roll). iOS Safari labels them alpha = short
+  // axis, beta = long axis, gamma = normal. Horizontal follows both the roll and the yaw
+  // (tilt or turn left = left), vertical the pitch (top up = up). deg/s; left and up negative.
+  const ios=airAskNeeded, pitch=ios?r.alpha:r.beta, roll=ios?r.beta:r.gamma, yaw=ios?r.gamma:r.alpha;
+  airSm.x+=AIR_SMOOTH*(dz(roll)-dz(yaw)-airSm.x);
+  airSm.y+=AIR_SMOOTH*(-dz(pitch)-airSm.y);
+  const k=Math.pow(1.3,airK-9)/AIR_DEG_FULL;   // screen widths per degree; 5 = the old lowest
   airAcc.x+=airSm.x*dt*k;airAcc.y+=airSm.y*dt*k*(16/9);   // the same angle is more of a short side
   airMoved+=Math.hypot(airSm.x,airSm.y)*dt;
   airPump()
