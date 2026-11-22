@@ -25,6 +25,7 @@ QUERIES = [("xbmc.python.pluginsource", "video"),
            ("xbmc.python.pluginsource", "executable"),
            ("xbmc.python.script", "executable"),
            ("xbmc.python.script", "video")]
+CARD_ID = "card:phone-remote"    # the pinned Phone remote card: not an app, so never launched or recorded
 ID_RE = re.compile(r"webapp:[a-z0-9-]+|[A-Za-z0-9._-]+")
 
 
@@ -32,6 +33,9 @@ class App(NamedTuple):
     id: str
     name: str
     art: str
+
+
+CARD = App(CARD_ID, "Phone remote", "")
 
 
 def is_hidden(addon_id):
@@ -92,6 +96,8 @@ def load_recent():
 
 
 def record(app_id):
+    if not app_id or app_id == CARD_ID:
+        return
     recent = load_recent()
     recent[app_id] = time.time()
     path = _recent_path()
@@ -115,8 +121,19 @@ def ordered_apps():
     return order(installed() + web_apps(), load_recent())
 
 
+def carousel(app_list):
+    """What the carousel shows: the Phone remote card always first, then the apps in the given order."""
+    return [CARD] + [app for app in app_list if app.id != CARD_ID]
+
+
+def first_app_index(app_count):
+    """The item to focus on show: the most recently used app (index 1, right of the card), so OK
+    still launches the favourite; index 0 (the card) only when there is no app at all."""
+    return 1 if app_count > 0 else 0
+
+
 def launch(app_id):
-    if not ID_RE.fullmatch(app_id or ""):
+    if app_id == CARD_ID or not ID_RE.fullmatch(app_id or ""):
         xbmc.log(f"[{ADDON_ID}] refusing to launch {app_id!r}", xbmc.LOGWARNING)
         return
     record(app_id)

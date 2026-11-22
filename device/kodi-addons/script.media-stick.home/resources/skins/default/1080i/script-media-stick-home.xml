@@ -167,6 +167,17 @@
                     <aspectratio scalediffuse="false">scale</aspectratio>
                     <texture diffuse="card-mask.png">$INFO[ListItem.Art(icon)]</texture>
                     <colordiffuse>D0FFFFFF</colordiffuse>
+                    <visible>String.IsEmpty(ListItem.Property(glyph))</visible>
+                </control>
+                <control type="image">
+                    <left>70</left>
+                    <top>94</top>
+                    <width>112</width>
+                    <height>112</height>
+                    <aspectratio>keep</aspectratio>
+                    <texture>$INFO[ListItem.Art(icon)]</texture>
+                    <colordiffuse>B3FFFFFF</colordiffuse>
+                    <visible>!String.IsEmpty(ListItem.Property(glyph))</visible>
                 </control>
             </itemlayout>
             <focusedlayout width="252" height="330">
@@ -206,6 +217,16 @@
                         <height>220</height>
                         <aspectratio scalediffuse="false">scale</aspectratio>
                         <texture diffuse="card-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                        <visible>String.IsEmpty(ListItem.Property(glyph))</visible>
+                    </control>
+                    <control type="image">
+                        <left>70</left>
+                        <top>94</top>
+                        <width>112</width>
+                        <height>112</height>
+                        <aspectratio>keep</aspectratio>
+                        <texture>$INFO[ListItem.Art(icon)]</texture>
+                        <visible>!String.IsEmpty(ListItem.Property(glyph))</visible>
                     </control>
                 </control>
                 <control type="label">

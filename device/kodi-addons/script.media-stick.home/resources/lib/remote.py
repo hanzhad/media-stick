@@ -37,12 +37,23 @@ def state_text(name):
         return ""
 
 
+def https_url():
+    url = state_text("panel-url")
+    return url if url.startswith("https://") else ""
+
+
+def page_url(ip):
+    """The address the phone opens: the https one once a certificate exists, else http://<ip>/;
+    empty when offline. The dialog and the home card show the same one."""
+    return (https_url() or f"http://{ip}/") if ip else ""
+
+
 def https_info(ip):
     """Air mouse (needs HTTPS) as the dialog shows it: the https address once a certificate
     exists, one status line while it is being set up or failed, or the three setup steps
     with a second QR that opens the phone page on the HTTPS card."""
-    url = state_text("panel-url")
-    if url.startswith("https://"):
+    url = https_url()
+    if url:
         name = url[len("https://"):].rstrip("/")
         return {"url": url, "shown": name, "airline": f"Air mouse: on · {name}"}
     try:
