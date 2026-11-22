@@ -423,6 +423,13 @@ label{display:block;margin:14px 0 6px;color:var(--dim);font-size:14px}
 /* full-screen picture: an overlay (iPhone has no Fullscreen API for a page), keys at the
    bottom in portrait and down the right side in landscape, where the 16:9 picture leaves room */
 .shotbox.full{position:fixed;inset:0;z-index:50;border-radius:0;aspect-ratio:auto;background:#000}
+/* phone held upright with rotation lock on: the picture is drawn turned by 90 degrees and fills
+   the screen; the user turns the phone, not the page (iPhone has no orientation lock for a page) */
+.shotbox.full.rot{inset:auto;top:50%;left:50%;transform:translate(-50%,-50%) rotate(var(--r))}
+body.rot .fbar .i{transform:rotate(var(--r))}
+body.rotm .fbar{top:calc(12px + env(safe-area-inset-top));bottom:auto}
+body.rot .fhint{display:none}
+#f-flip{display:none}body.rot #f-flip{display:inline-flex}
 body.fs{overflow:hidden}
 .fbar{position:fixed;z-index:51;left:50%;bottom:calc(12px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:4px;padding:4px;border-radius:22px;background:rgba(18,22,32,.85)}
 .fbar .btn{min-height:48px;width:60px;padding:0;background:transparent}
@@ -532,6 +539,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 <symbol id="i-remote" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></symbol>
 <symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
 <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+<symbol id="i-rot" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></symbol>
 <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
 <symbol id="i-air" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/></symbol>
 </defs></svg>
@@ -606,6 +614,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   <div id="fbar" class="fbar hide">
     <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
     <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
+    <button class="btn" id="f-flip" onclick="rotFlip()" aria-label="Перевернуть картинку"><svg class="i"><use href="#i-rot"/></svg></button>
     <button class="btn" onclick="fullOn(false)" aria-label="Выйти из полного экрана"><svg class="i"><use href="#i-shrink"/></svg></button>
   </div>
   <div id="fhint" class="fhint hide">Поверните телефон — картинка станет больше</div>
@@ -803,10 +812,42 @@ function fullOn(on){
   full=on;$('shot-box').classList.toggle('full',on);document.body.classList.toggle('fs',on);
   $('fbar').classList.toggle('hide',!on);$('fhint').classList.toggle('hide',!on);
   if(on&&!live)setLive(true);
-  const d=document, el=d.documentElement;   // where the browser can (Android, computers), real full screen too
-  try{if(on&&el.requestFullscreen&&!d.fullscreenElement)el.requestFullscreen().catch(()=>{});
+  const d=document, el=d.documentElement;   // where the browser can (Android, computers), real full screen
+  try{if(on&&el.requestFullscreen&&!d.fullscreenElement)el.requestFullscreen()   // and a real landscape lock
+        .then(()=>screen.orientation&&screen.orientation.lock&&screen.orientation.lock('landscape')).catch(()=>{});
       else if(!on&&d.fullscreenElement)d.exitFullscreen().catch(()=>{})}catch(e){}
+  if(on)addEventListener('devicemotion',rotMotion);else removeEventListener('devicemotion',rotMotion);
+  rotApply()
 }
+// Which way to turn: +90 = the phone's top to the left (the usual way), -90 = to the right.
+// Gravity tells it where the motion sensor is open (Android; iPhone after the air mouse got its
+// permission); the flip button covers the rest and, when gravity was seen, also learns its sign.
+let rotDir=1, rotCal=1, rotSeen=0;
+try{rotDir=localStorage.getItem('fsdir')==='-1'?-1:1;rotCal=localStorage.getItem('fscal')==='-1'?-1:1}catch(e){}
+const touchy=matchMedia('(pointer:coarse)').matches;
+let rotDeg=0;
+function rotApply(){
+  const b=$('shot-box'), on=full&&touchy&&innerHeight>innerWidth;
+  rotDeg=on?90*rotDir:0;
+  b.classList.toggle('rot',on);document.body.classList.toggle('rot',on);
+  document.body.classList.toggle('rotm',on&&rotDir<0);
+  document.documentElement.style.setProperty('--r',rotDeg+'deg');
+  b.style.width=on?innerHeight+'px':'';b.style.height=on?innerWidth+'px':'';
+}
+function rotFlip(){
+  rotDir=-rotDir;buzz();
+  if(Date.now()-rotSeen<3000)rotCal=-rotCal;   // gravity said the other way: its sign is the other way here
+  try{localStorage.setItem('fsdir',String(rotDir));localStorage.setItem('fscal',String(rotCal))}catch(e){}
+  rotApply()
+}
+function rotMotion(e){
+  const a=e.accelerationIncludingGravity;if(!a||a.x==null||a.y==null)return;
+  if(Math.abs(a.x)<7||Math.abs(a.x)<Math.abs(a.y)*2)return;   // not clearly on its side
+  rotSeen=Date.now();
+  const d=(a.x>0?1:-1)*rotCal;
+  if(d!==rotDir){rotDir=d;try{localStorage.setItem('fsdir',String(d))}catch(_){}rotApply()}
+}
+addEventListener('resize',()=>{if(full)rotApply()});
 document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement&&full)fullOn(false)});
 document.addEventListener('keydown',e=>{if(full&&e.key==='Escape'){e.stopImmediatePropagation();fullOn(false)}},true);
 function setLive(on){
@@ -846,16 +887,24 @@ function ptrErr(e){
   const h=$('shot-h'); h.textContent=e.message||'Не получилось'; h.classList.add('bad');
   clearTimeout(ptrNote); ptrNote=setTimeout(()=>{h.textContent=HINT;h.classList.remove('bad')},4000)
 }
-function spot(cx,cy){
+// A screen point -> px in the picture box's own frame (the box may be turned by rotDeg about
+// its centre). Everything below works in that frame, so a turned picture needs nothing else.
+function loc(cx,cy){
+  const r=box.getBoundingClientRect(), W=box.clientWidth, H=box.clientHeight,
+        vx=cx-(r.left+r.width/2), vy=cy-(r.top+r.height/2);
+  const q=rotDeg===90?[vy,-vx]:rotDeg===-90?[-vy,vx]:[vx,vy];
+  return {x:q[0]+W/2,y:q[1]+H/2}
+}
+function spot(lx,ly){
   const im=$('shot'), w=im.naturalWidth, h=im.naturalHeight;
   if(!gotFrame||!w||!h)return null;
-  const r=im.getBoundingClientRect(), k=Math.min(r.width/w,r.height/h), dw=w*k, dh=h*k,
-        x=(cx-r.left-(r.width-dw)/2)/dw, y=(cy-r.top-(r.height-dh)/2)/dh;
+  const W=box.clientWidth, H=box.clientHeight, k=Math.min(W/w,H/h), dw=w*k, dh=h*k,
+        x=(lx-(W-dw)/2)/dw, y=(ly-(H-dh)/2)/dh;
   return x<0||x>1||y<0||y>1?null:{x,y}
 }
-function ripple(cx,cy,cls){
-  const b=box.getBoundingClientRect(), d=document.createElement('i');
-  d.className='rip'+(cls?' '+cls:''); d.style.left=(cx-b.left)+'px'; d.style.top=(cy-b.top)+'px';
+function ripple(lx,ly,cls){
+  const d=document.createElement('i');
+  d.className='rip'+(cls?' '+cls:''); d.style.left=lx+'px'; d.style.top=ly+'px';
   box.appendChild(d); setTimeout(()=>d.remove(),900)
 }
 function tap(action,cx,cy){
@@ -872,8 +921,7 @@ function flushKeys(){
     .finally(()=>{kbusy=false;flushKeys()})
 }
 function cardPx(){   // one home-screen card (about 252 of 1920 px) in picture pixels
-  const r=$('shot').getBoundingClientRect();
-  return Math.max(28,Math.min(r.width,r.height*16/9)*252/1920)
+  return Math.max(28,Math.min(box.clientWidth,box.clientHeight*16/9)*252/1920)
 }
 function flushScroll(){
   if(sbusy||!spend||!spos)return;
@@ -884,14 +932,15 @@ function flushScroll(){
 box.addEventListener('pointerdown',e=>{
   lastType=e.pointerType;
   if(g||(e.pointerType==='mouse'&&e.button!==0))return;
-  g={id:e.pointerId,x:e.clientX,y:e.clientY,lx:e.clientX,ly:e.clientY,acc:0,moved:false,scroll:false,side:false,long:false,t:0};
+  const q=loc(e.clientX,e.clientY);
+  g={id:e.pointerId,x:q.x,y:q.y,lx:q.x,ly:q.y,acc:0,moved:false,scroll:false,side:false,long:false,t:0};
   try{box.setPointerCapture(e.pointerId)}catch(_){}
   // a mouse has its own right button (contextmenu below); only a finger needs the hold
   if(e.pointerType!=='mouse')g.t=setTimeout(()=>{if(g&&!g.moved){g.long=true;tap('right',g.x,g.y)}},LONG_MS)
 });
 box.addEventListener('pointermove',e=>{
   if(!g||e.pointerId!==g.id)return;
-  const dx=e.clientX-g.x, dy=e.clientY-g.y;
+  const q=loc(e.clientX,e.clientY), dx=q.x-g.x, dy=q.y-g.y;
   if(!g.moved&&Math.hypot(dx,dy)>SLOP_PX){
     g.moved=true; clearTimeout(g.t);
     const p=spot(g.x,g.y);
@@ -899,12 +948,12 @@ box.addEventListener('pointermove',e=>{
     else if(p){g.side=true;g.lx=g.x;if(!live)setLive(true)}
   }
   if(g.side){  // finger left = the row moves left = the next card (right key)
-    g.acc+=e.clientX-g.lx; g.lx=e.clientX;
+    g.acc+=q.x-g.lx; g.lx=q.x;
     const c=cardPx(), n=Math.trunc(g.acc/c);
     if(n){g.acc-=n*c;kpend-=n;buzz();flushKeys()}
   }
   if(g.scroll){  // finger down = wheel up (the view follows the finger)
-    g.acc+=e.clientY-g.ly; g.ly=e.clientY;
+    g.acc+=q.y-g.ly; g.ly=q.y;
     const n=Math.trunc(g.acc/STEP_PX);
     if(n){g.acc-=n*STEP_PX;spend+=n;flushScroll()}
   }
@@ -916,7 +965,7 @@ function endGesture(e,cancel){
 }
 box.addEventListener('pointerup',e=>endGesture(e,false));
 box.addEventListener('pointercancel',e=>endGesture(e,true));
-box.addEventListener('contextmenu',e=>{e.preventDefault();if(lastType==='mouse')tap('right',e.clientX,e.clientY)});
+box.addEventListener('contextmenu',e=>{e.preventDefault();if(lastType==='mouse'){const q=loc(e.clientX,e.clientY);tap('right',q.x,q.y)}});
 if(wide()){shotState('Загрузка…');frame()}  // one still frame on a computer, live only on request
 
 // ---- HTTPS card (Настройки). The helper does the work as root; the token is typed here,
