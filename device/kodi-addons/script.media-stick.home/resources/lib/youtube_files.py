@@ -8,7 +8,7 @@ import os
 import xbmc
 import xbmcvfs
 
-from resources.lib import apps, onboarding_files, onboarding_view as view, ui, youtube_data as data
+from resources.lib import apps, onboarding_files, onboarding_view as view, profiles, ui, youtube_data as data
 
 SETTINGS_FILE = "settings.xml"   # in the add-on's userdata folder: <setting id="youtube.api.key">..</setting> (and .id, .secret)
 KEYS_FILE = "api_keys.json"      # the same folder, the older place: {"keys": {"personal": {"api_key", "client_id", "client_secret"}}}
@@ -86,10 +86,11 @@ def profile_id(log=True):
 
 
 def profile_name():
-    """The name of the add-on's current profile, "" when there is none or it cannot be told (the avatar shows it)."""
+    """The name of the add-on's current profile as the phone shows it (profiles.name_of: the channel's title when known),
+    "" when there is none or it cannot be told (the avatar takes its letter and colour from it)."""
     try:
         current = _current_profile()
-        return str(current["name"]) if current else ""
+        return profiles.name_of(current) if current else ""
     except Exception as e:
         ui.log(f"cannot read the YouTube profile's name: {e!r}")
         return ""

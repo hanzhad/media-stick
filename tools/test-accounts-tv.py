@@ -163,6 +163,20 @@ def prof(uid, name, tokens=4, current=False):
     return {"id": str(uid), "name": name, "current": current, "tokens": tokens, "signed_in": tokens > 0}
 
 
+def channels(**by_id):
+    """A stand-in for the channel library: peek() answers what is given per profile id (an Exception is raised)."""
+    def peek(profile_id):
+        answer = by_id.get(f"p{profile_id}", {"state": "unknown", "title": ""})
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    return types.SimpleNamespace(peek=peek)
+
+
+def titled(title):
+    return {"state": "yes", "title": title}
+
+
 def acct(service, profile_list=(), signed_in=False, state=None):
     return {"service": service, "name": service, "profiles": list(profile_list), "signed_in": signed_in, "signin": state}
 
@@ -989,18 +1003,75 @@ class PartnerScreen(unittest.TestCase):
 
 class Lists(unittest.TestCase):
     def test_cards(self):
-        cards = profiles.cards([prof(0, "Default", 4, True), prof(7, "anna", 0)])
+        cards = profiles.cards([prof(0, "Default", 4, True), prof(7, "anna", 4)])
         self.assertEqual([c["id"] for c in cards], ["0", "7", profiles.ADD_ID])
-        self.assertEqual([c["initial"] for c in cards], ["D", "A", "+"])
-        self.assertEqual([c["mark"] for c in cards], ["Signed in", "Not signed in", ""])
+        self.assertEqual([c["initial"] for c in cards], ["О", "A", "+"])
+        self.assertEqual([c["mark"] for c in cards], ["Signed in", "Signed in", ""])
         self.assertEqual(cards[1]["color"], profiles.PALETTE[7 % len(profiles.PALETTE)])
         self.assertEqual(cards[-1]["name"], "Add account")
         self.assertEqual(profiles.first_index(cards), 0)
-        cards = profiles.cards([prof(0, "D", 4), prof(1, "Anna", 0, True)])
+        cards = profiles.cards([prof(0, "D", 4), prof(1, "Anna", 4, True)])
         self.assertEqual(profiles.first_index(cards), 1)
         self.assertEqual(profiles.initial("  "), "?")
         self.assertEqual(profiles.initial("-Ωmega"), "Ω")
         self.assertEqual(profiles.cards([])[0]["id"], profiles.ADD_ID)
+
+    def test_the_picker_shows_the_names_of_the_phone_and_hides_the_profiles_without_a_sign_in(self):
+        known = [prof(0, "Default", 4), prof(1, "Аккаунт 2", 4, True), prof(2, "Аккаунт 3", 4), prof(3, "Аккаунт 4", 0)]
+        with mock.patch.object(store, "ytchannel", channels(p1=titled("Dmytro Hanzha"))):
+            cards = profiles.cards(known)
+        self.assertEqual([(c["id"], c["name"], c["initial"]) for c in cards],
+                         [("0", "Основной", "О"), ("1", "Dmytro Hanzha", "D"), ("2", "Аккаунт 3", "А"),
+                          (profiles.ADD_ID, "Add account", "+")])
+        self.assertEqual([c["current"] for c in cards], [False, True, False, False])
+        self.assertEqual(profiles.first_index(cards), 1)
+        only_add = profiles.cards([prof(0, "Default", 0, True), prof(1, "Anna", 0)])
+        self.assertEqual([c["id"] for c in only_add], [profiles.ADD_ID])
+
+    def test_the_picker_still_finds_a_hidden_profile_by_id_for_the_choice(self):
+        known = [prof(0, "D", 4, True), prof(1, "Anna", 0)]
+        with mock.patch.object(lib, "youtube_accounts", return_value=known), \
+                mock.patch.object(profiles, "pick", return_value="0") as pick:
+            self.assertEqual(accounts.choose_profile()["id"], "0")
+        self.assertEqual(pick.call_args[0][0], known)        # the dialog gets all of them and hides the empty ones itself
+
+    def test_display_name(self):
+        anna, default = prof(1, "Anna", 4), prof(0, "Default", 4)
+        self.assertEqual(profiles.display_name(anna, "Dmytro Hanzha"), "Dmytro Hanzha")        # the channel's title wins
+        self.assertEqual(profiles.display_name(default, "Dmytro Hanzha"), "Dmytro Hanzha")
+        self.assertEqual(profiles.display_name(default), "Основной")
+        self.assertEqual(profiles.display_name(default, ""), "Основной")
+        self.assertEqual(profiles.display_name(anna), "Anna")
+        self.assertEqual(profiles.display_name(prof(5, "default", 4)), "default")              # only the add-on's exact "Default"
+
+    def test_name_of_asks_the_channel_the_way_the_phone_does(self):
+        def name(p, **answers):
+            with mock.patch.object(store, "ytchannel", channels(**answers)):
+                return profiles.name_of(p)
+        self.assertEqual(name(prof(1, "Аккаунт 2"), p1=titled("  Dmytro \t Hanzha ")), "Dmytro Hanzha")   # whitespace collapsed
+        self.assertEqual(name(prof(1, "Аккаунт 2"), p1=titled("A\x00B\u200bC")), "ABC")                    # printable only
+        self.assertEqual(name(prof(1, "Аккаунт 2"), p1=titled("x" * 100)), "x" * 64)                       # at most 64
+        self.assertEqual(name(prof(1, "Аккаунт 2"), p1={"state": "no", "title": "Old"}), "Аккаунт 2")      # only when "yes"
+        self.assertEqual(name(prof(1, "Аккаунт 2"), p1={"state": "unknown", "title": "Old"}), "Аккаунт 2")
+        self.assertEqual(name(prof(0, "Default"), p0={"state": "yes", "title": ""}), "Основной")
+        self.assertEqual(name(prof(1, "Аккаунт 2", 0), p1=titled("Old")), "Аккаунт 2")                      # not signed in: ignored
+        self.assertEqual(name(prof(0, "Default", 0), p0=titled("Old")), "Основной")
+        self.assertEqual(name(prof(1, "Аккаунт 2"), p1=OSError("gone")), "Аккаунт 2")                      # a look that breaks
+        self.assertEqual(name(prof(1, "Аккаунт 2"), p1="not a dict"), "Аккаунт 2")
+        with mock.patch.object(store, "ytchannel", None):                                                 # no library on the device
+            self.assertEqual(profiles.name_of(prof(1, "Anna")), "Anna")
+            self.assertEqual(profiles.name_of(prof(0, "Default")), "Основной")
+
+    def test_the_accounts_window_says_who_is_current_by_the_display_name(self):
+        accts = [acct("youtube", [prof(0, "Default", 4), prof(1, "Аккаунт 2", 4, True), prof(2, "Аккаунт 3", 0)], True)]
+        with mock.patch.object(store, "ytchannel", channels(p1=titled("Dmytro Hanzha"))):
+            out = self.labels(accts)
+        self.assertEqual(out[0], ("youtube", "signout", "Sign out of YouTube", "Dmytro Hanzha: signed in"))
+        self.assertEqual(out[1][3], "3 profiles: Основной, Dmytro Hanzha, Аккаунт 3")
+        accts = [acct("youtube", [prof(0, "Default", 0, True)])]
+        with mock.patch.object(store, "ytchannel", None):
+            self.assertEqual(self.labels(accts)[0][3], "Основной: not signed in")
+        self.assertEqual(self.labels([acct("youtube")])[0][3], "Основной: not signed in")
 
     def labels(self, accts, pending=None):
         return [(r.service, r.action, r.label, r.detail) for r in accounts_screen.rows(accts, pending)]
@@ -1008,16 +1079,16 @@ class Lists(unittest.TestCase):
     def test_accounts_rows(self):
         out = self.labels([acct("youtube", [prof(0, "Default", 4, True), prof(1, "Anna", 0)], True), acct("sweettv")])
         self.assertEqual(out, [
-            ("youtube", "signout", "Sign out of YouTube", "Default: signed in"),
-            ("youtube", "switch", "Switch profile or add one", "2 profiles: Default, Anna"),
+            ("youtube", "signout", "Sign out of YouTube", "Основной: signed in"),
+            ("youtube", "switch", "Switch profile or add one", "2 profiles: Основной, Anna"),
             ("sweettv", "signin", "Sign in to SWEET.TV", "Not signed in")])
         out = self.labels([acct("youtube", [prof(0, "Default", 0, True)]), acct("sweettv", signed_in=True)])
-        self.assertEqual(out[0], ("youtube", "signin", "Sign in to YouTube", "Default: not signed in"))
+        self.assertEqual(out[0], ("youtube", "signin", "Sign in to YouTube", "Основной: not signed in"))
         self.assertEqual(out[-1], ("sweettv", "signout", "Sign out of SWEET.TV", "Signed in"))
 
     def test_partial_youtube_sign_in_is_said_plainly(self):
         out = self.labels([acct("youtube", [prof(0, "Default", 2, True)], True)])
-        self.assertEqual(out[0][2:], ("Finish signing in to YouTube", "Default: 2 of 4 codes entered"))
+        self.assertEqual(out[0][2:], ("Finish signing in to YouTube", "Основной: 2 of 4 codes entered"))
         self.assertEqual([r[1] for r in out], ["signin", "signout", "switch"])
 
     def test_sign_out_needs_a_second_press(self):

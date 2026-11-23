@@ -35,3 +35,19 @@ def channel_state(profile_id) -> str:
         return "unknown"
     return state if state in ("yes", "no") else "unknown"
 
+
+def channel_title(profile) -> str:
+    """The YouTube channel's title of a signed-in profile, the phone page's rules (panel_accounts._channel): only when the
+    profile is signed in and the answer is "yes", whitespace collapsed, printable characters, at most 64. Never waits;
+    "" when there is none, the library is missing or the look fails."""
+    if ytchannel is None or not profile.get("signed_in"):
+        return ""
+    try:
+        got = ytchannel.peek(str(profile["id"]))
+    except Exception:
+        return ""
+    if not isinstance(got, dict) or got.get("state") != "yes":
+        return ""
+    title = " ".join(str(got.get("title", "")).split())
+    return "".join(ch for ch in title if ch.isprintable())[:64]
+

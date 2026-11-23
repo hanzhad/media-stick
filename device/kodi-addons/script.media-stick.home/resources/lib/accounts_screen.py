@@ -5,7 +5,7 @@ from typing import NamedTuple
 import xbmc
 import xbmcgui
 
-from resources.lib import accounts, store, ui
+from resources.lib import accounts, profiles, store, ui
 
 LIST = 600
 REFRESH = 2.0            # s between looks at who is signed in (the phone page may change it too)
@@ -34,7 +34,7 @@ def _channel_of(accts) -> str:
 def _youtube_rows(entry, pending, channel="unknown"):
     profile_list = entry["profiles"]
     current = next((p for p in profile_list if p["current"]), None)
-    who = current["name"] if current else "Default"
+    who = profiles.name_of(current) if current else profiles.DEFAULT_SHOWN
     tokens = current["tokens"] if current else 0
     out = []
     if entry["signin"] and entry["signin"]["state"] == "waiting":
@@ -49,9 +49,9 @@ def _youtube_rows(entry, pending, channel="unknown"):
         if channel == "no":                      # only when it is known; with a channel there is nothing to add
             detail += " · " + NO_CHANNEL
         out.append(Row("youtube", "signout", "Press OK again to sign out" if confirm else "Sign out of YouTube", detail, confirm))
-    names = ", ".join(p["name"] for p in profile_list)
+    names = ", ".join(profiles.name_of(p) for p in profile_list)
     out.append(Row("youtube", "switch", "Switch profile or add one",
-                   f"{len(profile_list)} profile{'s' if len(profile_list) != 1 else ''}: {names}" if names else "Default"))
+                   f"{len(profile_list)} profile{'s' if len(profile_list) != 1 else ''}: {names}" if names else profiles.DEFAULT_SHOWN))
     return out
 
 

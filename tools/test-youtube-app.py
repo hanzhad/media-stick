@@ -1908,6 +1908,22 @@ class Files(unittest.TestCase):
         with mock.patch.object(store.lib, "youtube_accounts", side_effect=OSError("gone")):
             self.assertEqual(files.profile_name(), "")
 
+    def test_the_profile_name_is_the_one_of_the_phone_so_the_avatar_follows_the_channel(self):
+        manager = os.path.join(TMP, "addon_data", "plugin.video.youtube", "access_manager.json")
+        put(manager, json.dumps({"access_manager": {"current_user": "1", "users": {
+            "0": {"name": "Default", "refresh_token": "a|b|c|d"}, "1": {"name": "Аккаунт 2", "refresh_token": "a|b|c|d"}}}}))
+        titles = {"0": {"state": "unknown", "title": ""}, "1": {"state": "yes", "title": "Dmytro Hanzha"}}
+        with mock.patch.object(store, "ytchannel", types.SimpleNamespace(peek=lambda pid: titles[pid])):
+            self.assertEqual(files.profile_name(), "Dmytro Hanzha")
+            self.assertEqual(profiles.initial(files.profile_name()), "D")
+            put(manager, json.dumps({"access_manager": {"current_user": "0", "users": {
+                "0": {"name": "Default", "refresh_token": "a|b|c|d"}}}}))
+            self.assertEqual((files.profile_name(), profiles.initial(files.profile_name())), ("Основной", "О"))
+        with mock.patch.object(store, "ytchannel", types.SimpleNamespace(peek=lambda pid: 1 / 0)):   # a look that breaks
+            self.assertEqual(files.profile_name(), "Основной")
+        with mock.patch.object(store, "ytchannel", None):
+            self.assertEqual(files.profile_name(), "Основной")
+
     def test_the_profile_id_is_the_current_ones_empty_without_one_and_none_when_it_cannot_be_told(self):
         manager = os.path.join(TMP, "addon_data", "plugin.video.youtube", "access_manager.json")
         self.assertEqual(files.profile_id(), "")
