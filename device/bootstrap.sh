@@ -70,6 +70,8 @@ while IFS= read -r -d '' src; do
     install -D -m "$mode" "$src" "$dst"; log "  updated /$rel"
     [[ $rel == etc/systemd/system/* ]] && changed_units+=("$(basename "$rel")")
     [[ $rel == home/media/.kodi/* ]] && changed_units+=(kodi.service)   # keymaps load at start
+    # a library the panel imports at start: restart the panel (Kodi loads it afresh at each sign-in)
+    [[ $rel == usr/local/lib/media-stick/* ]] && changed_units+=("panel.service")
     # a program with a service of the same name: restart that service too
     [[ $rel == usr/local/bin/* && -f "$FILES/etc/systemd/system/$(basename "$rel").service" ]] \
       && changed_units+=("$(basename "$rel").service")
@@ -141,7 +143,8 @@ wait_kodi || log "  kodi is not answering"
 # Settings are written into guisettings.xml and add-ons unpacked with Kodi stopped,
 # not done over RPC: switching some settings over RPC puts a confirmation dialog on
 # the TV and hangs the call, and an add-on dropped in while Kodi runs comes up disabled.
-#  - look: Fire TV-style skin, Bing photos as the screensaver after 5 idle minutes
+#  - look: Fire TV-style skin; no screensaver (empty mode): the home screen's wallpapers keep
+#    changing (Bing photos by media-stick-wallpapers) and its row dims itself when idle
 #  - casting: UPnP/DLNA renderer ("Cast to device", BubbleUPnP); Kodi's own AirPlay is off:
 #    UxPlay (airplay.service) receives AirPlay, screen mirroring included, which Kodi cannot
 #  - Kodi's web server on :8080 for the Kodi phone apps (Kore, Official Kodi Remote,
@@ -158,7 +161,7 @@ web_pass=$(sed -n 's/^KODI_WEB_PASSWORD=//p' "$SECRETS" | tail -1)
 on_settings=(services.zeroconf services.upnp services.upnprenderer
   services.webserver services.webserverauthentication)
 kodi_wanted=("${on_settings[@]/%/=true}" services.airplay=false services.webserverusername=kodi "services.webserverpassword=$web_pass"
-  lookandfeel.skin=skin.ftv screensaver.mode=screensaver.bing screensaver.time=5
+  lookandfeel.skin=skin.ftv screensaver.mode=
   lookandfeel.startupwindow=10000 input.enablemouse=true
   # 1080p60 explicitly; left alone Kodi picks the 1024x768 "DESKTOP" mode on the TV
   videoscreen.screenmode=0192001080060.00000pstd

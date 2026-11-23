@@ -211,6 +211,8 @@ def make_icons():
 
     ic = Icon(); ic.line([(60, 16), (34, 48), (60, 80)], 8); save('icon-chevron-left.png', ic)
 
+    ic = Icon(); ic.circle((48, 30), 14, 7); ic.arc((48, 92), 36, -152, -28, 7); save('icon-accounts.png', ic)
+
 
 # ---------------------------------------------------------------- B. app cards, C. add-on icon
 
@@ -643,7 +645,7 @@ def make_contact(wall_names):
     # icons on a plate
     plate = Image.new('RGB', (cw - 60, 120), (44, 50, 62))
     sheet.paste(plate, (30, 900))
-    names = ['search', 'apps', 'phone', 'settings', 'power', 'menu', 'wifi', 'ethernet', 'chevron-left']
+    names = ['search', 'apps', 'phone', 'settings', 'power', 'menu', 'wifi', 'ethernet', 'chevron-left', 'accounts']
     for i, n in enumerate(names):
         a = Image.open(os.path.join(MEDIA, 'icon-%s.png' % n)).split()[3].resize((80, 80), Image.LANCZOS)
         sheet.paste(Image.new('RGB', (80, 80), (255, 255, 255)), (60 + i * 160, 920), a)

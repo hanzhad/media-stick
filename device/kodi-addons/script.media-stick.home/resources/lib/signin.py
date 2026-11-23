@@ -1,0 +1,384 @@
+"""The full-screen sign-in dialog: the code, a QR that opens it on the phone, following the state file.
+
+Follow is the pure part (what to show for each state the add-on publishes, and when to close);
+SigninDialog and run() are the thin Kodi wrapper around it.
+
+Partner mode (the state says mode "partner"): a partner's specialist types the code from this
+screen into their own form, within a working day. So the screen stays for hours, counts down the
+time left, draws no QR, keeps the screensaver off (ScreensaverHold), and never cancels on a stray
+key: the first button, the one focused, is "keep waiting", and cancelling asks first.
+"""
+import subprocess
+import threading
+import time
+from typing import NamedTuple, Optional
+
+import xbmc
+import xbmcgui
+
+from resources.lib import remote, store, ui
+
+# 10 is the button that has the focus: Cancel, and in partner mode Wait, so a stray OK does nothing.
+# 11 is Continue without account, and in partner mode Cancel.
+CONTROL_CANCEL, CONTROL_SKIP = 10, 11
+TICK = 0.5                 # s between looks for an add-on dialog on top; the state file is read every other tick
+START_WAIT = 45            # s without any state from the add-on: give up
+CANCEL_WAIT = 10           # s the add-on gets to see a stop request (YouTube looks between two polls)
+FRESH_SLACK = 2            # s: the state's `updated` has whole-second resolution
+MAX_REOPEN = 40            # a dialog that keeps getting covered is left alone after this many tries
+SHOWING = "media-stick.signin"       # Home window property "<service>:<unix time>" while a screen is up
+SHOWING_ALIVE = 5          # s: the screen refreshes the property every second or so
+PROGRESS_DIALOG = 10101    # the add-on's own modal progress dialog (YouTube's code dialog)
+LINGER = {"done": 2.0, "failed": 3.0, "cancelled": 1.5, "gone": 1.5, "skipped": 0.5}   # s the result stays up
+MESSAGES = {               # result -> (headline, status)
+    "done": ("Signed in", ""),
+    "failed": ("Sign-in did not work", "Try again from Accounts."),
+    "cancelled": ("Sign-in cancelled", ""),
+    "gone": ("Sign-in stopped", ""),
+    "skipped": ("Continuing without an account", ""),
+}
+FINISHED = ("done", "failed", "cancelled")
+WAITING = "waiting"
+PARTNER = "partner"
+BUTTONS = ("Cancel", "Continue without account")                  # the two buttons, by mode
+PARTNER_BUTTONS = ("Ждать / Wait", "Отмена / Cancel")
+PARTNER_STATUS = ("Ждём подключения специалистом партнёра. Не выключайте ТВ.",
+                  "Waiting for the partner's specialist to connect. Keep the TV on.")
+CONFIRM = ("Отменить вход? / Cancel sign-in?",
+           "Специалист партнёра не сможет подключить подписку, а код пропадёт.[CR]"
+           "The partner's specialist will not be able to connect, and the code will be lost.")
+CONFIRM_AUTOCLOSE = 30000  # ms: a question nobody answers closes itself, and the sign-in goes on
+INHIBIT_EVERY = 60         # s: how often the screensaver is told to stay off while a partner is awaited
+
+
+class Frame(NamedTuple):
+    props: dict                  # window properties for the skin
+    link: str                    # what the QR holds ("" when no code is shown)
+    result: Optional[str]        # done | failed | cancelled | gone | skipped, once decided
+    close: bool                  # the result has been up long enough
+
+
+def hours(seconds):
+    """Time left as h:mm: 21540 -> 5:59, 61 -> 0:02, 1 -> 0:01 (a started minute counts as left), 0 -> 0:00."""
+    minutes = (max(0, int(seconds or 0)) + 59) // 60
+    return f"{minutes // 60}:{minutes % 60:02d}"
+
+
+def asked_partner(service):
+    """Whether the phone asked for a partner sign-in that has not started yet (so the first
+    seconds of the screen already say so). An older library without modes: no."""
+    try:
+        return store.lib.requested_mode(service) == PARTNER
+    except Exception as e:
+        ui.log(f"cannot read the requested sign-in mode: {e!r}")
+        return False
+
+
+class ScreensaverHold:
+    """Keeps Kodi's screensaver (and display power-off) away while a partner is awaited. Pure: step()
+    says which builtin to run now, if any: at once when it starts being wanted, again every
+    INHIBIT_EVERY seconds, and the release when it is wanted no more.
+    InhibitScreensaver(true) is Kodi 21's own builtin: it holds the idle timer off until it is told
+    false, so a missed call costs nothing, and it is not a fake key press that could hit a button."""
+
+    def __init__(self):
+        self.last = None
+
+    def step(self, wanted, now):
+        if wanted and (self.last is None or now - self.last >= INHIBIT_EVERY):
+            self.last = now
+            return "InhibitScreensaver(true)"
+        if not wanted and self.last is not None:
+            self.last = None
+            return "InhibitScreensaver(false)"
+        return None
+
+
+def spaced(code):
+    """A code for reading from the sofa: letters apart, groups set off by a dash."""
+    return "  -  ".join(" ".join(group) for group in code.split("-"))
+
+
+def site(url):
+    """youtube.com/activate from https://www.youtube.com/activate."""
+    text = url.split("://", 1)[-1]
+    return (text[4:] if text.startswith("www.") else text).rstrip("/")
+
+
+def covered(top, mine):
+    """True when a dialog of the add-on is on top of ours: its progress dialog, or a script window
+    of the add-on (same block of window ids as ours). Kodi's own questions are left alone."""
+    if not mine or not top or top == mine:
+        return False
+    return top == PROGRESS_DIALOG or top // 100 == mine // 100
+
+
+def parse_showing(text, now):
+    """The service whose screen is up according to the Home property, or ""."""
+    service, _, stamp = (text or "").partition(":")
+    try:
+        return service if service in store.SERVICES and now - int(stamp) <= SHOWING_ALIVE else ""
+    except ValueError:
+        return ""
+
+
+def can_attach(state, now):
+    """A sign-in that is waiting and was touched a moment ago is alive: show it, do not start another."""
+    return bool(state) and state["state"] == WAITING and now - state.get("updated", 0) <= 15
+
+
+class Follow:
+    """Follows one sign-in through the states its add-on publishes. Pure: feed() takes what
+    store.lib.read returned and the time, and says what to show and whether to close."""
+
+    def __init__(self, name, started, attach=False, partner=False):
+        self.name, self.started, self.attach = name, started, attach
+        self.partner = partner       # a partner's specialist will type the code in (the state says so too)
+        self.seen = False            # a state of this sign-in has been read
+        self.cancel_at = None
+        self.skipped = False         # the person chose to go on without an account
+        self.result = None
+        self.result_at = 0.0
+        self.note = ""
+
+    @property
+    def cancelling(self):
+        return self.cancel_at is not None and self.result is None
+
+    def cancel(self, now, skip=False):
+        if self.result is None and self.cancel_at is None:
+            self.cancel_at, self.skipped = now, skip
+
+    def force(self, now):
+        """A second Back while cancelling: leave without waiting for the add-on."""
+        if self.result is None:
+            self._finish("skipped" if self.skipped else "cancelled", now)
+
+    def _finish(self, result, now, note=""):
+        self.result, self.result_at, self.note = result, now, note
+
+    def usable(self, state):
+        """The state, unless it is left over from before this screen (an earlier result, or a
+        dead sign-in this one started over). A live one shown by attaching is accepted at any age."""
+        if not state:
+            return None
+        if self.attach and state["state"] == WAITING:
+            return state
+        return state if state.get("updated", 0) >= self.started - FRESH_SLACK else None
+
+    def _decide(self, state, now):
+        kind = state["state"] if state else ""
+        if self.cancel_at is not None:
+            if (kind in FINISHED or (not state and self.seen) or now - self.cancel_at >= CANCEL_WAIT):
+                self._finish("skipped" if self.skipped else "cancelled", now)
+        elif kind in FINISHED:
+            self._finish(kind, now)
+        elif not state and self.seen:
+            self._finish("gone", now)
+        elif not state and now - self.started >= START_WAIT:
+            self._finish("failed", now, "No code came. Try again from Accounts.")
+
+    def feed(self, state, now):
+        state = self.usable(state)
+        if state:
+            self.seen = True
+            if state["state"] == WAITING:
+                self.partner = state.get("mode") == PARTNER
+        if self.result is None:
+            self._decide(state, now)
+        waiting = state if state and state["state"] == WAITING and self.result is None and self.cancel_at is None else None
+        props, link = self._props(waiting)
+        return Frame(props, link, self.result, self.result is not None and now - self.result_at >= LINGER[self.result])
+
+    def _props(self, waiting):
+        props = {"title": self.name, "step": "", "code": "", "codelong": "", "site": "", "headline": "", "status": "",
+                 "status2": "", "left": "", "partner": "1" if self.partner else "",
+                 "btn1": (PARTNER_BUTTONS if self.partner else BUTTONS)[0],
+                 "btn2": (PARTNER_BUTTONS if self.partner else BUTTONS)[1]}
+        if self.result:
+            props["headline"], props["status"] = MESSAGES[self.result]
+            props["status"] = self.note or props["status"]
+        elif self.cancel_at is not None:
+            props["headline"], props["status"] = "Cancelling…", "Stopping the sign-in."
+        elif waiting:
+            code = str(waiting.get("code", ""))
+            if waiting.get("steps", 1) > 1:
+                props["step"] = f"Code {waiting.get('step', 1)} of {waiting['steps']}"
+            props["code"] = spaced(code)
+            props["codelong"] = "1" if len(code) > 14 else ""
+            if self.partner:         # a person reads the code off the screen: no QR, no "scan", the time left instead
+                props["left"] = hours(waiting.get("left", 0))
+                props["status"], props["status2"] = PARTNER_STATUS
+                return props, ""
+            if waiting.get("url"):
+                props["site"] = f"Or open {site(waiting['url'])} and type the code"
+            props["status"] = "Waiting for the code to be entered…"
+            return props, str(waiting.get("link", ""))
+        else:
+            props["headline"], props["status"] = "Getting a code…", "This takes a few seconds."
+        return props, ""
+
+
+def mark_showing(service, now):
+    xbmcgui.Window(ui.HOME).setProperty(SHOWING, f"{service}:{int(now)}")
+
+
+def clear_showing():
+    xbmcgui.Window(ui.HOME).setProperty(SHOWING, "")
+
+
+def showing(now=None):
+    """The service whose sign-in screen is up right now (any script's), or ""."""
+    return parse_showing(xbmcgui.Window(ui.HOME).getProperty(SHOWING), time.time() if now is None else now)
+
+
+class SigninDialog(xbmcgui.WindowXMLDialog):
+    """Set up with setup() after construction: the Kodi window constructors take no extra arguments."""
+
+    def setup(self, service, follow, allow_skip, cover, hold=None):
+        self.service, self.follow, self.allow_skip, self.cover = service, follow, allow_skip, cover
+        self.hold = hold or ScreensaverHold()
+        self.reopen = False
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+        self._shown = {}
+        self._link = ""
+        self._window_id = 0
+
+    def onInit(self):
+        self._window_id = xbmcgui.getCurrentWindowDialogId()
+        self.setProperty("skip", "1" if self.allow_skip else "")
+        self.setFocusId(CONTROL_CANCEL)
+        self._poll()
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(2)
+
+    def _watch(self):
+        beat = 0
+        while not self._stop.wait(TICK):
+            try:
+                if self.cover and covered(xbmcgui.getCurrentWindowDialogId(), self._window_id):
+                    self.reopen = True       # the add-on's dialog came up above ours: close and open again on top
+                    self.close()
+                    return
+                beat += 1
+                if beat % 2 == 0:
+                    self._poll()
+                self._hold_screensaver()
+            except Exception as e:
+                ui.log(f"sign-in screen tick failed: {e!r}")
+
+    def _hold_screensaver(self):
+        """Keep the screensaver off while a partner is awaited (this screen is the only thing they see)."""
+        command = self.hold.step(self.follow.partner and self.follow.result is None, time.time())
+        if command:
+            xbmc.executebuiltin(command)
+
+    def _read(self):
+        try:
+            return store.lib.read(self.service)
+        except Exception as e:
+            ui.log(f"cannot read the sign-in state: {e!r}")
+            return None
+
+    def _poll(self):
+        with self._lock:
+            now = time.time()
+            frame = self.follow.feed(self._read(), now)
+            self._apply(frame)
+            if self.follow.cancelling:
+                store.lib.request_cancel(self.service)       # again: the add-on clears an early request when it starts
+            mark_showing(self.service, now)
+        if frame.close:
+            self.close()
+
+    def _set(self, key, value):
+        if self._shown.get(key) != value:
+            self._shown[key] = value
+            self.setProperty(key, value)
+
+    def _apply(self, frame):
+        for key, value in frame.props.items():
+            self._set(key, value)
+        self._set("skip", "1" if self.allow_skip or self.follow.partner else "")     # partner: the second button is Cancel
+        if frame.link and frame.link != self._link:
+            self._link = frame.link
+            self._set("qr", self._qr(frame.link))
+
+    @staticmethod
+    def _qr(link):
+        try:
+            return remote.qr_png(link)
+        except (OSError, subprocess.SubprocessError) as e:
+            ui.log(f"sign-in QR failed: {e!r}")
+            return ""
+
+    def _sure(self):
+        """The question before a partner sign-in is given up: the answer is no unless it is a clear yes
+        (the first button, which has the focus, is "Wait"); the focus goes back to Wait afterwards."""
+        heading, line = CONFIRM
+        try:
+            yes = xbmcgui.Dialog().yesno(heading, line, nolabel=PARTNER_BUTTONS[0], yeslabel=PARTNER_BUTTONS[1],
+                                         autoclose=CONFIRM_AUTOCLOSE)
+        except Exception as e:
+            ui.log(f"cannot ask before cancelling: {e!r}")
+            yes = False
+        self.setFocusId(CONTROL_CANCEL)
+        return bool(yes)
+
+    def _cancel(self, skip):
+        if self.follow.partner and self.follow.result is None and not self.follow.cancelling and not self._sure():
+            return
+        self.follow.cancel(time.time(), skip)
+        store.lib.request_cancel(self.service)
+        self._poll()
+
+    def onClick(self, controlId):
+        if self.follow.partner:
+            if controlId == CONTROL_SKIP:            # Cancel; the first button only keeps waiting
+                self._cancel(False)
+        elif controlId == CONTROL_CANCEL:
+            self._cancel(False)
+        elif controlId == CONTROL_SKIP and self.allow_skip:
+            self._cancel(True)
+
+    def onAction(self, action):
+        if action.getId() in ui.BACK_ACTIONS:
+            if self.follow.cancelling:
+                self.follow.force(time.time())
+                self._poll()
+            else:
+                self._cancel(False)
+        else:
+            super().onAction(action)
+
+
+def run(service, attach=False, allow_skip=False):
+    """Show the sign-in screen for `service` until it has a result; returns done | failed |
+    cancelled | gone | skipped, or "closed" when the window went away without one. Every path ends."""
+    follow = Follow(store.SERVICES[service]["name"], time.time(), attach, partner=asked_partner(service))
+    hold = ScreensaverHold()           # outlives a reopened window, so it does not flap
+    opened = 0
+    try:
+        while True:
+            dialog = ui.load(SigninDialog, "script-media-stick-signin.xml")
+            dialog.setup(service, follow, allow_skip, cover=opened < MAX_REOPEN, hold=hold)
+            dialog.doModal()
+            dialog.stop()
+            again = dialog.reopen
+            del dialog
+            opened += 1
+            if follow.result is not None or not again:
+                break
+    finally:
+        clear_showing()
+        release = hold.step(False, time.time())      # whatever ended the screen, the screensaver is allowed again
+        if release:
+            xbmc.executebuiltin(release)
+    return follow.result or "closed"

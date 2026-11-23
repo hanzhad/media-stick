@@ -2,20 +2,22 @@
 import os
 import subprocess
 import threading
+import time
 from urllib.parse import quote_plus
 
 import xbmc
-import xbmcaddon
 import xbmcgui
 
-from resources.lib import apps, net, remote
+from resources.lib import apps, net, remote, ui
 from resources.lib.remote import RemoteDialog
+from resources.lib.ui import ADDON_PATH, LOG, MEDIA
 
-LOG = "[script.media-stick.home]"
 ACTION_PREVIOUS_MENU = 10
 ACTION_NAV_BACK = 92
 ACTION_CONTEXT_MENU = 117
 NAV_ACTIONS = {1, 2, 3, 4, 7}            # left, right, up, down, select
+IDLE_S = 30                              # seconds without input before the row dims (XML: Window.Property(idle))
+WAKE_ONLY = NAV_ACTIONS | {ACTION_CONTEXT_MENU}   # the first of these after idle only wakes the screen
 CAROUSEL, DRAWER = 100, 201
 EDGE_LEFT, EDGE_RIGHT = 301, 302         # mouse-only strips at the screen edges
 EDGE_STEP_S = 0.35                       # one card per step while the pointer rests there
@@ -23,13 +25,12 @@ CARDS_IN_VIEW = 7                        # whole 252 px cards in the 1824 px row
 PILL_RIGHT, PILL_PAD = 1632, 24          # right edge and padding of the status pill
 PILL_DIGIT, PILL_DOT = 14, 7             # approximate Reg25 glyph widths in px
 WALLPAPER_CACHE = "/var/cache/media-stick/wallpapers/"
-ADDON_PATH = xbmcaddon.Addon().getAddonInfo("path")
-MEDIA = os.path.join(ADDON_PATH, "resources", "skins", "default", "media")
+WINDOW_ID = 13000                        # Kodi's first script window id, used only if the window cannot say its own
 
 PHONE_ICON = os.path.join(MEDIA, "icon-phone.png")
 
 # (label, icon file in the skin media folder)
-DRAWER_ITEMS = [("Search", "icon-search.png"), ("Add-ons", "icon-apps.png"),
+DRAWER_ITEMS = [("Search", "icon-search.png"), ("Accounts", "icon-accounts.png"),
                 ("Phone & network", "icon-phone.png"), ("Settings", "icon-settings.png"),
                 ("Power", "icon-power.png")]
 POWER = [("Restart Kodi", ["restart", "kodi.service"]),
@@ -46,8 +47,11 @@ def has_cached_wallpapers():
 
 class Launcher(xbmcgui.WindowXML):
     _card_url = None                 # the address the Phone remote card was last built for
+    _last_input = 0.0                # time.monotonic() of the last action this window saw
 
     def onInit(self):
+        self._last_input = time.monotonic()
+        self.setProperty("idle", "")
         self.setProperty("wallpaper", "cache" if has_cached_wallpapers() else "bundled")
         self.refresh_status(force=True)
         self._fill_drawer()
@@ -69,6 +73,24 @@ class Launcher(xbmcgui.WindowXML):
             self._sync_card(ip)
         except RuntimeError as e:
             xbmc.log(f"{LOG} phone card refresh failed: {e}", xbmc.LOGWARNING)
+
+    def window_id(self):
+        """The id Kodi gave this window: once it is shown, it, not Home, is the current window."""
+        try:
+            return self.getId()
+        except AttributeError:
+            return WINDOW_ID
+
+    def refresh_idle(self, on_screen=True):
+        """Set or clear the idle window property, which the skin animates (the row dims and
+        slides down, the QR moves to the corner). Idle needs both Kodi's own input timer, which
+        sees every window, and this window's last action, so a pointer that Kodi does not count
+        as input cannot make it flicker. Called by the service loop on every pass; on_screen is
+        False while this window is left or under a dialog, which clears the property."""
+        idle = (on_screen and time.monotonic() - self._last_input >= IDLE_S
+                and xbmc.getCondVisibility(f"System.IdleTime({IDLE_S})"))
+        if idle != bool(self.getProperty("idle")):
+            self.setProperty("idle", "1" if idle else "")
 
     def _layout_pill(self, ip, kind):
         """Size the pill to its content (phone icon, address, network icon): a skin cannot
@@ -93,13 +115,14 @@ class Launcher(xbmcgui.WindowXML):
         """The QR png for the card, or "" when offline or qrencode fails (the card then shows the
         phone icon). Remembers the address, so a failure is not retried until it changes."""
         self._card_url = url
-        if not url:
-            return ""
-        try:
-            return remote.qr_png(url)
-        except (OSError, subprocess.SubprocessError) as e:
-            xbmc.log(f"{LOG} phone card QR failed: {e!r}", xbmc.LOGWARNING)
-            return ""
+        qr = ""
+        if url:
+            try:
+                qr = remote.qr_png(url)
+            except (OSError, subprocess.SubprocessError) as e:
+                xbmc.log(f"{LOG} phone card QR failed: {e!r}", xbmc.LOGWARNING)
+        self.setProperty("qr", qr)           # the skin's corner QR while idle shows the same png
+        return qr
 
     @staticmethod
     def _style_card(item, qr):
@@ -192,6 +215,11 @@ class Launcher(xbmcgui.WindowXML):
             xbmc.sleep(int(EDGE_STEP_S * 1000))
 
     def onAction(self, action):
+        self._last_input = time.monotonic()
+        if self.getProperty("idle"):         # any input brings the row back; a key only does that
+            self.setProperty("idle", "")
+            if action.getId() in WAKE_ONLY:
+                return
         # after the mouse, focus can be nowhere or on an edge strip, where keys lead nowhere:
         # the first arrow or OK then brings it back to the row
         if action.getId() in NAV_ACTIONS and self._focus() not in (CAROUSEL, DRAWER):
@@ -216,24 +244,44 @@ class Launcher(xbmcgui.WindowXML):
                 if item and item.getProperty("card") == "remote":
                     self._remote()
                 elif item and item.getProperty("app_id"):
-                    apps.launch(item.getProperty("app_id"))
+                    self._launch(item.getProperty("app_id"))
                     self._fill_apps()    # the launched app is first after the card on return
             elif controlId == DRAWER:
                 self._drawer(self.getControl(DRAWER).getSelectedPosition())
         except Exception as e:      # never let a click kill the service loop
             xbmc.log(f"{LOG} click {controlId} failed: {e}", xbmc.LOGERROR)
 
+    @staticmethod
+    def _launch(app_id):
+        """Launch an app; a YouTube profile or a sign-in may come first. Any trouble there is a plain launch."""
+        try:
+            from resources.lib import accounts
+            accounts.launch_app(app_id)
+        except Exception as e:
+            xbmc.log(f"{LOG} accounts step unavailable, launching {app_id}: {e!r}", xbmc.LOGERROR)
+            apps.launch(app_id)
+
     def _drawer(self, position):
-        if position == 0:
+        label = DRAWER_ITEMS[position][0] if 0 <= position < len(DRAWER_ITEMS) else ""
+        if label == "Search":
             self._search()
-        elif position == 1:
-            xbmc.executebuiltin("ActivateWindow(AddonBrowser,return)")
-        elif position == 2:
+        elif label == "Phone & network":
             self._remote()
-        elif position == 3:
+        elif label == "Accounts":
+            self._accounts()
+        elif label == "Settings":
             xbmc.executebuiltin("ActivateWindow(Settings)")
-        elif position == 4:
+        elif label == "Power":
             self._power()
+
+    @staticmethod
+    def _accounts():
+        try:
+            from resources.lib import accounts_screen
+            accounts_screen.show()
+        except Exception as e:
+            xbmc.log(f"{LOG} accounts screen failed: {e!r}", xbmc.LOGERROR)
+            ui.notify("Accounts are not available.")
 
     def _remote(self):
         dialog = RemoteDialog("script-media-stick-remote.xml", ADDON_PATH, "default", "1080i")

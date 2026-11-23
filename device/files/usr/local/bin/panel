@@ -28,6 +28,9 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+sys.path.insert(0, "/usr/local/lib/media-stick")
+import panel_accounts   # the Accounts tab and its API
+
 PORT = int(os.environ.get("PANEL_PORT", "80"))
 REPO = "/opt/media-stick"
 SHOTS = "/run/media-stick/shots"
@@ -805,11 +808,14 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
     </div>
   </section>
 
+  @@ACC_SECTION@@
+
   <nav class="tabs">
     <button data-go="remote" class="on"><span class="pb"><svg class="i"><use href="#i-remote"/></svg></span>Пульт</button>
     <button data-go="screen"><span class="pb"><svg class="i"><use href="#i-screen"/></svg></span>Экран</button>
     <button data-go="info"><span class="pb"><svg class="i"><use href="#i-info"/></svg></span>Инфо</button>
     <button data-go="settings"><span class="pb"><svg class="i"><use href="#i-sliders"/></svg></span>Настройки</button>
+    @@ACC_NAV@@
   </nav>
 </div>
 
@@ -970,6 +976,7 @@ async function tick(){
     header(s.wifi.online,(s.wifi.ssid||'кабель')+' · '+s.temp+' · '+s.time); $('info').innerHTML=fmt(s);
     httpsUrl=s.https_url||''; httpsCheck(); airUi(); keysUi(s.dead);kbUi(s.kb);
     pageCheck(s.page);
+    if(window.accNote)accNote(s.signin);
   }catch(e){header(false,'нет связи')}
 }
 tick(); setInterval(tick,5000);
@@ -1478,7 +1485,8 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)airStop(tru
 airUi();
 document.addEventListener('gesturestart',e=>e.preventDefault());
 document.addEventListener('dblclick',e=>e.preventDefault());
-</script></body></html>"""
+</script>@@ACC_TAIL@@</body></html>"""
+PAGE = panel_accounts.inject(PAGE)
 PAGE_VER = hashlib.sha256(PAGE.encode()).hexdigest()[:12]
 PAGE = PAGE.replace("@@PAGE_VER@@", PAGE_VER)
 
@@ -1605,7 +1613,9 @@ class H(BaseHTTPRequestHandler):
         if p == "/":
             return self.send(PAGE, "text/html; charset=utf-8")
         if p == "/api/status":
-            return self.send(status())
+            return self.send(panel_accounts.with_signin(status()))
+        if p == "/api/accounts":
+            return self.send(panel_accounts.view())
         if p == "/api/https":
             return self.send(https_status())
         if p == "/api/focus":   # polled by the air pad while it is held
@@ -1630,6 +1640,9 @@ class H(BaseHTTPRequestHandler):
         b = json_body(self)
         if p == "/api/pointer":
             return self.pointer_post(b)
+        if p.startswith(panel_accounts.PREFIX):
+            body, code = panel_accounts.post(p, b, kodi)
+            return self.send(body, code=code)
         try:
             if p == "/api/key":
                 a = b.get("action")

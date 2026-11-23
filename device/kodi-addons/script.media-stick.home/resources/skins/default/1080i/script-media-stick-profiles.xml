@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- "Who's watching" (resources/lib/profiles.py). List 500 items carry the properties
+     id, initial, color (ARGB of the circle), mark, markcolor (ARGB of the small line). -->
+<window>
+    <defaultcontrol always="true">500</defaultcontrol>
+    <controls>
+        <control type="image">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <texture>white.png</texture>
+            <colordiffuse>F2080B10</colordiffuse>
+        </control>
+        <control type="label">
+            <left>160</left>
+            <top>200</top>
+            <width>1600</width>
+            <height>100</height>
+            <font>Light60</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <aligny>center</aligny>
+            <label>Who's watching?</label>
+        </control>
+        <control type="label">
+            <left>160</left>
+            <top>300</top>
+            <width>1600</width>
+            <height>50</height>
+            <font>Reg25</font>
+            <textcolor>99FFFFFF</textcolor>
+            <aligny>center</aligny>
+            <label>YouTube</label>
+        </control>
+        <control type="list" id="500">
+            <left>160</left>
+            <top>400</top>
+            <width>1600</width>
+            <height>400</height>
+            <orientation>horizontal</orientation>
+            <scrolltime tween="cubic" easing="out">220</scrolltime>
+            <itemlayout width="280" height="400">
+                <control type="image">
+                    <left>60</left>
+                    <top>40</top>
+                    <width>160</width>
+                    <height>160</height>
+                    <texture>pill.png</texture>
+                    <colordiffuse>$INFO[ListItem.Property(color)]</colordiffuse>
+                </control>
+                <control type="label">
+                    <left>60</left>
+                    <top>40</top>
+                    <width>160</width>
+                    <height>160</height>
+                    <font>Light60</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(initial)]</label>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>224</top>
+                    <width>280</width>
+                    <height>44</height>
+                    <font>Med32</font>
+                    <textcolor>B3FFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Label]</label>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>272</top>
+                    <width>280</width>
+                    <height>34</height>
+                    <font>Reg22</font>
+                    <textcolor>$INFO[ListItem.Property(markcolor)]</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(mark)]</label>
+                </control>
+            </itemlayout>
+            <focusedlayout width="280" height="400">
+                <control type="image">
+                    <left>44</left>
+                    <top>24</top>
+                    <width>192</width>
+                    <height>192</height>
+                    <texture>pill.png</texture>
+                    <colordiffuse>FFFFFFFF</colordiffuse>
+                    <visible>Control.HasFocus(500)</visible>
+                </control>
+                <control type="image">
+                    <left>60</left>
+                    <top>40</top>
+                    <width>160</width>
+                    <height>160</height>
+                    <texture>pill.png</texture>
+                    <colordiffuse>$INFO[ListItem.Property(color)]</colordiffuse>
+                </control>
+                <control type="label">
+                    <left>60</left>
+                    <top>40</top>
+                    <width>160</width>
+                    <height>160</height>
+                    <font>Light60</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(initial)]</label>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>224</top>
+                    <width>280</width>
+                    <height>44</height>
+                    <font>Med32</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Label]</label>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>272</top>
+                    <width>280</width>
+                    <height>34</height>
+                    <font>Reg22</font>
+                    <textcolor>$INFO[ListItem.Property(markcolor)]</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(mark)]</label>
+                </control>
+            </focusedlayout>
+        </control>
+    </controls>
+</window>

@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sign-in screen (resources/lib/signin.py). Window properties: title, step, code, codelong, site,
+     headline, status, status2, left, partner, btn1, btn2, qr, skip. While `headline` is set (starting,
+     cancelling, a result) it takes the place of the code and the QR. Buttons, labels from btn1/btn2:
+     10 Cancel (focused first), 11 Continue without account. In partner mode (`partner` set: a partner's
+     specialist types the code in by hand, for hours) there is no QR, the time left (`left`, h:mm) takes
+     its place, `status`/`status2` are the Russian and English lines, 10 says Wait (so a stray OK does
+     nothing) and 11 says Cancel (the code asks first). -->
+<window>
+    <defaultcontrol always="true">10</defaultcontrol>
+    <controls>
+        <control type="image">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <texture>white.png</texture>
+            <colordiffuse>F2080B10</colordiffuse>
+        </control>
+        <control type="group">
+            <left>210</left>
+            <top>150</top>
+            <width>1500</width>
+            <height>780</height>
+            <control type="image">
+                <left>-40</left>
+                <top>-30</top>
+                <width>1580</width>
+                <height>860</height>
+                <texture border="56">card-shadow.png</texture>
+            </control>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>1500</width>
+                <height>780</height>
+                <texture border="47">pill.png</texture>
+                <colordiffuse>F2141922</colordiffuse>
+            </control>
+
+            <!-- the QR: a white plate and the code from qrencode (never a web service) -->
+            <control type="group">
+                <left>0</left>
+                <top>0</top>
+                <width>500</width>
+                <height>780</height>
+                <visible>String.IsEmpty(Window.Property(headline)) + String.IsEmpty(Window.Property(partner)) + !String.IsEmpty(Window.Property(qr))</visible>
+                <control type="image">
+                    <left>60</left>
+                    <top>170</top>
+                    <width>400</width>
+                    <height>400</height>
+                    <texture border="47">pill.png</texture>
+                    <colordiffuse>FFFFFFFF</colordiffuse>
+                </control>
+                <control type="image">
+                    <left>80</left>
+                    <top>190</top>
+                    <width>360</width>
+                    <height>360</height>
+                    <aspectratio>keep</aspectratio>
+                    <texture>$INFO[Window.Property(qr)]</texture>
+                </control>
+            </control>
+
+            <!-- partner mode: the time left where the QR would be -->
+            <control type="group">
+                <left>0</left>
+                <top>0</top>
+                <width>500</width>
+                <height>780</height>
+                <visible>String.IsEmpty(Window.Property(headline)) + !String.IsEmpty(Window.Property(partner))</visible>
+                <control type="label">
+                    <left>60</left>
+                    <top>250</top>
+                    <width>400</width>
+                    <height>40</height>
+                    <font>Reg25</font>
+                    <textcolor>CCFFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>Осталось / Time left</label>
+                </control>
+                <control type="label">
+                    <left>60</left>
+                    <top>300</top>
+                    <width>400</width>
+                    <height>110</height>
+                    <font>Light60</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(left)]</label>
+                </control>
+            </control>
+
+            <control type="label">
+                <left>520</left>
+                <top>60</top>
+                <width>920</width>
+                <height>60</height>
+                <font>Med40</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(title),Sign in to ]</label>
+            </control>
+            <control type="label">
+                <left>520</left>
+                <top>122</top>
+                <width>920</width>
+                <height>40</height>
+                <font>Reg25</font>
+                <textcolor>CCFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(step)]</label>
+                <visible>String.IsEmpty(Window.Property(headline))</visible>
+            </control>
+
+            <!-- a code to enter -->
+            <control type="group">
+                <left>520</left>
+                <top>0</top>
+                <width>920</width>
+                <height>780</height>
+                <visible>String.IsEmpty(Window.Property(headline))</visible>
+                <control type="label">
+                    <left>0</left>
+                    <top>190</top>
+                    <width>920</width>
+                    <height>110</height>
+                    <font>Light60</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(code)]</label>
+                    <visible>String.IsEmpty(Window.Property(codelong))</visible>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>190</top>
+                    <width>920</width>
+                    <height>110</height>
+                    <font>Med40</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(code)]</label>
+                    <visible>!String.IsEmpty(Window.Property(codelong))</visible>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>310</top>
+                    <width>920</width>
+                    <height>40</height>
+                    <font>Reg25</font>
+                    <textcolor>CCFFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(site)]</label>
+                </control>
+                <control type="textbox">
+                    <left>0</left>
+                    <top>380</top>
+                    <width>920</width>
+                    <height>100</height>
+                    <font>Reg25</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <label>Scan with your phone, or use the Accounts tab of the phone remote</label>
+                    <visible>String.IsEmpty(Window.Property(partner))</visible>
+                </control>
+                <control type="textbox">
+                    <left>0</left>
+                    <top>340</top>
+                    <width>920</width>
+                    <height>200</height>
+                    <font>Reg25</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <align>center</align>
+                    <label>$INFO[Window.Property(status)][CR][CR]$INFO[Window.Property(status2)]</label>
+                    <visible>!String.IsEmpty(Window.Property(partner))</visible>
+                </control>
+            </control>
+
+            <!-- starting, cancelling, or a result -->
+            <control type="label">
+                <left>520</left>
+                <top>190</top>
+                <width>920</width>
+                <height>110</height>
+                <font>Light60</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(headline)]</label>
+                <visible>!String.IsEmpty(Window.Property(headline))</visible>
+            </control>
+
+            <control type="label">
+                <left>520</left>
+                <top>500</top>
+                <width>920</width>
+                <height>40</height>
+                <font>Reg25</font>
+                <textcolor>99FFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(status)]</label>
+                <visible>String.IsEmpty(Window.Property(partner)) | !String.IsEmpty(Window.Property(headline))</visible>
+            </control>
+
+            <control type="button" id="10">
+                <left>520</left>
+                <top>620</top>
+                <width>300</width>
+                <height>80</height>
+                <label>$INFO[Window.Property(btn1)]</label>
+                <font>Med32</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <focusedcolor>FF000000</focusedcolor>
+                <selectedcolor>FF000000</selectedcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <texturenofocus border="47" colordiffuse="33FFFFFF">pill.png</texturenofocus>
+                <texturefocus border="47" colordiffuse="FFFFFFFF">pill.png</texturefocus>
+                <onright>11</onright>
+            </control>
+            <control type="button" id="11">
+                <left>850</left>
+                <top>620</top>
+                <width>500</width>
+                <height>80</height>
+                <label>$INFO[Window.Property(btn2)]</label>
+                <font>Med32</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <focusedcolor>FF000000</focusedcolor>
+                <selectedcolor>FF000000</selectedcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <texturenofocus border="47" colordiffuse="33FFFFFF">pill.png</texturenofocus>
+                <texturefocus border="47" colordiffuse="FFFFFFFF">pill.png</texturefocus>
+                <onleft>10</onleft>
+                <visible>!String.IsEmpty(Window.Property(skip))</visible>
+            </control>
+        </control>
+    </controls>
+</window>

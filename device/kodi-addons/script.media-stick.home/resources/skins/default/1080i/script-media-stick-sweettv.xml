@@ -1,0 +1,1135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SWEET.TV app (resources/lib/sweettv_app.py), laid out like the launcher (script-media-stick-home.xml): a backdrop in
+     the colour of the focused channel, a row of channel cards along the bottom, a narrow category menu on the left.
+     Controls: 100 category menu, 200 row of channel cards, 209 the buttons over the row (group): 210 "Continue from ..."
+     and 211 "Programme guide", 400 the guide's list of programmes, 300 sign-in button, 301 retry button of the status card.
+     Window properties: mode (data | signin | empty), demo, signed, chip, notice, hint, jump, emptycat, ip, net,
+     preview_video (PREVIEW_VIDEO in the Python: a video window over the big logo), guide (set while the guide is open),
+     guide_title; sign-in card: phone_step1, phone_url, phone_step2, phone_step3, phone_qr; status card (mode empty):
+     msg_kind (loading | empty | error), msg_glyph, msg_tint, msg_title, msg_text, msg_note.
+     Row items: label (the channel's name), art "icon" (the logo), properties num, initials, tint, plate, plate_hi, bg (the
+     channel's colours), now, nowrange, bar (the card's progress picture), pbar (the preview's), desc, next, nextrange, meta,
+     fav, catchup, guide, resume. Menu items: label, label2 (count), properties heading ("News  .  9 channels"), active.
+     Guide items: label (title), label2 ("Live" or ""), properties when, kind.
+     The preview reads the row's focused item (Container(200)), also while the menu has the focus: the Python puts the
+     row on the menu's category a moment after the key, so it shows that category's first channel.
+
+     Budget (Pi 3B+): pictures on screen with the channels shown, at most 34 at once. Backdrop: the colour, the logo or its
+     badge (one of the two), the two gradients = 4. Top: the account chip, the network pill with its icon (wifi or
+     ethernet: one) = 3, plus the DEMO chip in the demo only and the number chip while a number is typed. Menu: the
+     cursor's pill and, for a moment after a key, the pill of the category the row still shows = 2. Preview: the progress
+     bar, the Catch-up chip, the Favourite chip with its star, the two buttons = 6. Row: 5 cards in view, each a plate,
+     a logo (a missing logo is a badge drawn as text) and a progress bar = 3 for the 4 not focused, 4 for the focused
+     (plate, frame, logo, bar) = 16. Total 31, 33 with the DEMO and number chips. The guide hides the menu, the row and
+     the preview; it is a card, its shadow and one pill. One short zoom when a card gets the focus, as in the launcher,
+     and nothing that moves on every frame. Logos load in the background.
+     A 9-slice picture (border="n") must be at least 2n high and wide: pill-80.png is a round 80 x 80 (border 40),
+     pill.png a round 96 x 96 (border 47), card-mask.png 256 x 256 (border 28 to 56), sweettv-chip.png a round
+     48 x 48 (border 24). Smaller than that and the two halves overlap: the middle of a translucent one shows as a stripe. -->
+<window>
+    <backgroundcolor>0xff0a0e14</backgroundcolor>
+    <controls>
+        <!-- backdrop: the focused channel's colour, its logo big on the right -->
+        <control type="group">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <visible>String.IsEqual(Window.Property(mode),data)</visible>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>1920</width>
+                <height>1080</height>
+                <texture>white.png</texture>
+                <colordiffuse>$INFO[Container(200).ListItem.Property(bg)]</colordiffuse>
+                <visible>!String.IsEmpty(Container(200).ListItem.Property(bg))</visible>
+            </control>
+            <control type="group">
+                <left>1180</left>
+                <top>150</top>
+                <width>640</width>
+                <height>320</height>
+                <visible>String.IsEmpty(Window.Property(guide))</visible>
+                <control type="image">
+                    <left>0</left>
+                    <top>0</top>
+                    <width>640</width>
+                    <height>320</height>
+                    <aspectratio>keep</aspectratio>
+                    <texture background="true">$INFO[Container(200).ListItem.Art(icon)]</texture>
+                    <visible>!String.IsEmpty(Container(200).ListItem.Art(icon))</visible>
+                </control>
+                <control type="image">
+                    <left>120</left>
+                    <top>40</top>
+                    <width>400</width>
+                    <height>240</height>
+                    <texture border="32">card-mask.png</texture>
+                    <colordiffuse>$INFO[Container(200).ListItem.Property(plate_hi)]</colordiffuse>
+                    <visible>String.IsEmpty(Container(200).ListItem.Art(icon)) + !String.IsEmpty(Container(200).ListItem.Label)</visible>
+                </control>
+                <control type="label">
+                    <left>120</left>
+                    <top>40</top>
+                    <width>400</width>
+                    <height>240</height>
+                    <font>Light60</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[Container(200).ListItem.Property(initials)]</label>
+                    <visible>String.IsEmpty(Container(200).ListItem.Art(icon)) + !String.IsEmpty(Container(200).ListItem.Label)</visible>
+                </control>
+            </control>
+            <!-- PREVIEW_VIDEO: the stream of the focused channel in the window (off by default, see sweettv_app.py) -->
+            <control type="videowindow">
+                <left>1180</left>
+                <top>150</top>
+                <width>640</width>
+                <height>360</height>
+                <visible>!String.IsEmpty(Window.Property(preview_video)) + Player.HasVideo + String.IsEmpty(Window.Property(guide))</visible>
+            </control>
+        </control>
+        <control type="image">
+            <left>0</left>
+            <top>480</top>
+            <width>1920</width>
+            <height>600</height>
+            <texture>gradient-bottom.png</texture>
+        </control>
+        <control type="image">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>220</height>
+            <texture>gradient-top.png</texture>
+        </control>
+        <!-- top: the title and the account chip, the key hints, the network and the clock -->
+        <control type="label">
+            <left>64</left>
+            <top>36</top>
+            <width>360</width>
+            <height>80</height>
+            <font>Light60</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <aligny>center</aligny>
+            <label>SWEET.TV</label>
+        </control>
+        <control type="group">
+            <left>440</left>
+            <top>48</top>
+            <width>200</width>
+            <height>56</height>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>200</width>
+                <height>56</height>
+                <texture border="24">sweettv-chip.png</texture>
+                <colordiffuse>33FFFFFF</colordiffuse>
+            </control>
+            <control type="label">
+                <left>0</left>
+                <top>0</top>
+                <width>200</width>
+                <height>56</height>
+                <font>Reg22</font>
+                <textcolor>FF4CD964</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(chip)]</label>
+                <visible>!String.IsEmpty(Window.Property(signed))</visible>
+            </control>
+            <control type="label">
+                <left>0</left>
+                <top>0</top>
+                <width>200</width>
+                <height>56</height>
+                <font>Reg22</font>
+                <textcolor>FFFFC857</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(chip)]</label>
+                <visible>String.IsEmpty(Window.Property(signed))</visible>
+            </control>
+        </control>
+        <!-- the demo is marked here and in the account chip, and nowhere else -->
+        <control type="group">
+            <left>660</left>
+            <top>48</top>
+            <width>130</width>
+            <height>56</height>
+            <visible>!String.IsEmpty(Window.Property(demo))</visible>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>130</width>
+                <height>56</height>
+                <texture border="24">sweettv-chip.png</texture>
+                <colordiffuse>FFFFC857</colordiffuse>
+            </control>
+            <control type="label">
+                <left>0</left>
+                <top>0</top>
+                <width>130</width>
+                <height>56</height>
+                <font>Bold34</font>
+                <textcolor>FF10141A</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>DEMO</label>
+            </control>
+        </control>
+        <control type="label">
+            <left>64</left>
+            <top>112</top>
+            <width>1200</width>
+            <height>34</height>
+            <font>Reg22</font>
+            <textcolor>B3FFFFFF</textcolor>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(hint)]</label>
+            <visible>String.IsEqual(Window.Property(mode),data)</visible>
+        </control>
+        <control type="label">
+            <left>1290</left>
+            <top>112</top>
+            <width>566</width>
+            <height>34</height>
+            <font>Reg22</font>
+            <textcolor>FFFFC857</textcolor>
+            <align>right</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(notice)]</label>
+        </control>
+        <!-- channel number being typed -->
+        <control type="group">
+            <left>830</left>
+            <top>36</top>
+            <width>400</width>
+            <height>80</height>
+            <visible>!String.IsEmpty(Window.Property(jump))</visible>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>400</width>
+                <height>80</height>
+                <texture border="40">pill-80.png</texture>
+                <colordiffuse>E6FFFFFF</colordiffuse>
+            </control>
+            <control type="label">
+                <left>0</left>
+                <top>0</top>
+                <width>400</width>
+                <height>80</height>
+                <font>Med40</font>
+                <textcolor>FF10141A</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(jump)]</label>
+            </control>
+        </control>
+        <!-- the network, as on the launcher: the stick's address and how it is connected -->
+        <control type="group">
+            <left>1340</left>
+            <top>36</top>
+            <width>290</width>
+            <height>80</height>
+            <visible>!String.IsEmpty(Window.Property(ip))</visible>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>290</width>
+                <height>80</height>
+                <texture border="40">pill-80.png</texture>
+                <colordiffuse>66000000</colordiffuse>
+            </control>
+            <control type="label">
+                <left>32</left>
+                <top>0</top>
+                <width>190</width>
+                <height>80</height>
+                <font>Reg25</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(ip)]</label>
+            </control>
+            <control type="image">
+                <left>230</left>
+                <top>22</top>
+                <width>36</width>
+                <height>36</height>
+                <texture>icon-wifi.png</texture>
+                <visible>String.IsEqual(Window.Property(net),wifi)</visible>
+            </control>
+            <control type="image">
+                <left>230</left>
+                <top>22</top>
+                <width>36</width>
+                <height>36</height>
+                <texture>icon-ethernet.png</texture>
+                <visible>String.IsEqual(Window.Property(net),ethernet)</visible>
+            </control>
+        </control>
+        <control type="label">
+            <left>1656</left>
+            <top>36</top>
+            <width>200</width>
+            <height>80</height>
+            <font>Light60</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>right</align>
+            <aligny>center</aligny>
+            <label>$INFO[System.Time(hh:mm)]</label>
+        </control>
+        <!-- the channels: menu, preview, buttons, row -->
+        <control type="group">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <visible>String.IsEqual(Window.Property(mode),data)</visible>
+            <control type="group">
+                <left>0</left>
+                <top>0</top>
+                <width>1920</width>
+                <height>1080</height>
+                <visible>String.IsEmpty(Window.Property(guide))</visible>
+                <control type="list" id="100">
+                    <left>56</left>
+                    <top>186</top>
+                    <width>320</width>
+                    <height>560</height>
+                    <orientation>vertical</orientation>
+                    <scrolltime>150</scrolltime>
+                    <onright>200</onright>
+                    <itemlayout width="320" height="80">
+                        <control type="image">
+                            <left>0</left>
+                            <top>0</top>
+                            <width>320</width>
+                            <height>80</height>
+                            <texture border="40">pill-80.png</texture>
+                            <colordiffuse>26FFFFFF</colordiffuse>
+                            <visible>!String.IsEmpty(ListItem.Property(active))</visible>
+                        </control>
+                        <control type="label">
+                            <left>28</left>
+                            <top>0</top>
+                            <width>226</width>
+                            <height>80</height>
+                            <font>Med28</font>
+                            <textcolor>B3FFFFFF</textcolor>
+                            <selectedcolor>B3FFFFFF</selectedcolor>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label]</label>
+                        </control>
+                        <control type="label">
+                            <left>254</left>
+                            <top>0</top>
+                            <width>46</width>
+                            <height>80</height>
+                            <font>Reg22</font>
+                            <textcolor>66FFFFFF</textcolor>
+                            <selectedcolor>66FFFFFF</selectedcolor>
+                            <align>right</align>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label2]</label>
+                        </control>
+                    </itemlayout>
+                    <focusedlayout width="320" height="80">
+                        <control type="image">
+                            <left>0</left>
+                            <top>0</top>
+                            <width>320</width>
+                            <height>80</height>
+                            <texture border="40">pill-80.png</texture>
+                            <colordiffuse>FFFFFFFF</colordiffuse>
+                            <visible>Control.HasFocus(100)</visible>
+                        </control>
+                        <control type="image">
+                            <left>0</left>
+                            <top>0</top>
+                            <width>320</width>
+                            <height>80</height>
+                            <texture border="40">pill-80.png</texture>
+                            <colordiffuse>26FFFFFF</colordiffuse>
+                            <visible>!Control.HasFocus(100)</visible>
+                        </control>
+                        <control type="label">
+                            <left>28</left>
+                            <top>0</top>
+                            <width>226</width>
+                            <height>80</height>
+                            <font>Med28</font>
+                            <textcolor>FF000000</textcolor>
+                            <selectedcolor>FF000000</selectedcolor>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label]</label>
+                            <visible>Control.HasFocus(100)</visible>
+                        </control>
+                        <control type="label">
+                            <left>28</left>
+                            <top>0</top>
+                            <width>226</width>
+                            <height>80</height>
+                            <font>Med28</font>
+                            <textcolor>B3FFFFFF</textcolor>
+                            <selectedcolor>B3FFFFFF</selectedcolor>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label]</label>
+                            <visible>!Control.HasFocus(100)</visible>
+                        </control>
+                        <control type="label">
+                            <left>254</left>
+                            <top>0</top>
+                            <width>46</width>
+                            <height>80</height>
+                            <font>Reg22</font>
+                            <textcolor>99000000</textcolor>
+                            <selectedcolor>99000000</selectedcolor>
+                            <align>right</align>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label2]</label>
+                            <visible>Control.HasFocus(100)</visible>
+                        </control>
+                        <control type="label">
+                            <left>254</left>
+                            <top>0</top>
+                            <width>46</width>
+                            <height>80</height>
+                            <font>Reg22</font>
+                            <textcolor>66FFFFFF</textcolor>
+                            <selectedcolor>66FFFFFF</selectedcolor>
+                            <align>right</align>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label2]</label>
+                            <visible>!Control.HasFocus(100)</visible>
+                        </control>
+                    </focusedlayout>
+                </control>
+                <!-- over the row: the category (as the menu has it now), then the focused channel -->
+                <control type="label">
+                    <left>420</left>
+                    <top>150</top>
+                    <width>760</width>
+                    <height>40</height>
+                    <font>Reg25</font>
+                    <textcolor>FFFFC857</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Container(100).ListItem.Property(heading)]</label>
+                </control>
+                <control type="label">
+                    <left>420</left>
+                    <top>196</top>
+                    <width>760</width>
+                    <height>80</height>
+                    <font>Light60</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Container(200).ListItem.Label]</label>
+                </control>
+                <control type="label">
+                    <left>420</left>
+                    <top>278</top>
+                    <width>760</width>
+                    <height>36</height>
+                    <font>Reg25</font>
+                    <textcolor>99FFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Container(200).ListItem.Property(meta)]</label>
+                </control>
+                <control type="grouplist">
+                    <left>420</left>
+                    <top>324</top>
+                    <width>760</width>
+                    <height>48</height>
+                    <orientation>horizontal</orientation>
+                    <itemgap>12</itemgap>
+                    <control type="group">
+                        <left>0</left>
+                        <top>0</top>
+                        <width>150</width>
+                        <height>48</height>
+                        <visible>!String.IsEmpty(Container(200).ListItem.Property(catchup))</visible>
+                        <control type="image">
+                            <left>0</left>
+                            <top>0</top>
+                            <width>150</width>
+                            <height>48</height>
+                            <texture border="24">sweettv-chip.png</texture>
+                            <colordiffuse>33FFFFFF</colordiffuse>
+                        </control>
+                        <control type="label">
+                            <left>0</left>
+                            <top>0</top>
+                            <width>150</width>
+                            <height>48</height>
+                            <font>Reg22</font>
+                            <textcolor>FFFFFFFF</textcolor>
+                            <align>center</align>
+                            <aligny>center</aligny>
+                            <label>Catch-up</label>
+                        </control>
+                    </control>
+                    <control type="group">
+                        <left>0</left>
+                        <top>0</top>
+                        <width>190</width>
+                        <height>48</height>
+                        <visible>!String.IsEmpty(Container(200).ListItem.Property(fav))</visible>
+                        <control type="image">
+                            <left>0</left>
+                            <top>0</top>
+                            <width>190</width>
+                            <height>48</height>
+                            <texture border="24">sweettv-chip.png</texture>
+                            <colordiffuse>FFFFC857</colordiffuse>
+                        </control>
+                        <control type="image">
+                            <left>14</left>
+                            <top>10</top>
+                            <width>28</width>
+                            <height>28</height>
+                            <texture>icon-star.png</texture>
+                            <colordiffuse>FF10141A</colordiffuse>
+                        </control>
+                        <control type="label">
+                            <left>48</left>
+                            <top>0</top>
+                            <width>130</width>
+                            <height>48</height>
+                            <font>Reg22</font>
+                            <textcolor>FF10141A</textcolor>
+                            <aligny>center</aligny>
+                            <label>Favourite</label>
+                        </control>
+                    </control>
+                </control>
+                <control type="label">
+                    <left>420</left>
+                    <top>388</top>
+                    <width>760</width>
+                    <height>32</height>
+                    <font>Reg25</font>
+                    <textcolor>FFFFC857</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Container(200).ListItem.Property(nowrange),Now   ]</label>
+                </control>
+                <control type="label">
+                    <left>420</left>
+                    <top>420</top>
+                    <width>760</width>
+                    <height>56</height>
+                    <font>Med40</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Container(200).ListItem.Property(now)]</label>
+                </control>
+                <control type="image">
+                    <left>420</left>
+                    <top>486</top>
+                    <width>640</width>
+                    <height>6</height>
+                    <texture>$INFO[Container(200).ListItem.Property(pbar)]</texture>
+                    <colordiffuse>FFFFC857</colordiffuse>
+                    <visible>!String.IsEmpty(Container(200).ListItem.Property(pbar))</visible>
+                </control>
+                <control type="textbox">
+                    <left>420</left>
+                    <top>504</top>
+                    <width>760</width>
+                    <height>96</height>
+                    <font>Reg25</font>
+                    <textcolor>B3FFFFFF</textcolor>
+                    <label>$INFO[Container(200).ListItem.Property(desc)]</label>
+                </control>
+                <control type="label">
+                    <left>420</left>
+                    <top>606</top>
+                    <width>760</width>
+                    <height>34</height>
+                    <font>Reg25</font>
+                    <textcolor>B3FFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Container(200).ListItem.Property(nextrange),Next   ]$INFO[Container(200).ListItem.Property(next),   ]</label>
+                </control>
+                <control type="label">
+                    <left>400</left>
+                    <top>380</top>
+                    <width>1500</width>
+                    <height>120</height>
+                    <font>Med32</font>
+                    <textcolor>99FFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(emptycat)]</label>
+                </control>
+                <control type="grouplist" id="209">
+                    <left>420</left>
+                    <top>654</top>
+                    <width>1000</width>
+                    <height>56</height>
+                    <orientation>horizontal</orientation>
+                    <itemgap>16</itemgap>
+                    <onleft>100</onleft>
+                    <ondown>200</ondown>
+                    <visible>!Control.HasFocus(100) + !String.IsEmpty(Container(200).ListItem.Label)</visible>
+                    <control type="button" id="210">
+                        <width>380</width>
+                        <height>56</height>
+                        <label>$INFO[Container(200).ListItem.Property(resume)]</label>
+                        <font>Reg25</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <focusedcolor>FF10141A</focusedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <texturenofocus border="24" colordiffuse="33FFFFFF">sweettv-chip.png</texturenofocus>
+                        <texturefocus border="24" colordiffuse="FFFFFFFF">sweettv-chip.png</texturefocus>
+                        <visible>!String.IsEmpty(Container(200).ListItem.Property(resume))</visible>
+                    </control>
+                    <control type="button" id="211">
+                        <width>280</width>
+                        <height>56</height>
+                        <label>Programme guide</label>
+                        <font>Reg25</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <focusedcolor>FF10141A</focusedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <texturenofocus border="24" colordiffuse="33FFFFFF">sweettv-chip.png</texturenofocus>
+                        <texturefocus border="24" colordiffuse="FFFFFFFF">sweettv-chip.png</texturefocus>
+                        <visible>!String.IsEmpty(Container(200).ListItem.Property(guide))</visible>
+                    </control>
+                </control>
+                <control type="list" id="200">
+                    <left>400</left>
+                    <top>720</top>
+                    <width>1500</width>
+                    <height>300</height>
+                    <orientation>horizontal</orientation>
+                    <scrolltime tween="cubic" easing="out">220</scrolltime>
+                    <onleft>100</onleft>
+                    <itemlayout width="300" height="300">
+                        <control type="image">
+                            <left>16</left>
+                            <top>20</top>
+                            <width>268</width>
+                            <height>200</height>
+                            <texture border="32">card-mask.png</texture>
+                            <colordiffuse>$INFO[ListItem.Property(plate)]</colordiffuse>
+                        </control>
+                        <control type="image">
+                            <left>52</left>
+                            <top>32</top>
+                            <width>196</width>
+                            <height>98</height>
+                            <aspectratio>keep</aspectratio>
+                            <texture background="true">$INFO[ListItem.Art(icon)]</texture>
+                            <colordiffuse>D9FFFFFF</colordiffuse>
+                        </control>
+                        <control type="label">
+                            <left>52</left>
+                            <top>32</top>
+                            <width>196</width>
+                            <height>98</height>
+                            <font>Light60</font>
+                            <textcolor>FFFFFFFF</textcolor>
+                            <selectedcolor>FFFFFFFF</selectedcolor>
+                            <align>center</align>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Property(initials)]</label>
+                            <visible>String.IsEmpty(ListItem.Art(icon))</visible>
+                        </control>
+                        <control type="label">
+                            <left>28</left>
+                            <top>138</top>
+                            <width>244</width>
+                            <height>40</height>
+                            <font>Reg25</font>
+                            <textcolor>E6FFFFFF</textcolor>
+                            <selectedcolor>E6FFFFFF</selectedcolor>
+                            <align>center</align>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label]</label>
+                            <visible>String.IsEmpty(ListItem.Property(fav))</visible>
+                        </control>
+                        <control type="label">
+                            <left>28</left>
+                            <top>138</top>
+                            <width>244</width>
+                            <height>40</height>
+                            <font>Reg25</font>
+                            <textcolor>FFFFC857</textcolor>
+                            <selectedcolor>FFFFC857</selectedcolor>
+                            <align>center</align>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label]</label>
+                            <visible>!String.IsEmpty(ListItem.Property(fav))</visible>
+                        </control>
+                        <control type="image">
+                            <left>40</left>
+                            <top>192</top>
+                            <width>220</width>
+                            <height>6</height>
+                            <texture>$INFO[ListItem.Property(bar)]</texture>
+                            <colordiffuse>FFFFC857</colordiffuse>
+                        </control>
+                    </itemlayout>
+                    <focusedlayout width="300" height="300">
+                        <control type="group">
+                            <left>0</left>
+                            <top>0</top>
+                            <width>300</width>
+                            <height>300</height>
+                            <animation effect="zoom" start="100" end="106" time="220" tween="cubic" easing="out" center="auto">Focus</animation>
+                            <control type="image">
+                                <left>0</left>
+                                <top>4</top>
+                                <width>300</width>
+                                <height>232</height>
+                                <texture border="56">card-glow.png</texture>
+                                <visible>Control.HasFocus(200)</visible>
+                            </control>
+                            <control type="image">
+                                <left>16</left>
+                                <top>20</top>
+                                <width>268</width>
+                                <height>200</height>
+                                <texture border="32">card-mask.png</texture>
+                                <colordiffuse>$INFO[ListItem.Property(plate_hi)]</colordiffuse>
+                            </control>
+                            <control type="image">
+                                <left>52</left>
+                                <top>32</top>
+                                <width>196</width>
+                                <height>98</height>
+                                <aspectratio>keep</aspectratio>
+                                <texture background="true">$INFO[ListItem.Art(icon)]</texture>
+                            </control>
+                            <control type="label">
+                                <left>52</left>
+                                <top>32</top>
+                                <width>196</width>
+                                <height>98</height>
+                                <font>Light60</font>
+                                <textcolor>FFFFFFFF</textcolor>
+                                <selectedcolor>FFFFFFFF</selectedcolor>
+                                <align>center</align>
+                                <aligny>center</aligny>
+                                <label>$INFO[ListItem.Property(initials)]</label>
+                                <visible>String.IsEmpty(ListItem.Art(icon))</visible>
+                            </control>
+                            <control type="label">
+                                <left>28</left>
+                                <top>138</top>
+                                <width>244</width>
+                                <height>40</height>
+                                <font>Reg25</font>
+                                <textcolor>FFFFFFFF</textcolor>
+                                <selectedcolor>FFFFFFFF</selectedcolor>
+                                <align>center</align>
+                                <aligny>center</aligny>
+                                <label>$INFO[ListItem.Label]</label>
+                                <visible>String.IsEmpty(ListItem.Property(fav))</visible>
+                            </control>
+                            <control type="label">
+                                <left>28</left>
+                                <top>138</top>
+                                <width>244</width>
+                                <height>40</height>
+                                <font>Reg25</font>
+                                <textcolor>FFFFC857</textcolor>
+                                <selectedcolor>FFFFC857</selectedcolor>
+                                <align>center</align>
+                                <aligny>center</aligny>
+                                <label>$INFO[ListItem.Label]</label>
+                                <visible>!String.IsEmpty(ListItem.Property(fav))</visible>
+                            </control>
+                            <control type="image">
+                                <left>40</left>
+                                <top>192</top>
+                                <width>220</width>
+                                <height>6</height>
+                                <texture>$INFO[ListItem.Property(bar)]</texture>
+                                <colordiffuse>FFFFC857</colordiffuse>
+                            </control>
+                        </control>
+                    </focusedlayout>
+                </control>
+            </control>
+            <!-- the programme guide of a channel: what is on and what the archive holds -->
+            <control type="group">
+                <left>360</left>
+                <top>100</top>
+                <width>1200</width>
+                <height>860</height>
+                <visible>!String.IsEmpty(Window.Property(guide))</visible>
+                <control type="image">
+                    <left>-40</left>
+                    <top>-30</top>
+                    <width>1280</width>
+                    <height>920</height>
+                    <texture border="56">card-shadow.png</texture>
+                </control>
+                <control type="image">
+                    <left>0</left>
+                    <top>0</top>
+                    <width>1200</width>
+                    <height>860</height>
+                    <texture border="47">pill.png</texture>
+                    <colordiffuse>F2141922</colordiffuse>
+                </control>
+                <control type="label">
+                    <left>60</left>
+                    <top>28</top>
+                    <width>1080</width>
+                    <height>80</height>
+                    <font>Light60</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(guide_title)]</label>
+                </control>
+                <control type="label">
+                    <left>60</left>
+                    <top>108</top>
+                    <width>1080</width>
+                    <height>36</height>
+                    <font>Reg25</font>
+                    <textcolor>FFFFC857</textcolor>
+                    <aligny>center</aligny>
+                    <label>Programme guide</label>
+                </control>
+                <control type="list" id="400">
+                    <left>40</left>
+                    <top>160</top>
+                    <width>1120</width>
+                    <height>588</height>
+                    <orientation>vertical</orientation>
+                    <scrolltime>150</scrolltime>
+                    <itemlayout width="1120" height="84">
+                        <control type="label">
+                            <left>32</left>
+                            <top>2</top>
+                            <width>330</width>
+                            <height>80</height>
+                            <font>Reg25</font>
+                            <textcolor>99FFFFFF</textcolor>
+                            <selectedcolor>99FFFFFF</selectedcolor>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Property(when)]</label>
+                        </control>
+                        <control type="label">
+                            <left>372</left>
+                            <top>2</top>
+                            <width>600</width>
+                            <height>80</height>
+                            <font>Med28</font>
+                            <textcolor>E6FFFFFF</textcolor>
+                            <selectedcolor>E6FFFFFF</selectedcolor>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label]</label>
+                        </control>
+                        <control type="label">
+                            <left>980</left>
+                            <top>2</top>
+                            <width>112</width>
+                            <height>80</height>
+                            <font>Reg22</font>
+                            <textcolor>FFFFC857</textcolor>
+                            <selectedcolor>FFFFC857</selectedcolor>
+                            <align>right</align>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label2]</label>
+                        </control>
+                    </itemlayout>
+                    <focusedlayout width="1120" height="84">
+                        <control type="image">
+                            <left>0</left>
+                            <top>2</top>
+                            <width>1120</width>
+                            <height>80</height>
+                            <texture border="40">pill-80.png</texture>
+                            <colordiffuse>FFFFFFFF</colordiffuse>
+                        </control>
+                        <control type="label">
+                            <left>32</left>
+                            <top>2</top>
+                            <width>330</width>
+                            <height>80</height>
+                            <font>Reg25</font>
+                            <textcolor>99000000</textcolor>
+                            <selectedcolor>99000000</selectedcolor>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Property(when)]</label>
+                        </control>
+                        <control type="label">
+                            <left>372</left>
+                            <top>2</top>
+                            <width>600</width>
+                            <height>80</height>
+                            <font>Med28</font>
+                            <textcolor>FF000000</textcolor>
+                            <selectedcolor>FF000000</selectedcolor>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label]</label>
+                        </control>
+                        <control type="label">
+                            <left>980</left>
+                            <top>2</top>
+                            <width>112</width>
+                            <height>80</height>
+                            <font>Reg22</font>
+                            <textcolor>FF8A5A00</textcolor>
+                            <selectedcolor>FF8A5A00</selectedcolor>
+                            <align>right</align>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label2]</label>
+                        </control>
+                    </focusedlayout>
+                </control>
+                <control type="label">
+                    <left>60</left>
+                    <top>772</top>
+                    <width>1080</width>
+                    <height>36</height>
+                    <font>Reg22</font>
+                    <textcolor>80FFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>OK plays the programme. Back closes the guide.</label>
+                </control>
+            </control>
+        </control>
+        <!-- signed out: sign in on the phone (the address and its QR), or here with a code -->
+        <control type="group">
+            <left>360</left>
+            <top>230</top>
+            <width>1200</width>
+            <height>620</height>
+            <visible>String.IsEqual(Window.Property(mode),signin)</visible>
+            <control type="image">
+                <left>-40</left>
+                <top>-30</top>
+                <width>1280</width>
+                <height>700</height>
+                <texture border="56">card-shadow.png</texture>
+            </control>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>1200</width>
+                <height>620</height>
+                <texture border="47">pill.png</texture>
+                <colordiffuse>F2141922</colordiffuse>
+            </control>
+            <control type="label">
+                <left>70</left>
+                <top>44</top>
+                <width>700</width>
+                <height>80</height>
+                <font>Light60</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>Sign in on your phone</label>
+            </control>
+            <control type="label">
+                <left>70</left>
+                <top>124</top>
+                <width>700</width>
+                <height>36</height>
+                <font>Reg25</font>
+                <textcolor>99FFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>Live TV and the channel guide</label>
+            </control>
+            <control type="label">
+                <left>70</left>
+                <top>190</top>
+                <width>700</width>
+                <height>44</height>
+                <font>Med32</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(phone_step1)]</label>
+            </control>
+            <control type="label">
+                <left>126</left>
+                <top>236</top>
+                <width>650</width>
+                <height>50</height>
+                <font>Bold34</font>
+                <textcolor>FFFFC857</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(phone_url)]</label>
+            </control>
+            <control type="label">
+                <left>70</left>
+                <top>296</top>
+                <width>700</width>
+                <height>44</height>
+                <font>Med32</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(phone_step2)]</label>
+            </control>
+            <control type="label">
+                <left>70</left>
+                <top>344</top>
+                <width>700</width>
+                <height>36</height>
+                <font>Reg25</font>
+                <textcolor>B3FFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(phone_step3)]</label>
+            </control>
+            <control type="group">
+                <left>800</left>
+                <top>60</top>
+                <width>340</width>
+                <height>400</height>
+                <visible>!String.IsEmpty(Window.Property(phone_qr))</visible>
+                <control type="image">
+                    <left>0</left>
+                    <top>0</top>
+                    <width>340</width>
+                    <height>340</height>
+                    <texture border="47">pill.png</texture>
+                    <colordiffuse>FFFFFFFF</colordiffuse>
+                </control>
+                <control type="image">
+                    <left>20</left>
+                    <top>20</top>
+                    <width>300</width>
+                    <height>300</height>
+                    <aspectratio>keep</aspectratio>
+                    <texture>$INFO[Window.Property(phone_qr)]</texture>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>352</top>
+                    <width>340</width>
+                    <height>36</height>
+                    <font>Reg22</font>
+                    <textcolor>99FFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>Scan to open the phone page</label>
+                </control>
+            </control>
+            <control type="button" id="300">
+                <left>70</left>
+                <top>450</top>
+                <width>660</width>
+                <height>90</height>
+                <label>Or sign in here with a code</label>
+                <font>Med32</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <focusedcolor>FF10141A</focusedcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <texturenofocus border="40" colordiffuse="33FFFFFF">pill-80.png</texturenofocus>
+                <texturefocus border="40" colordiffuse="FFFFFFFF">pill-80.png</texturefocus>
+            </control>
+            <control type="label">
+                <left>70</left>
+                <top>556</top>
+                <width>700</width>
+                <height>36</height>
+                <font>Reg22</font>
+                <textcolor>80FFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>Press OK. Back returns to Home.</label>
+            </control>
+        </control>
+        <!-- signed in, nothing to show: loading, an empty list, or an error -->
+        <control type="group">
+            <left>360</left>
+            <top>230</top>
+            <width>1200</width>
+            <height>620</height>
+            <visible>String.IsEqual(Window.Property(mode),empty)</visible>
+            <control type="image">
+                <left>-40</left>
+                <top>-30</top>
+                <width>1280</width>
+                <height>700</height>
+                <texture border="56">card-shadow.png</texture>
+            </control>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>1200</width>
+                <height>620</height>
+                <texture border="47">pill.png</texture>
+                <colordiffuse>F2141922</colordiffuse>
+            </control>
+            <control type="image">
+                <left>560</left>
+                <top>50</top>
+                <width>80</width>
+                <height>80</height>
+                <texture border="40">pill-80.png</texture>
+                <colordiffuse>$INFO[Window.Property(msg_tint)]</colordiffuse>
+            </control>
+            <control type="label">
+                <left>560</left>
+                <top>50</top>
+                <width>80</width>
+                <height>80</height>
+                <font>Bold34</font>
+                <textcolor>FF10141A</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(msg_glyph)]</label>
+            </control>
+            <control type="label">
+                <left>100</left>
+                <top>150</top>
+                <width>1000</width>
+                <height>80</height>
+                <font>Light60</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(msg_title)]</label>
+            </control>
+            <control type="textbox">
+                <left>150</left>
+                <top>245</top>
+                <width>900</width>
+                <height>110</height>
+                <font>Reg25</font>
+                <textcolor>CCFFFFFF</textcolor>
+                <align>center</align>
+                <label>$INFO[Window.Property(msg_text)]</label>
+            </control>
+            <control type="label">
+                <left>100</left>
+                <top>380</top>
+                <width>1000</width>
+                <height>40</height>
+                <font>Reg25</font>
+                <textcolor>FFFFC857</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(msg_note)]</label>
+            </control>
+            <control type="button" id="301">
+                <left>390</left>
+                <top>450</top>
+                <width>420</width>
+                <height>90</height>
+                <label>Try again</label>
+                <font>Med32</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <focusedcolor>FF10141A</focusedcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <texturenofocus border="40" colordiffuse="33FFFFFF">pill-80.png</texturenofocus>
+                <texturefocus border="40" colordiffuse="FFFFFFFF">pill-80.png</texturefocus>
+                <visible>!String.IsEqual(Window.Property(msg_kind),loading)</visible>
+            </control>
+        </control>
+    </controls>
+</window>

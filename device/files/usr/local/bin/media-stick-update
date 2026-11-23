@@ -1,6 +1,7 @@
 #!/bin/bash
 # Pull origin/main and apply it. Rolls back to the previous commit if bootstrap fails.
-# Skips while Kodi is playing something, unless --force.
+# Skips while Kodi is playing something, someone holds the device lease (media-stick-lease), or a
+# sign-in is waiting for its code on the TV screen, unless --force.
 #   media-stick-update [--force]
 set -uo pipefail
 REPO=/opt/media-stick
@@ -17,6 +18,18 @@ if [ "${1:-}" != --force ] && kodi-rpc Player.GetActivePlayers 2>/dev/null | gre
 fi
 if [ "${1:-}" != --force ] && systemctl is-active -q 'web-app@*'; then
   echo "a web app is on screen; update to ${new:0:7} postponed"; exit 0
+fi
+# A live lease (rc 3) pauses the update; a lease always expires. No helper yet (an older device): go on.
+lease=$(/usr/local/bin/media-stick-lease check 2>/dev/null); lease_rc=$?
+if [ "${1:-}" != --force ] && [ $lease_rc -eq 3 ]; then
+  echo "$lease; update to ${new:0:7} postponed"; exit 0
+fi
+# A sign-in waiting for its code (rc 3) pauses the update too: bootstrap restarts Kodi and the next code is a
+# different one, which hurts most when a partner's specialist types it in by hand for hours. It expires on its own
+# (or when the add-on stops touching it). No helper yet (an older device): go on.
+signin=$(python3 /usr/local/lib/media-stick/mediastick_signin.py waiting 2>/dev/null); signin_rc=$?
+if [ "${1:-}" != --force ] && [ $signin_rc -eq 3 ]; then
+  echo "$signin; update to ${new:0:7} postponed"; exit 0
 fi
 
 echo "updating ${cur:0:7} -> ${new:0:7}: $(g log -1 --format=%s "$new")"

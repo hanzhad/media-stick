@@ -28,7 +28,9 @@ def main():
     last_status = time.monotonic()
     while not monitor.abortRequested():
         try:
-            if xbmcgui.getCurrentWindowId() in HOME_WINDOWS and not xbmc.getCondVisibility(BLOCKED):
+            current = xbmcgui.getCurrentWindowId()
+            blocked = xbmc.getCondVisibility(BLOCKED)
+            if current in HOME_WINDOWS and not blocked:
                 if launcher is None:
                     try:
                         launcher = Launcher("script-media-stick-home.xml", ADDON_PATH, "default", "1080i")
@@ -38,9 +40,14 @@ def main():
                             break
                         continue
                 launcher.show()
-            if launcher is not None and time.monotonic() - last_status >= STATUS_EVERY:
-                last_status = time.monotonic()
-                launcher.refresh_status()
+            if launcher is not None:
+                # once shown, the launcher is itself the current window, not Home: idle is judged
+                # there too, and cleared under a dialog or once the window is left
+                on_screen = current in HOME_WINDOWS or current == launcher.window_id()
+                launcher.refresh_idle(on_screen and not blocked)
+                if time.monotonic() - last_status >= STATUS_EVERY:
+                    last_status = time.monotonic()
+                    launcher.refresh_status()
         except Exception as e:
             xbmc.log(f"{LOG} loop error: {e!r}", xbmc.LOGERROR)
             drop(launcher)

@@ -1,0 +1,346 @@
+"""Sign-in and accounts: what a Kodi add-on is waiting for, and who is signed in.
+
+An add-on that signs in with a code (YouTube, SWEET.TV) publishes it here, through the
+overlay in device/skin-overlay/. The TV screen and the phone page read it and show the code
+as a link that opens on the phone with the code already typed in, instead of an address to
+type. Either of them can ask the add-on to stop (request_cancel).
+
+A sign-in has a mode. `normal` is a person at the TV with a phone: ten minutes. `partner` is
+SWEET.TV connected by a partner's specialist who types the code from the TV screen into their
+own form by hand, within a working day: six hours, polled gently, retried when the network
+drops (PartnerPoll). The phone asks for it (request_mode) and the add-on takes the request
+when it starts; the mode then travels in the published state. waiting_any() tells the update
+script that somebody is still entering a code.
+
+State is plain JSON in a tmpfs directory, written whole and renamed into place, standard
+library only: it imports the same in Kodi's Python, in the panel and in a test.
+"""
+import json
+import os
+import re
+import sys
+import tempfile
+import time
+import xml.etree.ElementTree as ET
+from urllib.parse import quote
+
+DIR = os.environ.get("MEDIASTICK_SIGNIN_DIR", "/run/media-stick/signin")
+USERDATA = os.environ.get("MEDIASTICK_ADDON_DATA", "/home/media/.kodi/userdata/addon_data")
+
+WAITING, DONE, FAILED, CANCELLED = "waiting", "done", "failed", "cancelled"
+STATES = (WAITING, DONE, FAILED, CANCELLED)
+HEARTBEAT = 60      # a waiting state not touched for this long is dead (Kodi restarted mid sign-in)
+RESULT_KEEP = 30    # a finished state stays readable this long, so a page that polls still sees it
+
+NORMAL, PARTNER = "normal", "partner"
+MODES = (NORMAL, PARTNER)
+TTL = {NORMAL: 10 * 60, PARTNER: 6 * 60 * 60}    # how long the code is waited for, by mode
+MODE_KEEP = 120     # a mode the phone asked for is forgotten after this many seconds if no sign-in took it
+
+SERVICES = {
+    "youtube": {
+        "name": "YouTube",
+        "addon": "plugin.video.youtube",
+        "signin": "plugin://plugin.video.youtube/sign/in/",
+        "link": "https://www.youtube.com/activate?user_code={code}",
+    },
+    "sweettv": {
+        "name": "SWEET.TV",
+        "addon": "plugin.video.sweettv",
+        "signin": "plugin://plugin.video.sweettv/login",
+        "link": "https://sweet.tv/addDevice?connectCode={code}",
+    },
+}
+
+
+def _path(service, ext="json"):
+    return os.path.join(DIR, f"{service}.{ext}")
+
+
+def _load(service):
+    try:
+        with open(_path(service), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("state") in STATES else None
+
+
+def _store(service, data):
+    """Write the state whole and rename it into place; never raises: the add-on must not break."""
+    tmp = None
+    try:
+        os.makedirs(DIR, mode=0o755, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=DIR, suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, _path(service))
+        return True
+    except (OSError, ValueError, TypeError):
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return False
+
+
+def begin(service):
+    """A sign-in starts: forget an earlier stop request and an earlier result."""
+    clear_cancel(service)
+    try:
+        os.unlink(_path(service))
+    except OSError:
+        pass
+
+
+def clean_mode(mode):
+    return PARTNER if mode == PARTNER else NORMAL
+
+
+def ttl_for(mode):
+    return TTL[clean_mode(mode)]
+
+
+def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NORMAL):
+    """Say what the add-on is doing: WAITING with the code to enter, or how it ended.
+    `ttl` is how long the code is waited for (seconds); by default what the mode allows."""
+    if service not in SERVICES or state not in STATES:
+        return False
+    now = int(time.time())
+    mode = clean_mode(mode)
+    data = {"service": service, "state": state, "mode": mode, "step": int(step), "steps": int(steps),
+            "updated": now, "expires": now + int(ttl_for(mode) if ttl is None else ttl)}
+    if state == WAITING:
+        data.update(code=code, url=url,
+                    link=SERVICES[service]["link"].format(code=quote(code, safe="-")) if code else url)
+    return _store(service, data)
+
+
+def touch(service):
+    """Heartbeat while waiting: a state that stops being touched is read as gone."""
+    data = _load(service)
+    if data is None or data["state"] != WAITING:
+        return False
+    data["updated"] = int(time.time())
+    return _store(service, data)
+
+
+def read(service, now=None):
+    """The current state, or None when there is none, it is stale, or it is long finished."""
+    data = _load(service)
+    if data is None:
+        return None
+    now = time.time() if now is None else now
+    updated, expires = data.get("updated", 0), data.get("expires", 0)
+    if data["state"] == WAITING:
+        if now - updated > HEARTBEAT or now > expires:
+            return None
+    elif now - updated > RESULT_KEEP:
+        return None
+    out = dict(data)
+    out["name"] = SERVICES.get(service, {}).get("name", service)
+    out["mode"] = clean_mode(data.get("mode"))
+    out["left"] = max(0, int(expires - now)) if data["state"] == WAITING else 0
+    return out
+
+
+def active(now=None):
+    """The sign-ins waiting for a person right now."""
+    return [s for s in (read(name, now) for name in SERVICES) if s and s["state"] == WAITING]
+
+
+def waiting_any(now=None):
+    """True while some sign-in is alive and waiting for its code: the update must not restart Kodi."""
+    return bool(active(now))
+
+
+def _mark(service, ext, text):
+    """A small flag file next to the state, world readable; False when it cannot be written."""
+    try:
+        os.makedirs(DIR, mode=0o755, exist_ok=True)
+        with open(_path(service, ext), "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(_path(service, ext), 0o644)
+        return True
+    except OSError:
+        return False
+
+
+def _unmark(service, ext):
+    try:
+        os.unlink(_path(service, ext))
+    except OSError:
+        pass
+
+
+def request_cancel(service):
+    return service in SERVICES and _mark(service, "cancel", str(int(time.time())))
+
+
+def cancel_requested(service):
+    return os.path.exists(_path(service, "cancel"))
+
+
+def clear_cancel(service):
+    _unmark(service, "cancel")
+
+
+def request_mode(service, mode):
+    """The phone asks that the next sign-in of `service` runs in `mode`; normal asks for no change."""
+    if service not in SERVICES:
+        return False
+    if clean_mode(mode) == NORMAL:
+        clear_mode(service)
+        return True
+    return _mark(service, "mode", f"{PARTNER} {int(time.time())}")
+
+
+def requested_mode(service, now=None):
+    """The mode asked for and not yet taken, if the request is fresh; else normal."""
+    try:
+        with open(_path(service, "mode"), encoding="utf-8") as f:
+            mode, stamp = f.read().split()
+        age = (time.time() if now is None else now) - int(stamp)
+    except (OSError, ValueError):
+        return NORMAL
+    return clean_mode(mode) if -MODE_KEEP <= age <= MODE_KEEP else NORMAL
+
+
+def take_mode(service, now=None):
+    """What the add-on calls when a sign-in starts: the requested mode, which is then used up."""
+    mode = requested_mode(service, now)
+    clear_mode(service)
+    return mode
+
+
+def clear_mode(service):
+    _unmark(service, "mode")
+
+
+# ---- waiting for a partner: the rules of the add-on's loop, pure ---------------------------------
+
+POLL_FAST, POLL_SLOW, FAST_FOR = 3, 12, 10 * 60     # s between checks, and for how long the quick pace lasts
+RETRY_FIRST, RETRY_MAX = 5, 60                      # s of the pause after a check with no answer: doubles up to the cap
+LOG_AGAIN = 10 * 60                                 # the same unknown answer is logged again after this long
+NOTE_MAX = 200
+# The `result` texts of SWEET.TV's check reply that mean the code is refused or has run out. What
+# the server says is not known yet: stays empty until a first run's log (WARNING lines of
+# PartnerPoll) shows it. Anything else that is not COMPLETED is logged and waited on.
+SWEETTV_REFUSED = frozenset()
+SECRET_KEY = re.compile(r"token|secret|pass|auth|bearer|cookie|session|sign|key", re.I)
+
+
+def describe(reply):
+    """A reply as one short log line: values of anything that smells of a secret hidden, 200 characters at most."""
+    if isinstance(reply, dict):
+        keys = sorted(reply, key=lambda k: (str(k) != "result", str(k)))     # what the server says first: the cut comes last
+        reply = {str(k): "***" if SECRET_KEY.search(str(k)) else reply[k] for k in keys}
+    else:
+        reply = f"<{type(reply).__name__}>"
+    text = str(reply)
+    return text if len(text) <= NOTE_MAX else text[:NOTE_MAX - 1] + "…"
+
+
+class PartnerPoll:
+    """How the add-on waits for a partner: when to ask again, what to do about no answer, what an
+    answer means. Takes the time as an argument and sleeps nowhere; answers with what to log."""
+
+    def __init__(self, started, refused=None):
+        self.started, self.refused = started, refused
+        self.failures = 0                # checks in a row that got no answer
+        self.logged = {}                 # described unknown answer -> when it was last logged
+
+    def delay(self, now):
+        """Seconds to wait after an answer that says "not yet"."""
+        return POLL_FAST if now - self.started < FAST_FOR else POLL_SLOW
+
+    def no_answer(self, now):
+        """(seconds to wait, what to log or "") after a check that got no answer; never gives up."""
+        self.failures += 1
+        wait = min(RETRY_MAX, RETRY_FIRST * 2 ** min(self.failures - 1, 6))
+        note = ""
+        if self.failures == 1 or self.failures % 10 == 0:
+            note = f"media-stick: SWEET.TV check got no answer ({self.failures} in a row); trying again in {wait} s"
+        return wait, note
+
+    def answer(self, reply, now):
+        """(verdict, what to log or ""): completed | refused | unknown (keep waiting)."""
+        self.failures = 0
+        result = reply.get("result") if isinstance(reply, dict) else None
+        if result == "COMPLETED":
+            return "completed", ""
+        refused = SWEETTV_REFUSED if self.refused is None else self.refused
+        text = describe(reply)
+        if isinstance(result, str) and result in refused:
+            return "refused", f"media-stick: SWEET.TV refused the code: {text}"
+        last = self.logged.get(text)
+        if last is not None and now - last < LOG_AGAIN:
+            return "unknown", ""
+        self.logged[text] = now
+        return "unknown", f"media-stick: SWEET.TV check answered something unexpected, still waiting: {text}"
+
+
+# ---- who is signed in -----------------------------------------------------------------------
+
+def _addon_file(addon, name):
+    return os.path.join(USERDATA, addon, name)
+
+
+def youtube_accounts():
+    """YouTube's profiles: [{id, name, current, tokens, signed_in}]. The add-on signs each
+    profile in up to four times (tokens tv|user|vr|dev), so `tokens` says how far it got."""
+    try:
+        with open(_addon_file("plugin.video.youtube", "access_manager.json"), encoding="utf-8") as f:
+            manager = json.load(f).get("access_manager", {})
+        users = manager.get("users", {})
+        current = str(manager.get("current_user", 0))
+    except (OSError, ValueError, AttributeError):
+        return []
+    out = []
+    for uid in sorted(users, key=lambda k: (not str(k).isdigit(), int(k) if str(k).isdigit() else 0, str(k))):
+        user = users[uid] if isinstance(users[uid], dict) else {}
+        tokens = sum(1 for t in str(user.get("refresh_token", "")).split("|") if t)
+        out.append({"id": str(uid), "name": user.get("name") or "Default", "current": str(uid) == current,
+                    "tokens": tokens, "signed_in": tokens > 0})
+    return out
+
+
+def sweettv_signed_in():
+    """SWEET.TV has one account; it is signed in when the add-on says `logged`."""
+    try:
+        root = ET.parse(_addon_file("plugin.video.sweettv", "settings.xml")).getroot()
+    except (OSError, ET.ParseError):
+        return False
+    for node in root.iter("setting"):
+        if node.get("id") == "logged":
+            return (node.text or "").strip().lower() == "true"
+    return False
+
+
+def accounts():
+    """Everything a screen needs for the Accounts list, one entry per service."""
+    youtube = youtube_accounts()
+    return [
+        {"service": "youtube", "name": SERVICES["youtube"]["name"], "profiles": youtube,
+         "signed_in": any(p["signed_in"] for p in youtube), "signin": read("youtube")},
+        {"service": "sweettv", "name": SERVICES["sweettv"]["name"], "profiles": [],
+         "signed_in": sweettv_signed_in(), "signin": read("sweettv")},
+    ]
+
+
+def main(argv):
+    """`python3 mediastick_signin.py waiting`: for media-stick-update, like `media-stick-lease check`:
+    exit 3 and say who, while a sign-in waits for its code; exit 0 when nothing does."""
+    if argv != ["waiting"]:
+        print("usage: mediastick_signin.py waiting", file=sys.stderr)
+        return 2
+    live = active()
+    for s in live:
+        print(f"{s['name']} sign-in waits for a code ({s['mode']}, {s['left'] // 60} min left)")
+    return 3 if live else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

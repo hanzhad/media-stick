@@ -2,6 +2,7 @@
 # One screen of health: is the device up, is Kodi running, is power/heat/disk fine.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd); . "$here/common.sh"
+lease_note
 "${SSH[@]}" 'bash -s' <<'R'
 ok()   { printf "OK    %s\n" "$*"; }
 bad()  { printf "FAIL  %s\n" "$*"; }
@@ -15,6 +16,13 @@ echo "      temp $(vcgencmd measure_temp | cut -d= -f2)  mem $(free -m | awk '/M
 chk "launcher add-on enabled"    "kodi-rpc Addons.GetAddonDetails '{\"addonid\":\"script.media-stick.home\",\"properties\":[\"enabled\"]}' | grep -q '\"enabled\":true'"
 chk "python3-evdev installed"    'python3 -c "import evdev"'
 chk "/dev/uinput group input 0660" 'test "$(stat -c %G%a /dev/uinput)" = input660'
+chk "sign-in state dir"          "test -d /run/media-stick/signin"
+# Files kept in device/skin-overlay/<addon>/ must be what the installed add-on really has.
+ov=/opt/media-stick/device/skin-overlay
+while IFS= read -r f; do
+  [ -d "/home/media/.kodi/addons/${f%%/*}" ] || continue
+  chk "overlay in place: ${f%%/*} ${f##*/}" "cmp -s '$ov/$f' '/home/media/.kodi/addons/$f'"
+done < <(cd "$ov" 2>/dev/null && find . -type f | sed 's|^\./||')
 echo "      wallpapers cached $(ls /var/cache/media-stick/wallpapers/*.jpg 2>/dev/null | wc -l)"
 if [ -s /var/lib/media-stick/panel-url ]; then
   end=$(openssl x509 -noout -enddate -in /etc/media-stick/tls/fullchain.pem 2>/dev/null | cut -d= -f2)

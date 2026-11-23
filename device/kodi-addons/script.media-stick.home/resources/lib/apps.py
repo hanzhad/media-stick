@@ -27,6 +27,8 @@ QUERIES = [("xbmc.python.pluginsource", "video"),
            ("xbmc.python.script", "video")]
 CARD_ID = "card:phone-remote"    # the pinned Phone remote card: not an app, so never launched or recorded
 ID_RE = re.compile(r"webapp:[a-z0-9-]+|[A-Za-z0-9._-]+")
+OWN_SCREENS = {"plugin.video.sweettv": "RunScript(script.media-stick.home,sweettv,open)",    # apps with a screen of our own
+               "plugin.video.youtube": "RunScript(script.media-stick.home,youtube,open)"}   # (sweettv_app.py, youtube_app.py)
 
 
 class App(NamedTuple):
@@ -139,5 +141,7 @@ def launch(app_id):
     record(app_id)
     if app_id.startswith("webapp:"):
         xbmc.executebuiltin(f"RunScript(script.media-stick.webapp,{app_id.split(':', 1)[1]})")
+    elif app_id in OWN_SCREENS:
+        xbmc.executebuiltin(OWN_SCREENS[app_id])     # default.py falls back to RunAddon if that screen cannot open
     else:
         xbmc.executebuiltin(f"RunAddon({app_id})")
