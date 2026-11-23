@@ -136,7 +136,8 @@
 
         <!-- app carousel. Idle (Window.Property(idle), set by launcher.py after IDLE_S s without
              input): the whole row goes to 30 % and slides down, the phone-remote card leaves it
-             (the corner QR below takes over), and any input brings it back. -->
+             (the corner QR below takes over), and any input brings it back. A Conditional fade starts
+             from 0 unless told otherwise and the reverse ends there, so start is explicit. -->
         <control type="list" id="100">
             <left>96</left>
             <top>740</top>
@@ -145,8 +146,8 @@
             <orientation>horizontal</orientation>
             <scrolltime tween="cubic" easing="out">220</scrolltime>
             <onleft>201</onleft>
-            <animation effect="fade" end="30" time="300" tween="cubic" easing="out" condition="String.IsEqual(Window.Property(idle),1)">Conditional</animation>
-            <animation effect="slide" end="0,200" time="300" tween="cubic" easing="out" condition="String.IsEqual(Window.Property(idle),1)">Conditional</animation>
+            <animation effect="fade" start="100" end="30" time="300" tween="cubic" easing="out" condition="String.IsEqual(Window.Property(idle),1)">Conditional</animation>
+            <animation effect="slide" start="0,0" end="0,200" time="300" tween="cubic" easing="out" condition="String.IsEqual(Window.Property(idle),1)">Conditional</animation>
             <itemlayout width="252" height="330">
                 <control type="group">
                     <visible>!String.IsEqual(Window.Property(idle),1) | !String.IsEqual(ListItem.Property(card),remote) | String.IsEmpty(Window.Property(qr))</visible>

@@ -341,7 +341,8 @@ class IdleSkin(unittest.TestCase):
             effects[a.get("effect")] = a
         fade, slide = effects["fade"], effects["slide"]
         self.assertEqual(fade.get("end"), "30")                                # opacity 0.3
-        self.assertIsNone(fade.get("start"))
+        self.assertEqual(fade.get("start"), "100")                             # not the default: see IdleWake
+        self.assertEqual(slide.get("start"), "0,0")
         down = [int(v) for v in slide.get("end").split(",")]
         self.assertEqual(down[0], 0)
         self.assertGreater(down[1], 0)                                         # down, not sideways or up
@@ -447,6 +448,150 @@ class IdleSkin(unittest.TestCase):
         self.assertFalse(cache[0].findall("animation"))        # idle does not touch the wallpaper
         self.assertIn("media-stick-wallpapers.timer", read(BOOTSTRAP))
         self.assertIn("bing.com", read(os.path.join(ROOT, "device", "files", "usr", "local", "bin", "media-stick-wallpapers")))
+
+
+def kodi_visible(expr, state):
+    """Evaluate a skin <visible> expression the way Kodi reads it: ! not, + and, | or, [ ] groups
+    (+ binds tighter than |). state maps each leaf infobool to its value; an unknown leaf fails."""
+    tokens = [t.strip() for t in re.split(r"([!+|\[\]])", expr) if t.strip()]
+    pos = [0]
+
+    def peek():
+        return tokens[pos[0]] if pos[0] < len(tokens) else None
+
+    def take():
+        pos[0] += 1
+        return tokens[pos[0] - 1]
+
+    def either():
+        value = both()
+        while peek() == "|":
+            take()
+            value = both() or value
+        return value
+
+    def both():
+        value = unary()
+        while peek() == "+":
+            take()
+            value = unary() and value
+        return value
+
+    def unary():
+        token = take()
+        if token == "!":
+            return not unary()
+        if token == "[":
+            value = either()
+            assert take() == "]", expr
+            return value
+        if token not in state:
+            raise KeyError(f"no value for {token!r} in {expr!r}")
+        return state[token]
+
+    result = either()
+    assert peek() is None, f"trailing {peek()!r} in {expr!r}"
+    return result
+
+
+def states():
+    """Every combination of what the skin reads: the idle property, the QR png, the item's card
+    kind, the row's focus and the focused position."""
+    for idle in ("", "1"):
+        for qr in ("", "/tmp/qr.png"):
+            for card in ("remote", ""):
+                for focus in (True, False):
+                    for current in (1, 2):
+                        yield dict(idle=idle, qr=qr, card=card, focus=focus, current=current)
+
+
+def leaves(s):
+    return {
+        "String.IsEqual(Window.Property(idle),1)": s["idle"] == "1",
+        "String.IsEmpty(Window.Property(qr))": s["qr"] == "",
+        "String.IsEqual(ListItem.Property(card),remote)": s["card"] == "remote",
+        "String.IsEmpty(ListItem.Property(glyph))": True,
+        "Control.HasFocus(100)": s["focus"],
+        "Integer.IsEqual(Container(100).CurrentItem,1)": s["current"] == 1,
+    }
+
+
+class IdleWake(unittest.TestCase):
+    """The row must come back whole when idle clears. Found on the TV: after a key the row did
+    not return, only the wallpaper, because the Conditional fade had end="30" and no start, and
+    Kodi's default start for a Conditional fade is 0: the reverse that runs when the condition
+    turns false ends at 0 % opacity. So every Conditional fade or zoom names both ends."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = ET.parse(HOME_XML).getroot()
+        cls.all = controls(cls.root)
+
+    def row(self):
+        return [c for c, _ in self.all if c.get("id") == "100"][0]
+
+    def test_every_conditional_effect_names_both_ends(self):
+        folder = os.path.dirname(HOME_XML)
+        names = sorted(n for n in os.listdir(folder) if n.endswith(".xml"))
+        self.assertIn(os.path.basename(HOME_XML), names)
+        seen = 0
+        for name in names:
+            for anim in ET.parse(os.path.join(folder, name)).getroot().iter("animation"):
+                if (anim.text or "").strip() != "Conditional" and anim.get("type") != "Conditional":
+                    continue
+                effects = [anim] if anim.get("effect") else list(anim.findall("effect"))
+                for effect in effects:
+                    kind = effect.get("effect") or effect.get("type")
+                    if kind in ("fade", "zoom"):          # their defaults are not "no change"
+                        seen += 1
+                        self.assertTrue(effect.get("start") is not None and effect.get("end") is not None,
+                                        f"{name}: Conditional {kind} needs start and end")
+        self.assertGreaterEqual(seen, 1)
+
+    def test_the_row_dims_from_full_and_back_to_full(self):
+        row = self.row()
+        fade = [a for a in row.findall("animation") if a.get("effect") == "fade"]
+        self.assertEqual(len(fade), 1)
+        self.assertEqual((fade[0].get("start"), fade[0].get("end")), ("100", "30"))
+        self.assertNotEqual(fade[0].get("reversible"), "false")     # the reverse is the way back
+        self.assertEqual(fade[0].get("condition"), IDLE_COND)       # one condition: no second animation to clash
+        slide = [a for a in row.findall("animation") if a.get("effect") == "slide"]
+        self.assertEqual(slide[0].get("start"), "0,0")              # the row's own place
+        self.assertIsNone(row.find("visible"))                      # the list itself is never hidden
+        self.assertNotIn("Hidden", {(a.text or "").strip() for a in row.findall("animation")})
+
+    def test_the_row_shows_its_cards_whenever_idle_is_empty(self):
+        row = self.row()
+        for layout, path in (("itemlayout", "control"), ("focusedlayout", "control[@type='group']")):
+            expr = text(row.find(f"{layout}/{path}"), "visible")
+            for s in states():
+                if s["idle"] == "" or s["card"] != "remote":
+                    self.assertTrue(kodi_visible(expr, leaves(s)), f"{layout} hides a card: {s}")
+
+    def test_the_remote_card_is_in_the_row_or_the_corner_never_both_never_neither(self):
+        row, corner = self.row(), self.root.find(".//control[@id='410']")
+        for layout, path in (("itemlayout", "control"), ("focusedlayout", "control[@type='group']")):
+            expr = text(row.find(f"{layout}/{path}"), "visible")
+            for s in states():
+                in_row = kodi_visible(expr, leaves(s))
+                in_corner = kodi_visible(text(corner, "visible"), leaves(s))
+                self.assertEqual(in_corner, s["idle"] == "1" and s["qr"] != "", s)
+                if s["card"] == "remote":
+                    self.assertNotEqual(in_row, in_corner, f"{layout} {s}")
+
+    def test_idle_hides_the_menu_hint_and_awake_shows_it(self):
+        hint = [c for c, _ in self.all if "Container(100).CurrentItem,1" in text(c, "visible")][0]
+        for s in states():
+            want = s["focus"] and s["current"] == 1 and s["idle"] == ""
+            self.assertEqual(kodi_visible(text(hint, "visible"), leaves(s)), want, s)
+
+    def test_the_evaluator_itself(self):
+        state = {"a": True, "b": False, "c": True}
+        for expr, want in (("a + b", False), ("a | b", True), ("!b + a", True), ("b | a + c", True),
+                           ("b + a | c", True), ("[b | a] + !c", False), ("!a | !b", True)):
+            self.assertEqual(kodi_visible(expr, state), want, expr)
+        with self.assertRaises(KeyError):
+            kodi_visible("a + nope", state)
 
 
 class NoScreensaver(unittest.TestCase):
