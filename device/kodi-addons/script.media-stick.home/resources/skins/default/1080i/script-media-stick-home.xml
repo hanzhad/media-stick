@@ -2,6 +2,18 @@
 <window>
     <backgroundcolor>0xff000000</backgroundcolor>
     <controls>
+        <!-- the boot picture (Plymouth's, Kodi's splash, the same file) stays up until the first
+             wallpaper has loaded and faded in over it: power-on to home shows only our picture.
+             First control = bottom layer; the opaque wallpapers cover it, nothing else uses it.
+             Missing file: draws nothing. -->
+        <control type="image">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <texture>special://home/media/splash.png</texture>
+        </control>
+
         <!-- wallpaper: downloaded set if present, bundled otherwise -->
         <control type="multiimage">
             <left>0</left>

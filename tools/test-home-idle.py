@@ -29,7 +29,8 @@ KODI_SETTINGS = os.path.join(ROOT, "device", "files", "usr", "local", "bin", "ko
 IDLE_COND = "String.IsEqual(Window.Property(idle),1)"
 TEXTURE_FILES_MAX = 16                  # distinct static textures the home window loads (12 before idle mode)
 TEXTURE_BYTES_MAX = 1 << 20             # decoded RGBA of those files together (about 0.5 MB before)
-FULLSCREEN_MAX = 3                      # two wallpaper multiimages (only one visible) and the drawer's dim layer
+FULLSCREEN_MAX = 4                      # the boot picture, two wallpaper multiimages (only one visible) and the drawer's dim layer
+SPLASH = "special://home/media/splash.png"   # the picture from power-on (device/files/home/media/.kodi/media/splash.png)
 ANIMATION_MS_MAX = 400                  # every idle transition is short, no per-frame animation
 
 # --- stand-ins for the Kodi modules launcher.py imports -------------------------------------
@@ -418,7 +419,7 @@ class IdleSkin(unittest.TestCase):
             for tag in ("texture", "texturefocus", "texturenofocus"):
                 for node in control.findall(tag):
                     for name in [(node.text or "").strip(), node.get("diffuse") or ""]:
-                        if name and "$INFO" not in name:
+                        if name and "$INFO" not in name and name != SPLASH:   # one texture of its own, see test_boot_picture_is_the_bottom_layer
                             refs.add(name)
         self.assertLessEqual(len(refs), TEXTURE_FILES_MAX)
         total = 0
@@ -436,6 +437,24 @@ class IdleSkin(unittest.TestCase):
         full = [c for c, _ in self.all
                 if text(c, "width") == "1920" and text(c, "height") == "1080"]
         self.assertLessEqual(len(full), FULLSCREEN_MAX)
+
+    def test_boot_picture_is_the_bottom_layer(self):
+        """Power-on to home shows only our picture: the first control is the boot splash, so the
+        wallpaper fades in over it, and no other control draws it (one texture, nothing after)."""
+        top = list(ET.parse(HOME_XML).getroot().find("controls"))
+        self.assertEqual(top[0].get("type"), "image")
+        self.assertEqual(text(top[0], "texture"), SPLASH)
+        self.assertEqual((text(top[0], "left"), text(top[0], "top")), ("0", "0"))
+        self.assertEqual((text(top[0], "width"), text(top[0], "height")), ("1920", "1080"))
+        self.assertEqual(text(top[0], "visible"), "")               # never hidden by a condition, nothing to flip
+        self.assertFalse(top[0].findall("animation"))
+        self.assertEqual(read(HOME_XML).count(SPLASH), 1)
+        self.assertTrue(os.path.exists(os.path.join(ROOT, "device", "files", "home", "media", ".kodi", "media", "splash.png")))
+        # the wallpapers that cover it are never dimmed: idle only dims the row of cards
+        for c, _ in self.all:
+            if c.get("type") == "multiimage":
+                self.assertFalse(c.findall("animation"))
+                self.assertEqual(text(c, "colordiffuse"), "")
 
     def test_wallpapers_keep_rotating_from_the_bing_cache(self):
         """No screensaver: the home screen's own multiimage cycles the cached Bing photos."""
