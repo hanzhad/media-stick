@@ -35,6 +35,52 @@ except:
 helper = Helper(base_url, handle)
 plugin = routing.Plugin()
 
+# media-stick begin: the language of the categories and programme titles (the accept-language header). The box has one
+# language, the phone's «Язык» (mediastick_lang); once it was chosen SWEET.TV is asked in it, and a long-lived process
+# (the service) reads it again before every request. Without a choice: the add-on's own setting, but upstream's untouched
+# default (Hungarian) is Russian
+MS_LANGUAGE = 'ru'
+
+
+def _ms_language_untouched():
+    # upstream's default is 'hu'. Kodi writes a setting nobody has changed as default="true" (or not at all): that one
+    # is ours to replace; a 'hu' the person chose is kept
+    try:
+        translate = getattr(xbmcvfs, 'translatePath', None) or xbmc.translatePath
+        with open(translate('special://profile/addon_data/%s/settings.xml' % helper.addon_name), encoding='utf-8') as f:
+            text = f.read()
+    except FileNotFoundError:
+        return True
+    except Exception:
+        return False
+    import re as _ms_re
+    found = _ms_re.search(r'<setting id="countryCode"([^>]*)>', text)
+    return found is None or 'default="true"' in found.group(1)
+
+
+def _ms_language():
+    try:
+        import mediastick_lang as _ms_lang
+        from os.path import exists as _ms_exists
+        if _ms_exists(_ms_lang.path()):
+            return _ms_lang.resolve(_ms_lang.read()).sweet   # the box's language, chosen by the owner
+    except Exception:  # not a media-stick device, or the file cannot be read: the add-on's own setting decides
+        pass
+    stored = helper.get_setting('countryCode') or helper.countryCode
+    return MS_LANGUAGE if stored == 'hu' and _ms_language_untouched() else stored
+
+
+def _ms_sync_language():
+    code = _ms_language()
+    if code and code != helper.countryCode:
+        helper.countryCode = code
+    if code:
+        helper.headers['accept-language'] = code
+
+
+_ms_sync_language()
+# media-stick end
+
 
 def getTime(x, y):
     data = ''
@@ -69,6 +115,7 @@ def refreshChannelList():
         return
     # media-stick begin
     _ms_sync_auth()
+    _ms_sync_language()   # the language may have been chosen since this process started
     # media-stick end
 
     timestamp = int(time.time())
@@ -672,6 +719,51 @@ def login(ms_mode=None):
     helper.refresh()
 
 
+# media-stick begin: the played item is named after the channel (and the programme of an archive)
+def _ms_names(cid, epg):
+    """(channel name, programme text, start, stop) from the saved channel list; empty where unknown, never raises."""
+    try:
+        now = int(time.time())
+        for channel in helper.get_channel_list().get('list') or []:
+            if str(channel.get('id')) != str(cid):
+                continue
+            name = str(channel.get('name') or '')
+            for p in channel.get('epg') or []:
+                here = str(p.get('id')) == str(epg) if epg else p['time_start'] <= now < p['time_stop']
+                if here:
+                    return name, str(p.get('text') or ''), int(p['time_start']), int(p['time_stop'])
+            return name, '', 0, 0
+    except Exception as e:
+        xbmc.log('media-stick: SWEET.TV channel name not read: ' + repr(e)[:120], xbmc.LOGWARNING)
+    return '', '', 0, 0
+
+
+def _ms_name_the_item(cid, epg):
+    """Wraps setResolvedUrl until the returned function is called: the item it resolves gets the channel name as its
+    title (for an archived programme: the programme, with the channel as its show). Unknown channel: upstream's item."""
+    name, text, start, stop = _ms_names(cid, epg)
+    real = xbmcplugin.setResolvedUrl
+    if not name:
+        return lambda: None
+
+    def resolved(handle, succeeded, listitem=None):
+        try:
+            if succeeded and listitem is not None:
+                title = (text or name) if epg else name
+                info = {'title': title, 'tvshowtitle': name}
+                if text and not epg:
+                    info['plot'] = text           # live: what is on now
+                listitem.setLabel(title)
+                listitem.setInfo('video', info)
+        except Exception as e:
+            xbmc.log('media-stick: SWEET.TV item not named: ' + repr(e)[:120], xbmc.LOGWARNING)
+        return real(handle, succeeded, listitem)
+
+    xbmcplugin.setResolvedUrl = resolved
+    return lambda: setattr(xbmcplugin, 'setResolvedUrl', real)
+# media-stick end
+
+
 @plugin.route('/playvid/<videoid>')
 def playvid(videoid):
     DRM = None
@@ -731,10 +823,16 @@ def playvid(videoid):
                 PROTOCOL = 'hls'
                 subs = None
 
+            # media-stick begin
+            ms_undo = _ms_name_the_item(idx, pid if pid != 'null' else None)
+            # media-stick end
             if helper.get_setting('playerType') == 'ffmpeg' and DRM is None:
                 helper.ffmpeg_player(stream_url)
             else:
                 helper.playstream(stream_url, lic_url, PROTOCOL, DRM, flags=False, subs=subs, vod=vod)
+            # media-stick begin
+            ms_undo()
+            # media-stick end
 
 
 @plugin.route('/listM3U')

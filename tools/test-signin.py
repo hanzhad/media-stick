@@ -869,6 +869,7 @@ class SweetResponse:
 class SweetHelper:
     """Stand-in for the add-on's Helper: records what the login asks for and what it stores."""
     auth_url, check_auth_url, base_api_url = "https://sweet/auth", "https://sweet/check", "https://sweet/{}"
+    countryCode = "ua"
     headers, json_data = {}, {}
 
     def __init__(self, base_url, handle):

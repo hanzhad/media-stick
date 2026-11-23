@@ -60,6 +60,7 @@ YT_SECTIONS = {"home": "rec", "subscriptions": "subs", "history": "history", "pl
                "trending": "trend", "search": "search"}
 CATALOG_APPS = ("plugin.video.sweettv", "plugin.video.youtube")
 SWEET_PLAY_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvid/([0-9]{1,12})\|(null|[0-9]{1,12})")
+SWEET_ITEM_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvid/([0-9]{1,12})\|(null|[0-9]{1,12})(?:\?[^\s]*)?")
 APPS_TTL, ROUTES_TTL = 60, 300
 RESUME_MIN, RESUME_MAX = 5, 86400
 SEEK_MAX = 86400
@@ -298,9 +299,38 @@ def _streams(items, current, label):
     return out, cur
 
 
-def now_view(item, props, app):
+def sweet_ref(file):
+    """(channel id, epg id or "" for live) of a SWEET.TV play path as Kodi reports it, or None."""
+    m = SWEET_ITEM_RE.fullmatch(file) if isinstance(file, str) else None
+    return (m.group(1), "" if m.group(2) == "null" else m.group(2)) if m else None
+
+
+def sweet_name(cid):
+    """The name of a SWEET.TV channel from the add-on's own channel list ("" when there is none)."""
+    def make():
+        raw, _ = _read_json(_sweet_list_path())
+        rows = raw.get("list") if isinstance(raw, dict) else None
+        names = {str(c["id"]): str(c["name"])[:120] for c in rows if isinstance(c, dict) and c.get("id") is not None
+                 and c.get("name")} if isinstance(rows, list) else {}
+        return names or None
+    return (_cached("sweetnames", 120, make) or {}).get(str(cid), "")
+
+
+def item_title(item, name_of=None):
+    """The title of a playing item. A SWEET.TV item that comes without one (an older add-on, or a name the add-on could
+    not find) has the bare channel number for a label: that is replaced by the channel's name."""
+    item = item if isinstance(item, dict) else {}
+    title, label = str(item.get("title") or ""), str(item.get("label") or "")
+    ref = sweet_ref(item.get("file"))
+    if title or not ref:
+        return title or label
+    return (name_of or sweet_name)(ref[0]) or ("" if label == ref[0] else label)
+
+
+def now_view(item, props, app, name_of=None):
     """The page's "now playing" from Player.GetItem's item, Player.GetProperties and Application.GetProperties."""
     item = item if isinstance(item, dict) else {}
+    ref = sweet_ref(item.get("file"))
     props = props if isinstance(props, dict) else {}
     art = item.get("art") if isinstance(item.get("art"), dict) else {}
     thumb = image_url(item.get("thumbnail")) or image_url(art.get("thumb")) or image_url(art.get("poster"))
@@ -308,7 +338,8 @@ def now_view(item, props, app):
     audio, audio_cur = _streams(props.get("audiostreams"), props.get("currentaudiostream"), "Дорожка")
     app = app if isinstance(app, dict) else {}
     return {"playing": True,
-            "title": str(item.get("title") or item.get("label") or "")[:200],
+            "title": item_title(item, name_of)[:200],
+            "live": bool(ref and not ref[1]), "cid": ref[0] if ref else "", "epg": ref[1] if ref else "",
             "channel": str(item.get("showtitle") or item.get("channel") or "")[:120],
             "thumb": thumb, "app": app_of(item.get("file")),
             "time": kodi_seconds(props.get("time")), "total": kodi_seconds(props.get("totaltime")),
@@ -604,12 +635,15 @@ def youtube_view(query, rpc):
             "keys": keys, "error": listing.error}
 
 
+def _sweet_list_path():
+    return os.path.join(os.path.dirname(os.path.dirname(signin.USERDATA)), "temp", "channelList.json")
+
+
 def sweettv_view():
     sw = sweet()
     if sw is None:
         raise Refused("SWEET.TV недоступен на этом устройстве.", 503)
-    temp = os.path.join(os.path.dirname(os.path.dirname(signin.USERDATA)), "temp", "channelList.json")
-    raw, mtime = _read_json(temp)
+    raw, mtime = _read_json(_sweet_list_path())
     signed = signin.sweettv_signed_in()
     return sweet_view(sw, raw, time.time(), signed, mtime)
 
@@ -627,7 +661,7 @@ def _player_id(rpc):
 
 PLAYER_PROPS = ["time", "totaltime", "speed", "subtitles", "currentsubtitle", "subtitleenabled",
                 "audiostreams", "currentaudiostream"]
-ITEM_PROPS = ["title", "showtitle", "thumbnail", "art", "file"]
+ITEM_PROPS = ["title", "showtitle", "thumbnail", "art", "file"]     # (the label comes with every item)
 
 
 def now_state(rpc):

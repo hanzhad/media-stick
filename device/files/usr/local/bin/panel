@@ -535,9 +535,8 @@ def _status():
         s["kodi"] = "up"
         if players:
             item = kodi("Player.GetItem", {"playerid": players[0]["playerid"],
-                                           "properties": ["title", "showtitle"]}) or {}
-            it = item.get("item", {})
-            s["playing"] = it.get("title") or it.get("label") or ""
+                                           "properties": ["title", "showtitle", "file"]}) or {}
+            s["playing"] = panel_watch.item_title(item.get("item", {}))
         s["kb"] = kb_state()
     except OSError:
         s["kodi"] = "down"

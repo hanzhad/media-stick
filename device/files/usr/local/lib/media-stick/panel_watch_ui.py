@@ -174,10 +174,10 @@ function mkPlayer(){
   P.update=function(st){
     P.st=st;
     title.textContent=st.title||'Без названия';
-    subl.textContent=[st.channel,({youtube:'YouTube',sweettv:'SWEET.TV'})[st.app]].filter(Boolean).join(' · ');
+    subl.textContent=[st.channel,st.live?'В эфире':'',({youtube:'YouTube',sweettv:'SWEET.TV'})[st.app]].filter(Boolean).join(' · ');
     art.style.backgroundImage=picture(st.thumb);art.classList.toggle('hide',!picture(st.thumb));   // no picture: no grey box
     pp.replaceChildren(ico(st.speed===0?'i-play':'wt-i-pause'));
-    const total=st.total>0;seekRow.classList.toggle('hide',!total);
+    const total=st.total>0&&!st.live;seekRow.classList.toggle('hide',!total);   // live: the player's ~1 minute is not a length
     if(total&&!P.drag&&Date.now()>P.hold){seek.max=Math.floor(st.total);seek.value=Math.floor(st.time);t1.textContent=tm(st.time)}
     t2.textContent=total?tm(st.total):'';
     bSub.classList.toggle('hide',!st.subtitles.length);bAud.classList.toggle('hide',st.audio.length<2);
@@ -318,7 +318,7 @@ function mkBar(host){
     host.classList.toggle('hide',!st);if(!st)return;
     title.textContent=st.title||'Без названия';
     const pic=picture(st.thumb);art.classList.toggle('hide',!pic);art.style.backgroundImage=pic;
-    const pct=st.total>0?Math.min(100,100*st.time/st.total):0;line.classList.toggle('hide',!pct);fill.style.width=pct+'%';
+    const pct=st.total>0&&!st.live?Math.min(100,100*st.time/st.total):0;line.classList.toggle('hide',!pct);fill.style.width=pct+'%';
     pp.replaceChildren(ico(st.speed===0?'i-play':'wt-i-pause'))}}}
 const sheetOpen=()=>!W.sheet.classList.contains('hide');
 function showSheet(){

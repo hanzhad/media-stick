@@ -253,6 +253,38 @@ class NowPlaying(unittest.TestCase):
         self.assertEqual((v["subtitle"], v["subtitles_on"], v["audio_index"]), (1, True, 0))
         self.assertEqual(v["thumb"], "https://i.ytimg.com/a.jpg")
 
+    def test_a_live_sweettv_channel_is_named_and_marked_live(self):
+        """What the owner saw: the title empty, the label the bare channel number, and a 1 minute window read as a movie."""
+        item = {"title": "", "label": "5", "file": "plugin://plugin.video.sweettv/playvid/5|null"}
+        v = pw.now_view(item, {"time": {"seconds": 45}, "totaltime": {"seconds": 56}}, None, name_of=lambda cid: "Первый канал")
+        self.assertEqual((v["title"], v["live"], v["cid"], v["epg"], v["app"]), ("Первый канал", True, "5", "", "sweettv"))
+        self.assertEqual(pw.item_title(item, lambda cid: "Первый канал"), "Первый канал")
+        self.assertEqual(pw.item_title(item, lambda cid: ""), "")                       # the bare number is never a title
+
+    def test_an_archived_programme_is_not_live_and_keeps_its_own_title(self):
+        item = {"title": "Холостяк", "label": "Холостяк", "showtitle": "Первый канал",
+                "file": "plugin://plugin.video.sweettv/playvid/5|51?ms_start=120"}
+        v = pw.now_view(item, None, None, name_of=lambda cid: "x")
+        self.assertEqual((v["title"], v["live"], v["cid"], v["epg"], v["channel"]),
+                         ("Холостяк", False, "5", "51", "Первый канал"))
+
+    def test_other_items_are_not_touched_by_the_sweettv_rules(self):
+        v = pw.now_view({"title": "", "label": "7", "file": VID}, None, None, name_of=lambda cid: "x")
+        self.assertEqual((v["title"], v["live"], v["cid"]), ("7", False, ""))
+        self.assertEqual(pw.item_title({"title": "Фильм", "label": "f"}), "Фильм")
+        self.assertEqual(pw.item_title(None), "")
+
+    def test_the_name_comes_from_the_add_ons_channel_list(self):
+        pw._cache.clear()
+        path = os.path.join(TMP, ".kodi", "temp", "channelList.json")
+        put(path, '{"list": [{"id": 5, "name": "Первый канал"}, {"id": 6}, "x"]}')
+        self.assertEqual(pw.sweet_name("5"), "Первый канал")
+        self.assertEqual(pw.sweet_name("6"), "")
+        self.assertEqual(pw.sweet_name("404"), "")
+        pw._cache.clear()
+        os.remove(path)
+        self.assertEqual(pw.sweet_name("5"), "")
+
     def test_odd_input_does_not_raise(self):
         v = pw.now_view(None, None, None)
         self.assertEqual((v["title"], v["time"], v["subtitles"], v["volume"]), ("", 0, [], None))

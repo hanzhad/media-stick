@@ -58,6 +58,7 @@ class StaleHelper:
     The API answers the channel list to the bearer it knows and with an error status to anything else."""
     auth_url, check_auth_url = "https://sweet/auth", "https://sweet/check"
     base_api_url, channelListPath, countryCode = "https://sweet/{}", "/tmp/channelList.json", "ua"
+    addon_name = "plugin.video.sweettv"
     calls = []                                        # (url, copy of the headers) of every request
     api_answer = None                                 # None: the real one (by the bearer), else a fixed reply
 
@@ -105,8 +106,9 @@ class Clock:
         self.now += seconds
 
 
-def load_sweettv(with_library=True, bearer_at_import=""):
-    """The overlay, imported (so helper is built) while the settings hold bearer_at_import."""
+def load_sweettv(with_library=True, bearer_at_import="", helper_class=None, xbmcplugin=None, translate=None):
+    """The overlay, imported (so helper is built) while the settings hold bearer_at_import. helper_class stands in for
+    the add-on's Helper, xbmcplugin for Kodi's, translate for xbmcvfs.translatePath."""
     Settings.values = {"bearer": bearer_at_import, "logged": True} if bearer_at_import else {}
     StaleHelper.calls, StaleHelper.api_answer = [], None
     logs, written = [], []
@@ -117,7 +119,7 @@ def load_sweettv(with_library=True, bearer_at_import=""):
             return lambda fn: fn
 
     vfs = types.SimpleNamespace(
-        translatePath=lambda p: "/tmp/", delete=lambda path: None,
+        translatePath=translate or (lambda p: "/tmp/"), delete=lambda path: None,
         File=lambda path, mode: type("F", (), {"write": lambda self, data: written.append(path),
                                                "close": lambda self: None})())
     parse = types.ModuleType("six.moves.urllib.parse")
@@ -125,14 +127,14 @@ def load_sweettv(with_library=True, bearer_at_import=""):
     package = types.ModuleType("sweettv_addon")
     package.__path__ = []
     helper_module = types.ModuleType("sweettv_addon.helper")
-    helper_module.Helper = StaleHelper
+    helper_module.Helper = helper_class or StaleHelper
     stubs = {
         "routing": types.SimpleNamespace(Plugin=Plugin),
         "urllib3": types.SimpleNamespace(disable_warnings=lambda: None),
         "xbmc": types.SimpleNamespace(log=lambda msg, level=0: logs.append((level, msg)), LOGDEBUG=DEBUG,
                                       LOGERROR=ERROR, LOGWARNING=WARNING),
         "xbmcgui": types.SimpleNamespace(WindowDialog=object, ListItem=object, Dialog=object),
-        "xbmcplugin": types.SimpleNamespace(), "xbmcvfs": vfs,
+        "xbmcplugin": xbmcplugin or types.SimpleNamespace(), "xbmcvfs": vfs,
         "six": types.ModuleType("six"), "six.moves": types.ModuleType("six.moves"),
         "six.moves.urllib": types.ModuleType("six.moves.urllib"), "six.moves.urllib.parse": parse,
         "sweettv_addon": package, "sweettv_addon.helper": helper_module,
