@@ -215,8 +215,8 @@ class Reading(unittest.TestCase):
         page = pa.inject("@@ACC_SECTION@@<body>@@ACC_TAIL@@</body>")
         self.assertIn("нет канала YouTube", page)
         self.assertIn("«Создать канал»", page)
-        self.assertIn("«Войти другим аккаунтом»", page)
-        self.assertIn("accLabel", page)
+        self.assertIn("«Добавить аккаунт»", page)
+        self.assertNotIn("«Войти другим аккаунтом»", page)
         self.assertIn("ch.textContent=", page)   # the title is text, never markup
         self.assertNotIn("ch.innerHTML", page)
 
@@ -560,6 +560,88 @@ class GivenUpAnother(unittest.TestCase):
         self.assertIn("if(accWaiting[svc]&&!accSheet", page)
 
 
+class ListPage(unittest.TestCase):
+    """The accounts page as an iOS-style list: groups of rows, no chips, no big buttons (text level; the script is not run)."""
+    page = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.page = pa.inject("@@ACC_SECTION@@<body>@@ACC_TAIL@@</body>")
+
+    def test_a_page_title_and_no_card_label(self):
+        sec = self.page.split('<section id="t-acc"', 1)[1].split("</section>", 1)[0]
+        self.assertIn('<h2 class="acc-title">Аккаунты</h2>', sec)
+        self.assertNotIn('class="card"', sec)
+
+    def test_three_groups_in_order(self):
+        for title in ("YouTube на ТВ", "SWEET.TV", "Выход"):
+            self.assertIn("'%s'" % title, self.page)
+        self.assertLess(self.page.index("['youtube','YouTube на ТВ']"), self.page.index("['sweettv','SWEET.TV']"))
+        self.assertLess(self.page.index("['sweettv','SWEET.TV']"), self.page.index("['out','Выход']"))
+
+    def test_youtube_rows(self):
+        p = self.page
+        self.assertIn("p.name==='Default'?'Основной':p.name", p)                 # the add-on's first profile
+        self.assertIn("const accInit=", p)                                       # initials in the avatar
+        self.assertIn("'Нажмите, чтобы включить на ТВ'", p)
+        self.assertIn("'Аккаунт Google без канала'", p)
+        self.assertIn("signed=a.profiles.filter(p=>p.signed_in)", p)             # empty profiles are not rows
+        self.assertIn("accRow({av:'+',title:'Новый аккаунт',sub:'ждёт входа'})", p)
+        self.assertIn("'+ Добавить аккаунт'", p)
+        self.assertIn("go:()=>accAnother(a.service)", p)
+        self.assertIn("'Войти в YouTube'", p)
+        self.assertIn("go:()=>accStart(a.service)", p)
+        self.assertIn("Пустые профили не показываются, приставка использует их сама.", p)
+
+    def test_a_switch_is_a_toast_and_moves_the_check_at_once(self):
+        p = self.page
+        self.assertIn("'На ТВ: '+accName(p)", p)
+        self.assertIn("accPend={svc,id:p.id,until:Date.now()+8000}", p)
+        self.assertIn("accWatch(20000)", p)
+        self.assertNotIn("выбран.'", p)                                          # no standing «Профиль … выбран»
+        self.assertNotIn("acc-chip", p)
+
+    def test_sweettv_rows_and_the_way_out(self):
+        p = self.page
+        self.assertIn("accRow({title:'Вход выполнен',tick:true})", p)
+        self.assertIn("'Войти'", p)
+        self.assertNotIn("Friendly Share", p)                                    # the partner sign-in no longer exists
+        self.assertIn("'Выйти из «'+accName(cur)+'» на ТВ'", p)
+        self.assertIn("'Выйти из SWEET.TV'", p)
+        self.assertIn("ask='Нажмите ещё раз, чтобы выйти'", p)
+        self.assertIn("if(armed(id,ask))accOut(svc)", p)
+        self.assertIn("cls:'red'", p)
+        self.assertIn(".acc-row.red{color:var(--bad)}", p)
+
+    def test_no_big_buttons_and_nothing_wraps(self):
+        p = self.page
+        for gone in ("bother", "bin=", "bout", "acc-btns", "acc-chips", "acc-who"):
+            self.assertNotIn(gone, p)
+        self.assertIn("white-space:nowrap", p)
+        self.assertIn("#acc-g-out{grid-column:1/-1}", p)                         # the wide layout
+
+    def test_the_title_is_a_plain_page_title(self):
+        css = self.page.split(".acc-title{", 1)[1].split("}", 1)[0]
+        for want in ("font-size:24px", "font-weight:600", "letter-spacing:0", "text-transform:none", "color:inherit", "margin:0 6px"):
+            self.assertIn(want, css)
+
+    def test_the_no_channel_hint_is_one_line_that_opens_and_closes(self):
+        p = self.page
+        self.assertIn("'На ТВ пусто в «Подписках»? Как исправить ›'", p)
+        self.assertIn("ch.classList.toggle('hide')===false", p)                  # a second tap collapses it
+        self.assertIn("g.querySelector('.acc-help').classList.toggle('hide',!none)", p)   # only for a profile with no channel
+        self.assertNotIn("classList.toggle('warn'", p)                           # no big block any more
+        self.assertLess(p.index("e.append(n,h)"), p.index("if(k!=='out')e.append(accEl('div','acc-m'))"))
+        self.assertIn("e.append(n,h)", p)                                        # the footnote first, then the hint
+
+    def test_all_avatars_look_alike(self):
+        self.assertNotIn(".acc-row.cur .acc-av", self.page)
+        self.assertIn(".acc-av{flex:none;width:40px;height:40px;border-radius:50%;background:var(--card2)", self.page)
+
+    def test_the_list_row_says_the_same(self):
+        self.assertIn("'YouTube: '+(cur?accName(cur):'не выполнен вход')+' · SWEET.TV: '+(sw&&sw.signed_in?'вход выполнен':'нет')", self.page)
+
+
 class Page(unittest.TestCase):
     def test_inject_fills_the_two_markers_and_the_whitelist(self):
         page = pa.inject("@@ACC_SECTION@@<body>@@ACC_TAIL@@</body>")
@@ -591,7 +673,7 @@ class Page(unittest.TestCase):
         self.assertIn("st.reason==='expired'", page)                   # only what the add-on says ran out, not any failure
         self.assertIn('id="acc-fin-renew"', page)                      # the end of an expired sheet has the button too
         self.assertIn("if(!expired)accCloseT=setTimeout", page)        # and stays until the person chooses
-        self.assertIn("bren.onclick=()=>accRenew(svc)", page)          # the card's own button, after the sheet is gone
+        self.assertIn("go:()=>accRenew(a.service)", page)              # the row of the group, after the sheet is gone
         self.assertIn("if(accSheet.renew&&Date.now()-accSheet.renew<20000)return", page)   # the sheet is kept while the new code comes
 
     def test_the_accounts_tab_has_a_hidden_bar_for_an_unfinished_keys_wizard(self):
@@ -599,7 +681,7 @@ class Page(unittest.TestCase):
         bar = page.split('id="acc-yk-cont"', 1)[1].split(">", 1)[0]
         self.assertIn("hide", bar)                                      # hidden until the wizard script shows it
         self.assertLess(page.index('id="acc-yk-cont"'), page.index('id="acc-list"'))
-        self.assertIn("bkeys.onclick=()=>ykOpen()", page)               # the card's button still opens the wizard
+        self.assertNotIn("Ключи Google", page)                          # the keys row lives on the maintenance page
 
     def test_no_browser_dialogs(self):
         page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")

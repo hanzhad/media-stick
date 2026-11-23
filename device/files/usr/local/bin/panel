@@ -929,6 +929,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <p class="dsub" id="act-last"></p>
       <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
       <button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз, чтобы перезагрузить'))act('reboot')">Перезагрузить</button></div>
+      <div class="slist" style="margin:14px -18px -18px;border-top:1px solid var(--line)"><button id="keys-row" class="srow" onclick="ykOpen()"><span class="sname">Ключи Google</span><span class="sval">для входа в YouTube</span><span class="chev" aria-hidden="true">›</span></button></div>
     </div>
   </section>
 
@@ -1075,7 +1076,7 @@ function spBack(){
   if(spPushed){spPushed=false;history.back();return}
   history.replaceState(null,'',location.pathname+location.search);setPage('')
 }
-document.querySelectorAll('.srow').forEach(b=>b.addEventListener('click',()=>{buzz();goPage(b.dataset.sp)}));
+document.querySelectorAll('.srow[data-sp]').forEach(b=>b.addEventListener('click',()=>{buzz();goPage(b.dataset.sp)}));
 document.querySelectorAll('[data-spage]').forEach(s=>{
   const hd=document.createElement('div'), b=document.createElement('button');
   hd.className='sp-head';b.className='btn sm';b.textContent='‹ Настройки';b.addEventListener('click',spBack);hd.append(b);s.prepend(hd)});

@@ -5,37 +5,37 @@ sheet is panel_ytkeys_ui.py; the card's "Ключи" button here opens it."""
 import json
 
 SECTION = """<section id="t-acc" data-tab="settings" data-spage="acc" class="hide">
-    <div class="card"><h2>Аккаунты</h2>
-      <button id="acc-yk-cont" class="btn sm acc wide hide"></button>
-      <div id="acc-list" class="acc-list"><div class="cap">Загружаю…</div></div>
-    </div>
+    <h2 class="acc-title">Аккаунты</h2>
+    <button id="acc-yk-cont" class="btn sm acc wide hide"></button>
+    <div id="acc-list" class="acc-list"><div class="cap">Загружаю…</div></div>
   </section>"""
 
 # @@HOSTS@@ is filled in with the links' whitelist: one list, kept in panel_accounts.py
 TAIL = r"""
 <style>
+.acc-title{margin:0 6px 14px;font-size:24px;font-weight:600;letter-spacing:0;text-transform:none;color:inherit}
 .acc-list{display:block}
-.acc-svc{padding:14px 0;border-top:1px solid var(--line)}
-.acc-svc:first-child{padding-top:0;border-top:0}
-.acc-svc:last-child{padding-bottom:0}
+.acc-gt{margin:22px 6px 8px;color:var(--dim);font-size:13px;letter-spacing:.04em;text-transform:uppercase}
+.acc-grp:first-child .acc-gt{margin-top:0}
+.acc-rows{background:var(--card);border-radius:20px;overflow:hidden}
+.acc-row{display:flex;align-items:center;gap:12px;width:100%;min-height:60px;padding:8px 16px;background:none;border:0;border-top:1px solid var(--line);color:inherit;font:inherit;font-size:17px;text-align:left;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.acc-row:first-child{border-top:0}
+button.acc-row:active{background:var(--card2)}
+button.acc-row:disabled{opacity:.5}
+.acc-av{flex:none;width:40px;height:40px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600}
+.acc-tx{flex:1 1 0;min-width:0}
+.acc-tx b{display:block;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acc-tx small{display:block;margin-top:1px;color:var(--dim);font-size:14px;line-height:1.3;overflow-wrap:anywhere}
+.acc-ck{flex:none;display:flex;color:var(--ok)}
+.acc-row.add{color:#7db4ff}
+.acc-row.red{color:var(--bad)}
+.acc-note{margin:8px 6px 0;color:var(--faint);font-size:13px;line-height:1.4}
+.acc-hlp{display:block;margin:6px 0 0;padding:6px;min-height:36px;background:none;border:0;color:var(--dim);font:inherit;font-size:13px;text-align:left}
+.acc-ch{margin:0 6px;color:var(--dim);font-size:14px;line-height:1.45}
+.acc-m{margin:8px 6px 0;color:var(--dim);font-size:14px;min-height:1.4em}
+.acc-m.bad{color:var(--bad)}
 .acc-hd{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .acc-hd b{font-size:18px;font-weight:600}
-.acc-st{color:var(--dim);font-size:14px;text-align:right}
-.acc-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-.acc-chip{min-height:44px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:var(--bg);touch-action:manipulation;user-select:none;-webkit-user-select:none}
-.acc-chip:active{background:#fff;color:var(--bg)}
-.acc-chip.cur{background:#fff;color:var(--bg);font-weight:600}
-.acc-chip small{font-size:13px;opacity:.7;margin-left:6px}
-.acc-btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-.acc-btns .btn{flex:1 1 120px;min-height:48px}
-.acc-who{margin-top:12px}
-.acc-who b{display:block;font-size:20px;font-weight:600;overflow-wrap:anywhere}
-.acc-who small{display:block;margin-top:2px;color:var(--dim);font-size:14px}
-.acc-lnk{display:block;margin-top:12px;padding:0;min-height:44px;background:none;border:0;color:var(--dim);font-size:15px;text-align:left}
-.acc-ch{margin-top:12px;color:var(--dim);font-size:14px;line-height:1.45}
-.acc-ch.warn{color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
-.acc-m{margin-top:10px;color:var(--dim);font-size:14px;min-height:1.4em}
-.acc-m.bad{color:var(--bad)}
 .acc-box .acc-hd{margin-bottom:12px}
 .acc-stp{color:var(--dim);font-size:15px}
 .acc-x{background:none;border:0;color:var(--dim);font-size:15px;min-height:44px;padding:0 4px}
@@ -52,8 +52,9 @@ TAIL = r"""
 .acc-sheet.acc-min .acc-mini{display:flex;pointer-events:auto}
 @media (min-width:900px){
   #t-acc{grid-area:acc}
-  .acc-list{display:grid;grid-template-columns:1fr 1fr;gap:20px}
-  .acc-svc,.acc-svc:first-child,.acc-svc:last-child{padding:0;border-top:0}
+  .acc-list{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+  .acc-grp .acc-gt,.acc-grp:first-child .acc-gt{margin-top:0}
+  #acc-g-out{grid-column:1/-1}
   .acc-sheet.acc-min{inset:auto 0 16px 0}
 }
 </style>
@@ -78,8 +79,8 @@ TAIL = r"""
 const ACC_HOSTS=@@HOSTS@@;
 const accEl=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e};
 const ACC_NO_CHANNEL='У этого аккаунта Google нет канала YouTube, поэтому на ТВ пусто в «Подписках», «Смотреть позже» и «Плейлистах» (рекомендации и поиск работают). '
-  +'Создайте канал в приложении YouTube: аватар → «Создать канал». Надпись пропадёт сама; если на ТВ всё ещё пусто — «Выйти» и «Войти». '
-  +'Или «Войти другим аккаунтом».';
+  +'Создайте канал в приложении YouTube: аватар → «Создать канал». Надпись пропадёт сама; если на ТВ всё ещё пусто — выйдите и войдите снова. '
+  +'Или «Добавить аккаунт».';
 function accSafe(u){   // only https links to the sign-in pages themselves
   try{const x=new URL(u);return x.protocol==='https:'&&!x.username&&!x.password&&x.port===''&&ACC_HOSTS.indexOf(x.hostname)>=0?x.href:''}catch(e){return ''}
 }
@@ -112,74 +113,104 @@ function accNote(names){
   if(k!==accKey||(names.length&&!accSheet)){accKey=k;accPoll()}
 }
 function accApply(d){accData=d;accRender(d.accounts||[]);accSync(d);if(window.setRows)setRows()}
+// a profile's name on the phone: the add-on's first profile is called "Default", which says nothing
+const accName=p=>p.name==='Default'?'Основной':p.name;
+const accInit=n=>String(n).trim().split(/\s+/).slice(0,2).map(w=>w.charAt(0)).join('').toUpperCase()||'?';
 // the state of the Аккаунты row in the settings list
 function accRowText(){
   const l=(accData&&accData.accounts)||[];
   if(!l.length)return '';
   const yt=l.find(x=>x.service==='youtube'), sw=l.find(x=>x.service==='sweettv');
   const cur=yt&&yt.profiles.find(p=>p.current&&p.signed_in);
-  return 'YouTube: '+(cur?accLabel(cur):'не выполнен вход')+' · SWEET.TV: '+(sw&&sw.signed_in?'вошли':'нет')
+  return 'YouTube: '+(cur?accName(cur):'не выполнен вход')+' · SWEET.TV: '+(sw&&sw.signed_in?'вход выполнен':'нет')
 }
 
-// ---- the cards ----
-function accCard(svc){
-  let c=$('acc-c-'+svc);if(c)return c;
-  c=accEl('div','acc-svc');c.id='acc-c-'+svc;c.dataset.svc=svc;
-  const hd=accEl('div','acc-hd');hd.append(accEl('b','', ''),accEl('span','acc-st'));
-  const chips=accEl('div','acc-chips');
-  const btns=accEl('div','acc-btns');
-  const bin=accEl('button','btn','Войти'),bother=accEl('button','btn','Войти другим аккаунтом'),bout=accEl('button','btn','Выйти');
-  const bren=accEl('button','btn','Обновить код');   // SWEET.TV only, after its code ran out
-  const bkeys=accEl('button','acc-lnk','Ключи Google ›');   // YouTube only: the Google keys wizard (panel_ytkeys_ui.py), needed once
-  bin.dataset.k='in';bother.dataset.k='another';bout.dataset.k='out';bren.dataset.k='renew';bkeys.dataset.k='keys';bout.id='acc-out-'+svc;
-  bin.onclick=()=>accStart(svc);bren.onclick=()=>accRenew(svc);bkeys.onclick=()=>ykOpen();bother.onclick=()=>accAnother(svc);
-  bout.onclick=()=>{if(armed(bout.id,'Нажмите ещё раз, чтобы выйти'))accOut(svc)};
-  btns.append(bin,bother,bren,bout);
-  const who=accEl('div','acc-who hide');who.append(accEl('b'),accEl('small'));
-  c.append(hd,who,accEl('div','acc-ch hide'),chips,btns,accEl('div','acc-m'),bkeys);
-  $('acc-list').append(c);return c
+// ---- the groups: rows in the look of the settings list, built from /api/accounts ----
+const ACC_TICK='<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+// the groups of the page; each keeps its own message line (.acc-m), which a redraw of the rows leaves alone
+const ACC_GROUPS=[['youtube','YouTube на ТВ'],['sweettv','SWEET.TV'],['out','Выход']];
+function accCard(id){
+  let g=$('acc-g-'+id);if(g)return g;
+  ACC_GROUPS.forEach(([k,title])=>{
+    if($('acc-g-'+k))return;
+    const e=accEl('div','acc-grp');e.id='acc-g-'+k;
+    e.append(accEl('div','acc-gt',title),accEl('div','acc-rows'));
+    if(k==='youtube'){
+      const n=accEl('div','acc-note hide','Пустые профили не показываются, приставка использует их сама.');
+      // the missing-channel hint: one muted line, the explanation opens under it and closes on a second tap
+      const h=accEl('div','acc-help hide'), b=accEl('button','acc-hlp','На ТВ пусто в «Подписках»? Как исправить ›'), ch=accEl('div','acc-ch hide');
+      b.type='button';b.setAttribute('aria-expanded','false');
+      b.onclick=()=>{b.setAttribute('aria-expanded',String(ch.classList.toggle('hide')===false))};
+      h.append(b,ch);e.append(n,h)}
+    if(k!=='out')e.append(accEl('div','acc-m'));
+    $('acc-list').append(e)});
+  return $('acc-g-'+id)
+}
+function accRow(o){
+  const r=accEl(o.go?'button':'div','acc-row'+(o.cls?' '+o.cls:''));
+  if(o.go){r.type='button';r.onclick=o.go;if(o.off)r.disabled=true}
+  if(o.id)r.id=o.id;
+  if(o.av!==undefined)r.append(accEl('span','acc-av',o.av));
+  if(o.title){const t=accEl('span','acc-tx');t.append(accEl('b','',o.title));if(o.sub)t.append(accEl('small','',o.sub));r.append(t)}
+  else r.textContent=o.text;   // a plain row is only its text, so that armed() can swap it
+  if(o.tick){const k=accEl('span','acc-ck');k.innerHTML=ACC_TICK;r.append(k)}
+  return r
 }
 function accMsg(svc,t,bad){const m=accCard(svc).querySelector('.acc-m');m.textContent=t||'';m.classList.toggle('bad',!!bad)}
-function accRender(list){
-  const box=$('acc-list');if(box.querySelector('.cap'))box.textContent='';
-  list.forEach(a=>{
-    const sig=JSON.stringify([a.profiles,a.signed_in,!!(a.signin&&a.signin.state==='waiting'),!!accExpired[a.service]]);
-    const c=accCard(a.service);
-    if(accSig[a.service]===sig)return;accSig[a.service]=sig;
-    const yt=a.service==='youtube', cur=a.profiles.find(p=>p.current), waiting=!!(a.signin&&a.signin.state==='waiting');
-    c.querySelector('.acc-hd b').textContent=a.name;
-    // YouTube: the profile on the TV is who is signed in; any of the add-on's tokens is enough to watch
-    const on=yt?!!(cur&&cur.signed_in):a.signed_in;
-    c.querySelector('.acc-st').textContent=waiting?'ждёт ввода кода':on?'вы вошли':'вход не выполнен';
-    const who=c.querySelector('.acc-who');
-    who.querySelector('b').textContent=yt&&on?accLabel(cur):'';
-    who.querySelector('small').textContent=yt&&on?(cur.channel==='yes'?'Канал YouTube':cur.channel==='no'?'Аккаунт Google без канала':'Аккаунт Google')
-      +(a.profiles.length>1&&accLabel(cur)!==cur.name?' · профиль «'+cur.name+'»':''):'';
-    who.classList.toggle('hide',!(yt&&on));
-    const chips=c.querySelector('.acc-chips');chips.textContent='';
-    a.profiles.forEach(p=>{
-      const b=accEl('button','acc-chip'+(p.current?' cur':''),accLabel(p));
-      if(p.current)b.setAttribute('aria-pressed','true');
-      if(!p.signed_in)b.append(accEl('small','','не вошёл'));
-      b.onclick=()=>{if(!p.current)accSwitch(a.service,p)};
-      chips.append(b)});
-    chips.classList.toggle('hide',a.profiles.length<2);   // one account: the line above says it all
-    // no YouTube channel on the Google account: Google gives the add-on no subscriptions, Watch Later or playlists
-    const ch=c.querySelector('.acc-ch'),cs=yt&&cur&&cur.signed_in?cur.channel:'';
-    ch.textContent=cs==='no'?ACC_NO_CHANNEL:'';
-    ch.classList.toggle('warn',cs==='no');ch.classList.toggle('hide',!ch.textContent);
-    const q=k=>c.querySelector('[data-k='+k+']');
-    const renew=a.service==='sweettv'&&!on&&!!accExpired[a.service];
-    q('in').classList.toggle('hide',on||renew);q('in').classList.add('acc');q('in').disabled=waiting;
-    q('another').classList.toggle('hide',!(yt&&on));q('another').classList.add('acc');q('another').disabled=waiting;
-    q('renew').classList.toggle('hide',!renew);q('renew').disabled=waiting;
-    q('keys').classList.toggle('hide',!yt);
-    q('out').classList.toggle('hide',!on);
-  })
+// who is on the TV: the channel when the add-on knows it
+const accSub=p=>p.channel==='yes'&&p.channel_title?p.channel_title:p.channel==='no'?'Аккаунт Google без канала':'Аккаунт Google';
+function accFillYouTube(a){
+  const g=accCard('youtube'), rows=g.querySelector('.acc-rows');rows.textContent='';
+  g.classList.toggle('hide',!a);if(!a)return;
+  const cur=a.profiles.find(p=>p.current), waiting=!!(a.signin&&a.signin.state==='waiting');
+  const signed=a.profiles.filter(p=>p.signed_in);
+  signed.forEach(p=>rows.append(accRow({av:accInit(accName(p)),title:accName(p),cls:p.current?'cur':'',tick:p.current,
+    sub:p.current?accSub(p):'Нажмите, чтобы включить на ТВ',go:p.current?null:()=>accSwitch(a.service,p)})));
+  if(cur&&!cur.signed_in)rows.append(accRow({av:'+',title:'Новый аккаунт',sub:'ждёт входа'}));
+  rows.append(signed.length?accRow({text:'+ Добавить аккаунт',cls:'add',go:()=>accAnother(a.service),off:waiting})
+    :accRow({text:'Войти в YouTube',cls:'add',go:()=>accStart(a.service),off:waiting}));
+  // no YouTube channel on the Google account: Google gives the add-on no subscriptions, Watch Later or playlists
+  const ch=g.querySelector('.acc-ch'), none=cur&&cur.signed_in&&cur.channel==='no';
+  ch.textContent=none?ACC_NO_CHANNEL:'';g.querySelector('.acc-help').classList.toggle('hide',!none);
+  if(!none){ch.classList.add('hide');g.querySelector('.acc-hlp').setAttribute('aria-expanded','false')}
+  g.querySelector('.acc-note').classList.toggle('hide',!a.profiles.some(p=>!p.signed_in&&!p.current))
 }
-async function accRun(svc,what,body,doing,done){
+function accFillSweet(a){
+  const g=accCard('sweettv'), rows=g.querySelector('.acc-rows');rows.textContent='';
+  g.classList.toggle('hide',!a);if(!a)return;
+  const waiting=!!(a.signin&&a.signin.state==='waiting');
+  if(a.signed_in)rows.append(accRow({title:'Вход выполнен',tick:true}));
+  else if(accExpired[a.service])rows.append(accRow({text:'Обновить код',cls:'add',go:()=>accRenew(a.service),off:waiting}));
+  else rows.append(accRow({text:waiting?'Ждёт ввода кода':'Войти',cls:'add',go:()=>accStart(a.service),off:waiting}))
+}
+// the way out, for the services that are signed in
+function accFillOut(yt,sw){
+  const g=accCard('out'), rows=g.querySelector('.acc-rows');rows.textContent='';
+  const cur=yt&&yt.profiles.find(p=>p.current&&p.signed_in), ask='Нажмите ещё раз, чтобы выйти';
+  const out=(id,svc,text)=>rows.append(accRow({id,text,cls:'red',go:()=>{if(armed(id,ask))accOut(svc)}}));
+  if(cur)out('acc-out-youtube','youtube','Выйти из «'+accName(cur)+'» на ТВ');
+  if(sw&&sw.signed_in)out('acc-out-sweettv','sweettv','Выйти из SWEET.TV');
+  g.classList.toggle('hide',!rows.children.length)
+}
+// a profile just asked for stays current on the page until the TV has really switched (or 8 s have passed)
+let accPend=null;
+function accHold(list){
+  if(!accPend)return list;
+  const a=list.find(x=>x.service===accPend.svc);
+  if(Date.now()>accPend.until||!a||a.profiles.some(p=>p.id===accPend.id&&p.current)){accPend=null;return list}
+  return list.map(x=>x===a?Object.assign({},a,{profiles:a.profiles.map(p=>Object.assign({},p,{current:p.id===accPend.id}))}):x)
+}
+function accRender(list){
+  const cap=$('acc-list').querySelector('.cap');if(cap)cap.remove();
+  list=accHold(list);accCard('youtube');
+  const sig=JSON.stringify([list.map(a=>[a.service,a.profiles,a.signed_in,!!(a.signin&&a.signin.state==='waiting')]),accExpired]);
+  if(accSig.all===sig)return;accSig.all=sig;
+  const yt=list.find(x=>x.service==='youtube'), sw=list.find(x=>x.service==='sweettv');
+  accFillYouTube(yt);accFillSweet(sw);accFillOut(yt,sw)
+}
+async function accRun(svc,what,body,doing,done,say){
   accMsg(svc,doing);
-  try{await accCall(what,body);accMsg(svc,done||'');accAsked[svc]=Date.now();accPoll();return true}
+  try{await accCall(what,body);accMsg(svc,done||'');if(say)toast(say);accAsked[svc]=Date.now();accPoll();return true}
   catch(e){accMsg(svc,e.message,true);return false}
 }
 async function accStart(svc){
@@ -192,10 +223,11 @@ async function accStart(svc){
 // the TV switches a profile a moment after it is asked: the card is read often until the chosen one is current
 async function accSwitch(svc,p){
   buzz();
-  if(await accRun(svc,'switch',{service:svc,id:p.id},'Переключаю на «'+p.name+'»…','Профиль «'+p.name+'» выбран.'))accWatch(20000)
+  if(await accRun(svc,'switch',{service:svc,id:p.id},'Переключаю на «'+accName(p)+'»…','','На ТВ: '+accName(p))){
+    accPend={svc,id:p.id,until:Date.now()+8000};accSig.all='';accRender((accData&&accData.accounts)||[]);   // the check moves at once
+    accWatch(20000)
+  }
 }
-// a profile's name on the phone: its channel when it has one ("Default" says nothing)
-const accLabel=p=>p.channel==='yes'&&p.channel_title?p.channel_title:p.name;
 async function accAnother(svc){
   buzz();accMsg(svc,'Готовлю вход…');
   try{
@@ -204,7 +236,7 @@ async function accAnother(svc){
     setTimeout(()=>{if(accWaiting[svc]&&!accSheet&&Date.now()-accAsked[svc]>=14000){accWaiting[svc]=false;accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)}},15000)
   }catch(e){accMsg(svc,e.message,true)}
 }
-function accOut(svc){accRun(svc,'signout',{service:svc},'Выхожу…','Вы вышли.')}
+function accOut(svc){accRun(svc,'signout',{service:svc},'Выхожу…','','Вы вышли.')}
 
 // «Обновить код»: the running sign-in is asked to get a new code in the same run (the panel waits until it shows). Nothing does
 // it by itself: the code may have been typed into another page. From the sheet a second tap is needed (the old code dies).

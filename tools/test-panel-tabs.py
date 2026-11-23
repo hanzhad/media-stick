@@ -172,7 +172,7 @@ class Page(unittest.TestCase):
         for i, h in (("t-acc", "Аккаунты"), ("t-wifi", "Wi-Fi"), ("t-https", "Пульт как приложение (HTTPS)"),
                      ("t-info", "О приставке"), ("t-act", "Обслуживание")):
             sec = self.page.split('<section id="%s"' % i, 1)[1].split("</section>", 1)[0]
-            self.assertIn("<h2>%s</h2>" % h, sec)
+            self.assertRegex(sec, r"<h2[^>]*>%s</h2>" % re.escape(h))
         self.assertIn("Обновить сейчас", self.page.split('id="t-act"', 1)[1])
 
     def test_the_header_says_what_the_tv_is_doing(self):
@@ -279,7 +279,7 @@ class Page(unittest.TestCase):
         self.assertIn("if(again&&spage)spBack();", js)               # a second tap on the tab comes back to the list
         # the states on the right of the rows
         self.assertIn("function accRowText()", js)
-        self.assertIn("'YouTube: '+(cur?accLabel(cur):'не выполнен вход')+' · SWEET.TV: '+(sw&&sw.signed_in?'вошли':'нет')", js)
+        self.assertIn("'YouTube: '+(cur?accName(cur):'не выполнен вход')+' · SWEET.TV: '+(sw&&sw.signed_in?'вход выполнен':'нет')", js)
         self.assertIn("v('sv-wifi',s.wifi.ssid||'кабель')", js)
         self.assertIn("HTTPS_RE.test(httpsUrl)?'включено':'выключено'", js)
         self.assertIn("need?'нужно внимание':'всё в порядке'", js)
@@ -297,6 +297,7 @@ class Page(unittest.TestCase):
 
     def test_one_confirmation_phrase(self):
         labels = re.findall(r"armed\([^,()]+,\s*'([^']+)'\)", self.page)
+        labels += re.findall(r"ask='([^']+)'", self.page)   # the sign-out rows keep the phrase in a variable
         self.assertGreaterEqual(len(labels), 6)
         for l in labels:
             self.assertTrue(l.startswith("Нажмите ещё раз, чтобы "), l)
@@ -410,6 +411,14 @@ class Settings(unittest.TestCase):
         self.assertIn("v('sv-act',s.last_check_min==null?'—':'проверено '+ruAgo(s.last_check_min))", self.page)
         for s in ("через '+mins+' мин", "через '+Math.round(mins/60)+' ч", "'завтра в '+c[1]", "' мин назад'", "' ч назад'", "' дн назад'"):
             self.assertIn(s, self.page)
+
+    def test_the_keys_row_is_on_the_maintenance_page(self):
+        act = self.page.split('<section id="t-act"', 1)[1].split("</section>", 1)[0]
+        self.assertIn('id="keys-row" class="srow" onclick="ykOpen()"', act)
+        self.assertIn("Ключи Google", act)
+        acc = self.page.split('<section id="t-acc"', 1)[1].split("</section>", 1)[0]
+        self.assertNotIn("Ключи Google", acc)
+        self.assertIn("document.querySelectorAll('.srow[data-sp]')", self.page)   # the keys row is not a page link
 
     def test_dead_leftovers_are_gone(self):
         for gone in ("AIR_SMOOTH", "show('a-msg'", 'id="a-msg"'):
