@@ -393,6 +393,37 @@ class SigninLayout(unittest.TestCase):
         self.assertEqual(src.phone_qr(), "/tmp/p.png")
 
 
+def guide_doc(link):
+    d = store.lib.guide.document("youtube", "active", "KQX-7MD-P4W", link)
+    d.update(v=1, service="youtube", updated=NOW, expires=NOW + 120)
+    return d
+
+
+class SigninText(unittest.TestCase):
+    def test_the_line_under_the_code_is_the_providers_page_and_the_step_words_are_in_the_rows(self):
+        link = "https://www.google.com/device"
+        screen = view.parse(guide_doc(link), "YouTube")
+        props = view.signin_props(screen, "", "")
+        self.assertEqual((props["ob_site"], props["ob_code"]), ("Or on any device: google.com/device", "KQX-7MD-P4W"))
+        self.assertEqual(props["ob_kicker"], "YouTube · sign in")
+        rows = [r.props() for r in view.step_rows(screen, view.SIGNIN_STEP_W)]
+        self.assertEqual(len(rows), 3)
+        for row, step in zip(rows, screen.steps):
+            self.assertTrue(row["t1"].startswith("[COLOR "))
+            self.assertIn(step.text.split()[0], row["t1"])
+        self.assertIn("type the code", rows[0]["t1"])
+        window = signin.SigninDialog()
+        window.setup("youtube", signin.Follow("YouTube", 0), True, False, source=onboarding_demo.SigninSource(""))
+        state = tv.waiting(code="KQX-7MD-P4W", step=1, steps=1, updated=1000, url=link) | {"link": link}
+        with mock.patch.object(remote, "qr_png", side_effect=lambda l: l):
+            frame = window.follow.feed(state, 1001, screen)
+            window._apply(frame)
+        self.assertEqual((frame.ob_link, window.getProperty("ob_qr")), (link, link))      # the QR holds the page itself
+        items = window.controls[signin.CONTROL_STEPS].items
+        self.assertEqual(len(items), 3)
+        self.assertIn("Sign-in page opened", items[0].props["t1"])
+
+
 class KeysCard(unittest.TestCase):
     def setUp(self):
         for name in os.listdir(ob.DIR) if os.path.isdir(ob.DIR) else []:

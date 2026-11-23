@@ -147,6 +147,7 @@ def _do_login(provider, context, client=None, **kwargs):
             if _ms:
                 _ms.publish('youtube', 'waiting', code=user_code,
                             url=('' if verification_url.startswith('http') else 'https://www.') + verification_url,
+                            link=json_data.get('verification_url_complete') or '',
                             step=token_idx + 1, steps=len(token_types), ttl=10 * 60)
             # media-stick end
 

@@ -218,10 +218,25 @@ class Guide(unittest.TestCase):
         self.assertEqual(d["action"]["kind"], "link")
         self.assertTrue(all(s["tv"] and s["phone"] for s in d["steps"]))
 
-    def test_codes_in_a_row_are_counted_in_the_kicker(self):
-        d = guide.document("youtube", "active", "A", "", step=2, steps=4)
-        self.assertEqual(d["kicker"]["tv"], "YouTube · sign in · code 2 of 4")
-        self.assertNotIn("action", d)
+    def test_the_kicker_has_no_counter_of_codes(self):
+        for step, steps in ((1, 1), (2, 4), (4, 4)):
+            d = guide.document("youtube", "active", "A", "", step=step, steps=steps)
+            self.assertEqual((d["kicker"]["tv"], d["kicker"]["phone"]), ("YouTube · sign in", "YouTube · вход"))
+        self.assertNotIn("action", guide.document("youtube", "active", "A", "", step=2, steps=4))
+
+    def test_the_steps_say_whether_the_link_has_the_code_in_it(self):
+        carried = guide.document("youtube", "active", "ABCD-EFGH", "https://www.google.com/device?user_code=ABCD-EFGH")
+        self.assertEqual(carried["steps"][0]["tv"], "Sign-in page opened, code filled in")
+        self.assertIn("Nothing to type", carried["hint"]["tv"])
+        typed = guide.document("youtube", "active", "ABCD-EFGH", "https://www.google.com/device")
+        self.assertEqual(typed["steps"][0]["tv"], "Sign-in page opened, type the code")
+        self.assertIn("Type the code", typed["hint"]["tv"])
+        self.assertEqual([s["tv"] for s in typed["steps"][1:]], [s["tv"] for s in carried["steps"][1:]])
+        self.assertEqual(typed["link"], "https://www.google.com/device")
+        self.assertEqual(guide.document("youtube", "done")["steps"][0]["tv"], "Sign-in page opened, code filled in")
+        sweet = guide.document("sweettv", "active", "12345", "https://sweet.tv/addDevice?connectCode=12345")
+        self.assertEqual(sweet["steps"][0]["tv"], "Sign-in page opened, code filled in")
+        self.assertTrue(ob.write("youtube", typed, now=NOW))
 
     def test_results_and_unknown_services(self):
         done = guide.document("sweettv", "done")
@@ -246,6 +261,20 @@ class SigninFeedsOnboarding(unittest.TestCase):
         old = ms.read("youtube")
         self.assertEqual((old["state"], old["code"]), ("waiting", "KQX-7MD-P4W"))
         self.assertNotIn("flow", old)        # the old file keeps its own shape
+
+    def test_the_document_link_is_the_providers_page_or_complete_link(self):
+        ms.publish("youtube", "waiting", code="ABCD-EFGH", url="https://www.google.com/device")
+        d = ob.read("youtube")
+        self.assertEqual((d["link"], d["action"]["url"]), ("https://www.google.com/device",) * 2)
+        self.assertEqual(d["steps"][0]["tv"], "Sign-in page opened, type the code")
+        full = "https://www.google.com/device?user_code=ABCD-EFGH"
+        ms.publish("youtube", "waiting", code="ABCD-EFGH", url="https://www.google.com/device", link=full)
+        d = ob.read("youtube")
+        self.assertEqual((d["link"], ms.read("youtube")["link"]), (full, full))
+        self.assertEqual(d["steps"][0]["tv"], "Sign-in page opened, code filled in")
+        ms.publish("sweettv", "waiting", code="12345", url="https://sweet.tv/addDevice")
+        self.assertEqual(ob.read("sweettv")["link"], "https://sweet.tv/addDevice?connectCode=12345")
+        self.assertEqual(ob.read("sweettv")["kicker"]["tv"], "SWEET.TV · sign in")
 
     def test_lifetime_is_short_and_a_heartbeat_extends_it(self):
         ms.publish("youtube", "waiting", code="A-B", url="https://www.youtube.com/activate")

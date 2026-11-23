@@ -49,6 +49,27 @@ class State(unittest.TestCase):
         ms.publish("sweettv", "waiting", code="12345", url="https://sweet.tv/addDevice")
         self.assertEqual(ms.read("sweettv")["link"], "https://sweet.tv/addDevice?connectCode=12345")
 
+    def test_the_link_is_what_the_providers_answer_gives(self):
+        """A personal Google client answers google.com/device and no complete link: the QR holds that page, the code is
+        not put into an address that does not take it. A complete link wins. YouTube's own page and SWEET.TV's keep
+        the code in the address; no page at all falls back to the YouTube page."""
+        def link(service, url="", complete="", code="ABCD-EFGH"):
+            ms.publish(service, "waiting", code=code, url=url, link=complete)
+            return ms.read(service)["link"]
+        self.assertEqual(link("youtube", "https://www.google.com/device"), "https://www.google.com/device")
+        full = "https://www.google.com/device?user_code=ABCD-EFGH"
+        self.assertEqual(link("youtube", "https://www.google.com/device", full), full)
+        self.assertEqual(link("youtube", "https://www.youtube.com/activate", full), full)
+        self.assertEqual(link("youtube", "https://www.youtube.com/activate"), "https://www.youtube.com/activate?user_code=ABCD-EFGH")
+        self.assertEqual(link("youtube"), "https://www.youtube.com/activate?user_code=ABCD-EFGH")
+        self.assertEqual(link("youtube", "https://accounts.google.com/o/oauth2/device/usercode"),
+                         "https://accounts.google.com/o/oauth2/device/usercode")
+        self.assertEqual(link("sweettv", "https://sweet.tv/addDevice", code="12345"), "https://sweet.tv/addDevice?connectCode=12345")
+        self.assertEqual(link("sweettv", "https://sweet.tv/addDevice", "https://sweet.tv/x?c=1", code="12345"), "https://sweet.tv/x?c=1")
+        for bad in ("javascript:alert(1)", "http://www.google.com/device", "https://a b", "x" * 400, 5, None):
+            self.assertEqual(ms.link_for("youtube", "A-B", "https://www.google.com/device", bad), "https://www.google.com/device", bad)
+        self.assertEqual(ms.link_for("youtube", "A-B", "ftp://x"), "https://www.youtube.com/activate?user_code=A-B")
+
     def test_a_code_cannot_break_out_of_the_link(self):
         ms.publish("youtube", "waiting", code="A&b=c d", url="https://www.youtube.com/activate")
         self.assertEqual(ms.read("youtube")["link"], "https://www.youtube.com/activate?user_code=A%26b%3Dc%20d")
@@ -502,8 +523,8 @@ class AccessManager:
 
 class Client:
     """Hands out one code per token type; a code is approved after `pending` polls."""
-    def __init__(self, pending=1, on_poll=None, answer=None):
-        self.pending, self.on_poll, self.answer = pending, on_poll, answer
+    def __init__(self, pending=1, on_poll=None, answer=None, reply=None):
+        self.pending, self.on_poll, self.answer, self.reply = pending, on_poll, answer, reply or {}
         self.codes, self.polls = [], {}
 
     def internet_available(self):
@@ -512,7 +533,7 @@ class Client:
     def request_device_and_user_code(self, idx):
         self.codes.append(idx)
         return {"device_code": f"dev{idx}", "user_code": f"CODE-{idx}", "interval": 5,
-                "verification_url": "https://www.youtube.com/activate"}
+                "verification_url": "https://www.youtube.com/activate", **self.reply}
 
     def request_access_token(self, idx, device_code):
         n = self.polls[idx] = self.polls.get(idx, 0) + 1
@@ -612,9 +633,22 @@ class YouTubeSignIn(unittest.TestCase):
         self.assertEqual([k["code"] for a, k in self.seen[:4]], [f"CODE-{i}" for i in range(4)])
         self.assertEqual({k["steps"] for a, k in self.seen[:4]}, {4})
         self.assertEqual(self.seen[0][1]["url"], "https://www.youtube.com/activate")
+        self.assertEqual(self.seen[0][1]["link"], "")                  # the answer had no complete link
         self.assertEqual(context.ui.ok, [])               # the upstream "sign in several times" dialog is skipped
         self.assertEqual(context.ui.dialogs, [])          # and the code is not shown in a dialog either: the TV screen has it
         self.assertEqual(ms.read("youtube")["state"], "done")
+
+    def test_a_personal_client_answer_gives_its_own_page_and_complete_link_to_the_screens(self):
+        client = Client(pending=1, reply={"verification_url": "https://www.google.com/device"})
+        self.run_login(client)
+        self.assertEqual(self.seen[0][1]["url"], "https://www.google.com/device")
+        self.assertEqual(ms.read("youtube")["state"], "done")
+        ms.begin("youtube")
+        self.seen.clear()
+        client = Client(pending=1, reply={"verification_url": "https://www.google.com/device",
+                                          "verification_url_complete": "https://www.google.com/device?user_code=CODE-0"})
+        self.run_login(client)
+        self.assertEqual(self.seen[0][1]["link"], "https://www.google.com/device?user_code=CODE-0")
 
     def test_a_stop_request_ends_the_whole_sign_in_not_just_one_code(self):
         client = Client(pending=99, on_poll=lambda idx, n: ms.request_cancel("youtube") if idx == 1 and n == 2 else None)

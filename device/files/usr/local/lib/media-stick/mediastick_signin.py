@@ -55,12 +55,14 @@ SERVICES = {
         "addon": "plugin.video.youtube",
         "signin": "plugin://plugin.video.youtube/sign/in/",
         "link": "https://www.youtube.com/activate?user_code={code}",
+        "prefill": "youtube.com/activate",
     },
     "sweettv": {
         "name": "SWEET.TV",
         "addon": "plugin.video.sweettv",
         "signin": "plugin://plugin.video.sweettv/login",
         "link": "https://sweet.tv/addDevice?connectCode={code}",
+        "prefill": "sweet.tv/addDevice",
     },
 }
 
@@ -117,9 +119,35 @@ def ttl_for(mode):
     return TTL[clean_mode(mode)]
 
 
-def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NORMAL):
+def _web(url) -> str:
+    return url.strip() if isinstance(url, str) and re.fullmatch(r"https://[^\s\x00-\x1f]{1,290}", url.strip()) else ""
+
+
+def _place(url) -> str:
+    """sweet.tv/addDevice from https://www.sweet.tv/addDevice?x=1: where a page is, without scheme, www, query."""
+    text = url.split("://", 1)[-1].split("?", 1)[0].split("#", 1)[0]
+    return (text[4:] if text.startswith("www.") else text).rstrip("/").lower()
+
+
+def link_for(service, code, url="", complete="") -> str:
+    """The link the QR holds and the phone opens. What the provider's answer gives comes first: its own complete link
+    (`complete`, the code already in it), else the page it names (`url`), with nothing added to it. Only the two pages
+    this device knows to take the code in the address (SERVICES[...]["prefill"]: YouTube's own activate page, SWEET.TV's
+    add-device page), and a service whose answer named no page at all, get the code put in by us. A page the answer names
+    that is not one of those (a personal Google client answers google.com/device) is not given a made-up query."""
+    complete, url = _web(complete), _web(url)
+    if complete:
+        return complete
+    guide_for = SERVICES[service]
+    if code and (not url or _place(url) == guide_for["prefill"].lower()):
+        return guide_for["link"].format(code=quote(code, safe="-"))
+    return url
+
+
+def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NORMAL, link=""):
     """Say what the add-on is doing: WAITING with the code to enter, or how it ended.
-    `ttl` is how long the code is waited for (seconds); by default what the mode allows."""
+    `ttl` is how long the code is waited for (seconds); by default what the mode allows. `url` is the page the code
+    is entered on and `link` the provider's complete link with the code in it, when its answer had one (link_for)."""
     if service not in SERVICES or state not in STATES:
         return False
     now = int(time.time())
@@ -127,8 +155,7 @@ def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NOR
     data = {"service": service, "state": state, "mode": mode, "step": int(step), "steps": int(steps),
             "updated": now, "expires": now + int(ttl_for(mode) if ttl is None else ttl)}
     if state == WAITING:
-        data.update(code=code, url=url,
-                    link=SERVICES[service]["link"].format(code=quote(code, safe="-")) if code else url)
+        data.update(code=code, url=url, link=link_for(service, code, url, link) if code else url)
     stored = _store(service, data)
     _onboard(service, data)
     return stored

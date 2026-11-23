@@ -79,6 +79,7 @@ OVERLAYS = [
          "            if _ms:\n"
          "                _ms.publish('youtube', 'waiting', code=user_code,\n"
          "                            url=('' if verification_url.startswith('http') else 'https://www.') + verification_url,\n"
+         "                            link=json_data.get('verification_url_complete') or '',\n"
          "                            step=token_idx + 1, steps=len(token_types), ttl=10 * 60)\n"
          "            # media-stick end\n\n"),
         ("            with ui.create_progress_dialog(\n"
