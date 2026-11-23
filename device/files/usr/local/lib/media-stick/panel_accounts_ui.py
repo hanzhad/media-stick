@@ -113,8 +113,9 @@ function accNote(names){
   if(k!==accKey||(names.length&&!accSheet)){accKey=k;accPoll()}
 }
 function accApply(d){accData=d;accRender(d.accounts||[]);accSync(d);if(window.setRows)setRows()}
-// a profile's name on the phone: the add-on's first profile is called "Default", which says nothing
-const accName=p=>p.name==='Default'?'Основной':p.name;
+// the one name of a profile on the phone (rows, avatar, toast, sign-out, the list state): the person's channel when it
+// is known, else the profile's own name, where the add-on's first profile, "Default", says nothing
+const accName=p=>p.channel_title||(p.name==='Default'?'Основной':p.name);
 const accInit=n=>String(n).trim().split(/\s+/).slice(0,2).map(w=>w.charAt(0)).join('').toUpperCase()||'?';
 // the state of the Аккаунты row in the settings list
 function accRowText(){
@@ -158,7 +159,7 @@ function accRow(o){
 }
 function accMsg(svc,t,bad){const m=accCard(svc).querySelector('.acc-m');m.textContent=t||'';m.classList.toggle('bad',!!bad)}
 // who is on the TV: the channel when the add-on knows it
-const accSub=p=>p.channel==='yes'&&p.channel_title?p.channel_title:p.channel==='no'?'Аккаунт Google без канала':'Аккаунт Google';
+const accSub=p=>p.channel_title?'Канал YouTube':p.channel==='no'?'Аккаунт Google без канала':'Аккаунт Google';
 function accFillYouTube(a){
   const g=accCard('youtube'), rows=g.querySelector('.acc-rows');rows.textContent='';
   g.classList.toggle('hide',!a);if(!a)return;

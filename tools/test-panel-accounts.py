@@ -620,6 +620,23 @@ class ListPage(unittest.TestCase):
         self.assertIn("white-space:nowrap", p)
         self.assertIn("#acc-g-out{grid-column:1/-1}", p)                         # the wide layout
 
+    def test_a_profile_is_named_by_its_channel_in_every_place(self):
+        # what the device gave: Default (no channel, current), «Аккаунт 2» (channel «Dmytro Hanzha»), «Аккаунт 3» (empty)
+        yt({"0": {"name": "Default", "refresh_token": "a|b|c"}, "1": {"name": "Аккаунт 2", "refresh_token": "a|b"},
+            "2": {"name": "Аккаунт 3", "refresh_token": ""}}, 0)
+        with mock.patch.object(pa.ytchannel, "peek", side_effect=lambda pid: {"state": "yes", "title": "Dmytro Hanzha"} if pid == "1" else {"state": "no"}):
+            profiles = pa.view()["accounts"][0]["profiles"]
+        self.assertEqual([(p["name"], p["channel"], p["channel_title"], p["current"]) for p in profiles],
+                         [("Default", "no", "", True), ("Аккаунт 2", "yes", "Dmytro Hanzha", False), ("Аккаунт 3", "unknown", "", False)])
+        p = self.page
+        self.assertIn("const accName=p=>p.channel_title||(p.name==='Default'?'Основной':p.name)", p)
+        self.assertIn("const accSub=p=>p.channel_title?'Канал YouTube':", p)
+        # every place that names a profile goes through the one helper, none reads p.name itself
+        for use in ("av:accInit(accName(p)),title:accName(p)", "'На ТВ: '+accName(p)", "'Выйти из «'+accName(cur)+'» на ТВ'",
+                    "(cur?accName(cur):'не выполнен вход')", "'Переключаю на «'+accName(p)+'»…'"):
+            self.assertIn(use, p)
+        self.assertNotRegex(p, r"title:p\.name|accInit\(p\.name")
+
     def test_the_title_is_a_plain_page_title(self):
         css = self.page.split(".acc-title{", 1)[1].split("}", 1)[0]
         for want in ("font-size:24px", "font-weight:600", "letter-spacing:0", "text-transform:none", "color:inherit", "margin:0 6px"):
