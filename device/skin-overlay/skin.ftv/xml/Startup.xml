@@ -6,8 +6,9 @@
 		- No splash: the StartUp property that shows window 1108 (fTV logo) and starts the
 		  4 s autoclosestartupscreen timer in Timers.xml is never set, so 1108 stays invisible and
 		  the timer never runs. Timers.xml and Custom_1108 are left as they are.
-		- No background fill (upstream BackgroundColour), so nothing is drawn while this window
-		  hands over to the startup window (Home, which the launcher then covers).
+		- No background fill (upstream BackgroundColour): the boot picture instead (Kodi's own
+		  splash, special://home/media/splash.png, also Plymouth's), so the TV keeps showing it
+		  while this window hands over to the startup window (Home, which the launcher then covers).
 		- The first-run block (about 450 lines of Home widget/menu defaults) is dropped: it only
 		  configured the skin Home, which is not shown. The non-widget settings it made are kept.
 		Kodi opens this window at boot whenever the skin has Startup.xml, so it must stay and
@@ -15,6 +16,14 @@
 	-->
 	<defaultcontrol always="true">99</defaultcontrol>
 	<controls>
+		<control type="image">
+			<left>0</left>
+			<top>0</top>
+			<width>1920</width>
+			<height>1080</height>
+			<aspectratio>scale</aspectratio>
+			<texture>special://home/media/splash.png</texture>
+		</control>
 		<control type="button" id="99">
 			<include>HiddenControl</include>
 			<onfocus condition="Skin.HasSetting(firstrun)">ReplaceWindow($INFO[System.StartupWindow])</onfocus>
