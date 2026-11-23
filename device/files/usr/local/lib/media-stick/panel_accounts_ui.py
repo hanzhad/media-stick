@@ -206,8 +206,8 @@ async function accAnother(svc){
 }
 function accOut(svc){accRun(svc,'signout',{service:svc},'Выхожу…','Вы вышли.')}
 
-// «Обновить код»: the waiting sign-in is stopped and a new one asks for a new code. Nothing does it by itself: the code
-// may have been typed into another page. From the sheet a second tap is needed (the old code stops working at once).
+// «Обновить код»: the running sign-in is asked to get a new code in the same run (the panel waits until it shows). Nothing does
+// it by itself: the code may have been typed into another page. From the sheet a second tap is needed (the old code dies).
 async function accRenew(svc){
   if(accSheet&&accSheet.svc===svc){
     if(!armed('acc-renew','Нажмите ещё раз, чтобы обновить код'))return;

@@ -114,6 +114,7 @@ def _store(service, data):
 def begin(service):
     """A sign-in starts: forget an earlier stop request and an earlier result."""
     clear_cancel(service)
+    clear_renew(service)
     try:
         os.unlink(_path(service))
     except OSError:
@@ -300,6 +301,34 @@ def clear_cancel(service):
     _unmark(service, "cancel")
 
 
+RENEW_KEEP = 120    # a request for a new code that the add-on has not taken is forgotten after this many seconds
+
+
+def request_renew(service):
+    """The phone asks the sign-in that is running to get a new code in the same run: relaunching it would not do,
+    the TV's screen of the old one is still up for a moment and a second launch of the screen is turned away."""
+    return service in SERVICES and _mark(service, "renew", str(int(time.time())))
+
+
+def take_renew(service, now=None):
+    """What the add-on calls between two checks: True once if a fresh request for a new code is there (and uses it up)."""
+    try:
+        with open(_path(service, "renew"), encoding="utf-8") as f:
+            age = (time.time() if now is None else now) - int(f.read().strip())
+    except (OSError, ValueError):
+        return False
+    clear_renew(service)
+    return -RENEW_KEEP <= age <= RENEW_KEEP
+
+
+def renew_requested(service):
+    return os.path.exists(_path(service, "renew"))
+
+
+def clear_renew(service):
+    _unmark(service, "renew")
+
+
 def request_mode(service, mode):
     """The phone asks that the next sign-in of `service` runs in `mode`; normal asks for no change."""
     if service not in SERVICES:
@@ -391,6 +420,9 @@ RETRY_FIRST, RETRY_MAX = 5, 60                      # s of the pause after a che
 NO_ANSWER_LIMIT = 30 * 60                           # s of checks in a row with no answer after which the code is given up
 LOG_AGAIN = 10 * 60                                 # the same unknown answer is logged again after this long
 NOTE_MAX = 200
+# The `result` texts of SWEET.TV's check reply that only say "not yet": a device's log showed STARTED (with an
+# access_token and expires_in 0, which mean nothing yet) for as long as the code waits; it is not worth a warning.
+SWEETTV_WAITING = frozenset({"STARTED"})
 # The `result` texts of SWEET.TV's check reply that mean the code is refused. What the server says is not known
 # yet: stays empty until a first run's log (WARNING lines of PartnerPoll) shows it. Any text with EXPIRED in it
 # (an expired code, whatever the exact word) is a refusal too. Anything else that is not COMPLETED is logged and waited on.
@@ -449,6 +481,8 @@ class PartnerPoll:
         text = describe(reply)
         if isinstance(result, str) and (result in refused or "EXPIRED" in result.upper()):
             return "refused", f"media-stick: SWEET.TV refused the code: {text}"
+        if isinstance(result, str) and result in SWEETTV_WAITING:
+            return "unknown", ""
         last = self.logged.get(text)
         if last is not None and now - last < LOG_AGAIN:
             return "unknown", ""

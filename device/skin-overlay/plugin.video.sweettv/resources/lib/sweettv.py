@@ -464,9 +464,30 @@ def login(ms_mode=None):
         while time.time() < end:
             if _ms:
                 _ms.touch('sweettv')
-                if _ms.cancel_requested('sweettv'):
+                if _ms.cancel_requested('sweettv') or _ms.renew_requested('sweettv'):
                     return
             time.sleep(max(0, min(3, end - time.time())))
+
+    def ms_renew():
+        # the phone asks for a new code: SWEET.TV is asked for one inside this same run (the TV's screen follows the state, no
+        # second launch of it), and the old code is dropped only once the new one is here; a failure leaves the old one waiting
+        nonlocal auth_code, ms_deadline, ms_poll
+        try:
+            fresh = helper.request_sess(helper.auth_url, 'post', headers=helper.headers, data=helper.json_data, json=True,
+                                        json_data=True)
+        except Exception as e:
+            xbmc.log('media-stick: SWEET.TV new code failed: ' + repr(e)[:200], xbmc.LOGWARNING)
+            return False
+        code = fresh.get('auth_code') if isinstance(fresh, dict) and fresh.get('result') == 'OK' else None
+        if not code:
+            ms_why = _ms.describe(fresh)
+            xbmc.log('media-stick: SWEET.TV gave no new code: ' + ms_why, xbmc.LOGWARNING)
+            return False
+        auth_code = code
+        ms_deadline = time.time() + _ms.ttl_for(ms_mode, 'sweettv')
+        ms_poll = _ms.PartnerPoll(time.time())
+        _ms.publish('sweettv', 'waiting', code=code, url='https://sweet.tv/addDevice', mode=ms_mode)
+        return True
     # media-stick end
 
     # media-stick begin: on the device the TV screen draws the QR, so no image is requested (that would hand the code to a third party)
@@ -503,6 +524,8 @@ def login(ms_mode=None):
                     if path is not None:
                         xbmcvfs.delete(path)
                     return
+                if _ms.take_renew('sweettv') and ms_renew():
+                    json_data = dumps({'auth_code': auth_code}, separators=(',', ':'))
                 if time.time() > ms_deadline:
                     _ms.publish('sweettv', 'failed', reason=_ms.EXPIRED)
                     helper.set_setting('logged', 'false')

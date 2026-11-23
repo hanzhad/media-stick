@@ -399,6 +399,48 @@ class SigninStart(unittest.TestCase):
             accounts.signin_service("youtube")
         run.assert_called_once()
 
+    def test_a_new_sign_in_waits_for_the_result_screen_that_is_still_up_instead_of_being_turned_away(self):
+        """The order that failed on the device: the phone's cancel ended the old sign-in, its screen lingered on the result,
+        and the new `accounts signin` came 0.7 s later, found the screen up and returned "shown" without starting anything."""
+        lib.publish("sweettv", "cancelled")
+        lib.request_cancel("sweettv")                        # the stop request that is still on disk
+        signin.mark_showing("sweettv", time.time())
+        sleeps = []
+
+        def sleep(ms):
+            sleeps.append(ms)
+            if len(sleeps) == 3:                             # the first screen's script ends and takes its property away
+                signin.clear_showing()
+        with mock.patch.object(xbmc, "sleep", sleep), mock.patch.object(signin, "run", return_value="done") as run:
+            self.assertEqual(accounts.signin_service("sweettv"), "done")
+        self.assertEqual(Fake.builtins, ["RunPlugin(plugin://plugin.video.sweettv/login)"])   # the add-on is started this time
+        run.assert_called_once_with("sweettv", False, False)
+        self.assertFalse(lib.cancel_requested("sweettv"))    # and the old stop request cannot cancel it at once
+        self.assertIsNone(lib.read("sweettv"))               # nor the old result end its screen
+        self.assertGreaterEqual(len(sleeps), 3)
+
+    def test_a_failed_one_that_ran_out_is_waited_for_in_the_same_way(self):
+        lib.publish("sweettv", "failed", reason="expired")
+        signin.mark_showing("sweettv", time.time())
+        with mock.patch.object(xbmc, "sleep", lambda ms: signin.clear_showing()),                 mock.patch.object(signin, "run", return_value="done"):
+            self.assertEqual(accounts.signin_service("sweettv"), "done")
+        self.assertEqual(Fake.builtins, ["RunPlugin(plugin://plugin.video.sweettv/login)"])
+
+    def test_a_result_screen_that_never_closes_still_ends_as_shown_and_starts_nothing(self):
+        lib.publish("sweettv", "cancelled")
+        signin.mark_showing("sweettv", time.time())
+        with mock.patch.object(accounts, "RESULT_WAIT", 0.05), mock.patch.object(signin, "run") as run:
+            self.assertEqual(accounts.signin_service("sweettv"), "shown")
+        run.assert_not_called()
+        self.assertEqual(Fake.builtins, [])
+
+    def test_a_screen_that_is_up_for_a_sign_in_that_is_not_over_is_not_waited_for(self):
+        lib.publish("sweettv", "waiting", code="12345")
+        signin.mark_showing("sweettv", time.time())
+        with mock.patch.object(accounts, "RESULT_WAIT", 30), mock.patch.object(signin, "run") as run:
+            self.assertEqual(accounts.signin_service("sweettv"), "shown")      # at once: nothing to wait for
+        run.assert_not_called()
+
     def test_the_showing_property(self):
         now = 1000
         self.assertEqual(signin.parse_showing("youtube:1000", now), "youtube")

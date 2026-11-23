@@ -24,6 +24,7 @@ ID_RE = re.compile(r"[0-9]{1,6}")
 NAME_RE = re.compile(r"[\w .'\-]{1,24}")
 SIGNOUT = {"youtube": "plugin://plugin.video.youtube/sign/out/?confirmed=true",
            "sweettv": "plugin://plugin.video.sweettv/logout"}   # SWEET.TV asks yes/no on the TV itself
+RESULT_WAIT = 8.0                                # s for the screen of a sign-in that just ended to close before a new one starts
 SWITCH_WAIT = 6.0                                # s for the YouTube add-on to switch / add a profile
 LAUNCH, SIGNIN, SIGNIN_OPTIONAL, PICK = "launch", "signin", "signin-optional", "pick"
 
@@ -118,7 +119,14 @@ def signin_service(service, allow_skip=False):
         if up != service:
             ui.notify("Finish the other sign-in first.")
             return "busy"
-        return "shown"
+        # A screen of this service that stays up while its sign-in ended (cancelled, failed) is only showing the result for
+        # a moment: a new sign-in asked for now (the phone's "new code" after the old one ran out) waits for it to close
+        # instead of being turned away as "shown", which started nothing at all.
+        ended = store.lib.read(service)
+        if not (ended and ended["state"] in ("cancelled", "failed")) or not wait_for(lambda: not signin.showing(), RESULT_WAIT):
+            return "shown"
+        store.lib.begin(service)       # what the add-on does when it starts: the old result must not end the new screen at once
+        now = time.time()
     attach = signin.can_attach(store.lib.read(service), now)
     if not attach:
         xbmc.executebuiltin(f"RunPlugin({store.SERVICES[service]['signin']})")

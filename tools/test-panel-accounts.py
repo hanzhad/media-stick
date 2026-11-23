@@ -311,24 +311,32 @@ class Actions(unittest.TestCase):
         self.assertEqual((code, reply["ok"]), (500, False))
         self.assertEqual(self.k.calls, [])
 
-    def stops_when_asked(self):
-        """The add-on's side of a cancel: the waiting state ends as soon as a stop is asked for."""
-        real = ms.request_cancel
-        def request_cancel(service):
+    def addon_answers(self, then):
+        """The add-on's side of a request for a new code: when it is asked, `then()` is what it does next."""
+        real = ms.request_renew
+        def request_renew(service):
             ok = real(service)
-            ms.publish(service, "cancelled")
+            then()
             return ok
-        return mock.patch.object(ms, "request_cancel", request_cancel)
+        return mock.patch.object(ms, "request_renew", request_renew)
 
-    def test_renew_stops_the_waiting_sweettv_sign_in_and_starts_a_new_one(self):
+    def test_renew_asks_the_running_sign_in_for_a_new_code_and_starts_no_second_one(self):
         ms.publish("sweettv", "waiting", code="12345")
-        with self.stops_when_asked():
+        with self.addon_answers(lambda: ms.publish("sweettv", "waiting", code="67890")):
             reply, code = self.post("renew", {"service": "sweettv"})
         self.assertEqual((code, reply), (200, {"ok": True}))
-        self.assertEqual(ms.read("sweettv")["state"], "cancelled")          # the old code was given up, no other sign-in was touched
-        self.assertEqual(self.k.calls, [("Addons.ExecuteAddon", {"addonid": "script.media-stick.home",
-                                                                  "params": ["accounts", "signin", "sweettv"]})])
-        self.assertFalse(ms.cancel_requested("youtube"))
+        self.assertEqual(ms.read("sweettv")["code"], "67890")
+        self.assertEqual(self.k.calls, [])                                  # no launch: the TV's first screen is still up and would turn it away
+        self.assertFalse(ms.cancel_requested("sweettv"))                    # and the old sign-in is not cancelled
+        self.assertTrue(ms.renew_requested("sweettv"))                      # (the add-on uses the request up; this stand-in does not)
+
+    def test_renew_when_the_sign_in_ends_while_asking_starts_one(self):
+        ms.publish("sweettv", "waiting", code="12345")
+        with self.addon_answers(lambda: ms.publish("sweettv", "cancelled")):
+            reply, code = self.post("renew", {"service": "sweettv"})
+        self.assertEqual((code, reply), (200, {"ok": True}))
+        self.assertFalse(ms.renew_requested("sweettv"))
+        self.assertEqual(self.k.calls[0][1]["params"], ["accounts", "signin", "sweettv"])
 
     def test_renew_with_nothing_waiting_just_starts_a_sign_in(self):
         ms.publish("sweettv", "failed", reason="expired")
@@ -343,12 +351,14 @@ class Actions(unittest.TestCase):
             self.assertEqual((code, reply["ok"]), (400, False), body)
         self.assertEqual(self.k.calls, [])
 
-    def test_renew_that_the_tv_does_not_follow_is_an_error_and_starts_nothing(self):
+    def test_renew_that_the_add_on_does_not_answer_is_an_error_and_starts_nothing(self):
         ms.publish("sweettv", "waiting", code="12345")
         with mock.patch.object(pa, "RENEW_WAIT", 0.3):
             reply, code = self.post("renew", {"service": "sweettv"})
         self.assertEqual((code, reply["ok"]), (504, False))
         self.assertEqual(self.k.calls, [])
+        self.assertFalse(ms.renew_requested("sweettv"))                     # a late add-on does not renew a code nobody asked for any more
+        self.assertEqual(ms.read("sweettv")["code"], "12345")
 
     def test_nothing_renews_a_code_by_itself(self):
         ms.publish("sweettv", "waiting", code="12345")

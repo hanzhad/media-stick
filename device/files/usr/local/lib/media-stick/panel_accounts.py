@@ -185,24 +185,38 @@ def _cancel(body, rpc):
     return {"ok": True}
 
 
-RENEW_WAIT = 8.0   # s the add-on gets to stop the old sign-in before the new one starts
+RENEW_WAIT = 12.0   # s the running add-on gets to bring a new code (it looks every few seconds)
+
+
+def _waiting(service):
+    return next((s for s in signin.active() if s["service"] == service), None)
 
 
 def _renew(body, rpc):
-    """«Обновить код» (SWEET.TV): the sign-in that is waiting is stopped and a new one starts, which asks SWEET.TV
-    for a new code. Nothing replaces a code by itself: the person may have typed it into another page, so only this
-    does, when they ask. With no sign-in waiting (it ran out, or failed) it simply starts one."""
+    """«Обновить код» (SWEET.TV). A sign-in that is waiting is asked, through a file, to get a new code in the same run:
+    the add-on asks SWEET.TV again and publishes it, and the TV's screen and the phone's sheet just follow. A launch
+    of a second sign-in would not do: the TV's screen of the first is still up for a moment, and the launcher turns away
+    a screen that is up (that is what made the first version of this do nothing). Only with nothing waiting (the code ran
+    out, or it failed) a sign-in is started. Nothing replaces a code by itself: the person may have typed it elsewhere."""
     service = clean_service(body.get("service"))
     if service != "sweettv":
         raise Refused("Обновить код можно только у SWEET.TV.")
-    if any(s["service"] == service for s in signin.active()):
-        if not signin.request_cancel(service):
-            raise Refused("Не получилось передать отмену.", 500)
+    old = _waiting(service)
+    if old is not None:
+        if not signin.request_renew(service):
+            raise Refused("Не получилось передать просьбу об обновлении.", 500)
         deadline = time.monotonic() + RENEW_WAIT
-        while any(s["service"] == service for s in signin.active()):
+        while True:
+            now = _waiting(service)
+            if now is not None and now.get("code") != old.get("code"):
+                return {"ok": True}
+            if now is None:        # it ended while we asked (cancelled, ran out): start one as for a sign-in with nothing waiting
+                break
             if time.monotonic() >= deadline:
-                raise Refused("Телевизор не остановил прошлый вход. Посмотрите на ТВ.", 504)
+                signin.clear_renew(service)
+                raise Refused("Телевизор не получил новый код. Посмотрите на ТВ и попробуйте ещё раз.", 504)
             time.sleep(0.25)
+        signin.clear_renew(service)
     return _signin({"service": service}, rpc)
 
 

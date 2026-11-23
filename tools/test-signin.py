@@ -329,6 +329,28 @@ class Partner(unittest.TestCase):
         ms.publish("sweettv", "waiting", code="1", reason=ms.EXPIRED)
         self.assertEqual(ms.read("sweettv")["reason"], "")
 
+    def test_a_request_for_a_new_code_is_taken_once_and_forgotten_when_old(self):
+        self.assertFalse(ms.take_renew("sweettv"))
+        self.assertTrue(ms.request_renew("sweettv"))
+        self.assertTrue(ms.renew_requested("sweettv"))
+        self.assertEqual(os.stat(os.path.join(ms.DIR, "sweettv.renew")).st_mode & 0o777, 0o644)
+        self.assertTrue(ms.take_renew("sweettv"))
+        self.assertFalse(ms.take_renew("sweettv"))                                # used up
+        ms.request_renew("sweettv")
+        self.assertFalse(ms.take_renew("sweettv", time.time() + ms.RENEW_KEEP + 5))   # nobody took it in time
+        self.assertFalse(ms.renew_requested("sweettv"))
+        ms.request_renew("sweettv")
+        ms.begin("sweettv")                                                      # a sign-in that starts forgets an earlier request
+        self.assertFalse(ms.renew_requested("sweettv"))
+        self.assertFalse(ms.request_renew("nope"))
+
+    def test_started_is_a_waiting_answer_that_is_not_logged(self):
+        reply = {"result": "STARTED", "access_token": "SECRET", "expires_in": 0}
+        verdict, note = ms.PartnerPoll(0).answer(reply, 1)
+        self.assertEqual((verdict, note), ("unknown", ""))
+        self.assertIn("unknown", ms.PartnerPoll(0).answer({"result": "OTHER"}, 1)[0])
+        self.assertTrue(ms.PartnerPoll(0).answer({"result": "OTHER"}, 1)[1])      # anything else new is still logged
+
     def test_a_logged_reply_is_short_and_hides_what_looks_like_a_secret(self):
         reply = {"result": "ODD", "access_token": "SECRET-1", "refresh_token": "SECRET-2", "auth_code": "SECRET-3",
                  "Authorization": "SECRET-4", "cookie": "SECRET-5", "detail": "x" * 500}
@@ -764,12 +786,14 @@ class SweetHelper:
     def __init__(self, base_url, handle):
         self.settings, self.requests, self.notes, self.refreshed = {}, [], [], 0
         self.checks, self.on_check, self.auth_reply = [], None, {"result": "OK", "auth_code": "12345"}
+        self.check_data = []                              # what each check sent (the code it asks about)
 
     def request_sess(self, url, method="get", **kw):
         self.requests.append(url)
         if url == self.auth_url:
             return self.auth_reply
         if url == self.check_auth_url:
+            self.check_data.append(kw.get("data"))
             if self.on_check:
                 self.on_check(self.requests.count(self.check_auth_url))
             return self.checks.pop(0) if self.checks else {"result": "PENDING"}
@@ -1053,6 +1077,60 @@ class SweetTVPartnerSignIn(unittest.TestCase):
         self.assertEqual(sweet.helper.requests.count(sweet.helper.auth_url), 1)        # one Start.json: one code, for the whole wait
         self.assertEqual(self.states(), ["waiting", "done"])
         self.assertEqual(len([1 for a, k in self.seen if a[1] == "waiting"]), 1)
+
+    def test_started_answers_for_hours_log_no_warning_and_do_not_end_it(self):
+        sweet, _ = self.device()
+        started = {"result": "STARTED", "access_token": "SECRET", "expires_in": 0}
+        sweet.helper.checks = [dict(started) for _ in range(400)] + [COMPLETED]
+        sweet.login()
+        self.assertEqual(self.states(), ["waiting", "done"])
+        self.assertEqual(self.warnings(sweet), [])
+
+    def test_a_new_code_asked_for_is_fetched_in_the_same_run_and_the_checks_follow_it(self):
+        sweet, clock = self.device()
+        sent = []
+        sweet.helper.on_check = lambda n: (self.checked.append(clock.now), sent.append(len(self.seen)),
+                                           (setattr(sweet.helper, "auth_reply", {"result": "OK", "auth_code": "67890"}),
+                                            ms.request_renew("sweettv")) if n == 3 else None)[0]
+        sweet.helper.checks = [{"result": "STARTED"}] * 5 + [COMPLETED]
+        sweet.login()
+        self.assertEqual(sweet.helper.requests.count(sweet.helper.auth_url), 2)         # a second Start.json, in this very run
+        self.assertEqual([k.get("code") for a, k in self.seen if a[1] == "waiting"], ["12345", "67890"])
+        self.assertEqual(self.states(), ["waiting", "waiting", "done"])
+        codes = ["12345" if "12345" in d else "67890" for d in sweet.helper.check_data]
+        self.assertEqual(codes, ["12345"] * 3 + ["67890"] * (len(codes) - 3))            # the checks ask about the new code from then on
+        self.assertEqual(ms.read("sweettv")["state"], "done")
+        self.assertFalse(ms.renew_requested("sweettv"))
+        self.assertEqual(self.checked[3] - self.checked[2], 0)                           # seen at once, not after the pause
+        self.assertEqual(sweet.helper.settings["logged"], "true")
+
+    def test_a_new_code_restarts_the_wait_of_six_hours_and_the_patience(self):
+        sweet, clock = self.device()
+        start = clock.now
+        def on_check(n):
+            if n == 100:
+                sweet.helper.auth_reply = {"result": "OK", "auth_code": "67890"}
+                ms.request_renew("sweettv")
+        sweet.helper.on_check = on_check
+        sweet.login()
+        asked = 6 * 60 * 60 + 100                                                         # a bit more than six hours after the start
+        self.assertGreater(clock.now - start, asked)
+        self.assertEqual(self.seen[-1][1]["reason"], "expired")
+
+    def test_a_new_code_that_sweettv_does_not_give_leaves_the_old_one_waiting(self):
+        sweet, clock = self.device()
+        def on_check(n):
+            if n == 2:
+                sweet.helper.auth_reply = {"result": "ERROR"}
+                ms.request_renew("sweettv")
+        sweet.helper.on_check = on_check
+        sweet.helper.checks = [{"result": "STARTED"}] * 4 + [COMPLETED]
+        sweet.login()
+        self.assertEqual(self.states(), ["waiting", "done"])                              # no second waiting state, no failure
+        self.assertEqual(sweet.helper.requests.count(sweet.helper.auth_url), 2)
+        self.assertTrue(any("gave no new code" in m for m in self.warnings(sweet)))
+        self.assertEqual({"12345"}, {"12345" for d in sweet.helper.check_data if "12345" in d})
+        self.assertEqual(len(sweet.helper.check_data), 5)
 
     def test_an_expired_code_that_sweettv_names_ends_as_failed_with_the_reason(self):
         sweet, _ = self.device()
