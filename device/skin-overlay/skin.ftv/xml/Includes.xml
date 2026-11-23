@@ -342,7 +342,8 @@
 	</include>
 	<include name="MsPlayerTitle">
 		<!-- media-stick: clock at the top right; the title big above the bar, under it the picture and
-		     sound as outlined tags and the episode title, the file name of a local file, or artist/album -->
+		     sound as outlined tags and the episode title, the file name of a local library file (outside the library the
+		     title is the file name already), or artist/album -->
 		<control type="label">
 			<left>2079</left>
 			<top>96</top>
@@ -515,7 +516,7 @@
 				<textcolor>b3ffffff</textcolor>
 				<shadowcolor>ShadowColour</shadowcolor>
 				<label>$INFO[Player.Filename]</label>
-				<visible>String.IsEmpty(VideoPlayer.TVShowTitle) + !String.IsEmpty(VideoPlayer.Title) + !String.Contains(Player.FilenameAndPath,://) + !String.IsEqual(VideoPlayer.Title,$INFO[Player.Filename])</visible>
+				<visible>String.IsEmpty(VideoPlayer.TVShowTitle) + !String.IsEmpty(VideoPlayer.Title) + !String.Contains(Player.FilenameAndPath,://) + !String.IsEmpty(VideoPlayer.DBID)</visible>
 			</control>
 			<control type="label">
 				<left>8</left>
