@@ -2,7 +2,8 @@
 <window>
     <!-- virtualkeyboard. media-stick: text comes from the phone (the remote page shows a text
          box while this is up), so the key grid stays folded away unless "Keyboard" is pressed
-         (skin setting ms_tvkeys, remembered). Kept in device/skin-overlay. -->
+         (skin setting ms_tvkeys, remembered). Kept in device/skin-overlay. Keys, toggles and
+         the Keyboard / Cancel / Done buttons are pills; the heading is not in capitals. -->
     <onload>Setfocus(300)</onload>
     <controls>
         <!-- Background -->
@@ -20,25 +21,25 @@
             <control type="image">
                 <width>2360</width>
                 <height>1758</height>
-                <texture border="4">dialogs/DialogMessageBackground.png</texture>
+                <texture border="47" colordiffuse="F2141922">ms-pill.png</texture>
                 <visible>[Control.IsVisible(111) | Control.IsVisible(131) | Control.IsVisible(151) | Control.IsVisible(171)] + Skin.HasSetting(ms_tvkeys)</visible>
             </control>
             <control type="image">
                 <width>2200</width>
                 <height>1758</height>
-                <texture border="4">dialogs/DialogMessageBackground.png</texture>
+                <texture border="47" colordiffuse="F2141922">ms-pill.png</texture>
                 <visible>[[Control.IsVisible(110) | Control.IsVisible(130) | Control.IsVisible(150) | Control.IsVisible(170)] + [!Control.IsVisible(111) + !Control.IsVisible(131) + !Control.IsVisible(151) + !Control.IsVisible(171)]] + Skin.HasSetting(ms_tvkeys)</visible>
             </control>
             <control type="image">
                 <width>2020</width>
                 <height>1758</height>
-                <texture border="4">dialogs/DialogMessageBackground.png</texture>
+                <texture border="47" colordiffuse="F2141922">ms-pill.png</texture>
                 <visible>[!Control.IsVisible(110) + !Control.IsVisible(130) + !Control.IsVisible(150) + !Control.IsVisible(170) + !Control.IsVisible(111) + !Control.IsVisible(131) + !Control.IsVisible(151) + !Control.IsVisible(171)] + Skin.HasSetting(ms_tvkeys)</visible>
             </control>
             <control type="image">
                 <width>2020</width>
                 <height>790</height>
-                <texture border="4">dialogs/DialogMessageBackground.png</texture>
+                <texture border="47" colordiffuse="F2141922">ms-pill.png</texture>
                 <visible>!Skin.HasSetting(ms_tvkeys)</visible>
             </control>
             <!-- Control group -->
@@ -49,8 +50,8 @@
                 <control id="311" type="label">
                     <width>1776</width>
                     <height>72</height>
-                    <font>LightCap36</font>
-                    <textcolor>ffdadada</textcolor>
+                    <font>Light39</font>
+                    <textcolor>ffffffff</textcolor>
                 </control>
                 <!-- Edit -->
                 <control id="312" type="edit">
@@ -62,7 +63,7 @@
                     <font>Light39</font>
                     <textcolor>ffdadada</textcolor>
                     <focusedcolor>ffdadada</focusedcolor>
-                    <hinttext>[COLOR ff414141]Joe Bloggs[/COLOR]</hinttext>
+                    <hinttext/>
                 </control>
                 <!-- Edit Text line -->
                 <control type="image">
@@ -457,42 +458,42 @@
                         <control type="image">
                             <width>696</width>
                             <height>156</height>
-                            <texture border="3">dialogs/KeyboardButtonToggleOn.png</texture>
+                            <texture border="47" colordiffuse="66ffffff">ms-pill.png</texture>
                             <visible>!Control.IsVisible(310) + String.Contains(Control.GetLabel(302),*)</visible>
                         </control>
                         <!-- Shift off -->
                         <control type="image">
                             <width>696</width>
                             <height>156</height>
-                            <texture border="3">dialogs/KeyboardButtonToggleOff.png</texture>
+                            <texture border="47" colordiffuse="1affffff">ms-pill.png</texture>
                             <visible>!Control.IsVisible(310) + !String.Contains(Control.GetLabel(302),*)</visible>
                         </control>
                         <!-- Shift on -->
                         <control type="image">
                             <width>516</width>
                             <height>156</height>
-                            <texture border="3">dialogs/KeyboardButtonToggleOn.png</texture>
+                            <texture border="47" colordiffuse="66ffffff">ms-pill.png</texture>
                             <visible>Control.IsVisible(310) + String.Contains(Control.GetLabel(302),*)</visible>
                         </control>
                         <!-- Shift off -->
                         <control type="image">
                             <width>516</width>
                             <height>156</height>
-                            <texture border="3">dialogs/KeyboardButtonToggleOff.png</texture>
+                            <texture border="47" colordiffuse="1affffff">ms-pill.png</texture>
                             <visible>Control.IsVisible(310) + !String.Contains(Control.GetLabel(302),*)</visible>
                         </control>
                         <!-- Caps lock on-->
                         <control type="image">
                             <width>696</width>
                             <height>156</height>
-                            <texture border="3">dialogs/KeyboardButtonToggleOn.png</texture>
+                            <texture border="47" colordiffuse="66ffffff">ms-pill.png</texture>
                             <visible>String.Contains(Control.GetLabel(303),*)</visible>
                         </control>
                         <!-- Caps lock off-->
                         <control type="image">
                             <width>696</width>
                             <height>156</height>
-                            <texture border="3">dialogs/KeyboardButtonToggleOff.png</texture>
+                            <texture border="47" colordiffuse="1affffff">ms-pill.png</texture>
                             <visible>!String.Contains(Control.GetLabel(303),*)</visible>
                         </control>
                         <!-- Password show focus -->
@@ -527,14 +528,14 @@
                         <control type="image">
                             <width>156</width>
                             <height>156</height>
-                            <texture border="3">dialogs/KeyboardButtonToggleOn.png</texture>
+                            <texture border="47" colordiffuse="66ffffff">ms-pill.png</texture>
                             <visible>String.Contains(Control.GetLabel(304),*)</visible>
                         </control>
                         <!-- Symbols off -->
                         <control type="image">
                             <width>156</width>
                             <height>156</height>
-                            <texture border="3">dialogs/KeyboardButtonToggleOff.png</texture>
+                            <texture border="47" colordiffuse="1affffff">ms-pill.png</texture>
                             <visible>!String.Contains(Control.GetLabel(304),*)</visible>
                         </control>
                     </control>
@@ -642,8 +643,8 @@
                             <label>Keyboard</label>
                             <altlabel>Hide keys</altlabel>
                             <usealttexture>Skin.HasSetting(ms_tvkeys)</usealttexture>
-                            <alttexturefocus border="4">dialogs/KeyboardButtonFO.png</alttexturefocus>
-                            <alttexturenofocus border="4">dialogs/KeyboardButtonNF.png</alttexturenofocus>
+                            <alttexturefocus border="47">ms-pill.png</alttexturefocus>
+                            <alttexturenofocus border="47" colordiffuse="1affffff">ms-pill.png</alttexturenofocus>
                             <include>KeyboardButtons</include>
                         </control>
                         <!-- Layout -->

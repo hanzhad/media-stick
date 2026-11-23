@@ -175,6 +175,7 @@
 		<textureradionofocus/>
 	</include>
 	<!-- Keyboard buttons -->
+	<!-- media-stick: keys are pills (faint white, white with black text on focus), no amber -->
 	<include name="KeyboardButtons">
 		<width>156</width>
 		<height>156</height>
@@ -182,9 +183,9 @@
 		<align>center</align>
 		<aligny>center</aligny>
 		<textcolor>ffdadada</textcolor>
-		<focusedcolor>ff0c0c0c</focusedcolor>
-		<texturefocus border="4">dialogs/KeyboardButtonFO.png</texturefocus>
-		<texturenofocus border="4">dialogs/KeyboardButtonNF.png</texturenofocus>
+		<focusedcolor>ff000000</focusedcolor>
+		<texturefocus border="47">ms-pill.png</texturefocus>
+		<texturenofocus border="47" colordiffuse="1affffff">ms-pill.png</texturenofocus>
 	</include>
 	<!-- Numeric buttons -->
 	<include name="NumericButtons">
@@ -194,9 +195,9 @@
 		<align>center</align>
 		<aligny>center</aligny>
 		<textcolor>ffdadada</textcolor>
-		<focusedcolor>ff0c0c0c</focusedcolor>
-		<texturefocus border="4">dialogs/KeyboardButtonFO.png</texturefocus>
-		<texturenofocus border="4">dialogs/KeyboardButtonNF.png</texturenofocus>
+		<focusedcolor>ff000000</focusedcolor>
+		<texturefocus border="47">ms-pill.png</texturefocus>
+		<texturenofocus border="47" colordiffuse="1affffff">ms-pill.png</texturenofocus>
 	</include>
 	<!-- Video player details -->
 	<include name="VideoPlayerDetails">
