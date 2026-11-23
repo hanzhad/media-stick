@@ -55,6 +55,18 @@ ACTIONS = {"up", "down", "left", "right", "select", "back", "contextmenu", "info
            "playpause", "stop", "volumeup", "volumedown", "mute", "fastforward",
            "rewind", "osd", "skipnext", "skipprevious", "fullscreen"}
 
+# Kodi's fullscreen video window (no OSD, no dialog) does not handle the MOVE_* actions that
+# Input.ExecuteAction "left" and the like send straight to it: arrows work there only through
+# the keymap (FullscreenVideo: left/right step, up/down chapter or big step, select = OSD).
+# So in that window alone the arrows are sent as those actions themselves. With the OSD or any
+# other dialog up, and everywhere else (Home, menus, our own screens), they stay MOVE_*.
+PLAYER_KEYS = {"left": "stepback", "right": "stepforward", "up": "chapterorbigstepforward",
+               "down": "chapterorbigstepback", "select": "osd"}
+PLAYER_DIALOGS = ("videoosd", "osdvideosettings", "osdaudiosettings", "subtitlesettings",
+                  "videobookmarks", "playerprocessinfo", "fullscreeninfo", "subtitlesearch")
+PLAYER_BOOLS = (["Window.IsActive(fullscreenvideo)", "System.HasModalDialog"]
+                + ["Window.IsActive(%s)" % w for w in PLAYER_DIALOGS])
+
 # While a web app (Chromium, see web-app) has the screen, the same buttons become
 # keys typed into the browser; "home" closes it and brings Kodi back.
 WEB_KEYS = {"up": "Up", "down": "Down", "left": "Left", "right": "Right",
@@ -100,6 +112,25 @@ def kodi(method, params=None, timeout=3):
             except ValueError:
                 continue
     return None
+
+def player_action(a, flags):
+    """The action to send for button `a` given Kodi's answer to PLAYER_BOOLS (a dict): the
+    player's own action while the bare fullscreen video is up, else `a` unchanged."""
+    if a not in PLAYER_KEYS or not isinstance(flags, dict):
+        return a
+    if flags.get(PLAYER_BOOLS[0]) is True and all(flags.get(k) is False for k in PLAYER_BOOLS[1:]):
+        return PLAYER_KEYS[a]
+    return a
+
+def key_action(a):
+    """What Input.ExecuteAction gets for button `a`; one extra question to Kodi, asked only for
+    the keys that differ in the player. Any trouble asking: the button as it is."""
+    if a not in PLAYER_KEYS:
+        return a
+    try:
+        return player_action(a, kodi("XBMC.GetInfoBooleans", {"booleans": PLAYER_BOOLS}))
+    except (OSError, ValueError):
+        return a
 
 class FocusWatch:
     """What has focus on the TV, as a counter that goes up each time it changes, so the phone
@@ -1661,7 +1692,7 @@ class H(BaseHTTPRequestHandler):
                 if a == "home":
                     kodi("GUI.ActivateWindow", {"window": "home"})
                 else:
-                    kodi("Input.ExecuteAction", {"action": a})
+                    kodi("Input.ExecuteAction", {"action": key_action(a)})
                 return self.send({"ok": True, "fc": FOCUS.after(before), "kb": kb_now()})
             if p == "/api/text" and web_app_on():
                 web_type(str(b.get("text", ""))[:200])
