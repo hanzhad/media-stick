@@ -31,6 +31,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, "/usr/local/lib/media-stick")
 import panel_accounts   # the Accounts tab and its API
 import panel_watch      # the Смотреть tab and its API
+import panel_onboarding_ui   # the sheet of the shared TV <-> phone onboarding
+try:
+    import mediastick_onboarding   # what the TV asks of this phone; the panel works without it
+except ImportError:
+    mediastick_onboarding = None
 
 PORT = int(os.environ.get("PANEL_PORT", "80"))
 REPO = "/opt/media-stick"
@@ -447,6 +452,19 @@ def wifi_status():
     online = run(["nmcli", "-t", "networking", "connectivity"])[1] == "full"
     return {"online": online, "ap": ap, "ssid": ssid}
 
+# what the page may know of an onboarding document: the schema's fields, minus the TV-only chips
+ONBOARDING_FIELDS = ("v", "service", "flow", "state", "kicker", "title", "step", "steps", "code", "link", "action",
+                     "hint", "warn", "items", "updated", "expires")
+
+def onboarding_docs():
+    """The live onboarding documents for the phone's sheet; [] when there is no library, no directory or no document."""
+    if mediastick_onboarding is None:
+        return []
+    try:
+        return [{k: d[k] for k in ONBOARDING_FIELDS if k in d} for d in mediastick_onboarding.list_active()]
+    except Exception:
+        return []
+
 status_cache = {"t": 0.0, "s": None}
 status_lock = threading.Lock()
 
@@ -500,6 +518,7 @@ def _status():
         s["dead"] = ["fastforward", "osd", "playpause", "rewind", "stop"]
     else:
         s["dead"] = []
+    s["onboarding"] = onboarding_docs()
     return s
 
 # ---------------- page ----------------
@@ -1009,6 +1028,7 @@ async function tick(){
     httpsUrl=s.https_url||''; httpsCheck(); airUi(); keysUi(s.dead);kbUi(s.kb);
     pageCheck(s.page);
     if(window.accNote)accNote(s.signin);
+    if(window.obNote)obNote(s.onboarding);
   }catch(e){header(false,'нет связи')}
 }
 tick(); setInterval(tick,5000);
@@ -1520,6 +1540,7 @@ document.addEventListener('dblclick',e=>e.preventDefault());
 </script>@@ACC_TAIL@@</body></html>"""
 PAGE = panel_accounts.inject(PAGE)
 PAGE = panel_watch.inject(PAGE)
+PAGE = panel_onboarding_ui.inject(PAGE)
 PAGE_VER = hashlib.sha256(PAGE.encode()).hexdigest()[:12]
 PAGE = PAGE.replace("@@PAGE_VER@@", PAGE_VER)
 
