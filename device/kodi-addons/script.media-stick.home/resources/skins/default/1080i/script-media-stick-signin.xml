@@ -353,8 +353,8 @@
                         <width>54</width>
                         <height>54</height>
                         <font>Med28</font>
-                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <textcolor>FFF2F3F5</textcolor>
+                        <selectedcolor>FFF2F3F5</selectedcolor>
                         <align>center</align>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Property(num)]</label>
@@ -366,8 +366,8 @@
                         <width>870</width>
                         <height>84</height>
                         <font>Med32</font>
-                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <textcolor>FFF2F3F5</textcolor>
+                        <selectedcolor>FFF2F3F5</selectedcolor>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Property(t1)]</label>
                         <visible>String.IsEmpty(ListItem.Property(t2))</visible>
@@ -378,8 +378,8 @@
                         <width>870</width>
                         <height>40</height>
                         <font>Med32</font>
-                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <textcolor>FFF2F3F5</textcolor>
+                        <selectedcolor>FFF2F3F5</selectedcolor>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Property(t1)]</label>
                         <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
@@ -390,8 +390,8 @@
                         <width>870</width>
                         <height>40</height>
                         <font>Med32</font>
-                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <textcolor>FFF2F3F5</textcolor>
+                        <selectedcolor>FFF2F3F5</selectedcolor>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Property(t2)]</label>
                         <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
@@ -421,8 +421,8 @@
                         <width>54</width>
                         <height>54</height>
                         <font>Med28</font>
-                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <textcolor>FFF2F3F5</textcolor>
+                        <selectedcolor>FFF2F3F5</selectedcolor>
                         <align>center</align>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Property(num)]</label>
@@ -434,8 +434,8 @@
                         <width>870</width>
                         <height>84</height>
                         <font>Med32</font>
-                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <textcolor>FFF2F3F5</textcolor>
+                        <selectedcolor>FFF2F3F5</selectedcolor>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Property(t1)]</label>
                         <visible>String.IsEmpty(ListItem.Property(t2))</visible>
@@ -446,8 +446,8 @@
                         <width>870</width>
                         <height>40</height>
                         <font>Med32</font>
-                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <textcolor>FFF2F3F5</textcolor>
+                        <selectedcolor>FFF2F3F5</selectedcolor>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Property(t1)]</label>
                         <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
@@ -458,8 +458,8 @@
                         <width>870</width>
                         <height>40</height>
                         <font>Med32</font>
-                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <textcolor>FFF2F3F5</textcolor>
+                        <selectedcolor>FFF2F3F5</selectedcolor>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Property(t2)]</label>
                         <visible>!String.IsEmpty(ListItem.Property(t2))</visible>

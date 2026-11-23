@@ -148,6 +148,11 @@ def site(link) -> str:
 
 # ---- the step list -----------------------------------------------------------------------------------------
 
+def tinted(colour, text) -> str:
+    """`text` in `colour` (AARRGGBB) with a [COLOR] tag; "" stays "" (the skin tests an empty line with IsEmpty)."""
+    return f"[COLOR {colour}]{text}[/COLOR]" if text else ""
+
+
 class Row(NamedTuple):
     line1: str
     line2: str                      # "" for a step that fits one line
@@ -155,9 +160,12 @@ class Row(NamedTuple):
     number: str
 
     def props(self) -> dict:
-        """The list item's properties: the words, the state (which marker is drawn) and the colours of the number and the text."""
-        return {"t1": self.line1, "t2": self.line2, "state": self.state, "num": self.number,
-                "fg": STEP_TEXT[self.state], "ring": STEP_RING[self.state]}
+        """The list item's properties: the words and the number (in the colour of the state), the state (which marker
+        is drawn) and the colour of the ring. The colours are in the text, as [COLOR] tags: Kodi does not take a list
+        item's <textcolor> from a ListItem property (the text is not drawn at all), only fixed colours there."""
+        colour = STEP_TEXT[self.state]
+        return {"t1": tinted(colour, self.line1), "t2": tinted(colour, self.line2), "state": self.state,
+                "num": tinted(colour, self.number), "ring": STEP_RING[self.state]}
 
 
 def step_rows(screen, width) -> Tuple[Row, ...]:
@@ -219,7 +227,7 @@ def badge_rows(screen) -> Tuple[dict, ...]:
     rows = []
     for label, has in screen.items:
         fill, words = BADGE["ok" if has else "wait"]
-        rows.append({"t1": f"{label} · set" if has else f"{label} —", "bg": fill, "fg": words})
+        rows.append({"t1": tinted(words, f"{label} · set" if has else f"{label} —"), "bg": fill})
     return tuple(rows)
 
 

@@ -100,13 +100,16 @@ class Pieces(unittest.TestCase):
         self.assertEqual([r.state for r in rows], ["done", "now", "todo"])
         self.assertEqual(rows[0].line2, "")
         self.assertTrue(rows[1].line2)
-        self.assertEqual(rows[2].props(), {"t1": "Last", "t2": "", "state": "todo", "num": "3",
-                                           "fg": view.STEP_TEXT["todo"], "ring": view.STEP_RING["todo"]})
+        colour = view.STEP_TEXT["todo"]
+        self.assertEqual(rows[2].props(), {"t1": f"[COLOR {colour}]Last[/COLOR]", "t2": "", "state": "todo",
+                                           "num": f"[COLOR {colour}]3[/COLOR]", "ring": view.STEP_RING["todo"]})
+        self.assertTrue(rows[1].props()["t2"].startswith("[COLOR "))
 
     def test_badges_say_set_or_dash_and_never_carry_a_value(self):
         s = view.parse(doc(items=[{"label": "API key", "s": "ok", "value": "AIzaSECRET"}, {"label": "Client ID", "s": "wait"}]))
         rows = view.badge_rows(s)
-        self.assertEqual([r["t1"] for r in rows], ["API key · set", "Client ID —"])
+        self.assertEqual([r["t1"] for r in rows], [f"[COLOR {view.BADGE['ok'][1]}]API key · set[/COLOR]",
+                                                    f"[COLOR {view.BADGE['wait'][1]}]Client ID —[/COLOR]"])
         self.assertNotIn("AIza", repr(rows))
         self.assertEqual(rows[0]["bg"], view.BADGE["ok"][0])
 
@@ -495,7 +498,7 @@ class Skin(unittest.TestCase):
         self.assertLessEqual(count, 34)
 
     def test_art_exists_and_is_small(self):
-        for png in ("onboarding-done.png", "onboarding-ring.png"):
+        for png in ("onboarding-done.png", "onboarding-ring.png", "onboarding-chip.png"):
             path = os.path.join(MEDIA, png)
             self.assertTrue(os.path.exists(path), png)
             self.assertLess(os.path.getsize(path), 20000, png)
@@ -504,6 +507,95 @@ class Skin(unittest.TestCase):
     def test_the_xml_is_valid_for_xmllint(self):
         for name in (self.NAME, "script-media-stick-signin.xml"):
             self.assertEqual(tree(name).tag, "window")
+
+
+class Text(unittest.TestCase):
+    """The step rows and the badges were drawn without their words on a TV: a list item's <textcolor> taken from a
+    ListItem property is not a colour Kodi can use there. These pin what the skins and fill_list must do instead."""
+    FILES = ("script-media-stick-onboarding.xml", "script-media-stick-signin.xml")
+
+    @staticmethod
+    def label_controls(root):
+        """(list control, layout, label control) for every label in a list's or panel's layouts."""
+        for lst in root.iter("control"):
+            if lst.get("type") in ("list", "panel", "fixedlist", "wraplist"):
+                for layout in list(lst.findall("itemlayout")) + list(lst.findall("focusedlayout")):
+                    for c in layout.iter("control"):
+                        if c.get("type") == "label":
+                            yield lst, layout, c
+
+    def test_no_colour_in_a_list_layout_comes_from_a_property(self):
+        for name in self.FILES:
+            for lst, _, label in self.label_controls(tree(name)):
+                for tag in ("textcolor", "selectedcolor", "focusedcolor", "shadowcolor"):
+                    value = label.findtext(tag)
+                    if value is not None:
+                        self.assertRegex(value, r"^[0-9A-Fa-f]{8}$", f"{name} list {lst.get('id')} <{tag}>")
+
+    def test_every_label_in_a_list_has_a_text_source_that_the_rows_set(self):
+        rows = view.step_rows(view.parse(doc(), "YouTube"), view.KEYS_STEP_W)
+        sources = {"onboarding": {k for r in rows for k in r.props()} | set(view.badge_rows(view.parse(doc()))[0]),
+                   "signin": {k for r in rows for k in r.props()}}
+        for name in self.FILES:
+            known = sources["onboarding" if "onboarding" in name else "signin"]
+            labels = list(self.label_controls(tree(name)))
+            self.assertTrue(labels, name)
+            for lst, _, label in labels:
+                text = label.findtext("label") or ""
+                self.assertTrue(text, f"{name} list {lst.get('id')}: a label with no text")
+                props = re.findall(r"ListItem\.Property\((\w+)\)", text)
+                self.assertTrue(props or "ListItem.Label" in text, f"{name}: {text}")
+                self.assertLessEqual(set(props), known, f"{name}: {text}")
+                self.assertGreater(int(label.findtext("width")), 0)
+                self.assertGreater(int(label.findtext("height")), 0)
+
+    def test_fill_list_hands_the_words_to_the_items_and_they_are_not_empty(self):
+        s = view.parse(doc(items=[{"label": "API key", "s": "ok"}, {"label": "Client ID", "s": "wait"}]), "YouTube")
+        window = tv.Window()
+        ui.fill_list(window, 20, [r.props() for r in view.step_rows(s, view.KEYS_STEP_W)], select=1)
+        ui.fill_list(window, 30, view.badge_rows(s))
+        steps, badges = window.controls[20].items, window.controls[30].items
+        self.assertIn("Project and API", steps[0].props["t1"])
+        self.assertTrue(all(i.props["t1"] and i.props["num"] for i in steps))
+        self.assertTrue(all(i.props["t1"] and "[COLOR " in i.props["t1"] for i in badges))
+        self.assertIn("API key · set", badges[0].props["t1"])
+        self.assertEqual(steps[0].label, steps[0].props["t1"])
+
+    def test_a_nine_slice_texture_is_uniform_where_it_is_stretched(self):
+        """A texture drawn with border=B is stretched between B and size-B: there it must not change along the stretch,
+        or the ends of a pill come out with spiky leaf corners (pill.png, 96 px, is round only from border 47 up)."""
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("PIL is not installed")
+        for name in self.FILES:
+            for tag in ("texture", "texturefocus", "texturenofocus"):
+                for elem in tree(name).iter(tag):
+                    border = elem.get("border")
+                    if not border or "$" in elem.text or elem.text == "card-shadow.png":   # the shadow is a soft gradient
+                        continue
+                    b = int(border.split(",")[0])
+                    im = Image.open(os.path.join(MEDIA, elem.text)).convert("RGBA")
+                    w, h = im.size
+                    self.assertLessEqual(2 * b, w, elem.text)
+                    for y in range(h):
+                        row = [im.getpixel((x, y)) for x in range(b, w - b)]
+                        self.assertLessEqual(max((max(abs(a - c) for a, c in zip(p, row[0])) for p in row), default=0), 24,
+                                             f"{name} {elem.text} border {b}: row {y} changes where it is stretched")
+                    for x in range(w):
+                        col = [im.getpixel((x, y)) for y in range(b, h - b)]
+                        self.assertLessEqual(max((max(abs(a - c) for a, c in zip(p, col[0])) for p in col), default=0), 24,
+                                             f"{name} {elem.text} border {b}: column {x} changes where it is stretched")
+
+    def test_a_bordered_picture_is_never_smaller_than_its_two_borders(self):
+        for c in tree("script-media-stick-onboarding.xml").iter("control"):
+            elem = c.find("texture")
+            if c.get("type") == "image" and elem is not None and elem.get("border"):
+                b = int(elem.get("border"))
+                self.assertGreaterEqual(int(c.findtext("width")), 2 * b, c.get("id"))
+                self.assertGreaterEqual(int(c.findtext("height")), 2 * b, c.get("id"))
+        self.assertGreaterEqual(view.CHIP_MIN, 48)
+        self.assertGreaterEqual(view.CHIP_H, 48)
 
 
 class Dispatch(unittest.TestCase):

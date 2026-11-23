@@ -106,8 +106,8 @@
                     <width>51</width>
                     <height>51</height>
                     <font>Med28</font>
-                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <textcolor>FFF2F3F5</textcolor>
+                    <selectedcolor>FFF2F3F5</selectedcolor>
                     <align>center</align>
                     <aligny>center</aligny>
                     <label>$INFO[ListItem.Property(num)]</label>
@@ -119,8 +119,8 @@
                     <width>438</width>
                     <height>78</height>
                     <font>Med32</font>
-                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <textcolor>FFF2F3F5</textcolor>
+                    <selectedcolor>FFF2F3F5</selectedcolor>
                     <aligny>center</aligny>
                     <label>$INFO[ListItem.Property(t1)]</label>
                     <visible>String.IsEmpty(ListItem.Property(t2))</visible>
@@ -131,8 +131,8 @@
                     <width>438</width>
                     <height>37</height>
                     <font>Med32</font>
-                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <textcolor>FFF2F3F5</textcolor>
+                    <selectedcolor>FFF2F3F5</selectedcolor>
                     <aligny>center</aligny>
                     <label>$INFO[ListItem.Property(t1)]</label>
                     <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
@@ -143,8 +143,8 @@
                     <width>438</width>
                     <height>37</height>
                     <font>Med32</font>
-                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <textcolor>FFF2F3F5</textcolor>
+                    <selectedcolor>FFF2F3F5</selectedcolor>
                     <aligny>center</aligny>
                     <label>$INFO[ListItem.Property(t2)]</label>
                     <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
@@ -174,8 +174,8 @@
                     <width>51</width>
                     <height>51</height>
                     <font>Med28</font>
-                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <textcolor>FFF2F3F5</textcolor>
+                    <selectedcolor>FFF2F3F5</selectedcolor>
                     <align>center</align>
                     <aligny>center</aligny>
                     <label>$INFO[ListItem.Property(num)]</label>
@@ -187,8 +187,8 @@
                     <width>438</width>
                     <height>78</height>
                     <font>Med32</font>
-                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <textcolor>FFF2F3F5</textcolor>
+                    <selectedcolor>FFF2F3F5</selectedcolor>
                     <aligny>center</aligny>
                     <label>$INFO[ListItem.Property(t1)]</label>
                     <visible>String.IsEmpty(ListItem.Property(t2))</visible>
@@ -199,8 +199,8 @@
                     <width>438</width>
                     <height>37</height>
                     <font>Med32</font>
-                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <textcolor>FFF2F3F5</textcolor>
+                    <selectedcolor>FFF2F3F5</selectedcolor>
                     <aligny>center</aligny>
                     <label>$INFO[ListItem.Property(t1)]</label>
                     <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
@@ -211,8 +211,8 @@
                     <width>438</width>
                     <height>37</height>
                     <font>Med32</font>
-                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <textcolor>FFF2F3F5</textcolor>
+                    <selectedcolor>FFF2F3F5</selectedcolor>
                     <aligny>center</aligny>
                     <label>$INFO[ListItem.Property(t2)]</label>
                     <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
@@ -234,7 +234,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip1_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip1))</visible>
         </control>
@@ -255,7 +255,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip2_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip2))</visible>
         </control>
@@ -276,7 +276,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip3_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip3))</visible>
         </control>
@@ -297,7 +297,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip4_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip4))</visible>
         </control>
@@ -318,7 +318,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip5_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip5))</visible>
         </control>
@@ -339,7 +339,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip6_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip6))</visible>
         </control>
@@ -360,7 +360,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip7_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip7))</visible>
         </control>
@@ -381,7 +381,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip8_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip8))</visible>
         </control>
@@ -402,7 +402,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip9_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip9))</visible>
         </control>
@@ -423,7 +423,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip10_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip10))</visible>
         </control>
@@ -444,7 +444,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip11_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip11))</visible>
         </control>
@@ -465,7 +465,7 @@
             <top>259</top>
             <width>200</width>
             <height>66</height>
-            <texture border="32">pill.png</texture>
+            <texture border="24">onboarding-chip.png</texture>
             <colordiffuse>$INFO[Window.Property(chip12_bg)]</colordiffuse>
             <visible>!String.IsEmpty(Window.Property(chip12))</visible>
         </control>
@@ -681,7 +681,7 @@
                     <top>3</top>
                     <width>270</width>
                     <height>54</height>
-                    <texture border="27">pill.png</texture>
+                    <texture border="24">onboarding-chip.png</texture>
                     <colordiffuse>$INFO[ListItem.Property(bg)]</colordiffuse>
                 </control>
                 <control type="label">
@@ -690,8 +690,8 @@
                     <width>270</width>
                     <height>54</height>
                     <font>Reg25</font>
-                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <textcolor>FFF2F3F5</textcolor>
+                    <selectedcolor>FFF2F3F5</selectedcolor>
                     <align>center</align>
                     <aligny>center</aligny>
                     <label>$INFO[ListItem.Property(t1)]</label>
@@ -703,7 +703,7 @@
                     <top>3</top>
                     <width>270</width>
                     <height>54</height>
-                    <texture border="27">pill.png</texture>
+                    <texture border="24">onboarding-chip.png</texture>
                     <colordiffuse>$INFO[ListItem.Property(bg)]</colordiffuse>
                 </control>
                 <control type="label">
@@ -712,8 +712,8 @@
                     <width>270</width>
                     <height>54</height>
                     <font>Reg25</font>
-                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
-                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <textcolor>FFF2F3F5</textcolor>
+                    <selectedcolor>FFF2F3F5</selectedcolor>
                     <align>center</align>
                     <aligny>center</aligny>
                     <label>$INFO[ListItem.Property(t1)]</label>
