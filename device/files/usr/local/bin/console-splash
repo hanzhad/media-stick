@@ -1,0 +1,23 @@
+#!/bin/bash
+# The boot picture under everything: whenever no program has the screen (Kodi restarting, the
+# moment between Kodi and AirPlay or a web app), the TV shows the kernel's console framebuffer,
+# black until now. This puts the picture (Kodi's splash.png, also Plymouth's) there and unbinds the
+# text console from it, which would otherwise paint it black again each time Kodi lets go (boot
+# messages go to tty3 anyway: cmdline.txt). Run once at boot by console-splash.service, as root.
+set -euo pipefail
+PIC=/home/media/.kodi/media/splash.png
+FB=/sys/class/graphics/fb0
+[ -e /dev/fb0 ] && [ -r "$PIC" ] || { echo "no /dev/fb0 or no $PIC"; exit 0; }
+for v in /sys/class/vtconsole/vtcon*; do
+  grep -q 'frame buffer' "$v/name" && echo 0 > "$v/bind"
+done
+case $(cat "$FB/bits_per_pixel") in
+  16) fmt=rgb565le ;;
+  32) fmt=bgra ;;
+  *) echo "framebuffer format $(cat "$FB/bits_per_pixel") bpp not handled"; exit 0 ;;
+esac
+IFS=, read -r w h < "$FB/virtual_size"
+bpp=$(( $(cat "$FB/bits_per_pixel") / 8 ))
+[ "$(cat "$FB/stride")" = $(( w * bpp )) ] || { echo "framebuffer rows are padded; not drawn"; exit 0; }
+ffmpeg -nostdin -loglevel error -i "$PIC" -vf "scale=$w:$h" -f rawvideo -pix_fmt "$fmt" - > /dev/fb0
+echo "drawn ${w}x${h} $fmt"

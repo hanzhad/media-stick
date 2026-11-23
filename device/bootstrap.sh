@@ -134,6 +134,12 @@ done
 for unit in kodi.service panel.service airplay.service wifi-fallback.service media-stick-update.timer media-stick-wallpapers.timer media-stick-cert.timer; do
   systemctl enable -q "$unit"
 done
+# The picture behind Kodi (console-splash): drawn again when it, its program or its unit changed
+systemctl enable -q console-splash.service
+if [[ " ${changed_units[*]-} " == *" console-splash.service "* ]] || [ "${splash_changed:-0}" = 1 ] \
+   || ! systemctl is-active -q console-splash.service; then
+  systemctl restart console-splash.service || log "  console-splash failed"
+fi
 
 # Self-update schedule from UPDATE_SCHEDULE.
 dropin=/etc/systemd/system/media-stick-update.timer.d/schedule.conf

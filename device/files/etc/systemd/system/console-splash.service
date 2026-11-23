@@ -1,0 +1,12 @@
+[Unit]
+Description=The boot picture on the console framebuffer, shown whenever no program has the screen
+After=local-fs.target
+Before=kodi.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/console-splash
+
+[Install]
+WantedBy=multi-user.target
