@@ -24,6 +24,7 @@ from resources.lib import (onboarding_view, profiles, single_instance, sweettv_t
 
 XML = "script-media-stick-youtube.xml"
 RAIL, GRID, ACTION = 100, 200, 300
+KIND_BUTTONS = {401 + n: kind.key for n, kind in enumerate(data.KINDS)}     # the row of choices above the results of a search
 ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_PAGE_UP, ACTION_PAGE_DOWN = 1, 2, 3, 4, 5, 6
 MOVES = (ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_PAGE_UP, ACTION_PAGE_DOWN)
 COLUMNS = 4                      # the grid's columns (the panel in the skin)
@@ -102,7 +103,7 @@ class YouTube(xbmcgui.WindowXML):
             self.state = saved.load_state(files.state_path())
         self._set_avatar(None, "")
         self._fill_rail()
-        self._navigate(data.section_view(self.state["section"], query=self.state["query"]), focus=True)
+        self._navigate(data.section_view(self.state["section"], query=self.state["query"], kind=self.state["kind"]), focus=True)
         if not self.demo:
             self._later("profile", PROFILE_POLL, self._profile_tick)
 
@@ -148,6 +149,8 @@ class YouTube(xbmcgui.WindowXML):
             token, self.view = self.token, view
             self._prop("title", data.crumb(self.stack, view))
             self._prop("notice", "")
+            self._prop("search", "1" if view.key == data.SEARCH else "")     # the row of choices is for a search only
+            self._prop("kind", view.kind)
             self._mark_rail()
             cached = self.cache.get(view.route)
             if not view.route:
@@ -464,6 +467,8 @@ class YouTube(xbmcgui.WindowXML):
         if action_id == ACTION_MOVE_RIGHT and self._focus() == RAIL and self.mode != data.DATA:
             self._focus_content()                # no grid to go to: the card's button
             return
+        if self._kind_move(action_id):
+            return
         super().onAction(action)
         if action_id in (ACTION_MOVE_UP, ACTION_MOVE_DOWN) and self._focus() == RAIL:
             self._later("rail", RAIL_DELAY, self._rail_rested)
@@ -479,6 +484,8 @@ class YouTube(xbmcgui.WindowXML):
                 self._choose_section(commit=True)
             elif control_id == ACTION:
                 self._act()
+            elif control_id in KIND_BUTTONS:
+                self._choose_kind(KIND_BUTTONS[control_id])
         except Exception as e:                   # never let a click kill the window
             ui.log(f"click {control_id} failed: {e!r}", xbmc.LOGERROR)
 
@@ -520,7 +527,7 @@ class YouTube(xbmcgui.WindowXML):
             if not same:
                 self.stack = []
                 self.state = saved.remember_section(self.state, key)
-            view = data.section_view(key, self.routes, self.state["query"])
+            view = data.section_view(key, self.routes, self.state["query"], self.state["kind"])
         if same and self.mode == data.DATA:
             if commit:
                 self._focus_content()
@@ -624,7 +631,43 @@ class YouTube(xbmcgui.WindowXML):
             self.state = saved.record_query(self.state, text)
         if not self.demo:
             saved.save_state(files.state_path(), self.state)
-        self._navigate(data.section_view(data.SEARCH, query=text), focus=True)
+        self._navigate(data.section_view(data.SEARCH, query=text, kind=self.state["kind"]), focus=True)
+
+    def _searching(self):
+        """Whether the search is what the window shows (its row of choices is there); a folder opened from it is not."""
+        return self.view is not None and self.view.key == data.SEARCH
+
+    def _kind_move(self, action_id) -> bool:
+        """Up from the first row of the results (or from the card's button) goes to the chosen type, Down from a type goes
+        back to the results; the rest of the row is moved by the skin. True when the key was taken here."""
+        focus = self._focus()
+        if action_id == ACTION_MOVE_UP and self._searching() and (focus == ACTION or focus == GRID and self._first_row()):
+            self._focus_on(next(button for button, kind in KIND_BUTTONS.items() if kind == self.state["kind"]))
+            return True
+        if action_id == ACTION_MOVE_DOWN and focus in KIND_BUTTONS:
+            self._focus_content()
+            return True
+        return False
+
+    def _first_row(self):
+        try:
+            return 0 <= self.getControl(GRID).getSelectedPosition() < COLUMNS
+        except RuntimeError:
+            return False
+
+    def _choose_kind(self, kind):
+        """OK on a type: the current query is asked again for it. The focus stays on the row, so that the types can be tried
+        one after another; Down goes to the results. The same type again only goes to the results."""
+        with self._lock:
+            if not self._searching():
+                return
+            changed = kind != self.state["kind"]
+            self.state = saved.remember_kind(self.state, kind)
+            view = data.section_view(data.SEARCH, query=self.state["query"], kind=kind)
+        if changed:
+            self._navigate(view)
+        else:
+            self._focus_content()
 
     def _act(self):
         """The card's button: sign in, search, or ask again."""

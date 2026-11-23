@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- YouTube app (resources/lib/youtube_app.py), laid out like YouTube on a TV: a black page (#0F0F0F), the section rail on
      the left, rounded 16:9 thumbnails with the title in two lines and one grey line under each, no boxes.
-     Controls: 100 section rail, 200 video grid, 300 the card's button.
+     Controls: 100 section rail, 200 video grid, 300 the card's button, 401-404 what a search is for (Videos, Channels,
+     Playlists, Live).
      Window properties: mode (data | signin | needkey | empty | loading | error | unavailable | prompt), demo, signed (1 | 0 | none),
+     search (1 while the search is shown: the row 401-404 is), kind (video | channel | playlist | live: the chosen one),
      avatar (the letter in the circle, none: no circle), avatar_color, title (the section's name), notice (the line
      at the bottom while the next page loads), msg_title, msg_text, action (the button's label; none: no button).
      The "Set up your Google key" card (mode needkey) also reads key_qr (the phone page's QR picture, none: no QR),
@@ -102,6 +104,111 @@
             <textcolor>FFFFFFFF</textcolor>
             <aligny>center</aligny>
             <label>$INFO[Window.Property(title)]</label>
+        </control>
+
+        <!-- what a search is for: Videos, Channels, Playlists, Live (400 + n). Shown with the search only (window property
+             search); the chosen one (window property kind) has a dim pill like the rail's section, the focused one a white
+             pill with black text. Up from the first row of the results or from the card's button comes here, Down goes back
+             (both are done in Python); Left of the first one is the rail. 56 px high at the top of the page, between the
+             title and the DEMO mark: x 560, 776, 992, 1208, each 200 wide. -->
+        <control type="group">
+            <visible>!String.IsEmpty(Window.Property(search))</visible>
+            <control type="image">
+                <left>560</left>
+                <top>28</top>
+                <width>200</width>
+                <height>56</height>
+                <texture border="28">youtube-pill.png</texture>
+                <colordiffuse>26FFFFFF</colordiffuse>
+                <visible>String.IsEqual(Window.Property(kind),video)</visible>
+            </control>
+            <control type="button" id="401">
+                <left>560</left>
+                <top>28</top>
+                <width>200</width>
+                <height>56</height>
+                <label>Videos</label>
+                <font>Reg25</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <focusedcolor>FF000000</focusedcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <onleft>100</onleft>
+                <onright>402</onright>
+                <texturefocus border="28" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
+            </control>
+            <control type="image">
+                <left>776</left>
+                <top>28</top>
+                <width>200</width>
+                <height>56</height>
+                <texture border="28">youtube-pill.png</texture>
+                <colordiffuse>26FFFFFF</colordiffuse>
+                <visible>String.IsEqual(Window.Property(kind),channel)</visible>
+            </control>
+            <control type="button" id="402">
+                <left>776</left>
+                <top>28</top>
+                <width>200</width>
+                <height>56</height>
+                <label>Channels</label>
+                <font>Reg25</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <focusedcolor>FF000000</focusedcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <onleft>401</onleft>
+                <onright>403</onright>
+                <texturefocus border="28" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
+            </control>
+            <control type="image">
+                <left>992</left>
+                <top>28</top>
+                <width>200</width>
+                <height>56</height>
+                <texture border="28">youtube-pill.png</texture>
+                <colordiffuse>26FFFFFF</colordiffuse>
+                <visible>String.IsEqual(Window.Property(kind),playlist)</visible>
+            </control>
+            <control type="button" id="403">
+                <left>992</left>
+                <top>28</top>
+                <width>200</width>
+                <height>56</height>
+                <label>Playlists</label>
+                <font>Reg25</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <focusedcolor>FF000000</focusedcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <onleft>402</onleft>
+                <onright>404</onright>
+                <texturefocus border="28" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
+            </control>
+            <control type="image">
+                <left>1208</left>
+                <top>28</top>
+                <width>200</width>
+                <height>56</height>
+                <texture border="28">youtube-pill.png</texture>
+                <colordiffuse>26FFFFFF</colordiffuse>
+                <visible>String.IsEqual(Window.Property(kind),live)</visible>
+            </control>
+            <control type="button" id="404">
+                <left>1208</left>
+                <top>28</top>
+                <width>200</width>
+                <height>56</height>
+                <label>Live</label>
+                <font>Reg25</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <focusedcolor>FF000000</focusedcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <onleft>403</onleft>
+                <onright>404</onright>
+                <texturefocus border="28" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
+            </control>
         </control>
 
         <!-- the sections -->

@@ -12,7 +12,7 @@ import os
 import re
 import time
 from typing import NamedTuple
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote_plus, urlsplit
 
 from resources.lib import youtube_data as data
 
@@ -76,6 +76,12 @@ NEXT_PAGE = data.ROOT + "special/recommendations?page=2"
 BY_ROUTE = {urlsplit(route).path: key for key, route in ROUTES.items()}
 SEARCH_PATH = urlsplit(data.SEARCH_ROUTE).path
 PLAYLIST_PATH = re.compile(r"/playlist/demo([0-9]{1,3})/")
+CHANNEL_PATH = re.compile(r"/channel/demo([0-9]{1,3})/")
+# The add-on's own tiles at the top of a search, as it lists them: they switch the type (the screen has its own choice).
+SWITCH_TILES = (("Videos", "&search_type=video"), ("Channels", "&search_type=channel"),
+                ("Playlists", "&search_type=playlist"), ("Live broadcast", "&search_type=video&event_type=live"),
+                ("Upcoming", "&search_type=video&event_type=upcoming"),
+                ("Completed", "&search_type=video&event_type=completed"))
 SEARCH_FILLERS = ["the full story", "start to finish", "for beginners", "what nobody tells you", "a calm walkthrough",
                   "behind the scenes", "ten things to know", "in one take", "the slow version", "questions answered"]
 
@@ -147,16 +153,40 @@ def _main_page():
     return _answer(tiles + [_file(data.ROOT + "kodion/search/input/", "Search", directory=True)])
 
 
-def _search(query, thumb_dir, now):
-    words = query.casefold().split()
-    found = [n for n, (title, channel, *_) in enumerate(VIDEOS)
-             if all(w in f"{title} {data.clean_text(CHANNELS[channel])}".casefold() for w in words)]
+def _switch_tiles(query):
+    """The tiles the add-on puts first in a search to switch its type; the screen drops them (data.kind_of)."""
+    base = data.SEARCH_ROUTE.format(q=quote_plus(query))
+    return [_file(base + extra, f"[B]{name}[/B]", directory=True) for name, extra in SWITCH_TILES]
+
+
+def _matching(words, texts):
+    """The numbers of the texts that hold every word."""
+    return [n for n, text in enumerate(texts) if all(w in text.casefold() for w in words)]
+
+
+def _search(query, thumb_dir, now, kind=data.DEFAULT_KIND):
+    """The answer to a search for `kind`: the add-on's type tiles first, then what was found. Videos invent results when
+    nothing matches; the other types answer an empty list, which the screen says as "No channels found" and the like."""
+    words, tiles = query.casefold().split(), _switch_tiles(query)
+    if kind == data.KIND_CHANNEL:
+        found = _matching(words, [data.clean_text(name) for name in CHANNELS])
+        return _answer(tiles + [_file(data.ROOT + f"channel/demo{n}/", data.clean_text(CHANNELS[n]), _thumb(n, thumb_dir),
+                                      directory=True) for n in found])
+    if kind == data.KIND_PLAYLIST:
+        found = _matching(words, [name for name, _, _ in PLAYLISTS])
+        return _answer(tiles + [_file(data.ROOT + f"playlist/demo{n}/", PLAYLISTS[n][0], _thumb(n, thumb_dir),
+                                      channel=CHANNELS[n % len(CHANNELS)], directory=True, videos=PLAYLISTS[n][2])
+                                for n in found])
+    texts = [f"{title} {data.clean_text(CHANNELS[channel])}" for title, channel, *_ in VIDEOS]
+    if kind == data.KIND_LIVE:
+        return _answer(tiles + [_video(LIVE, thumb_dir, now)] * (LIVE in _matching(words, texts)))
+    found = _matching(words, texts)
     if found:
-        return _answer([_video(n, thumb_dir, now) for n in found])
+        return _answer(tiles + [_video(n, thumb_dir, now) for n in found])
     shown = query[:40]
-    return _answer([_file(data.ROOT + f"play/?video_id=demo-q{i:02d}", f"{shown}: {filler}", _thumb(i, thumb_dir),
-                          600 + 137 * i, data.clean_text(CHANNELS[i % len(CHANNELS)]), views=2500 * (i + 1) ** 2,
-                          dateadded=_stamp(now, 2 + 9 * i)) for i, filler in enumerate(SEARCH_FILLERS)])
+    return _answer(tiles + [_file(data.ROOT + f"play/?video_id=demo-q{i:02d}", f"{shown}: {filler}", _thumb(i, thumb_dir),
+                                  600 + 137 * i, data.clean_text(CHANNELS[i % len(CHANNELS)]), views=2500 * (i + 1) ** 2,
+                                  dateadded=_stamp(now, 2 + 9 * i)) for i, filler in enumerate(SEARCH_FILLERS)])
 
 
 def reply(route, scenario="", thumb_dir="", now=None) -> dict:
@@ -187,8 +217,11 @@ def reply(route, scenario="", thumb_dir="", now=None) -> dict:
             files.append(_file(NEXT_PAGE, "Next Page", directory=True))
         return _answer(files)
     if parts.path == SEARCH_PATH:
-        return _search(" ".join(query.get("q", [""])), thumb_dir, now)
+        return _search(" ".join(query.get("q", [""])), thumb_dir, now, data.route_kind(route))
     playlist = PLAYLIST_PATH.fullmatch(parts.path)
     if playlist and int(playlist.group(1)) < len(PLAYLISTS):
         return _answer([_video(n, thumb_dir, now) for n in PLAYLISTS[int(playlist.group(1))][1]])
+    channel = CHANNEL_PATH.fullmatch(parts.path)
+    if channel and int(channel.group(1)) < len(CHANNELS):
+        return _answer([_video(n, thumb_dir, now) for n, video in enumerate(VIDEOS) if video[1] == int(channel.group(1))])
     return _answer([])

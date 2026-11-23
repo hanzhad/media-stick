@@ -189,6 +189,8 @@ from resources.lib import (accounts, apps, profiles, store, youtube_app, youtube
 R = D.ROOT
 REAL_KEYS_POLL = youtube_app.KEYS_POLL            # the window tests make it short
 RAIL, GRID, ACTION = youtube_app.RAIL, youtube_app.GRID, youtube_app.ACTION
+KIND_IDS = tuple(youtube_app.KIND_BUTTONS)                         # 401..404: Videos, Channels, Playlists, Live
+UP, DOWN = youtube_app.ACTION_MOVE_UP, youtube_app.ACTION_MOVE_DOWN
 SEARCH_AT = D.SECTION_KEYS.index(D.SEARCH)
 LATER = R + "special/playlist/WL/?category_label=Watch+Later"     # not the fallback path: the main page decides
 INVALID = {"id": 1, "jsonrpc": "2.0", "error": {"code": -32602, "message": "Invalid params."}}    # what the add-on says to a path it does not serve
@@ -410,6 +412,65 @@ class Parser(unittest.TestCase):
         folder_view = D.folder_view(D.parse_entry(folder(R + "playlist/P/", "Mix")))
         self.assertEqual(D.crumb([(D.section_view("lists"), 0)], folder_view), "Playlists › Mix")
         self.assertEqual(D.crumb([], D.section_view("rec")), "Recommendations")
+
+    def test_the_search_route_asks_for_the_type(self):
+        base = R + "kodion/search/query/?q=cats"
+        self.assertEqual(D.search_route("cats"), base)                                       # Videos: the add-on's default
+        self.assertEqual(D.search_route("cats", D.KIND_VIDEO), base)
+        self.assertEqual(D.search_route("cats", D.KIND_CHANNEL), base + "&search_type=channel")
+        self.assertEqual(D.search_route("cats", D.KIND_PLAYLIST), base + "&search_type=playlist")
+        self.assertEqual(D.search_route("cats", D.KIND_LIVE), base + "&search_type=video&event_type=live")
+        self.assertEqual(D.search_route("cats", "nonsense"), base)
+        self.assertEqual([D.search_route("  ", kind) for kind in D.KIND_KEYS], [""] * 4)     # no words, no route
+        self.assertEqual(D.search_route("a b&c", D.KIND_CHANNEL), R + "kodion/search/query/?q=a+b%26c&search_type=channel")
+        self.assertEqual([k.name for k in D.KINDS], ["Videos", "Channels", "Playlists", "Live"])
+        self.assertEqual(D.DEFAULT_KIND, D.KINDS[0].key)
+        for kind in D.KIND_KEYS:                                                              # and the route says it back
+            self.assertEqual(D.route_kind(D.search_route("cats", kind)), kind)
+        self.assertEqual(D.route_kind(R + "kodion/search/query/?q=x&search_type=video&event_type=upcoming"), D.KIND_VIDEO)
+
+    def test_a_search_view_has_a_type_and_the_old_calls_still_work(self):
+        view = D.section_view(D.SEARCH, query="owls", kind=D.KIND_PLAYLIST)
+        self.assertEqual((view.key, view.kind, view.route, view.title),
+                         (D.SEARCH, D.KIND_PLAYLIST, R + "kodion/search/query/?q=owls&search_type=playlist", "Results for “owls”"))
+        self.assertEqual(D.section_view(D.SEARCH, None, "owls").kind, D.KIND_VIDEO)          # the old positional call: Videos
+        self.assertEqual(D.section_view(D.SEARCH, None, "owls", D.KIND_LIVE).kind, D.KIND_LIVE)
+        self.assertEqual(D.section_view(D.SEARCH, kind=D.KIND_LIVE).route, "")               # nothing typed yet: no route
+        self.assertEqual(D.section_view(D.SEARCH, query="x", kind="nonsense").kind, D.KIND_VIDEO)
+        self.assertEqual(D.section_view("rec", kind=D.KIND_LIVE).kind, "")                   # only a search has a type
+        self.assertEqual(D.View("folder", "T", "plugin://x", False).kind, "")
+
+    def test_the_add_ons_type_switch_tiles_are_no_cards_but_the_real_results_and_the_next_page_stay(self):
+        query = R + "kodion/search/query/?q=cats"
+        tiles = [folder(query + extra, name) for name, extra in (
+            ("Videos", "&search_type=video"), ("Channels", "&search_type=channel"), ("Playlists", "&search_type=playlist"),
+            ("Live broadcast", "&search_type=video&event_type=live"), ("Upcoming", "&search_type=video&event_type=upcoming"),
+            ("Completed", "&search_type=video&event_type=completed"))]
+        more = query + "&search_type=channel&page_token=CAoQAA"
+        listing = D.parse_reply(answer(*tiles, vid(1, "A cat"), folder(R + "channel/UC1/", "Cat Channel"),
+                                       folder(R + "playlist/PL1/", "Cat Mix"), folder(more, "Next Page")))
+        self.assertEqual([(e.kind, e.title) for e in listing.entries],
+                         [(D.VIDEO, "A cat"), (D.FOLDER, "Cat Channel"), (D.FOLDER, "Cat Mix")])
+        self.assertEqual((listing.more, listing.skipped, listing.error), (more, 6, ""))
+        only = D.parse_reply(answer(*tiles))                                                  # nothing but the tiles: empty
+        self.assertEqual((only.entries, only.skipped), ((), 6))
+        self.assertEqual(D.mode_for(only, True), D.EMPTY)
+        for path in (query + "&search_type=channel", query + "&event_type=live", R + "kodion/search/query?q=x&search_type=playlist"):
+            self.assertEqual(D.parse_reply(answer(folder(path, "T"))).entries, (), path)
+        for path in (query, R + "kodion/search/history/", R + "channel/UC1/?search_type=video", R + "playlist/PL1/?event_type=live"):
+            self.assertEqual([e.kind for e in D.parse_reply(answer(folder(path, "T"))).entries], [D.FOLDER], path)
+        file_tile = {**folder(query + "&search_type=channel", "T"), "filetype": "file"}       # not a directory: no card anyway
+        self.assertEqual(D.parse_reply(answer(file_tile)).entries, ())
+
+    def test_an_empty_search_says_what_was_searched(self):
+        for kind, title in ((D.KIND_VIDEO, "No videos found"), (D.KIND_CHANNEL, "No channels found"),
+                            (D.KIND_PLAYLIST, "No playlists found"), (D.KIND_LIVE, "No live broadcasts found")):
+            message = D.message(D.EMPTY, D.section_view(D.SEARCH, query="x", kind=kind), True)
+            self.assertEqual((message.title, message.action, message.text), (title, "New search", D.EMPTY_TEXT[D.SEARCH]), kind)
+        legacy = D.message(D.EMPTY, D.View(D.SEARCH, "Search", "", False), True)              # a search view with no type: as before
+        self.assertEqual(legacy.title, "No results")
+        self.assertEqual(D.message(D.EMPTY, D.section_view("history"), True).title, "Nothing here")
+        self.assertEqual(D.message(D.ERROR, D.section_view(D.SEARCH, query="x", kind=D.KIND_LIVE)).title, "YouTube did not answer")
 
     def test_which_card_and_what_it_says(self):
         found, empty, failed = D.parse_reply(answer(vid(1))), D.NO_LISTING, D.Listing((), "", "boom")
@@ -727,18 +788,35 @@ class CardTexts(unittest.TestCase):
 
 class State(unittest.TestCase):
     def test_normalize_save_load(self):
-        self.assertEqual(S.normalize_state(None), {"section": "rec", "query": ""})
-        self.assertEqual(S.normalize_state({"section": "x", "query": None}), {"section": "rec", "query": ""})
+        blank = {"section": "rec", "query": "", "kind": "video"}
+        self.assertEqual(S.normalize_state(None), blank)
+        self.assertEqual(S.normalize_state({"section": "x", "query": None}), blank)
         state = S.record_query(S.normalize_state({}), "  cats ")
-        self.assertEqual(state, {"section": "search", "query": "cats"})
-        self.assertEqual(S.remember_section(state, "later"), {"section": "later", "query": "cats"})
+        self.assertEqual(state, {"section": "search", "query": "cats", "kind": "video"})
+        self.assertEqual(S.remember_section(state, "later"), {"section": "later", "query": "cats", "kind": "video"})
         path = os.path.join(TMP, "state", "youtube.json")
         self.assertTrue(S.save_state(path, state))
         self.assertEqual(S.load_state(path), state)
         put(path, "{not json")
-        self.assertEqual(S.load_state(path), {"section": "rec", "query": ""})
-        self.assertEqual(S.load_state(os.path.join(TMP, "none.json")), {"section": "rec", "query": ""})
+        self.assertEqual(S.load_state(path), blank)
+        self.assertEqual(S.load_state(os.path.join(TMP, "none.json")), blank)
         self.assertEqual(os.listdir(os.path.dirname(path)), ["youtube.json"])
+
+    def test_the_type_of_a_search_is_kept_with_the_search_but_not_in_the_file(self):
+        state = S.normalize_state({})
+        self.assertEqual(state["kind"], D.KIND_VIDEO)                                   # Videos unless chosen otherwise
+        chosen = S.remember_kind(state, D.KIND_CHANNEL)
+        self.assertEqual(chosen["kind"], D.KIND_CHANNEL)
+        self.assertEqual(S.record_query(chosen, "owls")["kind"], D.KIND_CHANNEL)         # a new search keeps the type
+        self.assertEqual(S.remember_section(chosen, "later")["kind"], D.KIND_CHANNEL)
+        self.assertEqual(S.remember_kind(chosen, "nonsense")["kind"], D.KIND_VIDEO)
+        self.assertEqual(S.normalize_state({"kind": ["video"]})["kind"], D.KIND_VIDEO)
+        path = os.path.join(TMP, "state", "kind.json")
+        self.assertTrue(S.save_state(path, S.record_query(chosen, "owls")))
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"section": "search", "query": "owls"})        # only the query is saved
+        put(path, json.dumps({"section": "search", "query": "owls", "kind": "live"}))       # a file with it anyway: ignored
+        self.assertEqual(S.load_state(path), {"section": "search", "query": "owls", "kind": "video"})
 
     def test_a_save_that_cannot_happen_returns_false(self):
         blocked = os.path.join(TMP, "blocked")
@@ -820,6 +898,26 @@ class Demo(unittest.TestCase):
         invented = self.listing(route("something else"))
         self.assertEqual(len(invented.entries), len(demo.SEARCH_FILLERS))
         self.assertTrue(all(e.title.startswith("something else: ") for e in invented.entries))
+
+    def test_the_demo_answers_each_type_of_search_and_starts_it_with_the_add_ons_switch_tiles(self):
+        for kind in D.KIND_KEYS:
+            raw = demo.reply(D.search_route("stage", kind), "", "/art", self.NOW)["result"]["files"]
+            self.assertEqual([f["label"] for f in raw[:6]], [f"[B]{n}[/B]" for n in
+                                                              ("Videos", "Channels", "Playlists", "Live broadcast", "Upcoming", "Completed")])
+            self.assertEqual(self.listing(D.search_route("stage", kind)).skipped, 6, kind)     # all six are dropped
+        channels = self.listing(D.search_route("stage", D.KIND_CHANNEL)).entries
+        self.assertEqual([(e.kind, e.title) for e in channels], [(D.FOLDER, "Stage Notes")])
+        inside = self.listing(channels[0].path)
+        self.assertTrue(inside.entries and all(e.kind == D.VIDEO for e in inside.entries))
+        self.assertEqual([e.title for e in self.listing(D.search_route("e", D.KIND_CHANNEL)).entries],
+                         ["Northern Workshop", "Pixel Kitchen", "Stage Notes", "Garden Hour"])
+        lists = self.listing(D.search_route("space", D.KIND_PLAYLIST)).entries
+        self.assertEqual([(e.kind, e.title, e.count) for e in lists], [(D.FOLDER, "Space and stars", 5)])
+        self.assertTrue(self.listing(lists[0].path).entries)
+        live = self.listing(D.search_route("jazz", D.KIND_LIVE)).entries
+        self.assertEqual([(e.kind, e.live) for e in live], [(D.VIDEO, True)])
+        for kind in (D.KIND_CHANNEL, D.KIND_PLAYLIST, D.KIND_LIVE):                           # nothing matches: an empty list
+            self.assertEqual(self.listing(D.search_route("zzz qqq", kind)).entries, (), kind)
 
     def test_scenarios(self):
         self.assertEqual(tuple(demo.situation(s) for s in ("", "signin", "needkey", "unavailable")),
@@ -1594,7 +1692,7 @@ class Searching(WindowCase):
         self.assertEqual((window.getProperty("title"), window.focus), ("Results for “cats and dogs”", GRID))
         self.assertEqual(window.controls[RAIL].selected, SEARCH_AT)
         self.assertEqual([i.props["active"] for i in window.controls[RAIL].items][-1], "1")
-        self.assertEqual(S.load_state(files.state_path()), {"section": "search", "query": "cats and dogs"})
+        self.assertEqual(S.load_state(files.state_path()), {"section": "search", "query": "cats and dogs", "kind": "video"})
         self.assertEqual(Fake.rpc, [])
 
     def test_typing_nothing_changes_nothing_and_the_last_words_are_offered_again(self):
@@ -1630,7 +1728,7 @@ class Searching(WindowCase):
         window = self.open()
         self.go(window, D.SEARCH)
         self.assertTrue(wait_for(lambda: window.mode == D.EMPTY))
-        self.assertEqual((window.getProperty("msg_title"), window.getProperty("action")), ("No results", "New search"))
+        self.assertEqual((window.getProperty("msg_title"), window.getProperty("action")), ("No videos found", "New search"))
         Fake.typed.append("zzz2")
         window.onClick(ACTION)
         self.assertEqual(Fake.asked[1], "zzz")
@@ -1643,6 +1741,191 @@ class Searching(WindowCase):
         empty = self.open(wait=False, state={"section": "search", "query": ""})
         self.assertEqual(empty.mode, D.PROMPT)
         self.assertEqual(empty.focus, ACTION)
+
+
+class SearchKinds(WindowCase):
+    """What a search is for: the row 401-404 above the results (Videos, Channels, Playlists, Live)."""
+    VIDEOS, CHANNELS, PLAYLISTS, LIVE = KIND_IDS
+
+    def answer_for(self, query, kind, *entries):
+        self.site.routes[D.search_route(query, kind)] = answer(*entries)
+
+    def searched(self, text="cats", **state):
+        """A window that has searched for `text` (typed on the rail's Search)."""
+        self.answer_for(text, D.KIND_VIDEO, vid(1, "Cat video"))
+        window = self.open(**state)
+        Fake.typed.append(text)
+        self.go(window, D.SEARCH)
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Cat video"]))
+        return window
+
+    def pick(self, window, button, then):
+        window.focus = button
+        window.onClick(button)
+        self.assertTrue(wait_for(then), (button, self.shown(window), window.mode))
+
+    def test_a_search_is_for_videos_until_another_type_is_picked_and_the_row_shows_only_with_the_search(self):
+        window = self.open()
+        self.assertEqual((window.getProperty("search"), window.getProperty("kind")), ("", ""))       # Recommendations: no row
+        Fake.typed.append("cats")
+        self.answer_for("cats", D.KIND_VIDEO, vid(1, "Cat video"))
+        self.go(window, D.SEARCH)
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Cat video"]))
+        self.assertEqual((window.getProperty("search"), window.getProperty("kind")), ("1", "video"))
+        self.assertEqual(self.site.asked()[-1], R + "kodion/search/query/?q=cats")                  # nothing added for Videos
+        self.go(window, "trend")
+        self.assertEqual((window.getProperty("search"), window.getProperty("kind")), ("", ""))
+        self.assertEqual(window.state["kind"], D.KIND_VIDEO)
+
+    def test_the_prompt_before_anything_is_typed_has_the_row_too(self):
+        window = self.open(wait=False, state={"section": "search", "query": ""})
+        self.assertEqual((window.mode, window.getProperty("search"), window.getProperty("kind")), (D.PROMPT, "1", "video"))
+        window.focus = ACTION
+        self.press(window, UP)
+        self.assertEqual(window.focus, self.VIDEOS)
+
+    def test_picking_a_type_asks_for_the_same_words_again_with_that_type_and_keeps_the_focus_on_the_row(self):
+        window = self.searched("cats")
+        self.answer_for("cats", D.KIND_CHANNEL, folder(R + "channel/UC1/", "Cat Channel", art={"thumb": "x"}))
+        self.answer_for("cats", D.KIND_LIVE, vid(2, "Cat live", seconds=0, live=True))
+        asked = len(Fake.typed)
+        self.pick(window, self.CHANNELS, lambda: self.shown(window) == ["Cat Channel"])
+        self.assertEqual(self.site.asked()[-1], R + "kodion/search/query/?q=cats&search_type=channel")
+        self.assertEqual((window.getProperty("kind"), window.getProperty("title"), window.focus),
+                         ("channel", "Results for “cats”", self.CHANNELS))
+        self.assertEqual((window.state["kind"], window.state["query"], window.stack), (D.KIND_CHANNEL, "cats", []))
+        self.assertEqual(window.entries[0].kind, D.FOLDER)
+        self.pick(window, self.LIVE, lambda: self.shown(window) == ["Cat live"])
+        self.assertEqual(self.site.asked()[-1], R + "kodion/search/query/?q=cats&search_type=video&event_type=live")
+        before = len(self.site.calls)
+        self.pick(window, self.VIDEOS, lambda: self.shown(window) == ["Cat video"])                 # seen before: from the cache
+        self.assertEqual((len(self.site.calls), window.getProperty("kind")), (before, "video"))
+        self.assertEqual(len(Fake.typed), asked)                                                     # no dialog: the same words
+        self.press(window, DOWN)
+        self.assertEqual(window.focus, GRID)
+
+    def test_the_same_type_again_asks_nothing_and_goes_to_the_results(self):
+        window = self.searched("cats")
+        before = len(self.site.calls)
+        window.focus = self.VIDEOS
+        window.onClick(self.VIDEOS)
+        self.assertEqual((len(self.site.calls), window.focus, window.loads), (before, GRID, 2))
+
+    def test_a_new_search_keeps_the_type_chosen(self):
+        window = self.searched("cats")
+        self.pick(window, self.PLAYLISTS, lambda: window.mode == D.EMPTY)
+        self.answer_for("dogs", D.KIND_PLAYLIST, folder(R + "playlist/PL9/", "Dog mix"))
+        Fake.typed.append("dogs")
+        self.go(window, D.SEARCH)
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Dog mix"]))
+        self.assertEqual(self.site.asked()[-1], R + "kodion/search/query/?q=dogs&search_type=playlist")
+        self.assertEqual((window.getProperty("kind"), window.state["kind"], window.state["query"]), ("playlist", "playlist", "dogs"))
+
+    def test_a_type_picked_with_no_words_typed_only_changes_the_choice(self):
+        window = self.open(wait=False, state={"section": "search", "query": ""})
+        window.focus = self.LIVE
+        window.onClick(self.LIVE)
+        self.assertEqual((window.mode, window.getProperty("kind"), window.state["kind"]), (D.PROMPT, "live", D.KIND_LIVE))
+        self.assertEqual(self.site.calls, [])
+        self.answer_for("owls", D.KIND_LIVE, vid(3, "Owls live"))
+        Fake.typed.append("owls")
+        window.focus = ACTION
+        window.onClick(ACTION)
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Owls live"]))
+
+    def test_the_type_is_not_kept_for_the_next_launch_only_the_words(self):
+        window = self.searched("cats")
+        self.pick(window, self.CHANNELS, lambda: window.mode == D.EMPTY)
+        window.stop()
+        with open(files.state_path(), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"section": "search", "query": "cats"})
+        self.answer_for("cats", D.KIND_VIDEO, vid(1, "Cat video"))
+        again = self.open(state={"section": "search", "query": "cats", "kind": "channel"})
+        self.assertEqual((again.getProperty("kind"), again.state["kind"], self.shown(again)), ("video", "video", ["Cat video"]))
+        self.assertEqual(self.site.asked()[-1], R + "kodion/search/query/?q=cats")
+
+    def test_the_add_ons_switch_tiles_are_not_in_the_grid_and_channels_open_like_before(self):
+        tiles = [folder(R + "kodion/search/query/?q=cats" + extra, name) for name, extra in (
+            ("Videos", "&search_type=video"), ("Channels", "&search_type=channel"), ("Playlists", "&search_type=playlist"),
+            ("Live broadcast", "&search_type=video&event_type=live"), ("Upcoming", "&search_type=video&event_type=upcoming"),
+            ("Completed", "&search_type=video&event_type=completed"))]
+        self.answer_for("cats", D.KIND_VIDEO, *tiles, vid(1, "Cat video"))
+        self.answer_for("cats", D.KIND_CHANNEL, *tiles, folder(R + "channel/UC1/", "Cat Channel"))
+        self.site.routes[R + "channel/UC1/"] = answer(vid(7, "Inside the channel"))
+        window = self.open()
+        Fake.typed.append("cats")
+        self.go(window, D.SEARCH)
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Cat video"]))                      # starts with the real result
+        self.pick(window, self.CHANNELS, lambda: self.shown(window) == ["Cat Channel"])
+        window.focus = GRID
+        window.onClick(GRID)
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Inside the channel"]))
+        self.assertEqual((window.getProperty("search"), window.getProperty("title")), ("", "Results for “cats” › Cat Channel"))
+        self.press(window, 92)                                                                        # Back: the stack as before
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Cat Channel"]))
+        self.assertEqual((window.getProperty("search"), window.getProperty("kind"), window.stack, window.closed),
+                         ("1", "channel", [], False))
+        self.press(window, 92)
+        self.assertTrue(window.closed)
+
+    def test_an_empty_answer_says_what_was_searched(self):
+        window = self.searched("cats")
+        for button, title in ((self.CHANNELS, "No channels found"), (self.PLAYLISTS, "No playlists found"),
+                              (self.LIVE, "No live broadcasts found"), (self.VIDEOS, "")):
+            if title:
+                self.pick(window, button, lambda: window.getProperty("msg_title") == title)
+                self.assertEqual((window.mode, window.getProperty("action")), (D.EMPTY, "New search"))
+                self.assertEqual(window.focus, button)                                                # the row can be used at once
+            else:
+                self.pick(window, button, lambda: window.mode == D.DATA)
+
+    def test_up_goes_to_the_row_from_the_first_row_and_from_the_card_and_down_comes_back(self):
+        self.answer_for("cats", D.KIND_VIDEO, *[vid(n, f"Cat {n}") for n in range(1, 9)])
+        window = self.open()
+        Fake.typed.append("cats")
+        self.go(window, D.SEARCH)
+        self.assertTrue(wait_for(lambda: len(self.shown(window)) == 8))
+        window.focus = GRID
+        window.controls[GRID].selected = 3                                                            # the first row, any column
+        self.press(window, UP)
+        self.assertEqual(window.focus, self.VIDEOS)
+        self.press(window, DOWN)
+        self.assertEqual((window.focus, window.controls[GRID].selected), (GRID, 3))
+        window.focus, window.controls[GRID].selected = GRID, 4                                       # the second row: Up is the grid's own
+        self.press(window, UP)
+        self.assertEqual(window.focus, GRID)
+        self.pick(window, self.PLAYLISTS, lambda: window.mode == D.EMPTY)
+        window.focus = ACTION
+        self.press(window, UP)
+        self.assertEqual(window.focus, self.PLAYLISTS)                                                # the chosen one gets the focus
+        self.press(window, DOWN)
+        self.assertEqual(window.focus, ACTION)
+
+    def test_other_sections_and_folders_have_no_row_to_go_to(self):
+        self.rec(*[vid(n) for n in range(1, 9)])
+        window = self.open()
+        window.focus = GRID
+        window.controls[GRID].selected = 0
+        self.press(window, UP)
+        self.assertEqual(window.focus, GRID)
+        window.focus = ACTION
+        self.press(window, UP)
+        self.assertEqual(window.focus, ACTION)
+        window.focus = self.CHANNELS
+        window.onClick(self.CHANNELS)                                                                 # a stray click: nothing
+        self.assertEqual((window.getProperty("kind"), window.state["kind"]), ("", D.KIND_VIDEO))
+
+    def test_the_demo_switches_type_too(self):
+        for name in ("get_directory", "signed_in", "keys_configured", "profile_name", "profile_id", "read_step"):
+            getattr(files, name).side_effect = AssertionError("real data in the demo")
+        Fake.typed.append("stage")
+        window = self.open(demo=True)
+        self.go(window, D.SEARCH)
+        stage = sum(1 for video in demo.VIDEOS if demo.CHANNELS[video[1]] == "Stage Notes")
+        self.assertTrue(wait_for(lambda: len(self.shown(window)) == stage and window.mode == D.DATA))     # the videos of that channel
+        self.pick(window, self.CHANNELS, lambda: self.shown(window) == ["Stage Notes"])
+        self.pick(window, self.LIVE, lambda: self.shown(window) == ["Live: evening jazz from the old hall"])
+        self.assertEqual(window.getProperty("kind"), "live")
 
 
 class DemoWindow(WindowCase):
@@ -2033,7 +2316,7 @@ class Skin(unittest.TestCase):
         ids = [c.get("id") for c in root.iter("control") if c.get("id")]
         self.assertEqual(len(ids), len(set(ids)))
         types_ = {int(c.get("id")): c.get("type") for c in root.iter("control") if c.get("id", "").isdigit()}
-        self.assertEqual(types_, {RAIL: "list", GRID: "panel", ACTION: "button"})
+        self.assertEqual(types_, {RAIL: "list", GRID: "panel", ACTION: "button", **{c: "button" for c in KIND_IDS}})
 
     def test_every_window_and_item_property_the_xml_reads_is_set_by_the_python(self):
         text = "".join(ET.tostring(self.tree(), encoding="unicode").split())
@@ -2283,6 +2566,51 @@ class Skin(unittest.TestCase):
         rail = self.by_id(self.tree(), RAIL)
         self.assertGreaterEqual(int(rail.find("height").text), len(D.SECTIONS) * int(rail.find("itemlayout").get("height")))
         self.assertGreaterEqual(int(rail.findtext("width")), 260)                          # about 260 px, with the margins
+
+    def test_the_search_types_are_a_row_of_four_pills_at_the_top_shown_with_the_search_only(self):
+        root = self.tree()
+        header = root.find("controls")
+        buttons = [self.by_id(root, c) for c in KIND_IDS]
+        self.assertEqual([b.findtext("label") for b in buttons], [k.name for k in D.KINDS])      # the labels are the data's
+        search = {"mode": "data", "search": "1", "kind": "channel"}
+        self.assertEqual([c.get("id") for c in self.shown(header, window=search) if c.get("id") in map(str, KIND_IDS)],
+                         [str(c) for c in KIND_IDS])
+        for window in ({"mode": "data"}, {"mode": "data", "kind": "channel"}, {"mode": "empty", "action": "Search"}):
+            self.assertFalse([c for c in self.shown(header, window=window) if c.get("id") in map(str, KIND_IDS)], window)
+        for kind in D.KIND_KEYS:                                                                  # one pill marks the chosen type
+            marks = [c for c in self.shown(header, window={"search": "1", "kind": kind})
+                     if c.get("type") == "image" and c.findtext("colordiffuse") == "26FFFFFF"]
+            self.assertEqual(len(marks), 1, kind)
+            index = D.KIND_KEYS.index(kind)
+            self.assertEqual(marks[0].findtext("left"), buttons[index].findtext("left"), kind)
+        self.assertEqual(len([c for c in self.shown(header, window={"search": "1"}) if c.get("type") == "image"
+                              and c.findtext("colordiffuse") == "26FFFFFF"]), 0)                  # no type known: none marked
+        for a, b in zip(buttons, buttons[1:]):                                                    # in a row, apart, left to right
+            self.assertEqual(a.findtext("top"), b.findtext("top"))
+            self.assertGreaterEqual(int(b.findtext("left")), int(a.findtext("left")) + int(a.findtext("width")) + 8)
+        demo_mark = next(g for g in header.findall("control") if g.findtext("visible") == "!String.IsEmpty(Window.Property(demo))")
+        title = next(c for c in header.findall("control") if c.findtext("label") == "$INFO[Window.Property(title)]")
+        logo = next(c for c in header.findall("control") if c.findtext("label") == "YouTube")
+        last = buttons[-1]
+        self.assertLessEqual(int(last.findtext("left")) + int(last.findtext("width")), int(demo_mark.findtext("left")))
+        self.assertGreaterEqual(int(buttons[0].findtext("left")), int(logo.findtext("left")) + int(logo.findtext("width")))
+        for button in buttons:
+            self.assertLessEqual(int(button.findtext("top")) + int(button.findtext("height")), int(title.findtext("top")))   # above the title
+            self.assertEqual((button.findtext("textcolor"), button.findtext("focusedcolor")), ("FFFFFFFF", "FF000000"))
+            self.assertEqual(button.find("texturefocus").get("colordiffuse"), "FFFFFFFF")        # as the rail: white pill, black text
+            self.assertEqual(button.findtext("font"), "Reg25")
+        self.assertEqual([b.findtext("onleft") for b in buttons], ["100", "401", "402", "403"])    # Left of the first is the rail
+        self.assertEqual([b.findtext("onright") for b in buttons], ["402", "403", "404", "404"])
+        rail = self.by_id(root, RAIL)
+        self.assertLess(int(rail.findtext("left")) + int(rail.findtext("width")), int(buttons[0].findtext("left")))
+
+    def test_the_row_of_types_fits_the_pi_budget(self):
+        root = self.tree()
+        window = {"mode": "data", "demo": "1", "avatar": "A", "notice": "Loading…", "avatar_color": "FF3E8EF7", "search": "1", "kind": "live"}
+        self.assertEqual(self.pictures(root.find("controls"), window=window), 5, "mark, DEMO pill, avatar circle, loading pill, the chosen type")
+        plain = self.pictures(root.find("controls"), window={"mode": "data"})
+        self.assertEqual(plain, 1)
+        self.assertEqual(self.pictures(root.find("controls"), window={"mode": "data", "search": "1", "kind": "video"}), 2)
 
     def test_the_key_card_has_the_qr_the_step_block_and_room_for_russian(self):
         root = self.tree()

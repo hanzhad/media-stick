@@ -49,6 +49,24 @@ DATA, SIGNIN, NEEDKEY, EMPTY, LOADING, ERROR, PROMPT, UNAVAILABLE = (
 
 SEARCH, FOLDER_KEY = "search", "folder"          # the Search section; the key of a playlist or channel opened from a card
 MAX_QUERY = 80
+
+
+class SearchKind(NamedTuple):
+    key: str
+    name: str                    # the label of the choice above the results
+    params: Tuple[Tuple[str, str], ...]    # what the add-on's search route takes for it, after ?q=
+    noun: str                    # what an empty answer says was searched
+
+
+KIND_VIDEO, KIND_CHANNEL, KIND_PLAYLIST, KIND_LIVE = "video", "channel", "playlist", "live"
+KINDS = (SearchKind(KIND_VIDEO, "Videos", (), "videos"),             # the add-on's default: no extra parameter
+         SearchKind(KIND_CHANNEL, "Channels", (("search_type", "channel"),), "channels"),
+         SearchKind(KIND_PLAYLIST, "Playlists", (("search_type", "playlist"),), "playlists"),
+         SearchKind(KIND_LIVE, "Live", (("search_type", "video"), ("event_type", "live")), "live broadcasts"))
+KIND_KEYS = tuple(k.key for k in KINDS)
+DEFAULT_KIND = KIND_VIDEO
+SEARCH_QUERY_PATH = "/kodion/search/query"       # the add-on's search route; its own type-switch tiles are routes of it
+SWITCH_KEYS = {"search_type", "event_type"}      # the parameters that make a route of it a type switch, not a result
 MAX_ENTRIES = 200                                # per page: a page is a few dozen, this only bounds a runaway answer
 MAX_SECONDS = 7 * 86400                          # a duration above this is a data error
 CACHE_TTL, CACHE_SIZE = 300, 12                  # s a listing is shown again without asking; how many are kept
@@ -127,6 +145,7 @@ class View(NamedTuple):
     title: str
     route: str                   # "" for Search before anything is typed
     needs_login: bool
+    kind: str = ""               # what a search is for (one of KIND_KEYS); "" for a view that is no search
 
 
 class Message(NamedTuple):
@@ -290,10 +309,15 @@ def route_parts(path):
 
 
 def kind_of(raw, path) -> str:
-    """VIDEO for the add-on's play route, MORE for the next-page entry, FOLDER for any other directory, "" for the rest."""
+    """VIDEO for the add-on's play route, MORE for the next-page entry, FOLDER for any other directory, "" for the rest.
+    The add-on starts a search with its own tiles that switch the type (Videos, Channels, Playlists, Live broadcast,
+    Upcoming, Completed): routes of the search that carry search_type or event_type. The screen has its own choice of
+    type, so they are no cards (the next-page entry of a search carries the same parameters and stays MORE)."""
     route, keys = route_parts(path)
     if raw.get("filetype") == "directory":
-        return MORE if keys & NEXT_PAGE_KEYS else FOLDER
+        if keys & NEXT_PAGE_KEYS:
+            return MORE
+        return "" if route.rstrip("/").endswith(SEARCH_QUERY_PATH) and keys & SWITCH_KEYS else FOLDER
     return VIDEO if "/play/" in route or route.endswith("/play") else ""
 
 
@@ -378,17 +402,34 @@ def discover_routes(main_page) -> dict:
 
 # ---- the sections and what the window shows --------------------------------------------------
 
-def search_route(query) -> str:
+def search_kind(kind) -> SearchKind:
+    """The SearchKind for a key; an unknown one is the default (Videos)."""
+    return next((k for k in KINDS if k.key == kind), KINDS[0])
+
+
+def search_route(query, kind=DEFAULT_KIND) -> str:
+    """The add-on's search route for `query`, asking for what `kind` says (Videos adds nothing: it is the add-on's default)."""
     query = clean_query(query)
-    return SEARCH_ROUTE.format(q=quote_plus(query)) if query else ""
+    if not query:
+        return ""
+    extra = "".join(f"&{name}={value}" for name, value in search_kind(kind).params)
+    return SEARCH_ROUTE.format(q=quote_plus(query)) + extra
 
 
-def section_view(key, routes=None, query="") -> View:
+def route_kind(route) -> str:
+    """The kind a search route asks for (the reverse of search_route): the one whose parameters all stand in it, the
+    longest first (Live also has search_type=video); Videos when it names none."""
+    query = parse_qs(urlsplit(route).query)
+    found = [k for k in KINDS if k.params and all(query.get(name) == [value] for name, value in k.params)]
+    return max(found, key=lambda k: len(k.params)).key if found else DEFAULT_KIND
+
+
+def section_view(key, routes=None, query="", kind=DEFAULT_KIND) -> View:
     """The view of a section; Search without a query has no route yet (the window asks for one)."""
     section = next((s for s in SECTIONS if s.key == key), SECTIONS[0])
     if section.key == SEARCH:
-        query = clean_query(query)
-        return View(SEARCH, f"Results for “{query}”" if query else section.name, search_route(query), False)
+        query, kind = clean_query(query), search_kind(kind).key
+        return View(SEARCH, f"Results for “{query}”" if query else section.name, search_route(query, kind), False, kind)
     return View(section.key, section.name, (routes or {}).get(section.key) or section.route, section.needs_login)
 
 
@@ -472,6 +513,8 @@ def message(mode, view=None, keys=None, detail="", channel="") -> Message:
         text = EMPTY_TEXT.get(key, "Nothing here.")
         if keys is None:
             text += " If you expected videos, check the Google key. " + KEYS_HINT
+        if key == SEARCH and view.kind:          # say what was searched: "No channels found"
+            return Message(f"No {search_kind(view.kind).noun} found", text, "New search")
         return Message("No results" if key == SEARCH else "Nothing here", text, "New search" if key == SEARCH else "Try again")
     return Message("Loading…", "", "")
 
