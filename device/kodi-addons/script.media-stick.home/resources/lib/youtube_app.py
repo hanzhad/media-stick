@@ -33,6 +33,7 @@ LOADING_MORE = "Loading…"
 CHANNEL_RECHECK = 5.0            # s until a card in a section of the account looks again at whether the account has a channel,
 CHANNEL_TRIES = 3                # and how many times it does
 KEYS_POLL = 2.0                  # s between looks at the key wizard's progress while its card is shown
+PROFILE_POLL = 2.0               # s between looks at whether the add-on's current profile is still the one this window loaded with
 DEMO_NAME, SIGNED_OUT_COLOR = "Demo", "FF5F5F5F"      # the avatar of the demo; of nobody
 RAIL_DELAY = 0.3                 # s the rail rests on a section before the grid follows
 RETURN_GRACE = 2                 # s: the window coming back sooner than this after Play is not a return from the player
@@ -81,6 +82,8 @@ class YouTube(xbmcgui.WindowXML):
         self.loading_more = 0                    # the token of the view whose next page is being asked for, 0 for none
         self.more_retry = 0.0                    # no next page is asked for before this time (a failed one waits)
         self.channel = "unknown"                 # whether the account has a YouTube channel (yes | no | unknown)
+        self.profile = None                      # the id of the profile the window loaded with ("" none, None unknown)
+        self.profile_known = False               # a load has said which profile that is: before it there is nothing to compare
         self._card = None                        # (mode, keys, detail) of the card shown, to say it again
         self._watching = False                   # a worker is looking at the key wizard's progress
         self._guide_up = False                   # the onboarding window was opened for the keys document now there
@@ -96,6 +99,32 @@ class YouTube(xbmcgui.WindowXML):
         self._set_avatar(None, "")
         self._fill_rail()
         self._navigate(data.section_view(self.state["section"], query=self.state["query"]), focus=True)
+        if not self.demo:
+            self._later("profile", PROFILE_POLL, self._profile_tick)
+
+    def _profile_tick(self):
+        """On a timer: the window follows the add-on's current profile, as the phone does. A switch from the phone (or
+        a sign-in that made a profile current) changes it behind the window's back: what the cache holds, the circle
+        and the section were the other profile's. So a changed id clears the cache and the circle and loads the
+        section again (a playlist opened from it is the other profile's too: the section it came from is shown).
+        An id that cannot be told, or one the first load has not recorded yet, is not a change."""
+        if self._stop.is_set():
+            return
+        try:
+            now = files.profile_id(log=False)
+            if now is not None and self.profile_known and now != self.profile:
+                with self._lock:
+                    self.profile = now
+                    self.cache.clear()
+                    self.channel = "unknown"
+                    self._set_avatar(None, "")
+                    view = self.stack[0][0] if self.stack else self.view
+                    self.stack = []
+                if view is not None:
+                    self._navigate(view)
+        finally:
+            if not self._stop.is_set():
+                self._later("profile", PROFILE_POLL, self._profile_tick)
 
     def stop(self):
         self._stop.set()
@@ -156,6 +185,7 @@ class YouTube(xbmcgui.WindowXML):
         if self.demo:
             situation = youtube_demo.situation(self.scenario)
             return situation.signed, situation.keys, DEMO_NAME
+        self.profile, self.profile_known = files.profile_id(), True   # first: a switch during the questions below is seen by the next look
         signed = files.signed_in()
         return signed, files.keys_configured(), files.profile_name() if signed else ""
 

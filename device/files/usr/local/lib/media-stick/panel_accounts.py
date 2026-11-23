@@ -247,12 +247,26 @@ def _youtube(body):
     return "youtube"
 
 
+SWITCH_WAIT = 8.0    # s for the TV to switch the profile before the phone is told it did not
+SWITCH_STEP = 0.25
+
+
 def _switch(body, rpc):
     service, pid = _youtube(body), clean_profile_id(body.get("id"))
     if pid not in [p["id"] for p in signin.youtube_accounts()]:
         raise Refused("Такого профиля нет.", 404)
+    if any(x["current"] for x in signin.youtube_accounts() if x["id"] == pid):
+        return {"ok": True, "current": pid}                  # already there: nothing to wait for
     _launch(rpc, ["accounts", "switch", service, pid])
-    return {"ok": True}
+    # The phone's rows, its message line and the TV's window all show current_user, so "done" is said only once the
+    # add-on's own settings say the TV is on that profile; a TV that did not follow is an error the phone can show.
+    deadline = time.monotonic() + SWITCH_WAIT
+    while True:
+        if any(x["current"] for x in signin.youtube_accounts() if x["id"] == pid):
+            return {"ok": True, "current": pid}
+        if time.monotonic() >= deadline:
+            raise Refused("Телевизор не переключил профиль. Посмотрите на ТВ.", 504)
+        time.sleep(SWITCH_STEP)
 
 
 def _add(body, rpc):

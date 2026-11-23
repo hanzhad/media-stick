@@ -26,6 +26,7 @@ TAIL = r"""
 .acc-row:first-child{border-top:0}
 button.acc-row:active{background:var(--card2)}
 button.acc-row:disabled{opacity:.5}
+button.acc-row.wait:disabled{opacity:1}
 .acc-av{flex:none;width:40px;height:40px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600}
 .acc-tx{flex:1 1 0;min-width:0}
 .acc-tx b{display:block;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -96,6 +97,8 @@ async function accCall(what,body){
   return j
 }
 let accData=null, accTimer=null, accBusy=false, accKey='', accSheet=null, accCloseT=null, accAsked={}, accSig={}, accWaiting={}, accFastUntil=0, accExpired={};   // accExpired: a SWEET.TV code that ran out, until a new one is asked for
+let accWant={};   // svc: {id,name,busy,at}: the profile the person tapped; its row says "переключаю…" while busy, and the TV is said to be on it only from state the TV confirmed
+const accSwId=svc=>accWant[svc]&&accWant[svc].busy?accWant[svc].id:'';
 let accTrk=null;   // a sign-in the onboarding sheet draws: {svc, score}; the old sheet stays shut and only its end is handled here
 const accShown=()=>accSheet||accTrk;   // some sign-in is on screen: poll often
 // a profile's progress: how many of YouTube's four sign-ins it has; SWEET.TV is 0 or 1
@@ -118,7 +121,7 @@ function accNote(names){
   names=Array.isArray(names)?names:[];const k=names.join(',');
   if(k!==accKey||(names.length&&!accShown())){accKey=k;accPoll()}
 }
-function accApply(d){accData=d;accRender(d.accounts||[]);accSync(d);if(window.setRows)setRows()}
+function accApply(d){accData=d;accRender(d.accounts||[]);accSwitched(d.accounts||[]);accSync(d);if(window.setRows)setRows()}
 // the one name of a profile on the phone (rows, avatar, toast, sign-out, the list state): the person's channel when it
 // is known, else the profile's own name, where the add-on's first profile, "Default", says nothing
 const accName=p=>p.channel_title||(p.name==='Default'?'Основной':p.name);
@@ -171,11 +174,13 @@ function accFillYouTube(a){
   g.classList.toggle('hide',!a);if(!a)return;
   const cur=a.profiles.find(p=>p.current), waiting=!!(a.signin&&a.signin.state==='waiting');
   const signed=a.profiles.filter(p=>p.signed_in);
-  signed.forEach(p=>rows.append(accRow({av:accInit(accName(p)),title:accName(p),cls:p.current?'cur':'',tick:p.current,
-    sub:p.current?accSub(p):'Нажмите, чтобы включить на ТВ',go:p.current?null:()=>accSwitch(a.service,p)})));
+  const busy=accSwId(a.service);   // one switch at a time: the TV answers the first, the other rows wait
+  signed.forEach(p=>rows.append(accRow({av:accInit(accName(p)),title:accName(p),cls:(p.current?'cur':'')+(busy===p.id?' wait':''),tick:p.current,
+    sub:busy===p.id?'переключаю…':p.current?accSub(p):'Нажмите, чтобы включить на ТВ',
+    go:p.current?null:()=>accSwitch(a.service,p),off:!!busy})));
   if(cur&&!cur.signed_in)rows.append(accRow({av:'+',title:'Новый аккаунт',sub:'ждёт входа'}));
-  rows.append(signed.length?accRow({text:'+ Добавить аккаунт',cls:'add',go:()=>accAnother(a.service),off:waiting})
-    :accRow({text:'Войти в YouTube',cls:'add',go:()=>accStart(a.service),off:waiting}));
+  rows.append(signed.length?accRow({text:'+ Добавить аккаунт',cls:'add',go:()=>accAnother(a.service),off:waiting||!!busy})
+    :accRow({text:'Войти в YouTube',cls:'add',go:()=>accStart(a.service),off:waiting||!!busy}));
   // no YouTube channel on the Google account: Google gives the add-on no subscriptions, Watch Later or playlists
   const ch=g.querySelector('.acc-ch'), none=cur&&cur.signed_in&&cur.channel==='no';
   ch.textContent=none?ACC_NO_CHANNEL:'';g.querySelector('.acc-help').classList.toggle('hide',!none);
@@ -199,18 +204,10 @@ function accFillOut(yt,sw){
   if(sw&&sw.signed_in)out('acc-out-sweettv','sweettv','Выйти из SWEET.TV');
   g.classList.toggle('hide',!rows.children.length)
 }
-// a profile just asked for stays current on the page until the TV has really switched (or 8 s have passed)
-let accPend=null;
-function accHold(list){
-  if(!accPend)return list;
-  const a=list.find(x=>x.service===accPend.svc);
-  if(Date.now()>accPend.until||!a||a.profiles.some(p=>p.id===accPend.id&&p.current)){accPend=null;return list}
-  return list.map(x=>x===a?Object.assign({},a,{profiles:a.profiles.map(p=>Object.assign({},p,{current:p.id===accPend.id}))}):x)
-}
 function accRender(list){
   const cap=$('acc-list').querySelector('.cap');if(cap)cap.remove();
-  list=accHold(list);accCard('youtube');
-  const sig=JSON.stringify([list.map(a=>[a.service,a.profiles,a.signed_in,!!(a.signin&&a.signin.state==='waiting')]),accExpired]);
+  accCard('youtube');
+  const sig=JSON.stringify([list.map(a=>[a.service,a.profiles,a.signed_in,!!(a.signin&&a.signin.state==='waiting'),accSwId(a.service)]),accExpired]);
   if(accSig.all===sig)return;accSig.all=sig;
   const yt=list.find(x=>x.service==='youtube'), sw=list.find(x=>x.service==='sweettv');
   accFillYouTube(yt);accFillSweet(sw);accFillOut(yt,sw)
@@ -227,13 +224,32 @@ async function accStart(svc){
     setTimeout(()=>{if(accWaiting[svc]&&!accShown()&&Date.now()-accAsked[svc]>=14000){accWaiting[svc]=false;accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)}},15000)
   }
 }
-// the TV switches a profile a moment after it is asked: the card is read often until the chosen one is current
+// The TV switches a profile a moment after it is asked, and the panel answers when it has (its `current`). The check
+// mark is the polled current_user and nothing else; "На ТВ: …" is said from that answer or from a later poll, never before.
+// A TV that is late (504) still gets it when a poll sees the profile current.
+const accChosen=p=>'На ТВ: '+accName(p);
 async function accSwitch(svc,p){
   buzz();
-  if(await accRun(svc,'switch',{service:svc,id:p.id},'Переключаю на «'+accName(p)+'»…','','На ТВ: '+accName(p))){
-    accPend={svc,id:p.id,until:Date.now()+8000};accSig.all='';accRender((accData&&accData.accounts)||[]);   // the check moves at once
-    accWatch(20000)
-  }
+  const w=accWant[svc]={id:p.id,busy:true,at:Date.now()};
+  accMsg(svc,'Переключаю на «'+accName(p)+'»…');
+  accSig.all='';accRender((accData&&accData.accounts)||[]);   // this row says "переключаю…", the others wait
+  try{
+    const r=await accCall('switch',{service:svc,id:p.id});
+    w.busy=false;accMsg(svc,'');
+    if(r&&r.current===p.id){delete accWant[svc];toast(accChosen(p))}
+    else accMsg(svc,'Телевизор не подтвердил профиль. Посмотрите на ТВ.',true)
+  }catch(e){w.busy=false;accMsg(svc,e.message,true)}
+  accSig.all='';accRender((accData&&accData.accounts)||[]);
+  accAsked[svc]=Date.now();accWatch(20000)
+}
+// the polled list is the other witness: a profile asked for that the TV took after all
+function accSwitched(list){
+  list.forEach(a=>{
+    const w=accWant[a.service];if(!w||w.busy)return;
+    if(Date.now()-w.at>60000){delete accWant[a.service];return}
+    const cur=a.profiles.find(p=>p.current);
+    if(cur&&cur.id===w.id){delete accWant[a.service];accMsg(a.service,'');toast(accChosen(cur))}
+  })
 }
 async function accAnother(svc){
   buzz();accMsg(svc,'Готовлю вход…');

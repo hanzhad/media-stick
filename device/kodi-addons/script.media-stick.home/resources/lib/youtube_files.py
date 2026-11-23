@@ -73,6 +73,18 @@ def channel_state():
         return "unknown"
 
 
+def profile_id(log=True):
+    """The id of the add-on's current profile: "" when there is none, None when it cannot be told (no sign-in library
+    on this device). It is what the phone's list of profiles, its messages and this window all follow (current_user)."""
+    try:
+        current = _current_profile()
+        return str(current["id"]) if current else ""
+    except Exception as e:
+        if log:
+            ui.log(f"cannot read the YouTube profile's id: {e!r}")
+        return None
+
+
 def profile_name():
     """The name of the add-on's current profile, "" when there is none or it cannot be told (the avatar shows it)."""
     try:

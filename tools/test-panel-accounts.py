@@ -300,7 +300,6 @@ class Actions(unittest.TestCase):
     def test_each_action_sends_the_launcher_exactly_its_vocabulary(self):
         cases = [("signin", {"service": "youtube"}, ["accounts", "signin", "youtube"]),
                  ("signin", {"service": "sweettv"}, ["accounts", "signin", "sweettv"]),
-                 ("switch", {"service": "youtube", "id": "2"}, ["accounts", "switch", "youtube", "2"]),
                  ("add", {"service": "youtube", "name": " Гости "}, ["accounts", "add", "youtube", "Гости"]),
                  ("signout", {"service": "sweettv"}, ["accounts", "signout", "sweettv"])]
         for action, body, params in cases:
@@ -437,6 +436,41 @@ class Actions(unittest.TestCase):
             self.assertEqual(code, 400, (action, body))
             self.assertFalse(reply["ok"])
             self.assertTrue(reply["error"])
+        self.assertEqual(self.k.calls, [])
+
+    def test_a_switch_answers_when_the_tv_is_on_that_profile_and_says_which(self):
+        k = AddingKodi()                                                  # the add-on makes the profile current a moment after the call
+        reply, code = pa.post(pa.PREFIX + "switch", {"service": "youtube", "id": "2"}, k)
+        self.assertEqual((code, reply), (200, {"ok": True, "current": "2"}))
+        self.assertEqual([c[1]["params"] for c in k.calls], [["accounts", "switch", "youtube", "2"]])
+        self.assertEqual([p["id"] for p in ms.youtube_accounts() if p["current"]], ["2"])   # what the phone's check and the TV read
+
+    def test_a_switch_waits_for_a_slow_tv(self):
+        class Slow(AddingKodi):
+            """The profile changes some time after the call, as the add-on's own process does."""
+            def __call__(self, method, params=None, timeout=3):
+                out = FakeKodi.__call__(self, method, params, timeout)
+                args = (params or {}).get("params") or []
+                if args[:2] == ["accounts", "switch"]:
+                    threading.Timer(0.3, lambda: yt({"0": {"name": "Основной", "refresh_token": "a|b|c|d"},
+                                                     "2": {"name": "Дети", "refresh_token": ""}}, "2")).start()
+                return out
+        with mock.patch.object(pa, "SWITCH_STEP", 0.02):
+            reply, code = pa.post(pa.PREFIX + "switch", {"service": "youtube", "id": "2"}, Slow())
+        self.assertEqual((code, reply), (200, {"ok": True, "current": "2"}))
+
+    def test_a_tv_that_does_not_switch_is_a_504_with_the_calm_words_not_an_ok(self):
+        with mock.patch.object(pa, "SWITCH_WAIT", 0.2), mock.patch.object(pa, "SWITCH_STEP", 0.02):
+            reply, code = pa.post(pa.PREFIX + "switch", {"service": "youtube", "id": "2"}, self.k)   # FakeKodi changes nothing
+        self.assertEqual(code, 504)
+        self.assertFalse(reply["ok"])
+        self.assertEqual(reply["error"], "Телевизор не переключил профиль. Посмотрите на ТВ.")
+        self.assertEqual([c[1]["params"] for c in self.k.calls], [["accounts", "switch", "youtube", "2"]])   # it was asked once
+        self.assertEqual([p["id"] for p in ms.youtube_accounts() if p["current"]], ["0"])
+
+    def test_a_switch_to_the_profile_the_tv_is_on_asks_nothing(self):
+        reply, code = self.post("switch", {"service": "youtube", "id": "0"})
+        self.assertEqual((code, reply), (200, {"ok": True, "current": "0"}))
         self.assertEqual(self.k.calls, [])
 
     def test_switch_to_a_profile_that_does_not_exist(self):
@@ -640,13 +674,41 @@ class ListPage(unittest.TestCase):
         self.assertIn("go:()=>accStart(a.service)", p)
         self.assertIn("Пустые профили не показываются, приставка использует их сама.", p)
 
-    def test_a_switch_is_a_toast_and_moves_the_check_at_once(self):
+    def test_a_switch_is_a_toast_said_only_from_what_the_tv_confirmed_and_the_check_is_the_polled_profile(self):
         p = self.page
-        self.assertIn("'На ТВ: '+accName(p)", p)
-        self.assertIn("accPend={svc,id:p.id,until:Date.now()+8000}", p)
+        self.assertIn("const accChosen=p=>'На ТВ: '+accName(p)", p)
         self.assertIn("accWatch(20000)", p)
         self.assertNotIn("выбран.'", p)                                          # no standing «Профиль … выбран»
         self.assertNotIn("acc-chip", p)
+        # nothing holds the check on the tapped profile before the TV is on it
+        self.assertNotIn("accPend", p)
+        self.assertNotIn("accHold", p)
+        self.assertNotRegex(p, r"current:p\.id===")
+        sw = p.split("async function accSwitch(svc,p){", 1)[1].split("\n}\n", 1)[0]
+        self.assertNotIn("accRun(svc,'switch'", sw)                              # the generic runner said "done" at once
+        self.assertIn("accMsg(svc,'Переключаю на «'+accName(p)+'»…')", sw)
+        self.assertEqual(sw.count("accChosen(p)"), 1)                            # the toast is in one place, behind the TV's answer
+        self.assertIn("if(r&&r.current===p.id){delete accWant[svc];toast(accChosen(p))}", sw)
+        self.assertLess(sw.index("await accCall('switch'"), sw.index("accChosen(p)"))
+        self.assertIn("catch(e){w.busy=false;accMsg(svc,e.message,true)}", sw)   # a failure shows its error text
+        self.assertIn("accWatch(20000)", sw)
+        # the polled list is the other witness; a switch that is not over is not confirmed by it
+        late = p.split("function accSwitched(list){", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("if(!w||w.busy)return", late)
+        self.assertIn("cur&&cur.id===w.id", late)
+        self.assertIn("toast(accChosen(cur))", late)
+        self.assertIn("accSwitched(d.accounts||[])", p.split("function accApply(d){", 1)[1].split("\n", 1)[0])
+
+    def test_the_tapped_row_says_switching_and_the_others_cannot_be_tapped_meanwhile(self):
+        p = self.page
+        self.assertIn("const accSwId=svc=>accWant[svc]&&accWant[svc].busy?accWant[svc].id:''", p)
+        self.assertIn("const busy=accSwId(a.service);", p)
+        self.assertIn("sub:busy===p.id?'переключаю…':p.current?accSub(p):'Нажмите, чтобы включить на ТВ'", p)
+        self.assertIn("(busy===p.id?' wait':'')", p)
+        self.assertIn("off:!!busy})));", p)                                       # every profile row waits
+        self.assertIn("off:waiting||!!busy", p)                                   # and so does «Добавить аккаунт»
+        self.assertIn("accSwId(a.service)]", p)                                   # the rows are drawn again when it starts and ends
+        self.assertIn("button.acc-row.wait:disabled{opacity:1}", p)
 
     def test_sweettv_rows_and_the_way_out(self):
         p = self.page

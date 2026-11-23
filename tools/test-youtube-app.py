@@ -45,7 +45,7 @@ class Fake:
     stopped = 0
     home = {}
     now = None
-    signed, keys, name = True, True, "Anna"
+    signed, keys, name, profile = True, True, "Anna", "p1"             # profile: the id of the add-on's current profile
     step, phone = None, ("http://192.168.1.20/", "/tmp/qr.png")      # the key wizard's step; the phone page and its QR
 
 
@@ -869,12 +869,14 @@ class WindowCase(unittest.TestCase):
             fake.clear()
         Fake.playing, Fake.stopped, Fake.now = False, 0, None
         Fake.home.clear()
-        Fake.signed, Fake.keys, Fake.name = True, True, "Anna"
+        Fake.signed, Fake.keys, Fake.name, Fake.profile = True, True, "Anna", "p1"
         Fake.step, Fake.phone = None, ("http://192.168.1.20/", "/tmp/qr.png")
         self.site = Site()
         self.site.routes[R] = main_page()
         for patch in (mock.patch.object(youtube_app, "clock", lambda: Fake.now or time.time()),
                       mock.patch.object(youtube_app, "KEYS_POLL", 0.02),
+                      mock.patch.object(youtube_app, "PROFILE_POLL", 0.02),
+                      mock.patch.object(files, "profile_id", side_effect=lambda log=True: Fake.profile),
                       mock.patch.object(files, "read_step", side_effect=lambda now: Fake.step),
                       mock.patch.object(files, "phone_page", side_effect=lambda: Fake.phone),
                       mock.patch.object(files, "get_directory", side_effect=self.site.get),
@@ -1646,7 +1648,7 @@ class Searching(WindowCase):
 class DemoWindow(WindowCase):
     def setUp(self):
         super().setUp()
-        for name in ("get_directory", "signed_in", "keys_configured", "profile_name", "read_step"):
+        for name in ("get_directory", "signed_in", "keys_configured", "profile_name", "profile_id", "read_step"):
             getattr(files, name).side_effect = AssertionError("real data in the demo")
 
     def test_demo_is_marked_fills_from_the_fixture_and_never_touches_the_add_on(self):
@@ -1750,6 +1752,102 @@ class DemoWindow(WindowCase):
         load.assert_not_called()
 
 
+class ProfileChange(WindowCase):
+    """The window follows the add-on's current profile (current_user), as the phone's chips and its status line do."""
+
+    def looks(self, window, n=3):
+        """Wait for the window's profile timer to have looked n more times."""
+        seen = []
+        with mock.patch.object(files, "profile_id", side_effect=lambda log=True: seen.append(1) or Fake.profile):
+            self.assertTrue(wait_for(lambda: len(seen) >= n), "the timer did not look")
+        time.sleep(0.05)
+
+    def test_a_changed_profile_clears_the_cache_the_circle_and_loads_the_section_again(self):
+        self.rec(vid(1, "Anna's"))
+        window = self.open()
+        self.assertEqual((self.shown(window), window.getProperty("avatar"), window.profile), (["Anna's"], "A", "p1"))
+        self.assertTrue(window.cache, "the section is cached")
+        self.rec(vid(2, "Boris's"))
+        Fake.profile, Fake.name = "p2", "Борис"
+        self.assertTrue(wait_for(lambda: window.loads >= 2), "a second load")
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Boris's"]))
+        self.assertEqual((window.getProperty("avatar"), window.profile, window.view.key), ("Б", "p2", "rec"))
+        self.assertEqual(self.site.asked().count(D.SECTIONS[0].route), 2, "asked again, not from the cache")
+        self.assertEqual([i.props["active"] for i in window.controls[RAIL].items][:2], ["1", ""])
+
+    def test_the_cache_does_not_serve_the_other_profiles_list(self):
+        self.rec(vid(1, "Anna's"))
+        window = self.open()
+        self.site.routes[D.SECTIONS[1].route] = answer(vid(5, "Anna subs"))
+        self.go(window, "subs")
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Anna subs"]))
+        self.assertEqual(len(window.cache), 2)
+        self.site.routes[D.SECTIONS[1].route] = answer(vid(6, "Boris subs"))
+        Fake.profile = "p2"
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Boris subs"]))
+        self.assertEqual((window.view.key, window.profile), ("subs", "p2"))
+        self.assertNotIn("Anna's", [c[1].entries[0].title for c in window.cache.values() if c[1].entries])
+
+    def test_the_circle_is_empty_until_the_new_profile_has_answered(self):
+        self.rec(vid(1))
+        window = self.open()
+        self.site.held[D.SECTIONS[0].route] = hold = threading.Event()
+        Fake.profile, Fake.name = "p2", "Борис"
+        self.assertTrue(wait_for(lambda: window.getProperty("mode") == "loading"))
+        self.assertEqual((window.getProperty("avatar"), window.getProperty("signed")), ("", ""))
+        hold.set()
+        self.assertTrue(wait_for(lambda: window.getProperty("avatar") == "Б"))
+
+    def test_a_profile_that_did_not_change_loads_nothing(self):
+        self.rec(vid(1))
+        window = self.open()
+        self.looks(window)
+        self.assertEqual((window.loads, self.site.asked().count(D.SECTIONS[0].route)), (1, 1))
+
+    def test_a_profile_that_cannot_be_told_is_not_a_change_and_comes_back_as_it_was(self):
+        self.rec(vid(1))
+        window = self.open()
+        Fake.profile = None
+        self.looks(window)
+        Fake.profile = "p1"
+        self.looks(window)
+        self.assertEqual((window.loads, window.profile), (1, "p1"))
+
+    def test_a_playlist_of_the_old_profile_is_left_for_the_section_it_came_from(self):
+        mix = R + "playlist/PL1/"
+        self.site.routes[D.SECTIONS[4].route] = answer(folder(mix, "Mix"))
+        self.site.routes[mix] = answer(vid(1, "Inside"))
+        window = self.open()
+        self.go(window, "lists")
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Mix"]))
+        window.controls[GRID].selected = 0
+        window.onClick(GRID)
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Inside"]))
+        self.assertTrue(window.stack)
+        self.site.routes[D.SECTIONS[4].route] = answer(folder(R + "playlist/PL9/", "Boris's list"))
+        Fake.profile = "p2"
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Boris's list"]))
+        self.assertEqual((window.stack, window.getProperty("title")), ([], "Playlists"))
+
+    def test_the_timer_stops_with_the_window_and_the_demo_has_none(self):
+        window = self.open()
+        window.stop()
+        loads = window.loads
+        Fake.profile = "p2"
+        time.sleep(0.2)
+        self.assertEqual(window.loads, loads)
+        self.assertTrue(window._timers["profile"].finished.is_set())
+        demo = self.open(demo=True)
+        self.assertNotIn("profile", demo._timers)
+
+    def test_a_window_that_has_not_loaded_yet_has_nothing_to_compare(self):
+        window = self.make()
+        Fake.profile = "p2"
+        window._profile_tick()                                                  # before any load has said which profile it is
+        self.assertEqual((window.view, window.loads, window.profile_known), (None, 0, False))
+        self.assertIn("profile", window._timers)                                # and it looks again later
+
+
 class Files(unittest.TestCase):
     def setUp(self):
         shutil.rmtree(os.path.join(TMP, "addon_data"), ignore_errors=True)
@@ -1787,6 +1885,21 @@ class Files(unittest.TestCase):
         self.assertEqual(files.profile_name(), "Борис")
         with mock.patch.object(store.lib, "youtube_accounts", side_effect=OSError("gone")):
             self.assertEqual(files.profile_name(), "")
+
+    def test_the_profile_id_is_the_current_ones_empty_without_one_and_none_when_it_cannot_be_told(self):
+        manager = os.path.join(TMP, "addon_data", "plugin.video.youtube", "access_manager.json")
+        self.assertEqual(files.profile_id(), "")
+        put(manager, json.dumps({"access_manager": {"current_user": "1", "users": {
+            "0": {"name": "Anna", "refresh_token": "a|b|c|d"}, "1": {"name": "Борис", "refresh_token": "a|b"}}}}))
+        self.assertEqual(files.profile_id(), "1")
+        put(manager, json.dumps({"access_manager": {"current_user": "0", "users": {
+            "0": {"name": "Anna", "refresh_token": "a|b|c|d"}, "1": {"name": "Борис", "refresh_token": "a|b"}}}}))
+        self.assertEqual(files.profile_id(), "0")
+        with mock.patch.object(store.lib, "youtube_accounts", side_effect=OSError("gone")):
+            self.assertIsNone(files.profile_id())
+            with mock.patch.object(files.ui, "log") as log:
+                self.assertIsNone(files.profile_id(log=False))
+                log.assert_not_called()
 
     def test_the_key_wizard_file_is_read_when_it_is_there_and_fresh(self):
         path = os.path.join(TMP, "run", "ytkeys.step.json")
