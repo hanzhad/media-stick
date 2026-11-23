@@ -45,9 +45,31 @@ def getTime(x, y):
     return datetime.fromtimestamp(x).strftime(data)
 
 
+# media-stick begin: the sign-in token is read when it is needed. `helper` is built when this module is imported: in the sign-in
+# (which stays in this process for hours) and in the add-on's service (which lives from Kodi's start) that is before the new
+# bearer is stored, and a helper built without one sends no authorization: the channel list never loads
+def _ms_sync_auth():
+    bearer = helper.get_setting('bearer')
+    helper.bearer = bearer
+    if bearer:
+        helper.headers.update({'authorization': bearer})
+    else:
+        helper.headers.pop('authorization', None)
+
+
+def _ms_status(reply):
+    # the answer's own status field and nothing else: never the body, never a token
+    status = reply.get('status') if isinstance(reply, dict) else None
+    return repr(status)[:40] if isinstance(status, (str, int)) else type(status).__name__
+# media-stick end
+
+
 def refreshChannelList():
     if not helper.get_setting('logged'):
         return
+    # media-stick begin
+    _ms_sync_auth()
+    # media-stick end
 
     timestamp = int(time.time())
     json_data = {
@@ -68,6 +90,10 @@ def refreshChannelList():
                                  result=False)
 
     if jsdata is None:
+        # media-stick begin
+        xbmc.log('media-stick: SWEET.TV channel list not updated: no answer (authorization sent: %s)'
+                 % ('authorization' in helper.headers), xbmc.LOGWARNING)
+        # media-stick end
         return
 
     jsdata_content = jsdata.content
@@ -159,6 +185,10 @@ def refreshChannelList():
             f.close()
     else:
         xbmc.log("Failed to update channel list", xbmc.LOGERROR)
+        # media-stick begin: the cause without DEBUG logging: the status the API answered with (never the body, never a token)
+        xbmc.log('media-stick: SWEET.TV channel list not updated: status=%s (authorization sent: %s)'
+                 % (_ms_status(jsdata), 'authorization' in helper.headers), xbmc.LOGWARNING)
+        # media-stick end
         xbmc.log("Failed to update channel list " + str(jsdata), xbmc.LOGDEBUG)
 
     return jsdata

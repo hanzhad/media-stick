@@ -186,6 +186,41 @@ OVERLAYS = [
     ("plugin.video.sweettv", "resources/lib/sweettv.py", [
         ("from six.moves.urllib.parse import urlencode\n",
          "from six.moves.urllib.parse import urlencode\n\n" + IMPORT),
+        # the token the sign-in just stored must be the one the channel list request carries, and a failed fetch says why
+        ("def refreshChannelList():\n    if not helper.get_setting('logged'):\n        return\n",
+         "# media-stick begin: the sign-in token is read when it is needed. `helper` is built when this module is imported: in the sign-in\n"
+         "# (which stays in this process for hours) and in the add-on's service (which lives from Kodi's start) that is before the new\n"
+         "# bearer is stored, and a helper built without one sends no authorization: the channel list never loads\n"
+         "def _ms_sync_auth():\n"
+         "    bearer = helper.get_setting('bearer')\n"
+         "    helper.bearer = bearer\n"
+         "    if bearer:\n"
+         "        helper.headers.update({'authorization': bearer})\n"
+         "    else:\n"
+         "        helper.headers.pop('authorization', None)\n"
+         "\n\n"
+         "def _ms_status(reply):\n"
+         "    # the answer's own status field and nothing else: never the body, never a token\n"
+         "    status = reply.get('status') if isinstance(reply, dict) else None\n"
+         "    return repr(status)[:40] if isinstance(status, (str, int)) else type(status).__name__\n"
+         "# media-stick end\n\n\n"
+         "def refreshChannelList():\n    if not helper.get_setting('logged'):\n        return\n"
+         "    # media-stick begin\n"
+         "    _ms_sync_auth()\n"
+         "    # media-stick end\n"),
+        ("    if jsdata is None:\n        return\n\n    jsdata_content = jsdata.content\n",
+         "    if jsdata is None:\n"
+         "        # media-stick begin\n"
+         "        xbmc.log('media-stick: SWEET.TV channel list not updated: no answer (authorization sent: %s)'\n"
+         "                 % ('authorization' in helper.headers), xbmc.LOGWARNING)\n"
+         "        # media-stick end\n"
+         "        return\n\n    jsdata_content = jsdata.content\n"),
+        ('        xbmc.log("Failed to update channel list", xbmc.LOGERROR)\n',
+         '        xbmc.log("Failed to update channel list", xbmc.LOGERROR)\n'
+         "        # media-stick begin: the cause without DEBUG logging: the status the API answered with (never the body, never a token)\n"
+         "        xbmc.log('media-stick: SWEET.TV channel list not updated: status=%s (authorization sent: %s)'\n"
+         "                 % (_ms_status(jsdata), 'authorization' in helper.headers), xbmc.LOGWARNING)\n"
+         "        # media-stick end\n"),
         ("def login():\n    jsdata = helper.request_sess(helper.auth_url,",
          "def login(ms_mode=None):\n"
          "    # media-stick begin: the mode comes as the argument or as the phone's request (the phone asks for none: normal)\n"
@@ -342,6 +377,25 @@ OVERLAYS = [
          "            if _ms:\n"
          "                _ms.publish('sweettv', 'failed')\n"
          "            # media-stick end\n"),
+    ]),
+    # SWEET.TV's service: a channel list that did not load is asked for again after a minute, not after a quarter of an hour
+    ("plugin.video.sweettv", "service.py", [
+        ("    refreshChannelListTimer = 0\n",
+         "    refreshChannelListTimer = 0\n"
+         "    # media-stick begin\n"
+         "    ms_failed = 0   # fetches in a row that did not give a channel list\n"
+         "    # media-stick end\n"),
+        ("                refreshChannelList()\n                refreshChannelListTimer = int(time.time())\n",
+         "                # media-stick begin: a failed fetch is due again on the next pass (a minute), up to five times in a row, then every quarter of an hour\n"
+         "                ms_reply = refreshChannelList()\n"
+         "                refreshChannelListTimer = int(time.time())\n"
+         "                if isinstance(ms_reply, dict) and ms_reply.get('status') == 'OK':\n"
+         "                    ms_failed = 0\n"
+         "                else:\n"
+         "                    ms_failed += 1\n"
+         "                    if ms_failed <= 5:\n"
+         "                        refreshChannelListTimer -= 15 * 60\n"
+         "                # media-stick end\n"),
     ]),
 ]
 

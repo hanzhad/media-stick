@@ -457,6 +457,7 @@ class Overlays(unittest.TestCase):
         "plugin.video.youtube/resources/lib/youtube_plugin/youtube/helper/yt_login.py": "plugin.video.youtube",
         "plugin.video.youtube/resources/lib/youtube_plugin/kodion/script_actions.py": "plugin.video.youtube",
         "plugin.video.sweettv/resources/lib/sweettv.py": "plugin.video.sweettv",
+        "plugin.video.sweettv/service.py": "plugin.video.sweettv",
     }
 
     @staticmethod
