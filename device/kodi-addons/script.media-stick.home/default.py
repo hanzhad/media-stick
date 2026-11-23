@@ -7,6 +7,9 @@
 # `demo` is the same screen on invented channels, for looking at the design without an account.
 # RunScript(script.media-stick.home,youtube,open|demo[,signin|needkey|empty|error|loading]) the YouTube app screen
 # (resources/lib/youtube_app.py); `demo` is invented videos, the last word shows one of its cards instead of the list.
+# RunScript(script.media-stick.home,onboarding,show,<service>) the screen of a flow the phone is working through (the Google
+# key wizard; resources/lib/onboarding_app.py), following /run/media-stick/onboarding/<service>.json; `onboarding,demo,signin`
+# and `onboarding,demo,keys` are the sign-in and the key wizard screens on invented documents, for looking at them.
 # Without arguments: go to the (skin) Home window, where the service shows the launcher.
 import sys
 
@@ -37,6 +40,12 @@ elif args and args[0] == "sweettv":
         xbmc.log(f"[script.media-stick.home] sweettv {args[1:2]!r} failed: {e!r}", xbmc.LOGERROR)
         if args[1:2] != ["demo"]:
             xbmc.executebuiltin("RunAddon(plugin.video.sweettv)")
+elif args and args[0] == "onboarding":
+    try:
+        from resources.lib import onboarding_app
+        onboarding_app.main(args[1:])
+    except Exception as e:      # the screen cannot open: the phone still shows the steps
+        xbmc.log(f"[script.media-stick.home] onboarding {args[1:3]!r} failed: {e!r}", xbmc.LOGERROR)
 elif args and args[0] == "youtube":
     try:
         from resources.lib import youtube_app

@@ -31,6 +31,7 @@ MEDIA = os.path.join(ADDON, "resources", "skins", "default", "media")
 XML = os.path.join(SKIN, "script-media-stick-youtube.xml")
 TMP = tempfile.mkdtemp()
 os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
+os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(TMP, "onboarding")
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
 os.environ["TZ"] = "UTC"
 time.tzset()

@@ -11,4 +11,9 @@ if LIB_DIR not in sys.path:
 
 import mediastick_signin as lib  # noqa: E402
 
+try:        # what a flow tells the phone and the TV; a device without it keeps the older screens
+    import mediastick_onboarding as onboarding  # noqa: E402
+except ImportError:
+    onboarding = None
+
 SERVICES = lib.SERVICES

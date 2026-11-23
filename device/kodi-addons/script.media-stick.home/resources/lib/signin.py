@@ -7,6 +7,12 @@ Partner mode (the state says mode "partner"): a partner's specialist types the c
 screen into their own form, within a working day. So the screen stays for hours, counts down the
 time left, draws no QR, keeps the screensaver off (ScreensaverHold), and never cancels on a stray
 key: the first button, the one focused, is "keep waiting", and cancelling asks first.
+
+Onboarding layout (onboarding_view, the document the sign-in writes next to its state: "Continue on your phone", the
+three steps, a QR of the phone page and the code to type): while a normal sign-in waits and its document is there, the
+window shows that layout in place of the plain one. It has no buttons, the keys do it: Back cancels, Menu goes on
+without an account (when that is allowed). The plain layout stays for the first seconds, for partner mode and for
+every end: whatever the document says or fails to say, the state file decides how the sign-in ends.
 """
 import subprocess
 import threading
@@ -16,11 +22,14 @@ from typing import NamedTuple, Optional
 import xbmc
 import xbmcgui
 
-from resources.lib import remote, store, ui
+from resources.lib import onboarding_files, onboarding_view as view, remote, store, ui
 
 # 10 is the button that has the focus: Cancel, and in partner mode Wait, so a stray OK does nothing.
 # 11 is Continue without account, and in partner mode Cancel.
 CONTROL_CANCEL, CONTROL_SKIP = 10, 11
+CONTROL_STEPS = 20         # the onboarding layout's list of steps
+ACTION_CONTEXT_MENU = 117  # the remote's Menu key
+QR_RETRY = 5               # s between looks for the phone page's QR while there is none (no network yet)
 TICK = 0.5                 # s between looks for an add-on dialog on top; the state file is read every other tick
 START_WAIT = 45            # s without any state from the add-on: give up
 CANCEL_WAIT = 10           # s the add-on gets to see a stop request (YouTube looks between two polls)
@@ -56,6 +65,8 @@ class Frame(NamedTuple):
     link: str                    # what the QR holds ("" when no code is shown)
     result: Optional[str]        # done | failed | cancelled | gone | skipped, once decided
     close: bool                  # the result has been up long enough
+    rows: tuple = ()             # the onboarding layout's steps, when it is the one shown (view.Row)
+    ob_link: str = ""            # the sign-in link, for a QR when the phone page has none to show
 
 
 def hours(seconds):
@@ -101,8 +112,7 @@ def spaced(code):
 
 def site(url):
     """youtube.com/activate from https://www.youtube.com/activate."""
-    text = url.split("://", 1)[-1]
-    return (text[4:] if text.startswith("www.") else text).rstrip("/")
+    return view.site(url)
 
 
 def covered(top, mine):
@@ -178,7 +188,9 @@ class Follow:
         elif not state and now - self.started >= START_WAIT:
             self._finish("failed", now, "No code came. Try again from Accounts.")
 
-    def feed(self, state, now):
+    def feed(self, state, now, ob=None):
+        """`ob` is the sign-in's onboarding screen (view.Screen) when it has one: it replaces the plain layout while a
+        normal sign-in waits."""
         state = self.usable(state)
         if state:
             self.seen = True
@@ -188,7 +200,11 @@ class Follow:
             self._decide(state, now)
         waiting = state if state and state["state"] == WAITING and self.result is None and self.cancel_at is None else None
         props, link = self._props(waiting)
-        return Frame(props, link, self.result, self.result is not None and now - self.result_at >= LINGER[self.result])
+        shown = ob if waiting and not self.partner and ob and ob.active and ob.flow == view.SIGNIN else None
+        props.update(view.signin_props(shown, "", ""))
+        return Frame(props, link, self.result, self.result is not None and now - self.result_at >= LINGER[self.result],
+                     view.step_rows(shown, view.SIGNIN_STEP_W) if shown else (),
+                     str(waiting.get("link", "")) if shown else "")
 
     def _props(self, waiting):
         props = {"title": self.name, "step": "", "code": "", "codelong": "", "site": "", "headline": "", "status": "",
@@ -232,12 +248,36 @@ def showing(now=None):
     return parse_showing(xbmcgui.Window(ui.HOME).getProperty(SHOWING), time.time() if now is None else now)
 
 
+class LibSource:
+    """What the window follows and where its stop request goes: the device's libraries. The demo (onboarding_demo) has
+    one of its own with the same five methods."""
+
+    def read(self, service):
+        return store.lib.read(service)
+
+    def onboarding(self, service):
+        return onboarding_files.read(service)
+
+    def request_cancel(self, service):
+        store.lib.request_cancel(service)
+
+    def asked_partner(self, service):
+        return asked_partner(service)
+
+    def phone_qr(self):
+        return onboarding_files.phone_qr()
+
+
 class SigninDialog(xbmcgui.WindowXMLDialog):
     """Set up with setup() after construction: the Kodi window constructors take no extra arguments."""
 
-    def setup(self, service, follow, allow_skip, cover, hold=None):
+    def setup(self, service, follow, allow_skip, cover, hold=None, source=None):
         self.service, self.follow, self.allow_skip, self.cover = service, follow, allow_skip, cover
         self.hold = hold or ScreensaverHold()
+        self.source = source or LibSource()
+        self._rows = None                # the steps now in the list (the onboarding layout)
+        self._phone_qr, self._qr_at = "", 0.0
+        self._link_qr = ("", "")         # (link, its QR picture): the fallback of the onboarding layout
         self.reopen = False
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -282,18 +322,25 @@ class SigninDialog(xbmcgui.WindowXMLDialog):
 
     def _read(self):
         try:
-            return store.lib.read(self.service)
+            return self.source.read(self.service)
         except Exception as e:
             ui.log(f"cannot read the sign-in state: {e!r}")
+            return None
+
+    def _read_onboarding(self):
+        try:
+            return view.parse(self.source.onboarding(self.service), self.follow.name)
+        except Exception as e:
+            ui.log(f"cannot read the onboarding document: {e!r}")
             return None
 
     def _poll(self):
         with self._lock:
             now = time.time()
-            frame = self.follow.feed(self._read(), now)
+            frame = self.follow.feed(self._read(), now, self._read_onboarding())
             self._apply(frame)
             if self.follow.cancelling:
-                store.lib.request_cancel(self.service)       # again: the add-on clears an early request when it starts
+                self.source.request_cancel(self.service)       # again: the add-on clears an early request when it starts
             mark_showing(self.service, now)
         if frame.close:
             self.close()
@@ -304,12 +351,39 @@ class SigninDialog(xbmcgui.WindowXMLDialog):
             self.setProperty(key, value)
 
     def _apply(self, frame):
-        for key, value in frame.props.items():
+        props = dict(frame.props)
+        if props.get("ob"):
+            try:
+                props.update(self._onboarding_extras(frame))
+            except Exception as e:           # the layout cannot be filled: the plain one still shows the code
+                ui.log(f"onboarding layout failed, the plain layout is used: {e!r}")
+                props.update(view.signin_props(None, "", ""))
+        for key, value in props.items():
             self._set(key, value)
         self._set("skip", "1" if self.allow_skip or self.follow.partner else "")     # partner: the second button is Cancel
         if frame.link and frame.link != self._link:
             self._link = frame.link
             self._set("qr", self._qr(frame.link))
+
+    def _onboarding_extras(self, frame):
+        """What only the window knows about the onboarding layout: the steps in their list, the QR and its line, the
+        footer. The QR is the phone page's (the person is told to scan it when the phone is not on the page yet); with
+        no network it is the sign-in link's, which opens the provider's page on the phone."""
+        if frame.rows != self._rows:
+            self._rows = frame.rows
+            ui.fill_list(self, CONTROL_STEPS, [r.props() for r in frame.rows],
+                         select=next((n for n, r in enumerate(frame.rows) if r.state == "now"), 0))
+        now = time.time()
+        if not self._phone_qr and now - self._qr_at >= QR_RETRY:
+            self._qr_at = now
+            self._phone_qr = self.source.phone_qr()
+        if self._phone_qr:
+            picture, caption = self._phone_qr, view.QR_REMOTE
+        else:
+            if frame.ob_link and self._link_qr[0] != frame.ob_link:
+                self._link_qr = (frame.ob_link, self._qr(frame.ob_link))
+            picture, caption = self._link_qr[1] if frame.ob_link else "", view.QR_LINK
+        return {"ob_qr": picture, "ob_caption": caption, "ob_footer": view.signin_footer(self.allow_skip)}
 
     @staticmethod
     def _qr(link):
@@ -336,7 +410,7 @@ class SigninDialog(xbmcgui.WindowXMLDialog):
         if self.follow.partner and self.follow.result is None and not self.follow.cancelling and not self._sure():
             return
         self.follow.cancel(time.time(), skip)
-        store.lib.request_cancel(self.service)
+        self.source.request_cancel(self.service)
         self._poll()
 
     def onClick(self, controlId):
@@ -355,20 +429,25 @@ class SigninDialog(xbmcgui.WindowXMLDialog):
                 self._poll()
             else:
                 self._cancel(False)
+        elif action.getId() == ACTION_CONTEXT_MENU and self._shown.get("ob") and self.allow_skip \
+                and not self.follow.cancelling:
+            self._cancel(True)               # the onboarding layout has no buttons: Menu is "continue without an account"
         else:
             super().onAction(action)
 
 
-def run(service, attach=False, allow_skip=False):
+def run(service, attach=False, allow_skip=False, source=None):
     """Show the sign-in screen for `service` until it has a result; returns done | failed |
-    cancelled | gone | skipped, or "closed" when the window went away without one. Every path ends."""
-    follow = Follow(store.SERVICES[service]["name"], time.time(), attach, partner=asked_partner(service))
+    cancelled | gone | skipped, or "closed" when the window went away without one. Every path ends.
+    `source` is where the window reads from (LibSource, the device's files; the demo brings its own)."""
+    source = source or LibSource()
+    follow = Follow(store.SERVICES[service]["name"], time.time(), attach, partner=source.asked_partner(service))
     hold = ScreensaverHold()           # outlives a reopened window, so it does not flap
     opened = 0
     try:
         while True:
             dialog = ui.load(SigninDialog, "script-media-stick-signin.xml")
-            dialog.setup(service, follow, allow_skip, cover=opened < MAX_REOPEN, hold=hold)
+            dialog.setup(service, follow, allow_skip, cover=opened < MAX_REOPEN, hold=hold, source=source)
             dialog.doModal()
             dialog.stop()
             again = dialog.reopen

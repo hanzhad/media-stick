@@ -19,8 +19,8 @@ import zlib
 import xbmc
 import xbmcgui
 
-from resources.lib import (profiles, sweettv_text, ui, youtube_cards as cards, youtube_data as data, youtube_demo,
-                           youtube_files as files, youtube_state as saved)
+from resources.lib import (onboarding_view, profiles, sweettv_text, ui, youtube_cards as cards, youtube_data as data,
+                           youtube_demo, youtube_files as files, youtube_state as saved)
 
 XML = "script-media-stick-youtube.xml"
 RAIL, GRID, ACTION = 100, 200, 300
@@ -79,6 +79,7 @@ class YouTube(xbmcgui.WindowXML):
         self.loading_more = 0                    # the token of the view whose next page is being asked for, 0 for none
         self.more_retry = 0.0                    # no next page is asked for before this time (a failed one waits)
         self._watching = False                   # a worker is looking at the key wizard's progress
+        self._guide_up = False                   # the onboarding window was opened for the keys document now there
 
     def onInit(self):
         self._prop("demo", "1" if self.demo else "")
@@ -359,9 +360,20 @@ class YouTube(xbmcgui.WindowXML):
             url, qr = files.phone_page()
             self._prop("key_url", sweettv_text.short_url(url))
             self._prop("key_qr", qr)
-        step = self._step()
+        guide = None if self.demo else files.read_keys_guide()
+        self._open_guide(guide)
+        step = onboarding_view.card_step(guide) or self._step()      # the onboarding document first, the step file after
         if self.mode == data.NEEDKEY:            # the card may have been left while the file was read
             self._show_step(step)
+
+    def _open_guide(self, guide):
+        """The phone's key wizard has a document: the TV shows it big in the onboarding window over this card, once for
+        each wizard (Back closes it and it stays closed until the wizard is over and a new one starts)."""
+        if guide is None:
+            self._guide_up = False
+        elif not self._guide_up:
+            self._guide_up = True
+            xbmc.executebuiltin("RunScript(script.media-stick.home,onboarding,show,youtube)")
 
     def _step(self):
         if self.demo:                            # the demo shows a step in the phone page's own (Russian) words

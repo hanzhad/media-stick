@@ -5,7 +5,12 @@
      10 Cancel (focused first), 11 Continue without account. In partner mode (`partner` set: a partner's
      specialist types the code in by hand, for hours) there is no QR, the time left (`left`, h:mm) takes
      its place, `status`/`status2` are the Russian and English lines, 10 says Wait (so a stray OK does
-     nothing) and 11 says Cancel (the code asks first). -->
+     nothing) and 11 says Cancel (the code asks first).
+     The onboarding layout (properties ob, ob_badge, ob_badge_colour, ob_kicker, ob_title, ob_hint, ob_site, ob_code,
+     ob_codelong, ob_caption, ob_footer, ob_qr; list 20 of the steps with the items t1, t2, state, num, fg, ring; see
+     onboarding_view.py) replaces the card above while `ob` is set: "Continue on your phone", the steps, a QR and the code.
+     It has no buttons (the keys do it, see signin.py), so nothing in it takes the focus; it is not animated and draws
+     at most 8 step markers, the shadow, the card, the divider, the badge and the QR with its plate. -->
 <window>
     <defaultcontrol always="true">10</defaultcontrol>
     <controls>
@@ -22,6 +27,7 @@
             <top>150</top>
             <width>1500</width>
             <height>780</height>
+            <visible>String.IsEmpty(Window.Property(ob))</visible>
             <control type="image">
                 <left>-40</left>
                 <top>-30</top>
@@ -235,6 +241,304 @@
                 <texturefocus border="47" colordiffuse="FFFFFFFF">pill.png</texturefocus>
                 <onleft>10</onleft>
                 <visible>!String.IsEmpty(Window.Property(skip))</visible>
+            </control>
+        </control>
+
+        <!-- the onboarding layout: replaces the plain card while a normal sign-in waits and has its document -->
+        <control type="group">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <visible>!String.IsEmpty(Window.Property(ob))</visible>
+            <control type="image">
+                <left>110</left>
+                <top>90</top>
+                <width>1700</width>
+                <height>900</height>
+                <texture border="56">card-shadow.png</texture>
+            </control>
+            <control type="image">
+                <left>150</left>
+                <top>120</top>
+                <width>1620</width>
+                <height>840</height>
+                <texture border="47">pill.png</texture>
+                <colordiffuse>FF1B1D28</colordiffuse>
+            </control>
+            <control type="image">
+                <left>1266</left>
+                <top>204</top>
+                <width>2</width>
+                <height>672</height>
+                <texture>white.png</texture>
+                <colordiffuse>FF2C303B</colordiffuse>
+            </control>
+            <control type="image">
+                <left>234</left>
+                <top>204</top>
+                <width>54</width>
+                <height>54</height>
+                <texture>pill.png</texture>
+                <colordiffuse>$INFO[Window.Property(ob_badge_colour)]</colordiffuse>
+            </control>
+            <control type="label">
+                <left>234</left>
+                <top>204</top>
+                <width>54</width>
+                <height>54</height>
+                <font>Med28</font>
+                <textcolor>FFF2F3F5</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(ob_badge)]</label>
+            </control>
+            <control type="label">
+                <left>309</left>
+                <top>204</top>
+                <width>880</width>
+                <height>54</height>
+                <font>Med28</font>
+                <textcolor>FFA3A8B3</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(ob_kicker)]</label>
+            </control>
+            <control type="label">
+                <left>234</left>
+                <top>300</top>
+                <width>948</width>
+                <height>72</height>
+                <font>MsTitle</font>
+                <textcolor>FFF2F3F5</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(ob_title)]</label>
+            </control>
+            <control type="textbox">
+                <left>234</left>
+                <top>388</top>
+                <width>840</width>
+                <height>90</height>
+                <font>Med32</font>
+                <textcolor>FFC7CCD6</textcolor>
+                <label>$INFO[Window.Property(ob_hint)]</label>
+            </control>
+            <control type="list" id="20">
+                <left>234</left>
+                <top>500</top>
+                <width>948</width>
+                <height>336</height>
+                <orientation>vertical</orientation>
+                <scrolltime>0</scrolltime>
+                <itemlayout width="948" height="84">
+                    <control type="image">
+                        <left>0</left>
+                        <top>15</top>
+                        <width>54</width>
+                        <height>54</height>
+                        <texture>onboarding-done.png</texture>
+                        <visible>String.IsEqual(ListItem.Property(state),done)</visible>
+                    </control>
+                    <control type="image">
+                        <left>0</left>
+                        <top>15</top>
+                        <width>54</width>
+                        <height>54</height>
+                        <texture>onboarding-ring.png</texture>
+                        <colordiffuse>$INFO[ListItem.Property(ring)]</colordiffuse>
+                        <visible>!String.IsEqual(ListItem.Property(state),done)</visible>
+                    </control>
+                    <control type="label">
+                        <left>0</left>
+                        <top>15</top>
+                        <width>54</width>
+                        <height>54</height>
+                        <font>Med28</font>
+                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(num)]</label>
+                        <visible>!String.IsEqual(ListItem.Property(state),done)</visible>
+                    </control>
+                    <control type="label">
+                        <left>78</left>
+                        <top>0</top>
+                        <width>870</width>
+                        <height>84</height>
+                        <font>Med32</font>
+                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(t1)]</label>
+                        <visible>String.IsEmpty(ListItem.Property(t2))</visible>
+                    </control>
+                    <control type="label">
+                        <left>78</left>
+                        <top>2</top>
+                        <width>870</width>
+                        <height>40</height>
+                        <font>Med32</font>
+                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(t1)]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
+                    </control>
+                    <control type="label">
+                        <left>78</left>
+                        <top>42</top>
+                        <width>870</width>
+                        <height>40</height>
+                        <font>Med32</font>
+                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(t2)]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="948" height="84">
+                    <control type="image">
+                        <left>0</left>
+                        <top>15</top>
+                        <width>54</width>
+                        <height>54</height>
+                        <texture>onboarding-done.png</texture>
+                        <visible>String.IsEqual(ListItem.Property(state),done)</visible>
+                    </control>
+                    <control type="image">
+                        <left>0</left>
+                        <top>15</top>
+                        <width>54</width>
+                        <height>54</height>
+                        <texture>onboarding-ring.png</texture>
+                        <colordiffuse>$INFO[ListItem.Property(ring)]</colordiffuse>
+                        <visible>!String.IsEqual(ListItem.Property(state),done)</visible>
+                    </control>
+                    <control type="label">
+                        <left>0</left>
+                        <top>15</top>
+                        <width>54</width>
+                        <height>54</height>
+                        <font>Med28</font>
+                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(num)]</label>
+                        <visible>!String.IsEqual(ListItem.Property(state),done)</visible>
+                    </control>
+                    <control type="label">
+                        <left>78</left>
+                        <top>0</top>
+                        <width>870</width>
+                        <height>84</height>
+                        <font>Med32</font>
+                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(t1)]</label>
+                        <visible>String.IsEmpty(ListItem.Property(t2))</visible>
+                    </control>
+                    <control type="label">
+                        <left>78</left>
+                        <top>2</top>
+                        <width>870</width>
+                        <height>40</height>
+                        <font>Med32</font>
+                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(t1)]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
+                    </control>
+                    <control type="label">
+                        <left>78</left>
+                        <top>42</top>
+                        <width>870</width>
+                        <height>40</height>
+                        <font>Med32</font>
+                        <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                        <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(t2)]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
+                    </control>
+                </focusedlayout>
+            </control>
+            <control type="group">
+                <left>0</left>
+                <top>0</top>
+                <width>1920</width>
+                <height>1080</height>
+                <visible>!String.IsEmpty(Window.Property(ob_qr))</visible>
+                <control type="image">
+                    <left>1327</left>
+                    <top>330</top>
+                    <width>300</width>
+                    <height>300</height>
+                    <texture border="47">pill.png</texture>
+                    <colordiffuse>FFFFFFFF</colordiffuse>
+                </control>
+                <control type="image">
+                    <left>1341</left>
+                    <top>344</top>
+                    <width>272</width>
+                    <height>272</height>
+                    <aspectratio>keep</aspectratio>
+                    <texture>$INFO[Window.Property(ob_qr)]</texture>
+                </control>
+            </control>
+            <control type="textbox">
+                <left>1327</left>
+                <top>204</top>
+                <width>360</width>
+                <height>108</height>
+                <font>Reg25</font>
+                <textcolor>FFA3A8B3</textcolor>
+                <label>$INFO[Window.Property(ob_caption)]</label>
+            </control>
+            <control type="textbox">
+                <left>1327</left>
+                <top>650</top>
+                <width>360</width>
+                <height>62</height>
+                <font>Reg22</font>
+                <textcolor>FF8D939F</textcolor>
+                <label>$INFO[Window.Property(ob_site)]</label>
+                <visible>!String.IsEmpty(Window.Property(ob_site))</visible>
+            </control>
+            <control type="label">
+                <left>1327</left>
+                <top>718</top>
+                <width>360</width>
+                <height>56</height>
+                <font>Med40</font>
+                <textcolor>FFF2F3F5</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(ob_code)]</label>
+                <visible>String.IsEmpty(Window.Property(ob_codelong))</visible>
+            </control>
+            <control type="label">
+                <left>1327</left>
+                <top>718</top>
+                <width>360</width>
+                <height>56</height>
+                <font>Med32</font>
+                <textcolor>FFF2F3F5</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(ob_code)]</label>
+                <visible>!String.IsEmpty(Window.Property(ob_codelong))</visible>
+            </control>
+            <control type="label">
+                <left>234</left>
+                <top>876</top>
+                <width>900</width>
+                <height>36</height>
+                <font>Reg25</font>
+                <textcolor>FF8D939F</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(ob_footer)]</label>
             </control>
         </control>
     </controls>

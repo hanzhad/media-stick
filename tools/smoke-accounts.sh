@@ -40,6 +40,8 @@ KODI_ADDONS=/home/media/.kodi/addons
 SIGNIN_DIR=/run/media-stick/signin
 FILES=(
   device/files/usr/local/lib/media-stick/mediastick_signin.py
+  device/files/usr/local/lib/media-stick/mediastick_signin_guide.py
+  device/files/usr/local/lib/media-stick/mediastick_onboarding.py
   device/files/usr/local/bin/panel
   device/files/usr/local/lib/media-stick/panel_accounts.py
   device/files/usr/local/lib/media-stick/panel_accounts_ui.py
@@ -49,6 +51,12 @@ FILES=(
   device/kodi-addons/script.media-stick.home/resources/lib/accounts.py
   device/kodi-addons/script.media-stick.home/resources/lib/signin.py
   device/kodi-addons/script.media-stick.home/resources/lib/ytkeys.py
+  # the onboarding screens: the sign-in code and the key wizard (the TV's side of the shared onboarding files)
+  device/kodi-addons/script.media-stick.home/resources/lib/onboarding_app.py
+  device/kodi-addons/script.media-stick.home/resources/lib/onboarding_demo.py
+  device/kodi-addons/script.media-stick.home/resources/lib/onboarding_files.py
+  device/kodi-addons/script.media-stick.home/resources/lib/onboarding_view.py
+  device/kodi-addons/script.media-stick.home/resources/skins/default/1080i/script-media-stick-onboarding.xml
   # the sign-in overlays: bootstrap copies them over the installed add-ons (doctor.sh checks all overlays)
   device/skin-overlay/plugin.video.sweettv/resources/lib/sweettv.py
   device/skin-overlay/plugin.video.youtube/resources/lib/youtube_plugin/kodion/script_actions.py

@@ -21,6 +21,7 @@ SKIN = os.path.join(ADDON, "resources", "skins", "default", "1080i")
 MEDIA = os.path.join(ADDON, "resources", "skins", "default", "media")
 TMP = tempfile.mkdtemp()
 os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
+os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(TMP, "onboarding")
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
 
 
@@ -50,9 +51,43 @@ xbmcaddon = types.ModuleType("xbmcaddon")
 xbmcaddon.Addon = lambda *a: types.SimpleNamespace(getAddonInfo=lambda key: ADDON)
 
 
+class Control:
+    """A list or a chip slot of the stubbed window: remembers what it was given."""
+
+    def __init__(self):
+        self.items, self.selected, self.position, self.width = [], -1, None, None
+
+    def reset(self):
+        self.items = []
+
+    def addItems(self, items):
+        self.items += list(items)
+
+    def selectItem(self, n):
+        self.selected = n
+
+    def setPosition(self, x, y):
+        self.position = (x, y)
+
+    def setWidth(self, w):
+        self.width = w
+
+
+class ListItem:
+    def __init__(self, label="", label2="", path="", offscreen=False):
+        self.label, self.props = label, {}
+
+    def setProperty(self, key, value):
+        self.props[key] = value
+
+
 class Window:
     def __init__(self, *a):
         self._props = {}
+        self.controls = {}
+
+    def getControl(self, control_id):
+        return self.controls.setdefault(control_id, Control())
 
     def setProperty(self, key, value):
         self._props[key] = value
@@ -105,6 +140,7 @@ xbmcgui.WindowXMLDialog = WindowXMLDialog
 xbmcgui.WindowXML = Window
 xbmcgui.Window = HomeWindow
 xbmcgui.Dialog = Dialog
+xbmcgui.ListItem = ListItem
 xbmcgui.NOTIFICATION_INFO = "info"
 xbmcgui.getCurrentWindowDialogId = lambda: Fake.top
 sys.modules.update(xbmc=xbmc, xbmcvfs=xbmcvfs, xbmcgui=xbmcgui, xbmcaddon=xbmcaddon)
@@ -909,7 +945,8 @@ class Lists(unittest.TestCase):
 
 
 class Skin(unittest.TestCase):
-    NEW = ("script-media-stick-signin.xml", "script-media-stick-profiles.xml", "script-media-stick-accounts.xml")
+    NEW = ("script-media-stick-signin.xml", "script-media-stick-profiles.xml", "script-media-stick-accounts.xml",
+           "script-media-stick-onboarding.xml")
 
     def tree(self, name):
         return ET.parse(os.path.join(SKIN, name)).getroot()
@@ -940,7 +977,7 @@ class Skin(unittest.TestCase):
         texts = lambda name: "".join(ET.tostring(self.tree(name), encoding="unicode").split())   # noqa: E731
         read = set(re.findall(r"Window\.Property\((\w+)\)", texts("script-media-stick-signin.xml")))
         props, _ = signin.Follow("YouTube", 0).feed(None, 1)[:2]
-        self.assertLessEqual(read, set(props) | {"qr", "skip"})
+        self.assertLessEqual(read, set(props) | {"qr", "skip", "ob_qr"})
         items = set(re.findall(r"ListItem\.Property\((\w+)\)", texts("script-media-stick-profiles.xml")))
         self.assertLessEqual(items, set(profiles.cards([])[0]))
         self.assertEqual(set(re.findall(r"ListItem\.Property\((\w+)\)", texts("script-media-stick-accounts.xml"))), {"confirm"})
@@ -964,6 +1001,7 @@ class Skin(unittest.TestCase):
         fonts = set()
         for name in ("script-media-stick-home.xml", "script-media-stick-remote.xml"):
             fonts |= {f.text for f in self.tree(name).iter("font")}
+        fonts.add("MsTitle")             # the skin's own title font (skin.ftv Font.xml): loaded at start, whoever draws with it
         for name in self.NEW:
             root = self.tree(name)
             self.assertLessEqual({f.text for f in root.iter("font")}, fonts, name)

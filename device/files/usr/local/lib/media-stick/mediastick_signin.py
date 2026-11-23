@@ -14,6 +14,11 @@ script that somebody is still entering a code.
 
 State is plain JSON in a tmpfs directory, written whole and renamed into place, standard
 library only: it imports the same in Kodi's Python, in the panel and in a test.
+
+Next to it each normal sign-in also writes the shared onboarding picture (mediastick_onboarding,
+/run/media-stick/onboarding/<service>.json; its words are in mediastick_signin_guide): the three steps the
+person does on the phone, which the TV and the phone sheet both draw. This file stays what the add-ons,
+the accounts list and the update script read; the onboarding one is a view of it and never breaks it.
 """
 import json
 import os
@@ -23,6 +28,12 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
+
+try:        # the shared picture of a flow for the TV and the phone; a device without it signs in as it always did
+    import mediastick_onboarding as onboarding
+    import mediastick_signin_guide as guide
+except ImportError:
+    onboarding = guide = None
 
 DIR = os.environ.get("MEDIASTICK_SIGNIN_DIR", "/run/media-stick/signin")
 USERDATA = os.environ.get("MEDIASTICK_ADDON_DATA", "/home/media/.kodi/userdata/addon_data")
@@ -36,6 +47,7 @@ NORMAL, PARTNER = "normal", "partner"
 MODES = (NORMAL, PARTNER)
 TTL = {NORMAL: 10 * 60, PARTNER: 6 * 60 * 60}    # how long the code is waited for, by mode
 MODE_KEEP = 120     # a mode the phone asked for is forgotten after this many seconds if no sign-in took it
+ONBOARD_ALIVE = HEARTBEAT + 30    # the onboarding picture of a waiting sign-in dies this long after the last heartbeat
 
 SERVICES = {
     "youtube": {
@@ -93,6 +105,8 @@ def begin(service):
         os.unlink(_path(service))
     except OSError:
         pass
+    if onboarding is not None:
+        onboarding.clear(service)
 
 
 def clean_mode(mode):
@@ -115,7 +129,25 @@ def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NOR
     if state == WAITING:
         data.update(code=code, url=url,
                     link=SERVICES[service]["link"].format(code=quote(code, safe="-")) if code else url)
-    return _store(service, data)
+    stored = _store(service, data)
+    _onboard(service, data)
+    return stored
+
+
+def _onboard(service, data):
+    """Keep the onboarding picture in step with the sign-in state `data`. Whatever goes wrong here, the sign-in goes on."""
+    if onboarding is None or not guide.known(service):
+        return
+    try:
+        if data["state"] == WAITING and data["mode"] == PARTNER:
+            onboarding.clear(service)        # a partner's specialist types the code from the TV: nobody is on the phone
+            return
+        state = onboarding.ACTIVE if data["state"] == WAITING else data["state"]
+        doc = guide.document(service, state, data.get("code", ""), data.get("link", ""), data["step"], data["steps"])
+        ttl = min(data["expires"] - data["updated"], ONBOARD_ALIVE) if state == onboarding.ACTIVE else None
+        onboarding.write(service, doc, data["updated"], ttl)
+    except Exception:
+        pass
 
 
 def touch(service):
@@ -124,7 +156,13 @@ def touch(service):
     if data is None or data["state"] != WAITING:
         return False
     data["updated"] = int(time.time())
-    return _store(service, data)
+    stored = _store(service, data)
+    if stored and onboarding is not None:
+        try:
+            onboarding.extend(service, ONBOARD_ALIVE, until=data.get("expires"), now=data["updated"])
+        except Exception:
+            pass
+    return stored
 
 
 def read(service, now=None):

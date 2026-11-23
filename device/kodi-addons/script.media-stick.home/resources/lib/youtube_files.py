@@ -8,7 +8,7 @@ import os
 import xbmc
 import xbmcvfs
 
-from resources.lib import apps, ui, youtube_data as data
+from resources.lib import apps, onboarding_files, onboarding_view as view, ui, youtube_data as data
 
 SETTINGS_FILE = "settings.xml"   # in the add-on's userdata folder: <setting id="youtube.api.key">..</setting> (and .id, .secret)
 KEYS_FILE = "api_keys.json"      # the same folder, the older place: {"keys": {"personal": {"api_key", "client_id", "client_secret"}}}
@@ -84,6 +84,13 @@ def read_step(now, path=STEP_FILE):
         ui.log(f"key wizard progress not readable: {e!r}")
         return None
     return data.parse_step(raw, now)
+
+
+def read_keys_guide(now=None):
+    """The key wizard's onboarding document (onboarding_view.Screen), None when no running keys flow has written one: the
+    phone side has not moved to it, or the wizard is over. The step file above is the older way of saying the same."""
+    screen = view.parse(onboarding_files.read("youtube", now), "YouTube")
+    return screen if screen is not None and screen.flow == view.KEYS and screen.active else None
 
 
 def phone_page():

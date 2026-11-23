@@ -1,0 +1,734 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Onboarding window (resources/lib/onboarding_app.py): what the TV shows while the phone works through a flow with
+     steps, here the Google key wizard. A dim backdrop and one rounded card: the steps on the left, the rows of chips
+     ("on the Google page tap ..."), a warning and the status badges on the right, a footer with the key hints.
+     Window properties: kicker, title1, title2 (the title cut into its two lines), header ("Step 2 of 4 . ..."), warn,
+     footer, and for the chips chip1..12 (the label, with colour markup), chip1_bg..chip12_bg (the fill), sep1..12 and
+     then1..3 (the words between them; "" for a slot not in use).
+     Controls: 20 the list of steps (items: t1, t2 (the second line, "" for a step that fits one), state done | now | todo,
+     num, fg (colour of the words and number), ring (colour of the ring)), 30 the list of badges (items: t1, bg, fg).
+     101..112 chip pictures and 201..212 chip labels, 301..312 separators, 401..403 "Then": all of them start at the
+     corner of the chip area, and Python moves and widens them (the widths follow the words, onboarding_view.layout_chips);
+     50 the warning, which Python puts under the last row of chips.
+     Nothing here takes the focus or is animated; the lists never show a cursor (the focused layout is the plain one).
+     Budget (Pi 3B+): backdrop, shadow, card, divider, at most 8 step markers, 12 chips and 6 badges: 30 pictures. -->
+<window>
+    <controls>
+        <control type="image">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <texture>white.png</texture>
+            <colordiffuse>D9080B10</colordiffuse>
+        </control>
+        <control type="image">
+            <left>80</left>
+            <top>75</top>
+            <width>1760</width>
+            <height>930</height>
+            <texture border="56">card-shadow.png</texture>
+        </control>
+        <control type="image">
+            <left>120</left>
+            <top>105</top>
+            <width>1680</width>
+            <height>870</height>
+            <texture border="47">pill.png</texture>
+            <colordiffuse>FF1B1D28</colordiffuse>
+        </control>
+        <control type="image">
+            <left>798</left>
+            <top>183</top>
+            <width>2</width>
+            <height>714</height>
+            <texture>white.png</texture>
+            <colordiffuse>FF2C303B</colordiffuse>
+        </control>
+        <control type="label">
+            <left>204</left>
+            <top>183</top>
+            <width>510</width>
+            <height>40</height>
+            <font>Med28</font>
+            <textcolor>FFA3A8B3</textcolor>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(kicker)]</label>
+        </control>
+        <control type="label">
+            <left>204</left>
+            <top>244</top>
+            <width>510</width>
+            <height>68</height>
+            <font>MsTitle</font>
+            <textcolor>FFF2F3F5</textcolor>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(title1)]</label>
+        </control>
+        <control type="label">
+            <left>204</left>
+            <top>312</top>
+            <width>510</width>
+            <height>68</height>
+            <font>MsTitle</font>
+            <textcolor>FFF2F3F5</textcolor>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(title2)]</label>
+        </control>
+        <control type="list" id="20">
+            <left>204</left>
+            <top>408</top>
+            <width>510</width>
+            <height>468</height>
+            <orientation>vertical</orientation>
+            <scrolltime>0</scrolltime>
+            <itemlayout width="510" height="78">
+                <control type="image">
+                    <left>0</left>
+                    <top>13</top>
+                    <width>51</width>
+                    <height>51</height>
+                    <texture>onboarding-done.png</texture>
+                    <visible>String.IsEqual(ListItem.Property(state),done)</visible>
+                </control>
+                <control type="image">
+                    <left>0</left>
+                    <top>13</top>
+                    <width>51</width>
+                    <height>51</height>
+                    <texture>onboarding-ring.png</texture>
+                    <colordiffuse>$INFO[ListItem.Property(ring)]</colordiffuse>
+                    <visible>!String.IsEqual(ListItem.Property(state),done)</visible>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>13</top>
+                    <width>51</width>
+                    <height>51</height>
+                    <font>Med28</font>
+                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(num)]</label>
+                    <visible>!String.IsEqual(ListItem.Property(state),done)</visible>
+                </control>
+                <control type="label">
+                    <left>72</left>
+                    <top>0</top>
+                    <width>438</width>
+                    <height>78</height>
+                    <font>Med32</font>
+                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(t1)]</label>
+                    <visible>String.IsEmpty(ListItem.Property(t2))</visible>
+                </control>
+                <control type="label">
+                    <left>72</left>
+                    <top>2</top>
+                    <width>438</width>
+                    <height>37</height>
+                    <font>Med32</font>
+                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(t1)]</label>
+                    <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
+                </control>
+                <control type="label">
+                    <left>72</left>
+                    <top>39</top>
+                    <width>438</width>
+                    <height>37</height>
+                    <font>Med32</font>
+                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(t2)]</label>
+                    <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
+                </control>
+            </itemlayout>
+            <focusedlayout width="510" height="78">
+                <control type="image">
+                    <left>0</left>
+                    <top>13</top>
+                    <width>51</width>
+                    <height>51</height>
+                    <texture>onboarding-done.png</texture>
+                    <visible>String.IsEqual(ListItem.Property(state),done)</visible>
+                </control>
+                <control type="image">
+                    <left>0</left>
+                    <top>13</top>
+                    <width>51</width>
+                    <height>51</height>
+                    <texture>onboarding-ring.png</texture>
+                    <colordiffuse>$INFO[ListItem.Property(ring)]</colordiffuse>
+                    <visible>!String.IsEqual(ListItem.Property(state),done)</visible>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>13</top>
+                    <width>51</width>
+                    <height>51</height>
+                    <font>Med28</font>
+                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(num)]</label>
+                    <visible>!String.IsEqual(ListItem.Property(state),done)</visible>
+                </control>
+                <control type="label">
+                    <left>72</left>
+                    <top>0</top>
+                    <width>438</width>
+                    <height>78</height>
+                    <font>Med32</font>
+                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(t1)]</label>
+                    <visible>String.IsEmpty(ListItem.Property(t2))</visible>
+                </control>
+                <control type="label">
+                    <left>72</left>
+                    <top>2</top>
+                    <width>438</width>
+                    <height>37</height>
+                    <font>Med32</font>
+                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(t1)]</label>
+                    <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
+                </control>
+                <control type="label">
+                    <left>72</left>
+                    <top>39</top>
+                    <width>438</width>
+                    <height>37</height>
+                    <font>Med32</font>
+                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(t2)]</label>
+                    <visible>!String.IsEmpty(ListItem.Property(t2))</visible>
+                </control>
+            </focusedlayout>
+        </control>
+        <control type="label">
+            <left>870</left>
+            <top>183</top>
+            <width>846</width>
+            <height>40</height>
+            <font>Med28</font>
+            <textcolor>FFA3A8B3</textcolor>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(header)]</label>
+        </control>
+        <control type="image" id="101">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip1_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip1))</visible>
+        </control>
+        <control type="label" id="201">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip1)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip1))</visible>
+        </control>
+        <control type="image" id="102">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip2_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip2))</visible>
+        </control>
+        <control type="label" id="202">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip2)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip2))</visible>
+        </control>
+        <control type="image" id="103">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip3_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip3))</visible>
+        </control>
+        <control type="label" id="203">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip3)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip3))</visible>
+        </control>
+        <control type="image" id="104">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip4_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip4))</visible>
+        </control>
+        <control type="label" id="204">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip4)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip4))</visible>
+        </control>
+        <control type="image" id="105">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip5_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip5))</visible>
+        </control>
+        <control type="label" id="205">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip5)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip5))</visible>
+        </control>
+        <control type="image" id="106">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip6_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip6))</visible>
+        </control>
+        <control type="label" id="206">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip6)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip6))</visible>
+        </control>
+        <control type="image" id="107">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip7_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip7))</visible>
+        </control>
+        <control type="label" id="207">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip7)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip7))</visible>
+        </control>
+        <control type="image" id="108">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip8_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip8))</visible>
+        </control>
+        <control type="label" id="208">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip8)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip8))</visible>
+        </control>
+        <control type="image" id="109">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip9_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip9))</visible>
+        </control>
+        <control type="label" id="209">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip9)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip9))</visible>
+        </control>
+        <control type="image" id="110">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip10_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip10))</visible>
+        </control>
+        <control type="label" id="210">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip10)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip10))</visible>
+        </control>
+        <control type="image" id="111">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip11_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip11))</visible>
+        </control>
+        <control type="label" id="211">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip11)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip11))</visible>
+        </control>
+        <control type="image" id="112">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <texture border="32">pill.png</texture>
+            <colordiffuse>$INFO[Window.Property(chip12_bg)]</colordiffuse>
+            <visible>!String.IsEmpty(Window.Property(chip12))</visible>
+        </control>
+        <control type="label" id="212">
+            <left>870</left>
+            <top>259</top>
+            <width>200</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFFFFFFF</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(chip12)]</label>
+            <visible>!String.IsEmpty(Window.Property(chip12))</visible>
+        </control>
+        <control type="label" id="301">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep1)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep1))</visible>
+        </control>
+        <control type="label" id="302">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep2)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep2))</visible>
+        </control>
+        <control type="label" id="303">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep3)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep3))</visible>
+        </control>
+        <control type="label" id="304">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep4)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep4))</visible>
+        </control>
+        <control type="label" id="305">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep5)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep5))</visible>
+        </control>
+        <control type="label" id="306">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep6)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep6))</visible>
+        </control>
+        <control type="label" id="307">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep7)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep7))</visible>
+        </control>
+        <control type="label" id="308">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep8)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep8))</visible>
+        </control>
+        <control type="label" id="309">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep9)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep9))</visible>
+        </control>
+        <control type="label" id="310">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep10)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep10))</visible>
+        </control>
+        <control type="label" id="311">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep11)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep11))</visible>
+        </control>
+        <control type="label" id="312">
+            <left>870</left>
+            <top>259</top>
+            <width>24</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FF8D939F</textcolor>
+            <align>center</align>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(sep12)]</label>
+            <visible>!String.IsEmpty(Window.Property(sep12))</visible>
+        </control>
+        <control type="label" id="401">
+            <left>870</left>
+            <top>259</top>
+            <width>80</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFA3A8B3</textcolor>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(then1)]</label>
+            <visible>!String.IsEmpty(Window.Property(then1))</visible>
+        </control>
+        <control type="label" id="402">
+            <left>870</left>
+            <top>259</top>
+            <width>80</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFA3A8B3</textcolor>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(then2)]</label>
+            <visible>!String.IsEmpty(Window.Property(then2))</visible>
+        </control>
+        <control type="label" id="403">
+            <left>870</left>
+            <top>259</top>
+            <width>80</width>
+            <height>66</height>
+            <font>Med32</font>
+            <textcolor>FFA3A8B3</textcolor>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(then3)]</label>
+            <visible>!String.IsEmpty(Window.Property(then3))</visible>
+        </control>
+        <control type="textbox" id="50">
+            <left>870</left>
+            <top>529</top>
+            <width>846</width>
+            <height>84</height>
+            <font>Med28</font>
+            <textcolor>FFF0C674</textcolor>
+            <label>$INFO[Window.Property(warn)]</label>
+            <visible>!String.IsEmpty(Window.Property(warn))</visible>
+        </control>
+        <control type="panel" id="30">
+            <left>870</left>
+            <top>790</top>
+            <width>846</width>
+            <height>122</height>
+            <orientation>vertical</orientation>
+            <scrolltime>0</scrolltime>
+            <itemlayout width="282" height="61">
+                <control type="image">
+                    <left>0</left>
+                    <top>3</top>
+                    <width>270</width>
+                    <height>54</height>
+                    <texture border="27">pill.png</texture>
+                    <colordiffuse>$INFO[ListItem.Property(bg)]</colordiffuse>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>3</top>
+                    <width>270</width>
+                    <height>54</height>
+                    <font>Reg25</font>
+                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(t1)]</label>
+                </control>
+            </itemlayout>
+            <focusedlayout width="282" height="61">
+                <control type="image">
+                    <left>0</left>
+                    <top>3</top>
+                    <width>270</width>
+                    <height>54</height>
+                    <texture border="27">pill.png</texture>
+                    <colordiffuse>$INFO[ListItem.Property(bg)]</colordiffuse>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>3</top>
+                    <width>270</width>
+                    <height>54</height>
+                    <font>Reg25</font>
+                    <textcolor>$INFO[ListItem.Property(fg)]</textcolor>
+                    <selectedcolor>$INFO[ListItem.Property(fg)]</selectedcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[ListItem.Property(t1)]</label>
+                </control>
+            </focusedlayout>
+        </control>
+        <control type="label">
+            <left>204</left>
+            <top>900</top>
+            <width>1500</width>
+            <height>36</height>
+            <font>Reg25</font>
+            <textcolor>FF8D939F</textcolor>
+            <aligny>center</aligny>
+            <label>$INFO[Window.Property(footer)]</label>
+        </control>
+    </controls>
+</window>

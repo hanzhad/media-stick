@@ -32,6 +32,7 @@ LIB = os.path.join(ROOT, "device", "files", "usr", "local", "lib", "media-stick"
 PANEL = os.path.join(ROOT, "device", "files", "usr", "local", "bin", "panel")
 TMP = tempfile.mkdtemp()
 os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
+os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(TMP, "onboarding")
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
 os.environ["MEDIASTICK_YTKEYS_DIR"] = os.path.join(TMP, "run")
 os.environ["PANEL_STATE_DIR"] = os.path.join(TMP, "state")

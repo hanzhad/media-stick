@@ -26,6 +26,7 @@ A network cable (or the Mac's Internet Sharing) also works and skips step 3.
 | show an iPhone, iPad or Mac screen on the TV | Screen Mirroring → Media Stick (AirPlay by UxPlay, `airplay.service`; sound too); Kodi comes back when the phone stops |
 | look at the SWEET.TV screen without an account | on the device `kodi-rpc Addons.ExecuteAddon '{"addonid":"script.media-stick.home","params":["sweettv","demo"]}'`: invented channels, marked DEMO, nothing is played |
 | look at the YouTube screen without a key or an account | on the device `kodi-rpc Addons.ExecuteAddon '{"addonid":"script.media-stick.home","params":["youtube","demo"]}'`: invented videos, marked DEMO, nothing is played; a third word (`signin`, `needkey`, `empty`, `error`, `loading`) shows that card instead of the list |
+| look at the onboarding screens (the phone does the action, the TV shows the hints) | on the device `kodi-rpc Addons.ExecuteAddon '{"addonid":"script.media-stick.home","params":["onboarding","demo","signin"]}'` (or `keys`): invented documents, nothing is written, Back closes |
 | add a Kodi add-on for good | add its id to `device/kodi-addons.want`, run `python3 tools/kodi-addons-lock.py`, commit |
 | apps on the home screen | none to set: any installed video or program add-on appears by itself, last used first |
 | Kodi phone app (Kore, Official Kodi Remote, Yatse) | finds `mediastick` by itself; user `kodi`, password: `ssh … sudo grep KODI_WEB /etc/media-stick/secrets.env` |
@@ -56,6 +57,25 @@ Signing in to YouTube or SWEET.TV in Kodi means a code and an address to type; Y
 
 The add-ons publish what they wait for into `/run/media-stick/signin` (RAM, one small JSON file per service; library `device/files/usr/local/lib/media-stick/mediastick_signin.py`), which the TV screen and the page read. The add-ons are the pinned third-party ones, so the few lines they need are not forked: `device/skin-overlay/<add-on>/` holds a changed copy of each file, every change fenced by `media-stick begin` / `end`, copied over the installed add-on by bootstrap after every (re)install. `tools/make-skin-overlays.py` rebuilds them from the pinned zips.
 
+The phone and the TV share one more picture, the onboarding channel: while a flow needs the phone (the sign-in above, the Google key wizard), whoever runs it writes `/run/media-stick/onboarding/<service>.json` (RAM; library `device/files/usr/local/lib/media-stick/mediastick_onboarding.py`, tests `tools/test-onboarding.py`). The TV draws it big (a dim backdrop and one card: the steps with done, now and to-come marks, the QR and code of a sign-in, or the rows of Google-page chips, a warning and status badges of a key wizard), the phone page draws it as its sheet; neither asks the other anything. The sign-in writes it from `mediastick_signin.publish` (`mediastick_signin_guide.py` has the words; the old `signin/<service>.json` is unchanged); the key card reads `youtube.json` with `flow` `keys` and falls back to `ytkeys.step.json`. Schema v1, all texts one line, longer ones are cut and longer lists lose their tail:
+
+```
+{"v": 1, "service": "youtube", "flow": "signin" | "keys" | <other>,
+ "state": "active" | "done" | "failed" | "cancelled",
+ "kicker": {"tv", "phone"},                       optional, <= 60
+ "title": {"tv", "phone"},                        <= 80
+ "step": 2, "steps": [{"id", "tv", "phone"}],      1-based; <= 8 steps, text <= 120
+ "code": "KQX-7MD-P4W", "link": "https://...",    sign-in only
+ "action": {"kind": "link"|"paste"|"wait", "label", "url"},
+ "hint": {"tv", "phone"},                         <= 160
+ "chips": [[{"t", "s": "done"|"now"|"todo"}]],     TV only: <= 4 rows, <= 12 chips, text <= 48
+ "items": [{"id", "label", "s": "ok"|"wait"}],   TV only: <= 6 badges, never a value
+ "warn": {"tv", "phone"},                         <= 160
+ "updated": <unix>, "expires": <unix>}             expires is mandatory; after it the file is nothing
+```
+
+`service` is `[a-z0-9_-]{1,32}`; the file is written whole and renamed into place (mode 0644). The library refuses a document that holds a Google API key (`AIza...`), a client secret (`GOCSPX-...`), a client id (`...apps.googleusercontent.com`), an OAuth token or a long token-like word, and reads a file with any of them as nothing; unknown fields are kept on read, a missing, corrupt, expired or other-version file reads as nothing. `MEDIASTICK_ONBOARDING_DIR` moves the directory (tests).
+
 ## Self-update
 
 The device pulls `main` on the schedule in `device/config.env` (`UPDATE_SCHEDULE`, every 5 minutes while developing) and applies it; a failed update rolls back. Nothing is updated while Kodi is playing.
@@ -68,7 +88,7 @@ The device pulls `main` on the schedule in `device/config.env` (`UPDATE_SCHEDULE
 | `provisioning/firstboot/` | first boot: get online (cable, Wi-Fi, or setup hotspot), clone, hand over to bootstrap |
 | `device/bootstrap.sh` | brings the Pi to the described state; safe to run again |
 | `device/files/` | copied to the same paths on the device |
-| `device/kodi-addons/script.media-stick.home/` | the launcher add-on: `resources/lib/` (`launcher.py` home, `apps.py`, `accounts*.py` and `signin.py` sign-in, `sweettv_app.py` the SWEET.TV window, `sweettv_data.py` its Kodi-free logic, `sweettv_state.py` favourites, `sweettv_files.py` the files it reads, `sweettv_demo.py` the demo channels), `resources/skins/default/1080i/` the windows |
+| `device/kodi-addons/script.media-stick.home/` | the launcher add-on: `resources/lib/` (`launcher.py` home, `apps.py`, `accounts*.py` and `signin.py` sign-in, `sweettv_app.py` the SWEET.TV window, `sweettv_data.py` its Kodi-free logic, `sweettv_state.py` favourites, `sweettv_files.py` the files it reads, `sweettv_demo.py` the demo channels, `onboarding_app.py` the onboarding window and `onboarding_view.py` its Kodi-free logic, `onboarding_files.py` the files it reads, `onboarding_demo.py` the demo documents), `resources/skins/default/1080i/` the windows |
 | `device/kodi-addons/script.media-stick.home/` (YouTube) | `resources/lib/youtube_app.py` the window, `youtube_data.py` its Kodi-free logic, `youtube_state.py` last section and search, `youtube_cards.py` what a card says (lines cut to fit with `textfit.py`), `youtube_files.py` the add-on calls and files it reads (and the wizard's step file), `youtube_demo.py` the demo videos, `ytkeys.py` writes the Google keys into the add-on; the phone side of the key wizard is `device/files/usr/local/lib/media-stick/panel_ytkeys.py`, `panel_ytkeys_ui.py` and `mediastick_ytkeys.py`; `resources/skins/default/1080i/script-media-stick-youtube.xml` |
 | `device/skin-overlay/` | files copied over installed add-ons: the sign-in changes to YouTube and SWEET.TV, the skin's pointer |
 | `tools/` | run from a computer |

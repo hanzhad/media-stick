@@ -33,6 +33,8 @@ CODE = "ABCD-EFGH"
 KA = "/home/media/.kodi/addons"
 DEPLOYED = {
     "device/files/usr/local/lib/media-stick/mediastick_signin.py": "/usr/local/lib/media-stick/mediastick_signin.py",
+    "device/files/usr/local/lib/media-stick/mediastick_signin_guide.py": "/usr/local/lib/media-stick/mediastick_signin_guide.py",
+    "device/files/usr/local/lib/media-stick/mediastick_onboarding.py": "/usr/local/lib/media-stick/mediastick_onboarding.py",
     "device/files/usr/local/bin/panel": "/usr/local/bin/panel",
     "device/files/usr/local/lib/media-stick/panel_accounts.py": "/usr/local/lib/media-stick/panel_accounts.py",
     "device/files/usr/local/lib/media-stick/panel_accounts_ui.py": "/usr/local/lib/media-stick/panel_accounts_ui.py",
@@ -45,6 +47,16 @@ DEPLOYED = {
         KA + "/script.media-stick.home/resources/lib/signin.py",
     "device/kodi-addons/script.media-stick.home/resources/lib/ytkeys.py":
         KA + "/script.media-stick.home/resources/lib/ytkeys.py",
+    "device/kodi-addons/script.media-stick.home/resources/lib/onboarding_app.py":
+        KA + "/script.media-stick.home/resources/lib/onboarding_app.py",
+    "device/kodi-addons/script.media-stick.home/resources/lib/onboarding_demo.py":
+        KA + "/script.media-stick.home/resources/lib/onboarding_demo.py",
+    "device/kodi-addons/script.media-stick.home/resources/lib/onboarding_files.py":
+        KA + "/script.media-stick.home/resources/lib/onboarding_files.py",
+    "device/kodi-addons/script.media-stick.home/resources/lib/onboarding_view.py":
+        KA + "/script.media-stick.home/resources/lib/onboarding_view.py",
+    "device/kodi-addons/script.media-stick.home/resources/skins/default/1080i/script-media-stick-onboarding.xml":
+        KA + "/script.media-stick.home/resources/skins/default/1080i/script-media-stick-onboarding.xml",
     "device/skin-overlay/plugin.video.sweettv/resources/lib/sweettv.py":
         KA + "/plugin.video.sweettv/resources/lib/sweettv.py",
     "device/skin-overlay/plugin.video.youtube/resources/lib/youtube_plugin/kodion/script_actions.py":
@@ -73,6 +85,7 @@ def scenario(d):
 
 def load_lib(d):
     os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(d, "signin")
+    os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(d, "onboarding")
     os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(d, "addon_data")
     sys.path.insert(0, LIB)
     import mediastick_signin as ms
@@ -570,7 +583,7 @@ class Smoke(unittest.TestCase):
         for rel in DEPLOYED:
             self.assertIn(rel, text)
             self.assertTrue(os.path.isfile(os.path.join(ROOT, rel)), rel)
-        self.assertEqual(len(DEPLOYED), 13)  # a file added to the script is added here too
+        self.assertEqual(len(DEPLOYED), 20)  # a file added to the script is added here too
 
 
 if __name__ == "__main__":
