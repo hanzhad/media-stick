@@ -33,6 +33,8 @@ TAIL = r"""
 .acc-add{display:flex;gap:8px;margin-top:8px}
 .acc-add input{flex:1;min-width:0}
 .acc-add .btn{flex:0 0 auto}
+.acc-ch{margin-top:12px;color:var(--dim);font-size:14px;line-height:1.45}
+.acc-ch.warn{color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .acc-m{margin-top:10px;color:var(--dim);font-size:14px;min-height:1.4em}
 .acc-m.bad{color:var(--bad)}
 .acc-sheet{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center}
@@ -81,6 +83,9 @@ TAIL = r"""
 // ---- accounts: sign in once on the phone, the code is already in the link ----
 const ACC_HOSTS=@@HOSTS@@;
 const accEl=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e};
+const ACC_NO_CHANNEL='У этого аккаунта Google нет канала YouTube, поэтому на ТВ пусто в «Подписках», «Смотреть позже» и «Плейлистах» (рекомендации и поиск работают). '
+  +'Создайте канал в приложении YouTube: аватар → «Создать канал». Надпись пропадёт сама; если на ТВ всё ещё пусто — «Выйти» и «Войти». '
+  +'Или войдите другим аккаунтом Google: «Добавить профиль».';
 function accSafe(u){   // only https links to the sign-in pages themselves
   try{const x=new URL(u);return x.protocol==='https:'&&!x.username&&!x.password&&x.port===''&&ACC_HOSTS.indexOf(x.hostname)>=0?x.href:''}catch(e){return ''}
 }
@@ -131,7 +136,7 @@ function accCard(svc){
   const go=accEl('button','btn acc','Добавить');
   go.onclick=()=>accAdd(svc,inp,add);inp.addEventListener('keydown',e=>{if(e.key==='Enter')go.click()});
   add.append(inp,go);
-  c.append(hd,chips,btns,add,accEl('div','acc-m'));
+  c.append(hd,chips,accEl('div','acc-ch hide'),btns,add,accEl('div','acc-m'));
   $('acc-list').append(c);return c
 }
 function accMsg(svc,t,bad){const m=accCard(svc).querySelector('.acc-m');m.textContent=t||'';m.classList.toggle('bad',!!bad)}
@@ -154,6 +159,10 @@ function accRender(list){
       b.onclick=()=>{if(!p.current)accSwitch(a.service,p)};
       chips.append(b)});
     chips.classList.toggle('hide',!a.profiles.length);
+    // no YouTube channel on the Google account: Google gives the add-on no subscriptions, Watch Later or playlists
+    const ch=c.querySelector('.acc-ch'),cs=yt&&cur&&cur.signed_in?cur.channel:'';
+    ch.textContent=cs==='no'?ACC_NO_CHANNEL:cs==='yes'&&cur.channel_title?'Канал YouTube: '+cur.channel_title:'';
+    ch.classList.toggle('warn',cs==='no');ch.classList.toggle('hide',!ch.textContent);
     const need=!a.signed_in||(yt&&(!cur||cur.tokens<4));
     const q=k=>c.querySelector('[data-k='+k+']');
     q('in').classList.toggle('acc',need);q('in').disabled=waiting;   // always there (a token may have expired), the main button when it is needed

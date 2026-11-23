@@ -12,6 +12,10 @@ import unicodedata
 from urllib.parse import urlsplit
 
 import mediastick_signin as signin
+try:
+    import mediastick_ytchannel as ytchannel   # does the signed-in Google account have a YouTube channel
+except ImportError:
+    ytchannel = None
 import panel_accounts_ui as ui
 import panel_ytkeys
 import panel_ytkeys_ui
@@ -109,10 +113,27 @@ def public_signin(state):
             "left": _int(state.get("left"), 0, 0, 86400), "updated": _int(state.get("updated"), 0, 0, 2 ** 40)}
 
 
+def _channel(service, p):
+    """("yes" | "no" | "unknown", the channel's title): without a channel Google gives the add-on no
+    subscriptions, Watch Later or playlists, so the page says so. Never waits (see mediastick_ytchannel)."""
+    if service != "youtube" or not p.get("signed_in") or ytchannel is None:
+        return "unknown", ""
+    try:
+        got = ytchannel.peek(str(p["id"]))
+    except Exception:   # a check that breaks must not take the Accounts tab with it
+        return "unknown", ""
+    state = got.get("state") if isinstance(got, dict) and got.get("state") in ("yes", "no") else "unknown"
+    title = " ".join(str(got.get("title", "")).split()) if state == "yes" else ""
+    return state, "".join(ch for ch in title if ch.isprintable())[:64]
+
+
 def _public_account(a):
-    profiles = [{"id": str(p["id"]), "name": str(p["name"]), "current": bool(p["current"]),
-                 "tokens": _int(p.get("tokens"), 0, 0, 4), "signed_in": bool(p["signed_in"])}
-                for p in a["profiles"]]
+    profiles = []
+    for p in a["profiles"]:
+        channel, title = _channel(a["service"], p)
+        profiles.append({"id": str(p["id"]), "name": str(p["name"]), "current": bool(p["current"]),
+                         "tokens": _int(p.get("tokens"), 0, 0, 4), "signed_in": bool(p["signed_in"]),
+                         "channel": channel, "channel_title": title})
     return {"service": a["service"], "name": a["name"], "profiles": profiles,
             "signed_in": bool(a["signed_in"]), "signin": public_signin(a["signin"])}
 

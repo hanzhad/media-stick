@@ -25,6 +25,7 @@ os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
 os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(TMP, "onboarding")
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
 os.environ["PANEL_STATE_DIR"] = os.path.join(TMP, "state")
+os.environ["MEDIASTICK_YTCHANNEL_OFF"] = "1"   # never ask Google from a test
 sys.dont_write_bytecode = True
 sys.path.insert(0, LIB)
 
@@ -164,6 +165,33 @@ class Reading(unittest.TestCase):
         self.assertEqual([w["service"] for w in v["waiting"]], ["youtube"])
         self.assertEqual(v["waiting"][0]["link"], "https://www.youtube.com/activate?user_code=ABC-DEF-GHI")
         self.assertEqual(by["youtube"]["signin"]["step"], 2)
+
+    def test_a_profile_says_whether_its_google_account_has_a_channel(self):
+        yt({"0": {"name": "Основной", "refresh_token": SECRET}, "1": {"name": "Дети", "refresh_token": ""}})
+        answers = {"0": {"state": "no", "title": ""}}
+        with mock.patch.object(pa.ytchannel, "peek", side_effect=lambda pid: answers[pid]) as peek:
+            prof = {p["id"]: p for p in pa.view()["accounts"][0]["profiles"]}
+            self.assertEqual((prof["0"]["channel"], prof["0"]["channel_title"]), ("no", ""))
+            self.assertEqual(prof["1"]["channel"], "unknown")   # not signed in: Google is not asked
+            self.assertEqual([c.args for c in peek.call_args_list], [("0",)])
+            answers["0"] = {"state": "yes", "title": "Мой\x07 канал " + "x" * 80}
+            p0 = pa.view()["accounts"][0]["profiles"][0]
+            self.assertEqual(p0["channel"], "yes")
+            self.assertEqual(p0["channel_title"], ("Мой канал " + "x" * 80)[:64])
+            answers["0"] = {"state": "maybe", "title": "x"}
+            self.assertEqual(pa.view()["accounts"][0]["profiles"][0]["channel"], "unknown")
+        with mock.patch.object(pa.ytchannel, "peek", side_effect=RuntimeError("boom")):
+            self.assertEqual(pa.view()["accounts"][0]["profiles"][0]["channel"], "unknown")
+        self.assertEqual(pa.view()["accounts"][1]["profiles"], [])
+
+    def test_the_page_explains_a_missing_channel(self):
+        page = pa.inject("<nav>@@ACC_NAV@@</nav>@@ACC_SECTION@@<body>@@ACC_TAIL@@</body>")
+        self.assertIn("нет канала YouTube", page)
+        self.assertIn("«Создать канал»", page)
+        self.assertIn("«Добавить профиль»", page)
+        self.assertIn("'Канал YouTube: '+cur.channel_title", page)
+        self.assertIn("ch.textContent=", page)   # the title is text, never markup
+        self.assertNotIn("ch.innerHTML", page)
 
     def test_no_secret_in_any_reply(self):
         yt({"0": {"name": "Основной", "refresh_token": SECRET, "access_token": SECRET, "client_secret": SECRET}})
