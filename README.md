@@ -85,6 +85,39 @@ The phone and the TV share one more picture, the onboarding channel: while a flo
 
 `service` is `[a-z0-9_-]{1,32}`; the file is written whole and renamed into place (mode 0644). The library refuses a document that holds a Google API key (`AIza...`), a client secret (`GOCSPX-...`), a client id (`...apps.googleusercontent.com`), an OAuth token or a long token-like word, and reads a file with any of them as nothing; unknown fields are kept on read, a missing, corrupt, expired or other-version file reads as nothing. `MEDIASTICK_ONBOARDING_DIR` moves the directory (tests).
 
+## SWEET.TV API
+
+What the phone page asks of the stick for SWEET.TV beyond the channel list: `device/files/usr/local/lib/media-stick/panel_sweettv.py` (routes `/api/sweettv/...`, handed over by `panel` in two lines; POSTs carry `X-Panel: 1` like all others) and, for what is playing now and the seek, `panel_watch.py` (`/api/watch/...`). Times are unix seconds, ids are strings of digits, errors are `{"error": "text"}` with 4xx/409/503, every text a person reads comes out of the dictionary (below). Tests: `tools/test-sweetlive.py`.
+
+Going back on a live channel. A live SWEET.TV stream is a window of about a minute in Kodi, so Kodi's own seek back cannot go further. What can: the archive of the programme on now (the add-on's `playvid/<channel>|<programme id>`) started at `now - start - step` seconds, never before the start. One function decides that, `mediastick_sweetlive.plan`, for everybody who asks: the TV remote (the add-on's `service.py` gets Kodi's seek callback `onPlayBackSeek` with a negative offset, and `onPlayBackResumed` after a pause longer than `PAUSE_LIMIT` = 30 s), the phone's -10 and the way back to live. A channel with no archive (`catchup` false, or the programme not `available`) says so ("No archive for this channel": a TV notification, a `note` on the phone) and keeps Kodi's ordinary seek inside the window. The start place rides in the plugin URL (`playvid/5|51?ms_start=3590`); the add-on turns it into the item's `StartOffset` property and gives the item the programme's real length as `TotalTime`. The red remote key, in full-screen video, runs the add-on's `/golive` route: an archived programme's channel live again (nothing on anything else).
+
+```
+GET  /api/watch/now          {playing, title, channel, live, cid, epg, programme, can_rewind, go_live, time, total, speed, ...}
+     title      the channel's name (a programme's text is `programme`), never the bare channel number
+     live       true for a live channel only: the page shows "Live", no length, no bar
+     cid, epg   the SWEET.TV channel and programme ids ("" when it is something else; epg "" is live)
+     programme  the programme on now (live) or the one playing (archive), "" when the list does not know it
+     can_rewind live and the channel has an archive: -10 does something
+     go_live    an archived programme is playing: show "Back to live"
+     total      an archive: the programme's real length (live: Kodi's window, to be ignored)
+POST /api/watch/ctl {"op": "seek", "by": -10}
+     live with an archive   {"ok": true, "switched": "archive", "epg", "offset"}   the archive plays, no seek was made
+     live without one       {"ok": true, "switched": "", "note": "<text>"}          a seek inside the window was made; show the note
+     anything else          {"ok": true}                                             as before
+POST /api/sweettv/play {"cid", "epg"?, "at"?}
+     no epg                 the live channel
+     epg + at "start"       the archive from the beginning (default)
+     epg + at "now"         from the place the live stream is at (only for the programme on now)
+     epg + at <seconds>     from that second, clamped into the programme
+     {"ok": true, "epg", "offset"}; 404 no such programme in the channel's guide, 409 no archive for it (the channel keeps none,
+     it is older than `catchup_duration` days, it has not started, `available` is false)
+POST /api/sweettv/golive {}   {"ok": true}; 409 when an archived programme is not what is playing
+```
+
+Texts. A string a person sees is looked up as `tr(msgid)` from `sweettv_text.py` (`TEXT = {msgid: {"ru", "uk"}}`, the msgid is the English text; `tr` answers Russian where there is a translation, else English, until the language setting exists). The panel and the SWEET.TV add-on's service reach the dictionary through `mediastick_sweetlive.text(msgid)` (it loads the launcher add-on's file on its own, and falls back to the msgid). `tools/test-sweetlive.py` checks that every msgid has `ru` and `uk` and that every `_t("...")` in the panel is in the dictionary.
+
+Assumed, to be checked on a device: the picture of a live stream is the wall clock (`LIVE_LAG` = 0 s behind it); Kodi calls `onPlayBackSeek` with a negative `seekOffset` in milliseconds for a seek back on a live item; the item's `StartOffset` (seconds) and `TotalTime` properties are honoured for a plugin-resolved item; the archive stream of a programme that is still running can be played from its beginning.
+
 ## Self-update
 
 The device pulls `main` on the schedule in `device/config.env` (`UPDATE_SCHEDULE`, every 5 minutes while developing) and applies it; a failed update rolls back. Nothing is updated while Kodi is playing.

@@ -72,3 +72,32 @@ def status(error, has_file, unreadable, waited) -> Status:
     return Status("empty", "0", DIM, "No channels yet",
                   "The channel list is empty. SWEET.TV may still be loading it, or the account has none.",
                   "Back returns to Home.")
+
+
+# ---- translations ----------------------------------------------------------------------------
+# Every string a person sees goes through tr(msgid): the msgid is the English text as written in the code, the
+# translations are here, in one place. Until the language setting exists tr() answers in Russian where it has a
+# translation and in English where it has none; mediastick_lang.text(msgid, lang) will replace it without a change
+# in the callers.
+
+LANG = "ru"
+TEXT = {
+    "Live": {"ru": "В эфире", "uk": "В ефірі"},
+    "Back to live": {"ru": "К эфиру", "uk": "До ефіру"},
+    "No archive for this channel": {"ru": "Архива у этого канала нет", "uk": "Архіву в цього каналу немає"},
+    "SWEET.TV is not available on this device.": {"ru": "SWEET.TV недоступен на этом устройстве.",
+                                                  "uk": "SWEET.TV недоступний на цьому пристрої."},
+    "Wrong channel.": {"ru": "Неверный канал.", "uk": "Невірний канал."},
+    "Wrong programme.": {"ru": "Неверная передача.", "uk": "Невірна передача."},
+    "This programme is not in the channel's guide.": {"ru": "Такой передачи нет в программе канала.",
+                                                      "uk": "Такої передачі немає в програмі каналу."},
+    "This programme is not in the archive.": {"ru": "Этой передачи нет в архиве.",
+                                              "uk": "Цієї передачі немає в архіві."},
+    "Wrong start place.": {"ru": "Неверное место начала.", "uk": "Невірне місце початку."},
+    "An archived programme is not playing.": {"ru": "Сейчас играет не архив.", "uk": "Зараз грає не архів."},
+}
+
+
+def tr(msgid) -> str:
+    """The text for a person: the translation in LANG, else the English msgid itself."""
+    return TEXT.get(msgid, {}).get(LANG) or msgid

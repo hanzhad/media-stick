@@ -720,6 +720,15 @@ def login(ms_mode=None):
 
 
 # media-stick begin: the played item is named after the channel (and the programme of an archive)
+def _ms_start():
+    # where to start an archived programme, seconds in: the add-on's own service and the phone ask for a place in the query
+    try:
+        from urllib.parse import parse_qs
+        return max(0, min(int(parse_qs(sys.argv[2].lstrip('?')).get('ms_start', ['0'])[0]), 3 * 86400))
+    except Exception:
+        return 0
+
+
 def _ms_names(cid, epg):
     """(channel name, programme text, start, stop) from the saved channel list; empty where unknown, never raises."""
     try:
@@ -738,10 +747,10 @@ def _ms_names(cid, epg):
     return '', '', 0, 0
 
 
-def _ms_name_the_item(cid, epg):
+def _ms_name_the_item(cid, epg, offset=0):
     """Wraps setResolvedUrl until the returned function is called: the item it resolves gets the channel name as its
     title (for an archived programme: the programme, with the channel as its show). Unknown channel: upstream's item."""
-    name, text, start, stop = _ms_names(cid, epg)
+    name, text, begin, end = _ms_names(cid, epg)
     real = xbmcplugin.setResolvedUrl
     if not name:
         return lambda: None
@@ -755,12 +764,27 @@ def _ms_name_the_item(cid, epg):
                     info['plot'] = text           # live: what is on now
                 listitem.setLabel(title)
                 listitem.setInfo('video', info)
+                if epg and offset:
+                    listitem.setProperty('StartOffset', str(offset))   # seconds into the programme: Kodi's own start offset
+                if epg and end > begin:
+                    listitem.setProperty('TotalTime', str(end - begin))   # the bar is the programme (upstream says 1 s)
         except Exception as e:
             xbmc.log('media-stick: SWEET.TV item not named: ' + repr(e)[:120], xbmc.LOGWARNING)
         return real(handle, succeeded, listitem)
 
     xbmcplugin.setResolvedUrl = resolved
     return lambda: setattr(xbmcplugin, 'setResolvedUrl', real)
+
+
+@plugin.route('/golive')
+def ms_golive():
+    # an archived programme is playing: its channel live (the remote's red key; the phone has a button of its own)
+    path = xbmc.getInfoLabel('Player.Filenameandpath')
+    prefix = 'plugin://plugin.video.sweettv/playvid/'
+    if path.startswith(prefix):
+        cid, _, rest = path[len(prefix):].partition('|')
+        if cid.isdigit() and rest and not rest.startswith('null'):
+            xbmc.executebuiltin('PlayMedia(%s%s|null)' % (prefix, cid))
 # media-stick end
 
 
@@ -824,7 +848,7 @@ def playvid(videoid):
                 subs = None
 
             # media-stick begin
-            ms_undo = _ms_name_the_item(idx, pid if pid != 'null' else None)
+            ms_undo = _ms_name_the_item(idx, pid if pid != 'null' else None, _ms_start())
             # media-stick end
             if helper.get_setting('playerType') == 'ffmpeg' and DRM is None:
                 helper.ffmpeg_player(stream_url)

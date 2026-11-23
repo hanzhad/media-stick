@@ -94,6 +94,7 @@
       <guide>noop</guide>
       <teletext>noop</teletext>
       <playlist>noop</playlist>
+      <red>RunPlugin(plugin://plugin.video.sweettv/golive)</red>
     </remote>
     <keyboard>
       <c>noop</c>

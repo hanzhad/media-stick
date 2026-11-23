@@ -35,13 +35,16 @@ STREAM = {"result": "OK", "http_stream": {"host": {"address": "cdn.example"}, "u
 class Item:
     """xbmcgui.ListItem as far as naming goes."""
     def __init__(self):
-        self.label, self.info = None, None
+        self.label, self.info, self.props = None, None, {}
 
     def setLabel(self, label):
         self.label = label
 
     def setInfo(self, kind, info):
         self.info = (kind, info)
+
+    def setProperty(self, key, value):
+        self.props[key] = value
 
 
 class PlayHelper(stubs.StaleHelper):

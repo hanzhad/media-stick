@@ -278,7 +278,9 @@ class ServiceRetry(unittest.TestCase):
 
         lib = types.ModuleType("resources.lib.sweettv")
         lib.refreshToken, lib.initSettings, lib.refreshChannelList = (lambda: True), (lambda: None), refresh
-        stubs = {"xbmc": types.SimpleNamespace(Monitor=Monitor, log=lambda *a: None, LOGERROR=1),
+        stubs = {"xbmc": types.SimpleNamespace(Monitor=Monitor, Player=type("Player", (), {}), log=lambda *a: None,
+                                               LOGERROR=1, LOGWARNING=2),
+                 "xbmcgui": types.SimpleNamespace(),
                  "resources": types.ModuleType("resources"), "resources.lib": types.ModuleType("resources.lib"),
                  "resources.lib.helper": types.SimpleNamespace(Helper=lambda: object()), "resources.lib.sweettv": lib}
         with mock.patch.dict(sys.modules, stubs), mock.patch.object(time, "time", clock.time):

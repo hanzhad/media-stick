@@ -32,6 +32,7 @@ sys.path.insert(0, "/usr/local/lib/media-stick")
 import panel_accounts   # the Accounts tab and its API
 import panel_watch      # the Смотреть tab and its API
 import panel_lang       # the device's language: its settings page and API
+import panel_sweettv    # the SWEET.TV part of that API
 import panel_onboarding_ui   # the sheet of the shared TV <-> phone onboarding
 try:
     import mediastick_onboarding   # what the TV asks of this phone; the panel works without it
@@ -1897,6 +1898,9 @@ class H(BaseHTTPRequestHandler):
         if p.startswith(panel_watch.PREFIX):
             body, code = panel_watch.get(self.path, kodi)
             return self.send(body, code=code)
+        if p.startswith(panel_sweettv.PREFIX):
+            body, code = panel_sweettv.get(self.path, kodi)
+            return self.send(body, code=code)
         if p == "/api/https":
             return self.send(https_status())
         if p == "/api/focus":   # polled by the air pad while it is held
@@ -1929,6 +1933,9 @@ class H(BaseHTTPRequestHandler):
             return self.send(body, code=code)
         if p == panel_lang.PATH:
             body, code = panel_lang.post(p, b, kodi)
+            return self.send(body, code=code)
+        if p.startswith(panel_sweettv.PREFIX):
+            body, code = panel_sweettv.post(p, b, kodi)
             return self.send(body, code=code)
         try:
             if p == "/api/key":

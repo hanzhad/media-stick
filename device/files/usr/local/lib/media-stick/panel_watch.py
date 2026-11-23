@@ -671,7 +671,12 @@ def now_state(rpc):
     item = (_rpc(rpc, "Player.GetItem", {"playerid": pid, "properties": ITEM_PROPS}) or {}).get("item")
     props = _rpc(rpc, "Player.GetProperties", {"playerid": pid, "properties": PLAYER_PROPS})
     app = _rpc(rpc, "Application.GetProperties", {"properties": ["volume", "muted"]})
-    return now_view(item, props, app)
+    view = now_view(item, props, app)
+    try:
+        import panel_sweettv   # the channel list adds the programme, can_rewind and go_live of a SWEET.TV item
+    except ImportError:
+        return view
+    return panel_sweettv.decorate(view, panel_sweettv.channels() if view.get("cid") else {}, time.time())
 
 
 def _seek_when_started(rpc, seconds):
@@ -703,6 +708,21 @@ def play(body, rpc):
     return {"ok": True}
 
 
+def _live_rewind(by, pid, rpc):
+    """-10 on a live SWEET.TV channel: the archive of the programme on now takes over (the live window is about a minute).
+    None when this is not such an item, else panel_sweettv.rewind's answer."""
+    try:
+        import panel_sweettv
+    except ImportError:
+        return None
+    item = (_rpc(rpc, "Player.GetItem", {"playerid": pid, "properties": ["file"]}) or {}).get("item")
+    found = panel_sweettv.rewind(panel_sweettv.channels(), (item or {}).get("file") if isinstance(item, dict) else None,
+                                 by, time.time())
+    if found and found["switched"]:
+        _rpc(rpc, "Player.Open", {"item": {"file": found["url"]}})
+    return found
+
+
 def ctl(body, rpc):
     c = clean_ctl(body)
     pid = None
@@ -710,11 +730,16 @@ def ctl(body, rpc):
         pid = _player_id(rpc)
         if pid is None:
             raise Refused("Сейчас ничего не играет.", 409)
+    found = _live_rewind(c["by"], pid, rpc) if c["op"] == "seek" and c.get("by", 0) < 0 else None
+    if found and found["switched"]:
+        return {"ok": True, "switched": "archive", "epg": found["epg"], "offset": found["offset"]}
     volume = None
     if c["op"] == "volume" and "by" in c:
         volume = (_rpc(rpc, "Application.GetProperties", {"properties": ["volume"]}) or {}).get("volume")
     method, params = ctl_rpc(c, pid, volume)
     _rpc(rpc, method, params)
+    if found:   # live, and no archive to go back into: the seek inside the window was made, the page says why it is short
+        return {"ok": True, "switched": "", "note": found["note"]}
     return {"ok": True}
 
 

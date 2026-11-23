@@ -6,6 +6,70 @@ import xbmc
 from resources.lib.helper import Helper
 from resources.lib.sweettv import refreshToken, initSettings, refreshChannelList
 
+# media-stick begin: going back on a live channel plays the archive of the programme on now (the window of a live stream is
+# about a minute): a seek back, and a pause that outlasts the window. The deciding is mediastick_sweetlive.plan, which the
+# phone's -10 asks too
+import sys as _ms_sys
+
+import xbmcgui as _ms_gui
+from resources.lib import sweettv as _ms_sweettv
+
+try:
+    _ms_sys.path.insert(0, '/usr/local/lib/media-stick')
+    import mediastick_sweetlive as _ml
+except Exception:  # not a media-stick device: the add-on behaves as upstream
+    _ml = None
+
+
+class _MsPlayer(xbmc.Player):
+    def __init__(self):
+        xbmc.Player.__init__(self)
+        self.paused_at = 0
+        self.quiet_until = 0
+
+    def _live(self):
+        # the channel id of the live SWEET.TV stream that is playing, else ''
+        try:
+            found = _ml.ref(self.getPlayingFile())
+        except Exception:
+            return ''
+        return found[0] if found and not found[1] else ''
+
+    def _rewind(self, cid, back):
+        if time.time() < self.quiet_until:   # a held key sends several seeks: the first one counts
+            return
+        self.quiet_until = time.time() + 8
+        try:
+            plan = _ml.plan(_ms_sweettv.helper.get_channel_list(), cid, back, int(time.time()))
+        except Exception as e:
+            xbmc.log('media-stick: SWEET.TV rewind not planned: ' + repr(e)[:120], xbmc.LOGWARNING)
+            return
+        if plan['ok']:
+            xbmc.executebuiltin('PlayMedia(%s)' % plan['url'])
+        elif plan['reason'] == 'no_archive':
+            _ms_gui.Dialog().notification('SWEET.TV', _ml.text(_ml.NO_ARCHIVE), _ms_gui.NOTIFICATION_INFO)
+
+    def onPlayBackSeek(self, seek_time, seek_offset):
+        cid = self._live() if seek_offset < 0 else ''
+        if cid:
+            self._rewind(cid, -seek_offset / 1000.0)
+
+    def onPlayBackPaused(self):
+        self.paused_at = time.time() if self._live() else 0
+
+    def onPlayBackResumed(self):
+        paused, self.paused_at = self.paused_at, 0
+        cid = self._live() if paused else ''
+        if cid and time.time() - paused > _ml.PAUSE_LIMIT:
+            self._rewind(cid, time.time() - paused)
+
+    def onPlayBackStopped(self):
+        self.paused_at = 0
+
+    def onPlayBackEnded(self):
+        self.paused_at = 0
+# media-stick end
+
 if __name__ == '__main__':
     monitor = xbmc.Monitor()
     helper = Helper()
@@ -14,6 +78,9 @@ if __name__ == '__main__':
     ms_failed = 0   # fetches in a row that did not give a channel list
     # media-stick end
     initSettings()
+    # media-stick begin
+    ms_player = _MsPlayer() if _ml else None
+    # media-stick end
 
     while not monitor.abortRequested():
         try:
