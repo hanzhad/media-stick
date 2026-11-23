@@ -159,6 +159,8 @@ for unit in airplay.service kodi.service panel.service; do
   [ $unit = kodi.service ] && systemctl is-active -q 'web-app@*' && continue
   [ $unit = kodi.service ] && [ -e /run/media-stick/airplay ] && continue
   if [[ " ${changed_units[*]-} " == *" $unit "* ]] || ! systemctl is-active -q "$unit"; then
+    # Kodi: below, in one stop/start with any settings, add-on or skin change (not twice)
+    [ $unit = kodi.service ] && { kodi_restart=1; continue; }
     systemctl restart "$unit"
     [ $unit = airplay.service ] && changed_units+=(kodi.service)
   fi
@@ -166,7 +168,6 @@ done
 
 log "kodi settings and add-ons"
 wait_kodi() { for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping 2>/dev/null | grep -q pong && return 0; sleep 2; done; return 1; }
-wait_kodi || log "  kodi is not answering"
 # Settings are written into guisettings.xml and add-ons unpacked with Kodi stopped,
 # not done over RPC: switching some settings over RPC puts a confirmation dialog on
 # the TV and hangs the call, and an add-on dropped in while Kodi runs comes up disabled.
@@ -226,7 +227,7 @@ retired_ok=1
 for old in "${retired_addons[@]}"; do
   if [ -e "/home/media/.kodi/addons/$old" ]; then retired_ok=0; fi
 done
-if [ $addons_ok = 0 ] || [ $settings_ok = 0 ] || [ $retired_ok = 0 ] || [ $overlay_fresh = 0 ]; then
+if [ "${kodi_restart:-0}" = 1 ] || [ $addons_ok = 0 ] || [ $settings_ok = 0 ] || [ $retired_ok = 0 ] || [ $overlay_fresh = 0 ]; then
   systemctl stop kodi
   [ $addons_ok = 1 ] || kodi-addons --install "$REPO"
   overlay_apply; [ $overlay_fresh = 1 ] || log "  skin overlay applied"
@@ -236,6 +237,8 @@ if [ $addons_ok = 0 ] || [ $settings_ok = 0 ] || [ $retired_ok = 0 ] || [ $overl
   done
   systemctl start kodi
   wait_kodi || log "  kodi did not come back"
+else
+  wait_kodi || log "  kodi is not answering"
 fi
 # First install on a fresh card: Kodi had no add-on database yet, so enable over RPC.
 addon_ids=(inputstream.adaptive inputstream.ffmpegdirect peripheral.joystick $(awk '!/^#/ && NF==4 {print $1}' "$REPO/device/kodi-addons.list"))
