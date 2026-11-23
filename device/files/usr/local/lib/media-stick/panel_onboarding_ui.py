@@ -7,9 +7,6 @@ The page's status poll calls obNote(status.onboarding)."""
 
 TAIL = r"""
 <style>
-.ob-sheet{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center}
-.ob-back{position:absolute;inset:0;background:rgba(0,0,0,.6)}
-.ob-box{position:relative;width:100%;max-width:440px;max-height:92vh;overflow-y:auto;background:var(--card);border-radius:24px 24px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -8px 32px rgba(0,0,0,.45)}
 .ob-hd{display:flex;align-items:center;gap:12px}
 .ob-ico{flex:none;width:44px;height:44px;border-radius:12px;background:var(--card2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px}
 .ob-ico.ob-youtube{background:#ff3d3d}
@@ -47,15 +44,15 @@ TAIL = r"""
 .ob-sheet.ob-min{inset:auto 0 calc(76px + env(safe-area-inset-bottom)) 0;pointer-events:none}
 .ob-sheet.ob-min .ob-back,.ob-sheet.ob-min .ob-box{display:none}
 .ob-sheet.ob-min .ob-mini{display:flex;pointer-events:auto}
-@media (min-width:900px){.ob-sheet{align-items:center}.ob-box{border-radius:24px}.ob-sheet.ob-min{inset:auto 0 16px 0}}
+@media (min-width:900px){.ob-sheet.ob-min{inset:auto 0 16px 0}}
 </style>
-<div id="ob-sheet" class="ob-sheet hide" role="dialog" aria-labelledby="ob-ttl">
-  <div class="ob-back" id="ob-back"></div>
-  <div class="ob-box">
+<div id="ob-sheet" class="sheet ob-sheet hide" role="dialog" aria-labelledby="ob-ttl">
+  <div class="sheet-back ob-back" id="ob-back"></div>
+  <div class="sheet-box ob-box">
     <div class="ob-hd">
       <span id="ob-ico" class="ob-ico" aria-hidden="true"></span>
       <div class="ob-tt"><b id="ob-ttl"></b><div id="ob-sub" class="ob-sub" aria-live="polite"></div></div>
-      <button id="ob-hide" class="ob-x" type="button">Скрыть</button>
+      <button id="ob-hide" class="ob-x" type="button">Свернуть</button>
     </div>
     <div class="ob-live">
       <ol id="ob-steps" class="ob-steps"></ol>

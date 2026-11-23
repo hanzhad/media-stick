@@ -41,7 +41,7 @@ CHECK_TIMEOUT = 10         # s for Google to answer
 WAIT = 12.0                # s for Kodi's script to answer
 WAIT_STEP = 0.25
 BODY_MAX = 8192            # of Google's error body, at most this much is read
-KODI_DOWN = "Kodi не отвечает. Подождите минуту и попробуйте снова."
+KODI_DOWN = "ТВ не отвечает. Подождите минуту и попробуйте снова."
 
 
 class Io(NamedTuple):
@@ -323,7 +323,7 @@ def _hand_over(op, values, rpc, io):
             if result is not None:
                 break
             if io.clock() >= end:
-                raise Refused("Kodi не ответил. Подождите минуту и попробуйте снова.", 504)
+                raise Refused("ТВ не ответил. Подождите минуту и попробуйте снова.", 504)
             io.sleep(WAIT_STEP)
         if not result["ok"]:
             raise Refused(RESULT_ERRORS.get(result["error"], RESULT_ELSE), 500)

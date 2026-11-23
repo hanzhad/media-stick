@@ -416,10 +416,15 @@ class Page(unittest.TestCase):
                      "'Перемотка'", "'Громкость'", "text:'−10'", "text:'+10'"):
             self.assertIn(text, js)
         # the sheet closes on the backdrop, on «Закрыть» and on a swipe down
-        self.assertIn("h('div',{class:'wt-back',onclick:closeSheet})", js)
+        self.assertIn("h('div',{class:'sheet-back wt-back',onclick:closeSheet})", js)
         self.assertIn("h('button',{class:'wt-btn wide',text:'Закрыть',onclick:closeSheet})", js)
         self.assertIn("e.changedTouches[0].clientY-swipeY>80)closeSheet()", js)
-        self.assertIn(".wt-psheet .wt-box{max-width:480px", ui.CSS)  # centred, 480 px at most on a wide screen
+        self.assertIn("'sheet wt-sheet wt-psheet hide'", js)         # the page's one sheet look (centred, 480 px at most on a wide screen)
+        self.assertIn("'sheet-box wt-box wt-pbox'", js)
+        self.assertNotIn(".wt-sheet{position:fixed", ui.CSS)
+        self.assertIn("art.classList.toggle('hide',!picture(st.thumb))", js)   # no picture: no empty grey box
+        self.assertIn("text:'вживую'", js)
+        self.assertNotIn("'LIVE'", js)
         # the bar: a tap opens the sheet, its own button only plays/pauses
         self.assertIn("function mkBar(host)", js)
         self.assertIn("onclick:openSheet", js)

@@ -408,7 +408,7 @@ class Page(unittest.TestCase):
         self.assertIn('<section id="t-acc" data-tab="settings"', page)
         for host in pa.LINK_HOSTS:
             self.assertIn('"%s"' % host, page)
-        self.assertIn("Точно выйти?", page)
+        self.assertIn("Нажмите ещё раз, чтобы выйти", page)
         self.assertIn("Открыть страницу входа", page)
         self.assertIn('rel="noopener"', page)
         self.assertIn("Готово — вы вошли", page)
@@ -563,7 +563,7 @@ class Served(unittest.TestCase):
         self.kodi.down = True
         status, d = self.post("signin", {"service": "youtube"})
         self.assertEqual((status, d["ok"]), (503, False))
-        self.assertIn("Kodi", d["error"])
+        self.assertIn("ТВ", d["error"])
         status, raw = self.req("GET", "/api/accounts")
         self.assertEqual(status, 200)
 

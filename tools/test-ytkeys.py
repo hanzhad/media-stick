@@ -756,7 +756,7 @@ class Actions(Base):
         self.kodi.down = True
         reply, code = self.save()
         self.assertEqual((code, reply["ok"]), (503, False))
-        self.assertIn("Kodi", reply["error"])
+        self.assertIn("ТВ", reply["error"])
         self.assertEqual(os.listdir(ky.DIR), [])
 
     def test_a_script_that_never_answers_times_out_and_withdraws_the_request(self):
@@ -1493,7 +1493,7 @@ class Page(unittest.TestCase):
         page = self.PAGE
         self.assertNotIn("@@", page)
         for text in ("Ключ Google для YouTube", "Сохранить и войти", "Вставить из буфера", "Сделано, дальше",
-                     "Открыть страницу Google", "Или загрузить скачанный JSON клиента", "Добавить", "Точно удалить?",
+                     "Открыть страницу Google", "Или загрузить скачанный JSON клиента", "Добавить", "Нажмите ещё раз, чтобы удалить",
                      "Ключи заданы (…", "Заменить", "Проверить", "Сохранить без проверки",
                      "Не похоже ни на ключ, ни на ID, ни на secret", "Нужен один раз, минут пять.",
                      "Без публикации вход на ТВ слетает через 7 дней.",

@@ -33,7 +33,7 @@ CODE_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 ID_RE = re.compile(r"^[0-9]{1,6}$")
 BAD_CHARS = ("Cc", "Cs", "Co", "Cn", "Zl", "Zp")
 
-KODI_DOWN = "Kodi не отвечает. Подождите минуту и попробуйте снова."
+KODI_DOWN = "ТВ не отвечает. Подождите минуту и попробуйте снова."
 
 
 class Refused(Exception):

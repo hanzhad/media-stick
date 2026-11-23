@@ -27,7 +27,7 @@ import panel_watch_ui as ui
 
 PREFIX = "/api/watch/"
 LAUNCHER = "script.media-stick.home"
-KODI_DOWN = "Kodi не отвечает. Подождите минуту и попробуйте снова."
+KODI_DOWN = "ТВ не отвечает. Подождите минуту и попробуйте снова."
 ADDON_LIB = os.path.join("script.media-stick.home", "resources", "lib")
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB_DIRS = (os.environ.get("MEDIASTICK_ADDON_LIB", ""),

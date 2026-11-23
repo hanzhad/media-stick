@@ -4,7 +4,7 @@ so it cannot collide with the page's own ids, classes and functions. The YouTube
 sheet is panel_ytkeys_ui.py; the card's "Ключи" button here opens it."""
 import json
 
-SECTION = """<section id="t-acc" data-tab="settings" class="hide">
+SECTION = """<section id="t-acc" data-tab="settings" data-spage="acc" class="hide">
     <div class="card"><h2>Аккаунты</h2>
       <button id="acc-yk-cont" class="btn sm acc wide hide"></button>
       <div id="acc-list" class="acc-list"><div class="cap">Загружаю…</div></div>
@@ -36,9 +36,6 @@ TAIL = r"""
 .acc-ch.warn{color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .acc-m{margin-top:10px;color:var(--dim);font-size:14px;min-height:1.4em}
 .acc-m.bad{color:var(--bad)}
-.acc-sheet{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center}
-.acc-back{position:absolute;inset:0;background:rgba(0,0,0,.6)}
-.acc-box{position:relative;width:100%;max-width:440px;background:var(--card);border-radius:24px 24px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -8px 32px rgba(0,0,0,.45)}
 .acc-box .acc-hd{margin-bottom:12px}
 .acc-stp{color:var(--dim);font-size:15px}
 .acc-x{background:none;border:0;color:var(--dim);font-size:15px;min-height:44px;padding:0 4px}
@@ -57,15 +54,13 @@ TAIL = r"""
   #t-acc{grid-area:acc}
   .acc-list{display:grid;grid-template-columns:1fr 1fr;gap:20px}
   .acc-svc,.acc-svc:first-child,.acc-svc:last-child{padding:0;border-top:0}
-  .acc-sheet{align-items:center}
-  .acc-box{border-radius:24px}
   .acc-sheet.acc-min{inset:auto 0 16px 0}
 }
 </style>
-<div id="acc-sheet" class="acc-sheet hide" role="dialog" aria-live="polite" aria-label="Вход в аккаунт">
-  <div class="acc-back" id="acc-back"></div>
-  <div class="acc-box">
-    <div class="acc-hd"><b id="acc-ttl"></b><span id="acc-stp" class="acc-stp"></span><button id="acc-hide" class="acc-x">Скрыть</button></div>
+<div id="acc-sheet" class="sheet acc-sheet hide" role="dialog" aria-live="polite" aria-label="Вход в аккаунт">
+  <div class="sheet-back acc-back" id="acc-back"></div>
+  <div class="sheet-box acc-box">
+    <div class="acc-hd"><b id="acc-ttl"></b><span id="acc-stp" class="acc-stp"></span><button id="acc-hide" class="acc-x">Свернуть</button></div>
     <div class="acc-live">
       <div id="acc-code" class="acc-code"></div>
       <button id="acc-copy" class="btn wide">Скопировать</button>
@@ -112,7 +107,15 @@ function accNote(names){
   names=Array.isArray(names)?names:[];const k=names.join(',');
   if(k!==accKey||(names.length&&!accSheet)){accKey=k;accPoll()}
 }
-function accApply(d){accData=d;accRender(d.accounts||[]);accSync(d)}
+function accApply(d){accData=d;accRender(d.accounts||[]);accSync(d);if(window.setRows)setRows()}
+// the state of the Аккаунты row in the settings list
+function accRowText(){
+  const l=(accData&&accData.accounts)||[];
+  if(!l.length)return '';
+  const yt=l.find(x=>x.service==='youtube'), sw=l.find(x=>x.service==='sweettv');
+  const cur=yt&&yt.profiles.find(p=>p.current&&p.signed_in);
+  return 'YouTube: '+(cur?accLabel(cur):'не выполнен вход')+' · SWEET.TV: '+(sw&&sw.signed_in?'вошли':'нет')
+}
 
 // ---- the cards ----
 function accCard(svc){
@@ -126,7 +129,7 @@ function accCard(svc){
   const bkeys=accEl('button','acc-lnk','Ключи Google ›');   // YouTube only: the Google keys wizard (panel_ytkeys_ui.py), needed once
   bin.dataset.k='in';bother.dataset.k='another';bout.dataset.k='out';bpar.dataset.k='partner';bkeys.dataset.k='keys';bout.id='acc-out-'+svc;
   bin.onclick=()=>accStart(svc);bpar.onclick=()=>accStart(svc,'partner');bkeys.onclick=()=>ykOpen();bother.onclick=()=>accAnother(svc);
-  bout.onclick=()=>{if(armed(bout.id,'Точно выйти?'))accOut(svc)};
+  bout.onclick=()=>{if(armed(bout.id,'Нажмите ещё раз, чтобы выйти'))accOut(svc)};
   btns.append(bin,bother,bpar,bout);
   const who=accEl('div','acc-who hide');who.append(accEl('b'),accEl('small'));
   c.append(hd,who,accEl('div','acc-ch hide'),chips,btns,accEl('div','acc-m'),bkeys);

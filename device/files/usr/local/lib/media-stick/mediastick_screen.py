@@ -13,7 +13,7 @@ Standard library only, nothing happens on import. MEDIASTICK_SCREEN_DIR moves th
 import os
 import subprocess
 
-KODI_DOWN = "Kodi не отвечает. Подождите минуту и попробуйте снова."
+KODI_DOWN = "ТВ не отвечает. Подождите минуту и попробуйте снова."
 MIRACAST = "Телевизор сейчас показывает экран компьютера (Win+K). Закончите трансляцию и попробуйте снова."
 AIRPLAY = "Телевизор сейчас показывает экран iPhone или Mac (AirPlay). Закончите трансляцию и попробуйте снова."
 WEB_APP = "На телевизоре открыто приложение не из Kodi. Закройте его и попробуйте снова."

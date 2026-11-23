@@ -67,9 +67,7 @@ CSS = r"""
 .wt-msg{padding:28px 12px;text-align:center;color:var(--dim)}
 .wt-msg b{display:block;color:#fff;font-size:17px;margin-bottom:6px}
 .wt-msg .wt-btn{margin-top:14px}
-.wt-sheet{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center}
-.wt-back{position:absolute;inset:0;background:rgba(0,0,0,.6)}
-.wt-box{position:relative;width:100%;max-width:440px;background:var(--card);border-radius:24px 24px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
+.wt-box{display:flex;flex-direction:column;gap:10px}
 .wt-box .wt-thumb{width:100%}
 .wt-box h3{margin:4px 0 0;font-size:17px}
 .wt-art{flex:none;width:96px;aspect-ratio:16/9;border-radius:12px;background:var(--card2) center/cover no-repeat}
@@ -96,14 +94,10 @@ CSS = r"""
 .wt-nb .wt-btn{flex:none;width:44px;height:44px;min-width:0;padding:0;border-radius:50%}
 .wt-nb .wt-btn .i{fill:currentColor}
 /* the player sheet */
-.wt-pbox{max-height:92vh;overflow-y:auto;overscroll-behavior:contain}
-.wt-grab{align-self:center;flex:none;width:44px;height:5px;border-radius:3px;background:var(--line)}
 .wt-pbox .wt-p{gap:12px}
 @media (min-width:900px){
   #t-watch{grid-area:watch}
   #t-remote>[data-wtbar]{display:none!important}
-  .wt-psheet{align-items:center}
-  .wt-psheet .wt-box{max-width:480px;border-radius:24px}
   .wt-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
   .wt-tiles{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
 }
@@ -176,7 +170,7 @@ function mkPlayer(){
     P.st=st;
     title.textContent=st.title||'Без названия';
     subl.textContent=[st.channel,({youtube:'YouTube',sweettv:'SWEET.TV'})[st.app]].filter(Boolean).join(' · ');
-    art.style.backgroundImage=picture(st.thumb);
+    art.style.backgroundImage=picture(st.thumb);art.classList.toggle('hide',!picture(st.thumb));   // no picture: no grey box
     pp.replaceChildren(ico(st.speed===0?'i-play':'wt-i-pause'));
     const total=st.total>0;seekRow.classList.toggle('hide',!total);
     if(total&&!P.drag&&Date.now()>P.hold){seek.max=Math.floor(st.total);seek.value=Math.floor(st.time);t1.textContent=tm(st.time)}
@@ -238,8 +232,8 @@ const SECS=[['home','Главная'],['subscriptions','Подписки'],['his
 function sheet(it){
   const close=()=>s.remove();
   const play=r=>{close();buzz();pst('play',{file:it.file,resume:r}).catch(e=>toast(errText(e)));toast('Открываю на ТВ…');W.wait=Date.now()+25000;W.last=null;openSheet()};
-  const s=h('div',{class:'wt-sheet',role:'dialog','aria-label':it.title},h('div',{class:'wt-back',onclick:close}),
-    h('div',{class:'wt-box'},h('div',{class:'wt-thumb',style:'background-image:'+picture(it.thumb)}),
+  const s=h('div',{class:'sheet wt-sheet',role:'dialog','aria-label':it.title},h('div',{class:'sheet-back wt-back',onclick:close}),
+    h('div',{class:'sheet-box wt-box'},h('div',{class:'wt-thumb',style:'background-image:'+picture(it.thumb)}),
       h('h3',{text:it.title}),h('div',{class:'wt-sub',text:sub(it)}),
       it.resume>=5?h('button',{class:'wt-btn pri wide',text:'Смотреть на ТВ с '+tm(it.resume),onclick:()=>play(it.resume)}):'',
       h('button',{class:it.resume>=5?'wt-btn wide':'wt-btn pri wide',text:it.resume>=5?'С начала':'Смотреть на ТВ',onclick:()=>play(0)}),
@@ -249,13 +243,13 @@ function ytCard(it,d){
   const open=()=>it.folder?go({t:'yt',section:d.section,q:'',path:it.file,title:it.title,app:d.app}):sheet(it);
   return h('button',{class:'wt-item',onclick:open},
     h('div',{class:'wt-thumb',style:'background-image:'+picture(it.thumb)},
-      it.duration?h('i',{text:tm(it.duration)}):(it.live?h('i',{text:'LIVE'}):''),
+      it.duration?h('i',{text:tm(it.duration)}):(it.live?h('i',{text:'вживую'}):''),
       it.progress>0?h('u',{style:'width:'+Math.round(it.progress*100)+'%'}):''),
     h('div',{class:'wt-txt'},h('b',{text:it.title}),h('span',{class:'wt-sub',text:it.folder&&it.count?it.count+' видео':sub(it)})))}
 async function renderYt(b,d){
   header(d.title,h('button',{class:'wt-btn',text:'Открыть на ТВ',onclick:()=>openOnTv('plugin.video.youtube')}));
   if(!d.path){
-    const inp=h('input',{type:'search',placeholder:'Поиск на YouTube','aria-label':'Поиск на YouTube',enterkeyhint:'search',value:d.q||''});
+    const inp=h('input',{type:'search',placeholder:'Например: новости','aria-label':'Поиск на YouTube',enterkeyhint:'search',value:d.q||''});
     const submit=()=>{const v=inp.value.trim();if(v){d.section='search';d.q=v;render()}};
     inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();submit()}});
     b.append(h('div',{class:'wt-search'},inp,h('button',{class:'wt-btn pri ico','aria-label':'Искать',onclick:submit},ico('wt-i-search'))),
@@ -337,9 +331,9 @@ function tick(){
 // ---- wiring ----
 W.wp=mkPlayer();
 W.pmsg=h('div',{class:'wt-msg',text:'Открываю на ТВ…'});
-W.sheet=h('div',{class:'wt-sheet wt-psheet hide',role:'dialog','aria-label':'Сейчас на ТВ'},
-  h('div',{class:'wt-back',onclick:closeSheet}),
-  W.pbox=h('div',{class:'wt-box wt-pbox'},h('div',{class:'wt-grab','aria-hidden':'true'}),W.pmsg,W.wp.root,
+W.sheet=h('div',{class:'sheet wt-sheet wt-psheet hide',role:'dialog','aria-label':'Сейчас на ТВ'},
+  h('div',{class:'sheet-back wt-back',onclick:closeSheet}),
+  W.pbox=h('div',{class:'sheet-box wt-box wt-pbox'},W.pmsg,W.wp.root,
     h('button',{class:'wt-btn wide',text:'Закрыть',onclick:closeSheet})));
 document.body.append(W.sheet);
 // a swipe down closes the sheet (not one that starts on a slider, and not while the sheet is scrolled)

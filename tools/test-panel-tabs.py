@@ -140,11 +140,14 @@ class Page(unittest.TestCase):
     def test_the_hash_links(self):
         js = self.page
         self.assertIn("if(h==='#air'||h==='#screen'){document.querySelector('[data-go=remote]').click();setMode(h.slice(1));return}", js)
-        self.assertIn("if(h==='#accounts'){openAccounts();return}", js)
-        self.assertIn("if(h.slice(0,6)!=='#https')return;", js)
+        # every settings page has its hash; a hash opens the tab and the page; no hash on the tab is the list
+        self.assertIn("const SP_HASH={acc:'accounts',wifi:'wifi',https:'https',info:'device',act:'maintenance'}", js)
+        self.assertIn("const p=SP_OF[h.replace(/[?].*$/,'').slice(1)];", js)
+        self.assertIn("if(!p){if(tab==='settings'&&spage)setPage('');return}", js)
+        self.assertIn("function openAccounts(){goPage('acc')}", js)
         self.assertIn("[?&]sub=([a-z0-9-]+)", js)
-        self.assertIn("document.querySelector('[data-go=settings]').click();\n  setTimeout(()=>{$('t-https').scrollIntoView", js)
-        self.assertIn("$('t-acc').scrollIntoView", js)
+        self.assertIn("openSettings(p);", js)
+        self.assertIn("if(wide())setTimeout(()=>$(SP_ID[p]).scrollIntoView", js)
         # booted last: hashGo needs everything above it (it used to run before `let airMode` existed)
         self.assertGreater(js.index("\nhashGo();\n</script>"), js.index("function airUi()"))
         self.assertEqual(js.count("\nhashGo();"), 1)
@@ -175,7 +178,7 @@ class Page(unittest.TestCase):
         js = self.page
         self.assertIn("function tvState(s,now)", js)
         for s in ("'ТВ занят трансляцией с компьютера'", "'ТВ занят трансляцией AirPlay'", "'На ТВ открыто приложение'",
-                  "'ТВ не отвечает'", "'ТВ свободен'", "'нет связи с приставкой'", "'ТВ: '+s.playing+' · '", "'пауза'", "'играет'"):
+                  "'ТВ не отвечает'", "'ТВ свободен'", "'нет связи с приставкой'", "'Пауза: ':'Играет: ')+s.playing"):
             self.assertIn(s, js)
         self.assertIn("now&&now.playing&&now.speed===0", js)        # the pause comes from what Смотреть knows
         self.assertIn("lastStatus=s;hdrDraw();", js)
@@ -192,7 +195,7 @@ class Page(unittest.TestCase):
     def test_wide_screen_shows_everything_without_the_bar(self):
         wide = self.page.split("@media (min-width:900px){\n  #app{max-width:1360px", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act"', wide)
-        self.assertIn(".tabs,.modes{display:none}", wide)
+        self.assertIn(".tabs,.modes,.sp-head,#t-setlist{display:none!important}", wide)
         self.assertIn("#t-remote{display:contents!important}", wide)
         self.assertIn("#t-screen{display:block!important", wide)
 
@@ -255,6 +258,88 @@ class Page(unittest.TestCase):
         self.assertIn("function pressKey(a)", js)
         self.assertIn(".toast{position:fixed", js)
         self.assertNotIn("wt-toast", js)
+
+    def test_settings_is_a_list_of_rows_and_each_opens_a_page(self):
+        lst = self.page.split('id="t-setlist"', 1)[1].split("</section>", 1)[0]
+        self.assertEqual(re.findall(r'data-sp="(\w+)"', lst), ["acc", "wifi", "https", "info", "act"])
+        self.assertEqual(re.findall(r'class="sname">([^<]+)<', lst),
+                         ["Аккаунты", "Wi-Fi", "Пульт как приложение", "О приставке", "Обслуживание"])
+        self.assertEqual(lst.count('class="chev" aria-hidden="true">›<'), 5)
+        for i in ("sv-acc", "sv-wifi", "sv-https", "sv-info"):
+            self.assertIn('id="%s"' % i, lst)
+        for page, sec in (("acc", "t-acc"), ("wifi", "t-wifi"), ("https", "t-https"), ("info", "t-info"), ("act", "t-act")):
+            self.assertRegex(self.page, r'<section id="%s" data-tab="settings" data-spage="%s"' % (sec, page))
+        self.assertLess(self.page.index('id="t-setlist"'), self.page.index('id="t-acc"'))
+        js = self.page
+        self.assertIn("function setPage(p)", js)
+        self.assertIn("b.textContent='‹ Настройки'", js)
+        self.assertIn("function spBack()", js)
+        self.assertIn("history.back()", js)                          # the browser's back button works through the hash
+        self.assertIn("if(again&&spage)spBack();", js)               # a second tap on the tab comes back to the list
+        # the states on the right of the rows
+        self.assertIn("function accRowText()", js)
+        self.assertIn("'YouTube: '+(cur?accLabel(cur):'не выполнен вход')+' · SWEET.TV: '+(sw&&sw.signed_in?'вошли':'нет')", js)
+        self.assertIn("v('sv-wifi',s.wifi.ssid||'кабель')", js)
+        self.assertIn("HTTPS_RE.test(httpsUrl)?'включено':'выключено'", js)
+        self.assertIn("need?'нужно внимание':'всё в порядке'", js)
+        self.assertIn("needAttention=s=>powerState(s)===true||tempC(s)>HOT_C||s.disk_free_gb<1", js)
+
+    def test_device_info_in_plain_words(self):
+        js = self.page
+        for s in ("function ruUptime(up)", "function ruNextCheck(next,now)", "const ruDate=", "const ruDur=", "'меньше минуты'",
+                  "'следующая проверка через '", "'слабый блок питания — приставка может тормозить'", "dot(true)+'в норме'",
+                  "const POWER_LOW=0x10000|0x1|0x40000|0x4;", "const HOT_C=75;", "' · '+dot(false)+'высокая'",
+                  "class=\"dsub\"", "ruDate(s.commit_date)", "['Версия',", "['Сеть',", "['Температура',"):
+            self.assertIn(s, js)
+        for hex_or_english in ("esc(s.throttled)", "просадка", "esc(s.uptime)", "esc(s.next_update", "['Kodi',"):
+            self.assertNotIn(hex_or_english, js)
+
+    def test_one_confirmation_phrase(self):
+        labels = re.findall(r"armed\([^,()]+,\s*'([^']+)'\)", self.page)
+        self.assertGreaterEqual(len(labels), 6)
+        for l in labels:
+            self.assertTrue(l.startswith("Нажмите ещё раз, чтобы "), l)
+        for want in ("перезагрузить", "сменить", "отключить", "выйти", "удалить", "отменить"):
+            self.assertIn("Нажмите ещё раз, чтобы " + want, labels)
+        for gone in ("Точно ", "чтобы подтвердить"):
+            self.assertNotIn(gone, self.page)
+
+    def test_sheets_share_one_look(self):
+        css = self.page
+        self.assertIn(".sheet{position:fixed;inset:0;z-index:var(--z-sheet)", css)
+        self.assertIn(".sheet-box::before{content:", css)             # the handle bar
+        self.assertIn("@media (min-width:900px){.sheet{align-items:center}.sheet-box{max-width:480px;border-radius:24px}}", css)
+        for sid, back in (("acc-sheet", "acc-back"), ("ob-sheet", "ob-back"), ("acc-yk", "acc-yk-back")):
+            self.assertRegex(css, r'<div id="%s" class="sheet [^"]*hide"' % sid)
+            self.assertRegex(css, r'<div class="sheet-back [^"]*" id="%s"></div>\s*<div class="sheet-box ' % back)
+        self.assertIn("'sheet wt-sheet wt-psheet hide'", css)
+        for gone in (".acc-sheet{position:fixed", ".ob-sheet{position:fixed", ".wt-sheet{position:fixed", ".acc-box{position:relative",
+                     ".ob-box{position:relative"):
+            self.assertNotIn(gone, css)
+        # minimise is «Свернуть», its bar «Показать», dismiss «Закрыть»
+        self.assertIn('id="acc-hide" class="acc-x">Свернуть<', css)
+        self.assertIn('id="ob-hide" class="ob-x" type="button">Свернуть<', css)
+        self.assertNotIn(">Скрыть<", css)
+        self.assertEqual(css.count("<span>Показать</span>"), 2)
+        self.assertIn('class="acc-x" aria-label="Закрыть мастер ключей">Закрыть<', css)
+
+    def test_results_of_actions_go_to_the_toast(self):
+        js = self.page
+        self.assertIn("toast(what==='reboot'?'Перезагружаю…':'Обновление запущено')", js)
+        self.assertNotIn('id="a-msg"', js)
+        self.assertIn("hideMsg('w-msg');toast('Подключено к «'+ssid+'»", js)
+        self.assertIn("toast('HTTPS включён')", js)
+        self.assertIn("toast('Не получилось: '+tvErr(e).split(token).join('***'))", js)
+        self.assertIn("Math.min(7000,1500+text.length*50)", js)        # a long text stays longer
+
+    def test_the_wording(self):
+        js = self.page
+        for s in ('<span id="live-t">Показать</span>', "on?'Стоп':'Показать'", "'ТВ не отвечает',true", 'placeholder="Например: название фильма"',
+                  'placeholder="Пароль сети"', "'Пауза: ':'Играет: '"):
+            self.assertIn(s, js)
+        for gone in ("Kodi не отвечает", "Нажмите «Смотреть»", "'LIVE'", '<span id="live-t">Смотреть</span>'):
+            self.assertNotIn(gone, js)
+        self.assertIn("TVs and Limited Input devices", js)           # Google's own words stay as they are
 
     def test_scripts_have_balanced_brackets_and_no_marker(self):
         scripts = re.findall(r"<script>(.*?)</script>", self.page, re.S)

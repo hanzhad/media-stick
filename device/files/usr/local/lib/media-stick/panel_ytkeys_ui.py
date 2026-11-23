@@ -10,7 +10,7 @@ import json
 
 TAIL = r"""
 <style>
-.acc-ykb{max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--bg)}
+.acc-ykb{background:var(--bg)}
 .acc-yk-p{margin:8px 0;color:var(--dim);font-size:15px}
 .acc-yk-big{font-size:20px;font-weight:600;padding:14px 0 6px}
 .acc-yk-row{display:flex;gap:8px}
@@ -52,9 +52,9 @@ TAIL = r"""
 .acc-yk-note a{color:inherit}
 #acc-yk-cont{margin:0 0 14px}
 </style>
-<div id="acc-yk" class="acc-sheet hide" role="dialog" aria-label="Ключ Google для YouTube">
-  <div class="acc-back" id="acc-yk-back"></div>
-  <div class="acc-box acc-ykb">
+<div id="acc-yk" class="sheet acc-sheet hide" role="dialog" aria-label="Ключ Google для YouTube">
+  <div class="sheet-back acc-back" id="acc-yk-back"></div>
+  <div class="sheet-box acc-box acc-ykb">
     <div class="acc-hd"><b>Ключ Google для YouTube</b><button id="acc-yk-x" class="acc-x" aria-label="Закрыть мастер ключей">Закрыть</button></div>
     <div id="acc-yk-body"></div>
   </div>
@@ -261,7 +261,7 @@ function ykSet(b){
   const row=accEl('div','acc-yk-row');
   if(full)row.append(ykBtn('Проверить','',ykCheck));
   row.append(ykBtn('Заменить','',()=>{ykSay('');ykGo(1)}));
-  row.append(ykBtn('Удалить','',()=>{if(armed('acc-yk-del','Точно удалить?'))ykClear()},'acc-yk-del'));
+  row.append(ykBtn('Удалить','',()=>{if(armed('acc-yk-del','Нажмите ещё раз, чтобы удалить'))ykClear()},'acc-yk-del'));
   b.append(row,ykMsgEl());
   if(full)b.append(ykBtn('Войти в YouTube заново','acc wide',ykSignin))
 }

@@ -506,6 +506,7 @@ def _status():
     s["https_url"] = read(PANEL_URL)
     s["page"] = PAGE_VER
     s["commit"] = run(["git", "-C", REPO, "log", "-1", "--format=%h %s"])[1]
+    s["commit_date"] = run(["git", "-C", REPO, "log", "-1", "--format=%cs"])[1]
     s["bad_commit"] = read("/var/lib/media-stick/bad-commit")[:7]
     nxt = run(["systemctl", "show", "media-stick-update.timer", "-p", "NextElapseUSecRealtime", "--value"])[1]
     s["next_update"] = nxt
@@ -542,7 +543,7 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="theme-color" content="#121620">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Media Stick"><title>Media Stick</title>
 <style>
-:root{--bg:#121620;--card:#1F2633;--card2:#2a3344;--line:rgba(255,255,255,.08);--dim:rgba(255,255,255,.7);--faint:rgba(255,255,255,.45);--bad:#ff6b6b;--ok:#4cc38a;--warn:#f0b429;color-scheme:dark}
+:root{--bg:#121620;--card:#1F2633;--card2:#2a3344;--line:rgba(255,255,255,.08);--dim:rgba(255,255,255,.7);--faint:rgba(255,255,255,.45);--bad:#ff6b6b;--ok:#4cc38a;--warn:#f0b429;--z-sheet:60;--z-toast:80;color-scheme:dark}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 /* a remote, not a document: no double-tap zoom, no rubber-band bounce */
 html{touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-adjust:100%}
@@ -668,7 +669,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 @media (max-width:899px){body.np .rc{height:calc(100vh - 284px)}}
 @media (max-width:899px){@supports (height:1svh){body.np .rc{height:calc(100svh - 284px - env(safe-area-inset-bottom))}}}
 /* the one toast: a short word at the bottom, above the sheets */
-.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom));z-index:80;max-width:calc(100vw - 32px);padding:12px 20px;border-radius:999px;background:#fff;color:var(--bg);font-weight:600;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom));z-index:var(--z-toast);max-width:calc(100vw - 32px);padding:12px 20px;border-radius:999px;background:#fff;color:var(--bg);font-weight:600;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.4)}
 .dwrap{position:relative;flex:1 1 0;min-height:120px}
 .dwrap .dpad{position:absolute;inset:0;width:100%;height:100%}
 .rc .row input,.rc .row .btn{min-height:48px!important}
@@ -687,6 +688,26 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 #air .pad{container-type:size;overflow:hidden}
 @container (max-height:110px){.pad .i,.pad small{display:none}}
 #air-no .row{flex-direction:column}
+/* one look for sheets (sign-in code, onboarding, the key wizard, the player): the handle, the radius, the backdrop, the
+   safe-area padding, the z-index; centred and 480px at most on a wide screen. A sheet adds only its own content. */
+.sheet{position:fixed;inset:0;z-index:var(--z-sheet);display:flex;align-items:flex-end;justify-content:center}
+.sheet-back{position:absolute;inset:0;background:rgba(0,0,0,.6)}
+.sheet-box{position:relative;width:100%;max-width:440px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--card);border-radius:24px 24px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -8px 32px rgba(0,0,0,.45)}
+.sheet-box::before{content:"";display:block;width:44px;height:5px;margin:-8px auto 12px;border-radius:3px;background:var(--line)}
+@media (min-width:900px){.sheet{align-items:center}.sheet-box{max-width:480px;border-radius:24px}}
+/* settings on a phone: a list of rows, each opens its page inside the tab */
+.slist{padding:4px 0;overflow:hidden}
+.srow{display:flex;align-items:center;gap:12px;width:100%;min-height:60px;padding:8px 16px;background:none;border:0;border-top:1px solid var(--line);text-align:left;touch-action:manipulation}
+.srow:first-child{border-top:0}
+.srow:active{background:var(--card2)}
+.sname{flex:none;font-size:17px}
+.sval{flex:1 1 0;min-width:0;text-align:right;color:var(--dim);font-size:14px;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.sval.warnt{color:var(--warn)}
+.chev{flex:none;color:var(--faint);font-size:22px}
+.sp-hide{display:none}
+.sp-head{margin:0 0 12px}
+.sp-head .btn{min-height:44px;padding:0 14px;background:transparent;color:var(--dim)}
+.dsub{display:block;margin-top:2px;color:var(--faint);font-size:13px}
 /* the mode switch of the remote; the picture mode swaps the whole remote card for the screen card */
 .modes{display:flex;gap:4px;padding:4px;margin-bottom:12px;border-radius:16px;background:var(--card)}
 .modes button{flex:1;min-height:44px;padding:0;border:0;border-radius:12px;background:transparent;color:var(--dim);touch-action:manipulation}
@@ -699,7 +720,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 @media (min-width:900px){
   #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act";gap:20px;padding:28px}
   .top{grid-area:top;margin-bottom:0}
-  .tabs,.modes{display:none}
+  .tabs,.modes,.sp-head,#t-setlist{display:none!important}
   .toast{bottom:28px}
   [data-tab]{display:block!important;margin:0!important}
   [data-tab]>.card{height:100%}
@@ -723,6 +744,10 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 <symbol id="i-back" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
 <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></symbol>
 <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+<symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></symbol>
+<symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></symbol>
 <symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></symbol>
 <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 7V5h14v2M12 5v14M9 19h6"/></symbol>
 <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></symbol>
@@ -786,7 +811,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       </div>
       <div id="kb" class="kb hide" role="dialog" aria-label="Ввод текста на телевизоре">
         <div class="kbh"><span id="kb-t">Ввод на телевизоре</span><button class="btn sm" id="kb-x" style="min-height:32px;padding:0 12px">Пульт</button></div>
-        <input id="kb-in" type="search" name="tvq" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="Текст для телевизора" aria-label="Текст для телевизора">
+        <input id="kb-in" type="search" name="tvq" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="Например: название фильма" aria-label="Текст для телевизора">
         <div class="row gap"><button class="btn sm" id="kb-c">Отмена</button><button class="btn sm acc" id="kb-ok">Готово</button></div>
       </div>
       </div>
@@ -808,10 +833,10 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         <h2>Экран</h2>
         <div class="acts">
           <button id="full-btn" class="btn sm" onclick="fullOn(true)" aria-label="Во весь экран"><svg class="i"><use href="#i-full"/></svg></button>
-          <button id="live-btn" class="btn sm" onclick="setLive(!live)"><svg class="i"><use id="live-ic" href="#i-play"/></svg><span id="live-t">Смотреть</span></button>
+          <button id="live-btn" class="btn sm" onclick="setLive(!live)"><svg class="i"><use id="live-ic" href="#i-play"/></svg><span id="live-t">Показать</span></button>
         </div>
       </div>
-      <div id="shot-box" class="shotbox"><img id="shot" alt=""><div id="shot-s">Нажмите «Смотреть»</div></div>
+      <div id="shot-box" class="shotbox"><img id="shot" alt=""><div id="shot-s">Нажмите «Показать»</div></div>
       <div class="grp">
         <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
         <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
@@ -831,19 +856,29 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   </div>
   <div id="fhint" class="fhint hide">Поверните телефон — картинка станет больше</div>
 
+  <section id="t-setlist" data-tab="settings" class="hide">
+    <div class="card slist">
+      <button class="srow" data-sp="acc"><svg class="i"><use href="#i-user"/></svg><span class="sname">Аккаунты</span><span class="sval" id="sv-acc"></span><span class="chev" aria-hidden="true">›</span></button>
+      <button class="srow" data-sp="wifi"><svg class="i"><use href="#i-wifi"/></svg><span class="sname">Wi-Fi</span><span class="sval" id="sv-wifi"></span><span class="chev" aria-hidden="true">›</span></button>
+      <button class="srow" data-sp="https"><svg class="i"><use href="#i-lock"/></svg><span class="sname">Пульт как приложение</span><span class="sval" id="sv-https"></span><span class="chev" aria-hidden="true">›</span></button>
+      <button class="srow" data-sp="info"><svg class="i"><use href="#i-info"/></svg><span class="sname">О приставке</span><span class="sval" id="sv-info"></span><span class="chev" aria-hidden="true">›</span></button>
+      <button class="srow" data-sp="act"><svg class="i"><use href="#i-rot"/></svg><span class="sname">Обслуживание</span><span class="sval"></span><span class="chev" aria-hidden="true">›</span></button>
+    </div>
+  </section>
+
   @@ACC_SECTION@@
 
-  <section id="t-wifi" data-tab="settings" class="hide">
+  <section id="t-wifi" data-tab="settings" data-spage="wifi" class="hide">
     <div class="card"><h2>Wi-Fi</h2>
       <div id="w-msg" class="msg hide"></div>
       <select id="w-ssid"></select>
-      <div class="row gap"><input id="w-psk" type="password" placeholder="Пароль" autocomplete="off">
-      <button id="w-btn" class="btn fit" style="min-height:52px" onclick="wifiChange()">Сменить</button></div>
+      <div class="row gap"><input id="w-psk" type="password" placeholder="Пароль сети" autocomplete="off"></div>
+      <button id="w-btn" class="btn wide gap" onclick="wifiChange()">Сменить</button>
       <button class="btn wide gap" onclick="loadNets('w-ssid')">Пересканировать</button>
     </div>
   </section>
 
-  <section id="t-https" data-tab="settings" class="hide">
+  <section id="t-https" data-tab="settings" data-spage="https" class="hide">
     <div id="h-card" class="card" tabindex="-1" style="outline:none">
       <h2>Пульт как приложение (HTTPS)</h2>
       <p class="expl">Нужно для аэромыши (указка по наклону телефона) и чтобы установить пульт как приложение. Бесплатный сертификат Let's Encrypt; в интернет ничего не открывается.</p>
@@ -870,15 +905,14 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
     </div>
   </section>
 
-  <section id="t-info" data-tab="settings" class="hide">
+  <section id="t-info" data-tab="settings" data-spage="info" class="hide">
     <div class="card"><h2>О приставке</h2><dl id="info"></dl></div>
   </section>
 
-  <section id="t-act" data-tab="settings" class="hide">
+  <section id="t-act" data-tab="settings" data-spage="act" class="hide">
     <div class="card"><h2>Обслуживание</h2>
       <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
-      <button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз'))act('reboot')">Перезагрузить</button></div>
-      <div id="a-msg" class="msg hide"></div>
+      <button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз, чтобы перезагрузить'))act('reboot')">Перезагрузить</button></div>
     </div>
   </section>
 
@@ -982,12 +1016,14 @@ const screenOn=()=>tab==='remote'&&mode==='screen';
 // the picture runs only while it is on a phone's screen; a computer shows one still frame
 function screenSync(){if(!wide())setLive(screenOn())}
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{
+  const again=tab==='settings'&&b.dataset.go==='settings';
   tab=TABS.includes(b.dataset.go)?b.dataset.go:'watch';
   document.querySelectorAll('[data-go]').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('[data-tab]').forEach(s=>s.classList.toggle('hide',s.dataset.tab!==tab));
   if(tab!=='remote')airStop(true);
   lsSet('tab',tab);
   if(tab==='settings'){loadNets('w-ssid');httpsLoad()}
+  if(again&&spage)spBack();
   screenSync()
 }));
 // The remote has three modes: the buttons, the air pointer (the pad in the D-pad's place) and the screen.
@@ -1000,13 +1036,34 @@ function setMode(m){
   airUi();screenSync()
 }
 document.querySelectorAll('.modes [data-m]').forEach(b=>b.addEventListener('click',()=>{buzz();setMode(b.dataset.m)}));
-function openAccounts(){
-  document.querySelector('[data-go=settings]').click();
-  setTimeout(()=>$('t-acc').scrollIntoView({behavior:'smooth',block:'start'}),150)
+// Settings on a phone: the list, or one page of it (spage; '' = the list). A page has a hash, so the back button works.
+const SP_HASH={acc:'accounts',wifi:'wifi',https:'https',info:'device',act:'maintenance'}, SP_OF={}, SP_ID={acc:'t-acc',wifi:'t-wifi',https:'t-https',info:'t-info',act:'t-act'};
+Object.keys(SP_HASH).forEach(k=>{SP_OF[SP_HASH[k]]=k});
+let spage='', spPushed=false;
+function setPage(p){
+  spage=p;
+  document.querySelectorAll('[data-spage]').forEach(s=>s.classList.toggle('sp-hide',s.dataset.spage!==p));
+  $('t-setlist').classList.toggle('sp-hide',p!=='');
+  if(!wide())window.scrollTo(0,0)
 }
+function openSettings(p){
+  if(tab!=='settings')document.querySelector('[data-go=settings]').click();
+  setPage(p);
+  if(wide())setTimeout(()=>$(SP_ID[p]).scrollIntoView({behavior:'smooth',block:'start'}),150)
+}
+function goPage(p){spPushed=true;const h='#'+SP_HASH[p];if(location.hash===h)hashGo();else location.hash=h}
+function spBack(){
+  if(spPushed){spPushed=false;history.back();return}
+  history.replaceState(null,'',location.pathname+location.search);setPage('')
+}
+document.querySelectorAll('.srow').forEach(b=>b.addEventListener('click',()=>{buzz();goPage(b.dataset.sp)}));
+document.querySelectorAll('[data-spage]').forEach(s=>{
+  const hd=document.createElement('div'), b=document.createElement('button');
+  hd.className='sp-head';b.className='btn sm';b.textContent='‹ Настройки';b.addEventListener('click',spBack);hd.append(b);s.prepend(hd)});
+function openAccounts(){goPage('acc')}
 // The one toast of the page (Смотреть uses it too). A key that did not get through says why, at most once in 2 s.
 let toastT=null, failAt=0;
-function toast(text){const e=$('toast');e.textContent=text;e.classList.remove('hide');clearTimeout(toastT);toastT=setTimeout(()=>e.classList.add('hide'),2200)}
+function toast(text){const e=$('toast');e.textContent=text;e.classList.remove('hide');clearTimeout(toastT);toastT=setTimeout(()=>e.classList.add('hide'),Math.min(7000,1500+text.length*50))}   // a long text stays longer
 function tvErr(e){
   if(!e||!e.http)return 'ТВ не ответил';
   let m=e.message;try{m=JSON.parse(m).error||m}catch(_){}
@@ -1017,7 +1074,7 @@ function keyFailed(e){const now=Date.now();if(now-failAt<2000)return;failAt=now;
 const KEYS={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Enter:'select',Backspace:'back',Escape:'back',' ':'playpause',c:'contextmenu',i:'info',h:'home','+':'volumeup','-':'volumedown',m:'mute'};
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;const a=KEYS[e.key];if(a){e.preventDefault();api('/api/key',{action:a}).catch(()=>{})}});
 
-function act(what){api('/api/'+what,{}).then(r=>show('a-msg',r.message||'ок')).catch(e=>show('a-msg',e.message))}
+function act(what){api('/api/'+what,{}).then(()=>toast(what==='reboot'?'Перезагружаю…':'Обновление запущено')).catch(e=>toast(tvErr(e)))}
 // Two taps instead of confirm(): embedded browsers (the Claude app's included) refuse
 // dialogs silently, and a button that asks first would then do nothing.
 const armedAt={};
@@ -1042,44 +1099,83 @@ async function wifiChange(){
   const ssid=$('w-ssid').value; if(!ssid)return;
   const psk=$('w-psk').value;
   if(psk&&(psk.length<8||psk.length>63)){show('w-msg','Пароль Wi-Fi — от 8 до 63 символов.');return}
-  if(!armed('w-btn','Нажмите ещё раз')){show('w-msg','Приставка перейдёт на «'+ssid+'». Нажмите ещё раз, чтобы подтвердить.');return}
+  if(!armed('w-btn','Нажмите ещё раз, чтобы сменить')){show('w-msg','Приставка перейдёт на «'+ssid+'». Подключение займёт до минуты.');return}
   show('w-msg','Подключаюсь к «'+ssid+'»… до минуты.');
   try{await api('/api/wifi/connect',{ssid,psk})}
-  catch(e){show('w-msg','Не отправилось: '+e.message);return}
+  catch(e){hideMsg('w-msg');toast('Не отправилось: '+tvErr(e));return}
   $('w-psk').value='';
   for(let i=0;i<25;i++){
     await new Promise(r=>setTimeout(r,3000));
     try{const s=await api('/api/status');
-      if(s.wifi.ssid===ssid){show('w-msg','Подключено к «'+ssid+'». Адрес: '+(s.ip||[]).join(', '));return}
-      if(i>15&&!s.wifi.ssid){show('w-msg','Не получилось подключиться к «'+ssid+'». Проверьте пароль.');return}
+      if(s.wifi.ssid===ssid){hideMsg('w-msg');toast('Подключено к «'+ssid+'». Адрес: '+(s.ip||[]).join(', '));return}
+      if(i>15&&!s.wifi.ssid){hideMsg('w-msg');toast('Не получилось подключиться к «'+ssid+'». Проверьте пароль.');return}
     }catch(e){}
   }
-  show('w-msg','Нет ответа. Если приставка ушла в другую сеть, откройте http://mediastick.local из неё.');
+  hideMsg('w-msg');toast('Нет ответа. Если приставка ушла в другую сеть, откройте http://mediastick.local из неё.');
 }
 function show(id,t){const m=$(id);m.textContent=t;m.classList.remove('hide')}
+function hideMsg(id){$(id).classList.add('hide')}
 
 const dot=ok=>'<span class="dot'+(ok?'':' bad')+'"></span>';
-const fmt=s=>[
+// «О приставке» in plain words. All of it is formatted here, from the status as it is.
+const ruDur=mins=>{
+  if(mins<1)return 'меньше минуты';
+  const d=Math.floor(mins/1440), h=Math.floor(mins%1440/60), m=mins%60, p=[];
+  if(d)p.push(d+' дн');if(h)p.push(h+' ч');if(m)p.push(m+' мин');
+  return p.join(' ')
+};
+// `uptime -p`: "1 hour, 3 minutes" (also weeks and days)
+function ruUptime(up){
+  let m=0;
+  String(up||'').replace(/(\d+)\s+(week|day|hour|minute)s?/g,(x,n,k)=>{m+=n*({week:10080,day:1440,hour:60,minute:1})[k];return x});
+  return ruDur(m)
+}
+// systemd's next run, "Mon 2026-11-23 15:05:00 UTC", against the box's own clock "HH:MM" (the status has no time of the last check)
+function ruNextCheck(next,now){
+  const a=/(\d\d):(\d\d):\d\d/.exec(next||''), b=/^(\d\d):(\d\d)$/.exec(now||'');
+  if(!a||!b)return '—';
+  const d=((+a[1]*60+ +a[2])-(+b[1]*60+ +b[2])+1440)%1440;
+  return d<1?'сейчас':'следующая проверка через '+ruDur(d)
+}
+const ruDate=v=>{const m=/^(\d{4})-(\d\d)-(\d\d)$/.exec(v||'');return m?m[3]+'.'+m[2]+'.'+m[1]:''};
+// vcgencmd get_throttled: 0x1 / 0x10000 under-voltage (now / since the start), 0x4 / 0x40000 throttled; never shown as hex
+const POWER_LOW=0x10000|0x1|0x40000|0x4;
+const powerState=s=>{const t=parseInt(s.throttled,16);return isNaN(t)?null:(t&POWER_LOW)!==0};   // true = weak, null = unknown
+const tempC=s=>parseFloat(s.temp)||0;
+const HOT_C=75;
+const needAttention=s=>powerState(s)===true||tempC(s)>HOT_C||s.disk_free_gb<1;
+const fmt=s=>{
+  const cm=String(s.commit||''), sp=cm.indexOf(' '), hash=sp<0?cm:cm.slice(0,sp), subject=sp<0?'':cm.slice(sp+1), pw=powerState(s);
+  return [
  ['Сеть',dot(s.wifi.online)+esc(s.wifi.ssid||'кабель')+' · '+esc((s.ip||[]).join(', '))],
- ['Kodi',s.kodi==='up'?(s.playing?'<svg class="i s"><use href="#i-play"/></svg> '+esc(s.playing):'работает'):dot(false)+'не отвечает'],
- ['Температура',esc(s.temp)],
- ['Питание',s.power_ok?dot(true)+'норма':dot(false)+'просадка '+esc(s.throttled)],
+ ['ТВ',s.kodi==='up'?(s.playing?'<svg class="i s"><use href="#i-play"/></svg> '+esc(s.playing):'работает'):dot(false)+'не отвечает'],
+ ['Температура',esc(s.temp)+(tempC(s)>HOT_C?' · '+dot(false)+'высокая':'')],
+ ['Питание',pw===null?'нет данных':pw?dot(false)+'слабый блок питания — приставка может тормозить':dot(true)+'в норме'],
  ['Память',s.mem_free_mb+' МБ свободно'],
  ['Диск',s.disk_free_gb+' ГБ свободно'],
- ['Работает',esc(s.uptime)],
- ['Версия',esc(s.commit)+(s.bad_commit?' '+dot(false)+'откат с '+esc(s.bad_commit):'')],
- ['Обновление',esc(s.next_update||'—')],
-].map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+ ['Работает',esc(ruUptime(s.uptime))],
+ ['Версия',esc(hash)+(s.commit_date?' · '+esc(ruDate(s.commit_date)):'')+(s.bad_commit?' '+dot(false)+'откат с '+esc(s.bad_commit):'')+(subject?'<span class="dsub">'+esc(subject)+'</span>':'')],
+ ['Обновление',esc(ruNextCheck(s.next_update,s.time))],
+].map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('')};
+// the rows of the settings list: a short state on the right of each
+function setRows(s){
+  s=s||lastStatus;if(!s)return;
+  const v=(id,text)=>{$(id).textContent=text};
+  v('sv-acc',window.accRowText?accRowText():'');
+  v('sv-wifi',s.wifi.ssid||'кабель');
+  v('sv-https',HTTPS_RE.test(httpsUrl)?'включено':'выключено');
+  const need=needAttention(s);v('sv-info',need?'нужно внимание':'всё в порядке');$('sv-info').classList.toggle('warnt',need)
+}
 
 // The header says what the TV is doing, not the Wi-Fi (that is under «О приставке»): the dot is green when
-// Kodi answers, amber when a cast or a web app has the TV, red when it does not answer or the box is out of reach.
+// the TV answers, amber when a cast or a web app has the TV, red when it does not answer or the box is out of reach.
 // `now` is what Смотреть knows of the player (speed 0 = paused); the status alone knows only the title.
 const TV_BUSY={miracast:'ТВ занят трансляцией с компьютера',airplay:'ТВ занят трансляцией AirPlay','web-app':'На ТВ открыто приложение'};
 function tvState(s,now){
   if(!s)return {dot:'bad',text:'нет связи с приставкой'};
   if(TV_BUSY[s.screen])return {dot:'warn',text:TV_BUSY[s.screen]};
   if(s.kodi!=='up')return {dot:'bad',text:'ТВ не отвечает'};
-  if(s.playing)return {dot:'ok',text:'ТВ: '+s.playing+' · '+(now&&now.playing&&now.speed===0?'пауза':'играет')};
+  if(s.playing)return {dot:'ok',text:(now&&now.playing&&now.speed===0?'Пауза: ':'Играет: ')+s.playing};   // the state first: the pill cuts the title, not it
   return {dot:'ok',text:'ТВ свободен'}
 }
 let lastStatus=null;
@@ -1100,7 +1196,7 @@ async function tick(){
     if(s.wifi.ap){ if($('setup').classList.contains('hide')){$('app').classList.add('hide');$('setup').classList.remove('hide');loadNets('s-ssid')} }
     else{$('setup').classList.add('hide');$('app').classList.remove('hide')}
     lastStatus=s;hdrDraw(); $('info').innerHTML=fmt(s);
-    httpsUrl=s.https_url||''; httpsCheck(); airUi(); keysUi(s.dead);kbUi(s.kb);
+    httpsUrl=s.https_url||'';setRows(s); httpsCheck(); airUi(); keysUi(s.dead);kbUi(s.kb);
     pageCheck(s.page);
     if(window.accNote)accNote(s.signin);
     if(window.obNote)obNote(s.onboarding);
@@ -1162,10 +1258,10 @@ document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement
 document.addEventListener('keydown',e=>{if(full&&e.key==='Escape'){e.stopImmediatePropagation();fullOn(false)}},true);
 function setLive(on){
   live=on; liveSince=Date.now();
-  $('live-t').textContent=on?'Стоп':'Смотреть';
+  $('live-t').textContent=on?'Стоп':'Показать';
   $('live-ic').setAttribute('href',on?'#i-stop':'#i-play');
   if(on){failed=0;shotState('Загрузка…');frame()}
-  else{clearTimeout(liveTimer);shotState(gotFrame?'Остановлено':'Нажмите «Смотреть»')}
+  else{clearTimeout(liveTimer);shotState(gotFrame?'Остановлено':'Нажмите «Показать»')}
 }
 function frame(){
   if(shotBusy){redo=true;return}
@@ -1179,7 +1275,7 @@ function frame(){
   // the first frame after idle can be slow or fail once: retry before giving up
   im.onerror=()=>{shotBusy=false;redo=false;
     if(!gotFrame&&failed++<1){shotState('Загрузка…');setTimeout(frame,800);return}
-    shotState('Kodi не отвечает',true);if(live)liveTimer=setTimeout(frame,3000)};
+    shotState('ТВ не отвечает',true);if(live)liveTimer=setTimeout(frame,3000)};
   im.src='/shot.png?'+t;
 }
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&live)setLive(false)});
@@ -1342,7 +1438,8 @@ let hWait=false, hFails=0, hWaitMsg='Панель перезапускается
 async function httpsLoad(){
   clearTimeout(hTimer);
   try{
-    const s=await api('/api/https');hFails=0;hView(s);
+    const s=await api('/api/https');hFails=0;const was=hWait;hView(s);
+    if(was&&s.state==='ok')toast('HTTPS включён');
     hWait=s.state==='updating-dns'||s.state==='issuing';
     if(hWait)hWaitMsg='Сертификат готов, панель перезапускается…';
     if(hWait)hTimer=setTimeout(httpsLoad,3000)
@@ -1356,29 +1453,32 @@ async function httpsSet(){
   if(!SUBRE.test(domain)||!TOKRE.test(token))return;
   $('h-btn').disabled=true;show('h-msg','Отправляю…');
   try{await api('/api/https',{domain,token})}
-  catch(e){show('h-msg','Не получилось: '+e.message.split(token).join('***'));hCheck();return}
+  catch(e){hideMsg('h-msg');toast('Не получилось: '+tvErr(e).split(token).join('***'));hCheck();return}
   $('h-tok').value='';hCheck();hWait=true;hFails=0;httpsLoad()
 }
 function httpsOff(){
   if(!armed('h-off','Нажмите ещё раз, чтобы отключить'))return;
+  toast('HTTPS отключается…');
   api('/api/https/clear',{}).then(()=>{
     clearTimeout(hTimer);$('h-open').classList.add('hide');$('h-off').classList.add('hide');
     show('h-msg','HTTPS отключён, панель перезапускается.'+(location.protocol==='https:'?' Эта страница перестанет открываться: зайдите по адресу http://mediastick.local':''));
     hWait=true;hFails=0;hWaitMsg='Панель перезапускается…';hTimer=setTimeout(httpsLoad,5000)
   }).catch(e=>show('h-msg',e.message))
 }
-// Deep links: /#air and /#screen open the remote in that mode, /#accounts the Accounts card, /#https the HTTPS card
-// (/#https?sub=<name> from the TV also fills the name).
+// Deep links: /#air and /#screen open the remote in that mode; /#accounts, /#wifi, /#https, /#device and /#maintenance open
+// that page of Настройки (/#https?sub=<name> from the TV also fills the name). No hash on the settings tab: its list.
 function hashGo(){
   const h=location.hash;
   if(h==='#air'||h==='#screen'){document.querySelector('[data-go=remote]').click();setMode(h.slice(1));return}
-  if(h==='#accounts'){openAccounts();return}
-  if(h.slice(0,6)!=='#https')return;
-  const m=h.match(/[?&]sub=([a-z0-9-]+)/i);
-  hDeep=m?m[1].toLowerCase():'';
-  if(hDeep&&!$('h-dom').value)$('h-dom').value=hDeep;
-  document.querySelector('[data-go=settings]').click();
-  setTimeout(()=>{$('t-https').scrollIntoView({behavior:'smooth',block:'start'});
+  const p=SP_OF[h.replace(/[?].*$/,'').slice(1)];
+  if(!p){if(tab==='settings'&&spage)setPage('');return}
+  if(p==='https'){
+    const m=h.match(/[?&]sub=([a-z0-9-]+)/i);
+    hDeep=m?m[1].toLowerCase():'';
+    if(hDeep&&!$('h-dom').value)$('h-dom').value=hDeep
+  }
+  openSettings(p);
+  if(p==='https')setTimeout(()=>{if(wide())$('t-https').scrollIntoView({behavior:'smooth',block:'start'});
     $('h-card').focus({preventScroll:true});
     if(!$('h-setup').classList.contains('hide'))$(hDeep?'h-tok':'h-dom').focus({preventScroll:true})},150)
 }
@@ -1606,6 +1706,7 @@ document.addEventListener('dblclick',e=>e.preventDefault());
 // Boot, last, when everything above exists. A phone opens on the tab and the remote mode it used last
 // (the Смотреть tab when it has none); a link from the TV overrides both.
 setMode(lsGet('mode'));
+setPage('');
 if(!wide()){const t=lsGet('tab');if(TABS.includes(t)&&t!=='watch')document.querySelector('[data-go='+t+']').click()}
 hashGo();
 </script>@@ACC_TAIL@@@@WATCH_TAIL@@</body></html>"""
@@ -1802,7 +1903,7 @@ class H(BaseHTTPRequestHandler):
                 kodi("Input.SendText", {"text": str(b.get("text", ""))[:200], "done": b.get("done", True) is not False})
                 return self.send({"ok": True})
         except OSError:
-            return self.send("Kodi не отвечает", "text/plain", 503)
+            return self.send("ТВ не отвечает", "text/plain", 503)
         if p == "/api/https":
             return self.https_set(b)
         if p == "/api/https/clear":
