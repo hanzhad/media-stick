@@ -27,6 +27,10 @@ TAIL = r"""
 .acc-yk-st .btn{border-radius:999px;min-height:48px}
 .acc-yk-st .btn.acc{background:#f2f3f5;color:#0f1115}
 .acc-yk-h{margin-top:8px;color:var(--faint);font-size:13px}
+.acc-yk-cv{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:10px}
+.acc-yk-cv .acc-yk-h{flex:1 1 100%;margin:0}
+.acc-yk-cv .acc-yk-url{flex:1 1 160px}
+.acc-yk-cv .btn{flex:0 0 auto;margin-top:0}
 .acc-yk-url{flex:1 1 100%;padding:10px 12px;background:var(--bg);border-radius:12px;color:var(--dim);font-size:13px;user-select:all;-webkit-user-select:all;overflow-wrap:anywhere}
 .acc-yk-m{margin-top:10px;color:var(--dim);font-size:14px;min-height:1.4em}
 .acc-yk-m.bad{color:var(--bad)}
@@ -111,6 +115,18 @@ function ykCopy(s){
   }));
   return b
 }
+// a value to paste on a Google page (our pages' links, the domain): its label, the value, a copy button
+function ykCopyVal(label,value){
+  const row=accEl('div','acc-yk-cv'),v=accEl('div','acc-yk-url',value);
+  const b=ykBtn('Скопировать','sm',()=>copyText(value).then(ok=>{
+    if(ok){b.textContent='Скопировано';setTimeout(()=>{b.textContent='Скопировать'},2000);return}
+    const r=document.createRange();r.selectNodeContents(v);const g=getSelection();g.removeAllRanges();g.addRange(r);
+    b.textContent='Скопируйте вручную'
+  }));
+  b.setAttribute('aria-label','Скопировать: '+label);
+  row.append(accEl('div','acc-yk-h',label),v,b);
+  return row
+}
 // a step's link: the button, "copy link" (and "open in Safari" on an iPhone), and what to expect
 function ykLinks(s){
   const a=ykLink(s,s.button,'btn acc wide');if(!a)return [];
@@ -153,6 +169,7 @@ function ykStepBody(b,s,n){
   if(ykIOS&&ykStandalone)b.append(accEl('p','acc-yk-p',YK.texts.ios_standalone));
   s.lines.forEach(t=>b.append(accEl('p','acc-yk-p',t)));
   if(s.ticks)ykChecklist(b,s);
+  (s.copies||[]).forEach(c=>b.append(ykCopyVal(c.label,c.value)));
   b.append(...ykLinks(s));
   if(s.paste)ykPasteBox(b,n);
   if(n<YK.steps.length)b.append(ykBtn('Сделано, дальше','wide',()=>ykGo(n+1),'acc-yk-next'));

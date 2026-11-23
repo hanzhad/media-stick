@@ -10,6 +10,16 @@ import urllib.parse
 CONSOLE = "https://console.cloud.google.com/"
 DOC_URL = "https://developers.google.com/youtube/v3/getting-started"
 TV_TITLE, PHONE_TITLE = "Follow along on your phone", "Ключ Google для YouTube"
+# Google publishes an External app only with a home page and a privacy policy on an authorized domain. These two
+# pages (branch gh-pages of the project's repository) serve every owner: the phone offers them to copy.
+PAGES_DOMAIN = "hanzhad.github.io"
+HOME_URL = "https://hanzhad.github.io/media-stick/"
+PRIVACY_URL = "https://hanzhad.github.io/media-stick/privacy.html"
+COPIES = (("Главная страница (Application home page)", HOME_URL),
+          ("Политика (Application privacy policy link)", PRIVACY_URL),
+          ("Домен (Authorized domain)", PAGES_DOMAIN))
+UNVERIFIED = ("При входе Google предупредит, что приложение не проверено: это ваш собственный проект. "
+              "Нажмите «Дополнительно» → «Перейти на сайт TV».")
 WARN = {"tv": "Publish it, or the TV gets signed out after 7 days.",
         "phone": "Без публикации вход на ТВ слетает через 7 дней."}
 
@@ -22,32 +32,38 @@ STEPS = (
      "lines": ["Google покажет два шага: «Confirm project» → «Enable API». Если проекта нет — создайте его в списке "
                "проектов сверху (имя любое, например TV), затем «Next» и «Enable»."]},
     {"id": "consent", "title": "Разрешить вход с ТВ", "tv": "Allow TV sign-in",
-     "tv_hint": "Get started › App name: TV › Audience: External › Create, then Audience › Publish app.",
+     "tv_hint": "Get started › App name: TV › External › Create › Branding: two links › Audience › Publish app.",
      "url": CONSOLE + "auth/overview", "button": "Открыть страницу Google",
-     "hint": "Начать → название TV → внешняя аудитория → Создать, затем Аудитория → «Опубликовать приложение».",
-     "lines": ["Отмечайте пункты, которые уже сделали."], "ticks": True, "warn": WARN["phone"]},
+     "hint": "Начать → TV → внешняя аудитория → Создать; в «Брендинге» две ссылки и домен; Аудитория → Опубликовать.",
+     "lines": ["Отмечайте пункты, которые уже сделали. Ссылки и домен для «Брендинга» — ниже, их можно скопировать."],
+     "ticks": True, "warn": WARN["phone"], "copies": [{"label": l, "value": v} for l, v in COPIES]},
     {"id": "api_key", "title": "Ключ API", "tv": "API key",
      "tv_hint": "Create an API key and paste it on your phone.",
      "url": CONSOLE + "apis/credentials", "button": "Открыть страницу Google",
      "hint": "«Создать учётные данные» → «Ключ API», скопируйте ключ и вставьте его здесь.",
-     "lines": ["Нажмите «Создать учётные данные» → «Ключ API», скопируйте ключ и вставьте его ниже."], "paste": True},
+     "lines": ["Если в списке уже есть «API key 1» — Google создал его сам: откройте его и нажмите «Show key». "
+               "Иначе «Создать учётные данные» → «Ключ API». Скопируйте ключ и вставьте его ниже.",
+               "Лучше сразу ограничить ключ: в его настройках «API restrictions» → YouTube Data API v3 → «Save»."],
+     "paste": True},
     {"id": "client", "title": "Клиент для ТВ", "tv": "TV client",
      "tv_hint": "Create a client of type TVs and Limited Input devices, paste its ID and secret on your phone.",
      "url": CONSOLE + "auth/clients/create", "button": "Открыть страницу Google",
      "hint": "Тип «TVs and Limited Input devices». Вставьте Client ID и secret или загрузите JSON клиента.",
-     "lines": ["Создайте клиент типа «TVs and Limited Input devices». Потом вставьте Client ID и secret "
-               "или загрузите скачанный JSON клиента."], "paste": True},
+     "lines": ["Создайте клиент типа «TVs and Limited Input devices». Google покажет Client ID и secret один раз: "
+               "скопируйте оба (или нажмите «Download JSON») до того, как закроете окно.",
+               "Вставьте их ниже по одному или загрузите скачанный JSON клиента.", UNVERIFIED], "paste": True},
 )
 STEP_TOTAL = len(STEPS)
 
-# step 2's checklist: (id, the TV's chip, the phone's line); two rows on the TV
+# step 2's checklist: (id, the TV's chip, the phone's line); two rows on the TV: the app, then publishing it
 TICKS = (
     ("start", "Get started", "Нажмите «Начать»"),
     ("name", "App name: TV", "Название — TV, почта — ваша"),
     ("external", "Audience: External", "Аудитория: «Внешняя»"),
     ("create", "Create", "Нажмите «Создать»"),
+    ("links", "Branding: links", "«Брендинг»: две ссылки и домен ниже → «Сохранить»"),
     ("audience", "Audience", "Откройте «Аудитория»"),
-    ("publish", "Publish app", "Нажмите «Опубликовать приложение»"),
+    ("publish", "Publish app", "«Опубликовать приложение» → «Подтвердить»"),
 )
 TICK_IDS = tuple(t[0] for t in TICKS)
 TICK_ROWS = (TICK_IDS[:4], TICK_IDS[4:])

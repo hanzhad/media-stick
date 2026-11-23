@@ -1173,7 +1173,7 @@ class StepActions(Base):
         self.assertEqual(pk.STEP_TOTAL, 4)
         expected = [
             ("Project and API", "On your phone: open the Google link and tap Enable."),
-            ("Allow TV sign-in", "Get started › App name: TV › Audience: External › Create, then Audience › Publish app."),
+            ("Allow TV sign-in", "Get started › App name: TV › External › Create › Branding: two links › Audience › Publish app."),
             ("API key", "Create an API key and paste it on your phone."),
             ("TV client", "Create a client of type TVs and Limited Input devices, paste its ID and secret on your phone."),
         ]
@@ -1282,25 +1282,40 @@ class Ticks(Base):
     def states(self):
         return [[c["s"] for c in row] for row in self.ob.last["chips"]]
 
-    def test_the_six_boxes_are_the_six_chips(self):
-        self.assertEqual(steps.TICK_IDS, ("start", "name", "external", "create", "audience", "publish"))
+    def test_the_seven_boxes_are_the_seven_chips(self):
+        self.assertEqual(steps.TICK_IDS, ("start", "name", "external", "create", "links", "audience", "publish"))
         self.assertEqual([[c["t"] for c in row] for row in steps.chip_rows([])],
-                         [["Get started", "App name: TV", "Audience: External", "Create"], ["Audience", "Publish app"]])
+                         [["Get started", "App name: TV", "Audience: External", "Create"],
+                          ["Branding: links", "Audience", "Publish app"]])
         self.assertEqual([t["label"] for t in pk.WIZARD["ticks"]][0], "Нажмите «Начать»")
+
+    def test_step_two_offers_the_pages_google_needs_to_publish(self):
+        s = pk.WIZARD["steps"][1]
+        self.assertEqual([c["value"] for c in s["copies"]],
+                         ["https://hanzhad.github.io/media-stick/", "https://hanzhad.github.io/media-stick/privacy.html",
+                          "hanzhad.github.io"])
+        for c in s["copies"][:2]:
+            self.assertTrue(c["value"].startswith("https://" + steps.PAGES_DOMAIN + "/"))
+
+    def test_step_four_warns_the_secret_is_shown_once_and_explains_the_unverified_screen(self):
+        lines = " ".join(steps.STEPS[3]["lines"])
+        self.assertIn("один раз", lines)
+        self.assertIn("Download JSON", lines)
+        self.assertIn("не проверено", lines)
 
     def test_the_first_open_chip_is_now_the_ticked_are_done_the_rest_todo(self):
         self.do({"action": "step", "step": 2})
-        self.assertEqual(self.states(), [["now", "todo", "todo", "todo"], ["todo", "todo"]])
+        self.assertEqual(self.states(), [["now", "todo", "todo", "todo"], ["todo", "todo", "todo"]])
         self.assertEqual(self.do({"action": "tick", "id": "start", "on": True}), ({"ok": True, "ticks": ["start"]}, 200))
-        self.assertEqual(self.states(), [["done", "now", "todo", "todo"], ["todo", "todo"]])
+        self.assertEqual(self.states(), [["done", "now", "todo", "todo"], ["todo", "todo", "todo"]])
         self.do({"action": "tick", "id": "external", "on": True})
-        self.assertEqual(self.states(), [["done", "now", "done", "todo"], ["todo", "todo"]])
-        for i in ("name", "create", "audience"):
+        self.assertEqual(self.states(), [["done", "now", "done", "todo"], ["todo", "todo", "todo"]])
+        for i in ("name", "create", "links", "audience"):
             reply, _ = self.do({"action": "tick", "id": i, "on": True})
-        self.assertEqual(reply["ticks"], ["start", "name", "external", "create", "audience"])
-        self.assertEqual(self.states(), [["done"] * 4, ["done", "now"]])
+        self.assertEqual(reply["ticks"], ["start", "name", "external", "create", "links", "audience"])
+        self.assertEqual(self.states(), [["done"] * 4, ["done", "done", "now"]])
         self.do({"action": "tick", "id": "publish", "on": True})
-        self.assertEqual(self.states(), [["done"] * 4, ["done", "done"]])
+        self.assertEqual(self.states(), [["done"] * 4, ["done", "done", "done"]])
         self.do({"action": "tick", "id": "start", "on": False})
         self.assertEqual(self.states()[0][0], "now")
 
@@ -1515,7 +1530,7 @@ class Page(unittest.TestCase):
         self.assertEqual(len(w["steps"]), 4)
         self.assertEqual([bool(s.get("ticks")) for s in w["steps"]], [False, True, False, False])
         self.assertEqual([bool(s.get("paste")) for s in w["steps"]], [False, False, True, True])
-        self.assertEqual(len(w["ticks"]), 6)
+        self.assertEqual(len(w["ticks"]), 7)
         self.assertEqual(w["steps"][1]["warn"], "Без публикации вход на ТВ слетает через 7 дней.")
         self.assertEqual(w["patterns"], dict(steps.PATTERNS))
         self.assertEqual({f["name"]: f["secret"] for f in w["fields"]},
@@ -1602,11 +1617,12 @@ class Page(unittest.TestCase):
         self.assertIn("s.safari!=='x-safari-'+u", js)
         self.assertIn("a.href=s.safari", js)
         self.assertIn("b.append(...ykLinks(s))", js)
+        self.assertIn("ykCopyVal(c.label,c.value)", js)          # step 2: our pages and the domain, to copy
         self.assertIn("YK.texts.open", js)
         self.assertIn("Скопировать ссылку", self.PAGE)
         self.assertIn("Открыть в Safari", self.PAGE)
         self.assertIn("Откроется в браузере. Вернитесь в пульт и нажмите «Сделано, дальше».", self.PAGE)
-        self.assertEqual(self.PAGE.count("acc-yk-url"), 3)       # the style, and the link shown when copying fails
+        self.assertEqual(self.PAGE.count("acc-yk-url"), 5)       # the styles (2), the link shown when copying fails, a value to copy
 
     def test_an_iphone_in_the_home_screen_app_is_told_where_the_links_open(self):
         js = self.script()
