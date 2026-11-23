@@ -4,11 +4,35 @@ set -euo pipefail
 DIR=/var/cache/media-stick/wallpapers
 KEEP=24
 API='https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=en-US'
+BLUR=/var/cache/media-stick/wallpapers-blur
+BUNDLED=/home/media/.kodi/addons/script.media-stick.home/resources/wallpapers
 log() { echo "media-stick-wallpapers: $*"; }
 
+# Small, soft copies of every photo (downloaded and bundled) for the skin's backgrounds behind
+# Settings and dialogs: made once per photo, so Kodi never blurs anything itself.
+blur_all() {
+  local src n
+  mkdir -p "$BLUR"
+  for src in "$DIR"/*.jpg "$BUNDLED"/*.jpg; do
+    [ -s "$src" ] || continue
+    n=${src##*/}
+    [ -s "$BLUR/$n" ] && continue
+    if ffmpeg -nostdin -loglevel error -y -i "$src" -vf "scale=960:-2,gblur=sigma=24,eq=saturation=1.25"          -q:v 2 -f mjpeg "$BLUR/.part" && [ -s "$BLUR/.part" ]; then
+      chmod 0644 "$BLUR/.part"; mv "$BLUR/.part" "$BLUR/$n"
+    else
+      rm -f "$BLUR/.part"; log "could not blur $n"
+    fi
+  done
+  for src in "$BLUR"/*.jpg; do
+    [ -e "$src" ] || continue
+    n=${src##*/}
+    [ -e "$DIR/$n" ] || [ -e "$BUNDLED/$n" ] || rm -f "$src"
+  done
+}
+
 mkdir -p "$DIR"
-json=$(curl -fsS --max-time 20 "$API") || { log "bing unreachable, keeping the cache"; exit 0; }
-urlbases=$(printf '%s' "$json" | jq -r '.images[].urlbase') || { log "unexpected answer from bing"; exit 0; }
+json=$(curl -fsS --max-time 20 "$API") || { log "bing unreachable, keeping the cache"; blur_all; exit 0; }
+urlbases=$(printf '%s' "$json" | jq -r '.images[].urlbase') || { log "unexpected answer from bing"; blur_all; exit 0; }
 
 tmp=$(mktemp "$DIR/.part.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
@@ -30,4 +54,5 @@ done <<< "$urlbases"
 
 # keep the newest $KEEP, drop the rest
 ls -t "$DIR"/*.jpg 2>/dev/null | tail -n +$((KEEP + 1)) | while IFS= read -r old; do rm -f "$old"; done
+blur_all
 exit 0

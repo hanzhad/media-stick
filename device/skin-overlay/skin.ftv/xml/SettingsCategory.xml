@@ -19,6 +19,7 @@
 		<effect type="fade" start="100" end="0" time="180" tween="cubic" easing="in"/>
 	</animation>
 	<controls>
+		<include>BackgroundImage</include>
 		<!-- Kodi writes the focused item's description here; shown by the textbox below -->
 		<control id="6" type="label">
 			<font/>
@@ -42,7 +43,7 @@
 			<control type="label">
 				<width>auto</width>
 				<height>160</height>
-				<font>Light60</font>
+				<font>MsTitle</font>
 				<aligny>center</aligny>
 				<textcolor>ffffffff</textcolor>
 				<label>$LOCALIZE[14206]</label>
@@ -51,7 +52,7 @@
 			<control type="label">
 				<width>auto</width>
 				<height>160</height>
-				<font>Light60</font>
+				<font>MsTitle</font>
 				<aligny>center</aligny>
 				<textcolor>ffffffff</textcolor>
 				<label>$LOCALIZE[14200]</label>
@@ -60,7 +61,7 @@
 			<control type="label">
 				<width>auto</width>
 				<height>160</height>
-				<font>Light60</font>
+				<font>MsTitle</font>
 				<aligny>center</aligny>
 				<textcolor>ffffffff</textcolor>
 				<label>$LOCALIZE[14211]</label>
@@ -69,7 +70,7 @@
 			<control type="label">
 				<width>auto</width>
 				<height>160</height>
-				<font>Light60</font>
+				<font>MsTitle</font>
 				<aligny>center</aligny>
 				<textcolor>ffffffff</textcolor>
 				<label>$LOCALIZE[13000]</label>
@@ -78,7 +79,7 @@
 			<control type="label">
 				<width>auto</width>
 				<height>160</height>
-				<font>Light60</font>
+				<font>MsTitle</font>
 				<aligny>center</aligny>
 				<textcolor>ffffffff</textcolor>
 				<label>$LOCALIZE[14036]</label>
@@ -87,7 +88,7 @@
 			<control type="label">
 				<width>auto</width>
 				<height>160</height>
-				<font>Light60</font>
+				<font>MsTitle</font>
 				<aligny>center</aligny>
 				<textcolor>ffffffff</textcolor>
 				<label>$LOCALIZE[15016]</label>
@@ -96,7 +97,7 @@
 			<control type="label">
 				<width>auto</width>
 				<height>160</height>
-				<font>Light60</font>
+				<font>MsTitle</font>
 				<aligny>center</aligny>
 				<textcolor>ffffffff</textcolor>
 				<label>$LOCALIZE[19180]</label>
@@ -161,7 +162,14 @@
 			<onclick>SettingsLevelChange</onclick>
 			<pulseonselect>false</pulseonselect>
 		</control>
-		<!-- right: the settings of the focused section -->
+		<!-- right: the settings of the focused section, on a glass card (description at its foot) -->
+		<control type="image">
+			<left>1280</left>
+			<top>368</top>
+			<width>2448</width>
+			<height>1712</height>
+			<texture border="76" colordiffuse="66141620">ms-card.png</texture>
+		</control>
 		<control id="5" type="grouplist">
 			<left>1312</left>
 			<top>400</top>
@@ -178,7 +186,7 @@
 		</control>
 		<control type="textbox">
 			<left>1376</left>
-			<top>1880</top>
+			<top>1872</top>
 			<width>2256</width>
 			<height>200</height>
 			<font>Light28</font>
@@ -209,15 +217,15 @@
 			<textcolor>e6ffffff</textcolor>
 			<focusedcolor>ff000000</focusedcolor>
 			<disabledcolor>4dffffff</disabledcolor>
-			<radiowidth>250</radiowidth>
-			<radioheight>106</radioheight>
-			<radioposx>2070</radioposx>
-			<textureradioonfocus>settings/radio_on_focus.png</textureradioonfocus>
-			<textureradioonnofocus>settings/radio_on_no_focus.png</textureradioonnofocus>
-			<textureradioondisabled>settings/radio_on_disabled.png</textureradioondisabled>
-			<textureradioofffocus>settings/radio_off_focus.png</textureradioofffocus>
-			<textureradiooffnofocus>settings/radio_off_no_focus.png</textureradiooffnofocus>
-			<textureradiooffdisabled>settings/radio_off_disabled.png</textureradiooffdisabled>
+			<radiowidth>144</radiowidth>
+			<radioheight>81</radioheight>
+			<radioposx>2176</radioposx>
+			<textureradioonfocus>ms-toggle-on-fo.png</textureradioonfocus>
+			<textureradioonnofocus>ms-toggle-on-nf.png</textureradioonnofocus>
+			<textureradioondisabled colordiffuse="66ffffff">ms-toggle-on-nf.png</textureradioondisabled>
+			<textureradioofffocus>ms-toggle-off-fo.png</textureradioofffocus>
+			<textureradiooffnofocus>ms-toggle-off-nf.png</textureradiooffnofocus>
+			<textureradiooffdisabled colordiffuse="66ffffff">ms-toggle-off-nf.png</textureradiooffdisabled>
 			<texturefocus border="47">ms-pill.png</texturefocus>
 			<texturenofocus/>
 		</control>

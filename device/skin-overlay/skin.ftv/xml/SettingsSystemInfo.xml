@@ -17,6 +17,7 @@
 		<effect type="fade" start="100" end="0" time="180" tween="cubic" easing="in"/>
 	</animation>
 	<controls>
+		<include>BackgroundImage</include>
 		<control type="label">
 			<left>192</left>
 			<top>96</top>
@@ -32,7 +33,7 @@
 			<top>168</top>
 			<width>2400</width>
 			<height>160</height>
-			<font>Light60</font>
+			<font>MsTitle</font>
 			<aligny>center</aligny>
 			<textcolor>ffffffff</textcolor>
 			<label>$LOCALIZE[130]</label>
@@ -148,7 +149,14 @@
 				<onclick>RunScript(script.skinvariables,run_dialog=textviewer,heading='empty',text='$ESCINFO[System.PrivacyPolicy]')</onclick>
 			</control>
 		</control>
-		<!-- right: lines Kodi fills for the focused page -->
+		<!-- right: a glass card with the lines Kodi fills for the focused page -->
+		<control type="image">
+			<left>1280</left>
+			<top>368</top>
+			<width>2448</width>
+			<height>1712</height>
+			<texture border="76" colordiffuse="66141620">ms-card.png</texture>
+		</control>
 		<control type="grouplist">
 			<left>1376</left>
 			<top>424</top>

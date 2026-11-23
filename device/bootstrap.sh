@@ -22,7 +22,7 @@ fi
 
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
-pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect kodi-peripheral-joystick ffmpeg git jq curl unzip
+pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect kodi-peripheral-joystick ffmpeg fonts-inter git jq curl unzip
       chromium libwidevinecdm0 cage wtype grim qrencode
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted
       python3-evdev lego
@@ -53,6 +53,16 @@ changed_units=()
 # Kodi's own folders stay media's: on a fresh card they do not exist yet, and install -D
 # below would make them root's (the keymap lives in userdata/keymaps).
 install -d -o media -g media /home/media/.kodi /home/media/.kodi/userdata /home/media/.kodi/userdata/keymaps
+# The skin's font is Inter from fonts-inter. Kodi takes only *.ttf names from Font.xml and
+# the package ships .otf, so Kodi's own font folder gets links with a .ttf name (FreeType
+# reads the file by its content). Kodi loads fonts at start: restart it when a link changes.
+install -d -o media -g media /home/media/.kodi/media /home/media/.kodi/media/Fonts
+for w in Inter-Regular Inter-Medium Inter-SemiBold InterDisplay-Light InterDisplay-SemiBold; do
+  l=/home/media/.kodi/media/Fonts/$w.ttf
+  [ "$(readlink "$l")" = "/usr/share/fonts/opentype/inter/$w.otf" ] && continue
+  ln -sfn "/usr/share/fonts/opentype/inter/$w.otf" "$l"; chown -h media:media "$l"; log "  linked $l"
+  changed_units+=(kodi.service)
+done
 while IFS= read -r -d '' src; do
   rel=${src#"$FILES"/}; dst=/$rel; mode=0644
   [[ $rel == usr/local/bin/* ]] && mode=0755

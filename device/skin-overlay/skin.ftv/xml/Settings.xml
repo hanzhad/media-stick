@@ -19,12 +19,13 @@
 		<effect type="fade" start="100" end="0" time="180" tween="cubic" easing="in"/>
 	</animation>
 	<controls>
+		<include>BackgroundImage</include>
 		<control type="label">
 			<left>192</left>
 			<top>112</top>
 			<width>2400</width>
 			<height>200</height>
-			<font>Light60</font>
+			<font>MsTitle</font>
 			<aligny>center</aligny>
 			<textcolor>ffffffff</textcolor>
 			<label>$LOCALIZE[5]</label>
@@ -132,7 +133,14 @@
 				</item>
 			</content>
 		</control>
-		<!-- right: the focused category, big and faint, with what it holds -->
+		<!-- right: the focused category, big and faint, with what it holds, on a glass card -->
+		<control type="image">
+			<left>1280</left>
+			<top>368</top>
+			<width>2448</width>
+			<height>1712</height>
+			<texture border="76" colordiffuse="66141620">ms-card.png</texture>
+		</control>
 		<control type="image">
 			<left>1400</left>
 			<top>400</top>
@@ -140,7 +148,7 @@
 			<height>480</height>
 			<aspectratio align="left" aligny="top">keep</aspectratio>
 			<texture>$INFO[Container(9000).ListItem.Icon]</texture>
-			<colordiffuse>33ffffff</colordiffuse>
+			<colordiffuse>59ffffff</colordiffuse>
 		</control>
 		<control type="textbox">
 			<left>1400</left>
