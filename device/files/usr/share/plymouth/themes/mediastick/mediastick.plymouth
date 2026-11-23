@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Media Stick
+Description=The Media Stick picture from power-on until Kodi (tools/make-splash.py draws it)
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/mediastick
+ScriptFile=/usr/share/plymouth/themes/mediastick/mediastick.script

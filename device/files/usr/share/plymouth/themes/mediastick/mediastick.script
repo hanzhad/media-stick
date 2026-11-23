@@ -1,0 +1,7 @@
+# The picture fills the screen, and nothing else is drawn: no progress, no messages. The
+# background is the picture's own dark, for the moment before the picture is loaded.
+Window.SetBackgroundTopColor(16 / 255, 18 / 255, 24 / 255);
+Window.SetBackgroundBottomColor(16 / 255, 18 / 255, 24 / 255);
+picture = Image("splash.png");
+sprite = Sprite(picture.Scale(Window.GetWidth(), Window.GetHeight()));
+sprite.SetPosition(Window.GetX(), Window.GetY(), 0);

@@ -26,7 +26,8 @@ pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect kodi-peripher
       chromium libwidevinecdm0 cage wtype grim qrencode
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted
       python3-evdev lego
-      uxplay gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-alsa gstreamer1.0-tools)
+      uxplay gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-alsa gstreamer1.0-tools
+      plymouth)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
 if [ ${#missing[@]} -gt 0 ]; then
@@ -42,6 +43,17 @@ if grep -q '^dtoverlay=vc4-kms-v3d$' "$cfg"; then
 fi
 grep -q 'video=HDMI-A-1:' /boot/firmware/cmdline.txt || {
   sed -i '1s|$| video=HDMI-A-1:1920x1080@60D|' /boot/firmware/cmdline.txt; reboot_needed=1; }
+# From power-on the TV shows our picture only (Plymouth, theme below, then Kodi's splash.png):
+# no rainbow square from the firmware, no raspberries and kernel text, no boot messages (they go
+# to tty3, still there with Alt+F3 on a keyboard), no blinking cursor.
+grep -q '^disable_splash=1$' "$cfg" || { echo 'disable_splash=1' >> "$cfg"; reboot_needed=1; }
+cmdline=/boot/firmware/cmdline.txt
+if grep -qw 'console=tty1' "$cmdline"; then
+  sed -i '1s|console=tty1|console=tty3|' "$cmdline"; reboot_needed=1
+fi
+for word in quiet splash loglevel=3 logo.nologo vt.global_cursor_default=0 plymouth.ignore-serial-consoles; do
+  grep -qw -- "$word" "$cmdline" || { sed -i "1s|\$| $word|" "$cmdline"; reboot_needed=1; }
+done
 
 log "secrets dir"
 install -d -m 0750 -o root -g media /etc/media-stick
@@ -74,12 +86,19 @@ while IFS= read -r -d '' src; do
     [[ $rel == etc/asound.conf ]] && changed_units+=(kodi.service airplay.service)
     # a library the panel imports at start: restart the panel (Kodi loads it afresh at each sign-in)
     [[ $rel == usr/local/lib/media-stick/* ]] && changed_units+=("panel.service")
+    # the boot picture is read from the initramfs: rebuilt below
+    [[ $rel == usr/share/plymouth/themes/* ]] && splash_changed=1
     # a program with a service of the same name: restart that service too
     [[ $rel == usr/local/bin/* && -f "$FILES/etc/systemd/system/$(basename "$rel").service" ]] \
       && changed_units+=("$(basename "$rel").service")
   fi
 done < <(find "$FILES" -type f -print0)
 systemd-tmpfiles --create /etc/tmpfiles.d/media-stick.conf
+# The boot splash: Plymouth starts from the initramfs, so the theme goes into it (-R rebuilds
+# it, a minute or two on a Pi 3; seen at the next boot).
+if [ "$(plymouth-set-default-theme)" != mediastick ] || [ "${splash_changed:-0}" = 1 ]; then
+  plymouth-set-default-theme -R mediastick; log "  boot splash: mediastick (at the next boot)"
+fi
 
 log "uinput"
 # The panel makes a virtual mouse through /dev/uinput (tap on the picture of the TV).
