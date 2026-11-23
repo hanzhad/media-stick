@@ -322,6 +322,58 @@ def clear_mode(service):
     _unmark(service, "mode")
 
 
+# ---- back to who was signed in, when a sign-in with another account is given up ---------------------
+
+RETURN_GRACE = 90   # s the add-on has to publish its first state after the phone asked for the sign-in
+
+
+def note_return(service, previous, target, now=None):
+    """«Войти другим аккаунтом»: the TV now sits on the empty profile `target`; `previous` is who was signed in."""
+    rec = {"previous": str(previous), "target": str(target), "started": int(time.time() if now is None else now)}
+    return _mark(service, "return", json.dumps(rec))
+
+
+def _return_rec(service):
+    try:
+        with open(_path(service, "return"), encoding="utf-8") as f:
+            rec = json.load(f)
+        return {"previous": str(rec["previous"]), "target": str(rec["target"]), "started": int(rec["started"])}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def return_decision(rec, state, profiles, now):
+    """What to do with a note_return record: "wait" (the sign-in is going), "drop" (nothing to do: it succeeded, or the
+    profile was changed by hand) or "back" (it ended without success, or never started). `state` is the raw state."""
+    cur = next((p for p in profiles if p["current"]), None)
+    if cur is None or cur["id"] != rec["target"] or cur["signed_in"]:
+        return "drop"        # somebody else moved the TV, or the sign-in worked
+    if rec["previous"] not in [p["id"] for p in profiles]:
+        return "drop"
+    if state is not None and state.get("updated", 0) >= rec["started"] - 2:     # a state of this sign-in, not an older one
+        if state["state"] == DONE:
+            return "drop"
+        alive = now - state.get("updated", 0) <= HEARTBEAT and now <= state.get("expires", 0)
+        return "wait" if state["state"] == WAITING and alive else "back"
+    return "wait" if now - rec["started"] < RETURN_GRACE else "back"
+
+
+def settle_return(service, switch, now=None):
+    """Called every few seconds by the panel: when a sign-in with another account ended without success (cancelled,
+    failed, code expired, the add-on went silent), switch the TV back to `previous` once, and only if the TV is
+    still on the empty profile. `switch(profile_id)` raises when the TV does not answer: the note stays, to try again."""
+    rec = _return_rec(service)
+    if rec is None:
+        return None
+    now = time.time() if now is None else now
+    verdict = return_decision(rec, _load(service), youtube_accounts(), now)
+    if verdict == "back":
+        switch(rec["previous"])
+    if verdict != "wait":
+        _unmark(service, "return")
+    return verdict
+
+
 # ---- waiting for a partner: the rules of the add-on's loop, pure ---------------------------------
 
 POLL_FAST, POLL_SLOW, FAST_FOR = 3, 12, 10 * 60     # s between checks, and for how long the quick pace lasts

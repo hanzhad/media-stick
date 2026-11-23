@@ -183,15 +183,24 @@ async function accStart(svc,mode){
   if(await accRun(svc,'signin',mode?{service:svc,mode}:{service:svc},'Прошу у приставки код…','Жду код от приставки…'))
     setTimeout(()=>{if(!accSheet&&Date.now()-accAsked[svc]>=14000)accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)},15000)
 }
-function accSwitch(svc,p){buzz();accRun(svc,'switch',{service:svc,id:p.id},'Переключаю на «'+p.name+'»…','Профиль «'+p.name+'» выбран.')}
+// the TV switches a profile a moment after it is asked: read the accounts again until the chosen one is current
+async function accSettle(svc,id){
+  for(let i=0;i<10;i++){
+    await new Promise(r=>setTimeout(r,700));await accPoll();
+    const a=((accData||{}).accounts||[]).find(x=>x.service===svc);
+    if(a&&a.profiles.some(p=>p.id===id&&p.current))return
+  }
+}
+async function accSwitch(svc,p){
+  buzz();
+  if(await accRun(svc,'switch',{service:svc,id:p.id},'Переключаю на «'+p.name+'»…','Профиль «'+p.name+'» выбран.'))accSettle(svc,p.id)
+}
 // a profile's name on the phone: its channel when it has one ("Default" says nothing)
 const accLabel=p=>p.channel==='yes'&&p.channel_title?p.channel_title:p.name;
-let accBackTo=null;   // the profile to go back to when a sign-in with another account is given up
 async function accAnother(svc){
   buzz();accMsg(svc,'Готовлю вход…');
   try{
-    const r=await accCall('another',{service:svc});
-    if(!r.already)accBackTo=r.previous||null;
+    await accCall('another',{service:svc});   // when it is given up the device itself puts the TV back on who was signed in
     accMsg(svc,'Жду код от приставки…');accAsked[svc]=Date.now();accPoll();
     setTimeout(()=>{if(!accSheet&&Date.now()-accAsked[svc]>=14000)accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)},15000)
   }catch(e){accMsg(svc,e.message,true)}
@@ -227,8 +236,6 @@ function accShow(s){
 }
 function accEnd(res){
   const sh=$('acc-sheet');
-  if(accBackTo&&res!=='done')accCall('switch',{service:'youtube',id:accBackTo}).then(accPoll,()=>{});   // back to who was signed in
-  accBackTo=null;
   $('acc-fin').textContent=res==='done'?'Готово — вы вошли':res==='cancelled'?'Отменено':'Не получилось';
   sh.classList.remove('acc-min','acc-partner');sh.classList.add('acc-end');accSheet=null;
   clearTimeout(accCloseT);accCloseT=setTimeout(()=>{sh.classList.add('hide');accCloseT=null;accLoop()},2600);

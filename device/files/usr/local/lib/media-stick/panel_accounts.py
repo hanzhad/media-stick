@@ -243,7 +243,18 @@ def _another(body, rpc):
         if time.monotonic() >= deadline:
             raise Refused("Телевизор не переключил профиль. Посмотрите на ТВ.", 504)
         time.sleep(0.25)
+    if previous is not None:
+        signin.note_return(service, previous, now["id"])   # the device itself switches back if this sign-in is given up
     return dict(_signin({"service": service}, rpc), previous=previous)
+
+
+def settle(rpc):
+    """Every few seconds (the panel's own thread): put the TV back on the profile it had before a sign-in with
+    another account that was given up. A TV that does not answer is tried again next time."""
+    try:
+        return signin.settle_return("youtube", lambda pid: _launch(rpc, ["accounts", "switch", "youtube", pid]))
+    except Refused:
+        return None
 
 
 def _signout(body, rpc):

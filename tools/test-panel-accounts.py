@@ -400,6 +400,95 @@ class Actions(unittest.TestCase):
         self.assertEqual(self.post("signin", {"service": "youtube"})[1], 200)
 
 
+class GivenUpAnother(unittest.TestCase):
+    """«Войти другим аккаунтом» that ends without success puts the TV back, from the device, once."""
+    def setUp(self):
+        reset()
+        yt({"0": {"name": "Основной", "refresh_token": "a|b|c"}}, 0)
+        self.k = AddingKodi()
+        reply, code = pa.post(pa.PREFIX + "another", {"service": "youtube"}, self.k)
+        self.assertEqual((code, reply["previous"]), (200, "0"), reply)
+        self.k.calls.clear()
+
+    def switches(self):
+        return [c[1]["params"] for c in self.k.calls if c[1]["params"][:2] == ["accounts", "switch"]]
+
+    def test_asking_for_it_leaves_a_note_for_the_device(self):
+        self.assertEqual(ms._return_rec("youtube")["previous"], "0")
+        self.assertEqual(ms._return_rec("youtube")["target"], "1")
+
+    def test_while_the_code_is_waited_for_nothing_happens(self):
+        ms.publish("youtube", "waiting", code="ABC-DEF-GHI")
+        self.assertEqual(pa.settle(self.k), "wait")
+        self.assertEqual(self.switches(), [])
+        self.assertIsNotNone(ms._return_rec("youtube"))
+
+    def test_before_the_add_on_has_said_anything_it_is_waited_for_a_while(self):
+        self.assertEqual(pa.settle(self.k), "wait")
+        later = time.time() + ms.RETURN_GRACE + 5
+        self.assertEqual(ms.return_decision(ms._return_rec("youtube"), None, ms.youtube_accounts(), later), "back")
+
+    def test_cancelled_switches_back_once(self):
+        ms.publish("youtube", "cancelled")
+        self.assertEqual(pa.settle(self.k), "back")
+        self.assertEqual(self.switches(), [["accounts", "switch", "youtube", "0"]])
+        self.assertEqual(pa.settle(self.k), None)           # the note is used up: no second switch
+        self.assertEqual(len(self.switches()), 1)
+
+    def test_failed_and_expired_and_a_silent_add_on_switch_back(self):
+        for how in ("failed", "expired", "silent"):
+            with self.subTest(how):
+                self.setUp()
+                if how == "failed":
+                    ms.publish("youtube", "failed")
+                    now = None
+                elif how == "expired":
+                    ms.publish("youtube", "waiting", code="X", ttl=-5)
+                    now = None
+                else:
+                    ms.publish("youtube", "waiting", code="X")
+                    now = time.time() + ms.HEARTBEAT + 5
+                rec = ms._return_rec("youtube")
+                verdict = ms.return_decision(rec, ms._load("youtube"), ms.youtube_accounts(), now or time.time())
+                self.assertEqual(verdict, "back")
+                if now is None:
+                    self.assertEqual(pa.settle(self.k), "back")
+                    self.assertEqual(self.switches(), [["accounts", "switch", "youtube", "0"]])
+
+    def test_success_does_not_switch_back(self):
+        ms.publish("youtube", "done")
+        self.assertEqual(pa.settle(self.k), "drop")
+        self.assertEqual(self.switches(), [])
+        self.assertIsNone(ms._return_rec("youtube"))
+
+    def test_a_signed_in_profile_is_success_even_when_the_state_is_gone(self):
+        yt({"0": {"name": "Основной", "refresh_token": "a|b|c"}, "1": {"name": "Аккаунт 2", "refresh_token": "x|y"}}, 1)
+        ms.publish("youtube", "cancelled")
+        self.assertEqual(pa.settle(self.k), "drop")
+        self.assertEqual(self.switches(), [])
+
+    def test_a_profile_chosen_by_hand_is_left_alone(self):
+        yt({"0": {"name": "Основной", "refresh_token": "a|b|c"}, "1": {"name": "Аккаунт 2", "refresh_token": ""}}, 0)
+        ms.publish("youtube", "cancelled")
+        self.assertEqual(pa.settle(self.k), "drop")
+        self.assertEqual(self.switches(), [])
+
+    def test_a_tv_that_does_not_answer_is_tried_again(self):
+        ms.publish("youtube", "cancelled")
+        self.k.down = True
+        self.assertIsNone(pa.settle(self.k))
+        self.assertIsNotNone(ms._return_rec("youtube"))
+        self.k.down = False
+        self.assertEqual(pa.settle(self.k), "back")
+        self.assertEqual(len(self.switches()), 1)
+
+    def test_the_page_no_longer_switches_back_itself_and_refreshes_after_a_switch(self):
+        import panel_accounts_ui as ui
+        page = ui.tail(pa.LINK_HOSTS)
+        self.assertNotIn("accBackTo", page)
+        self.assertIn("accSettle", page)
+
+
 class Page(unittest.TestCase):
     def test_inject_fills_the_two_markers_and_the_whitelist(self):
         page = pa.inject("@@ACC_SECTION@@<body>@@ACC_TAIL@@</body>")

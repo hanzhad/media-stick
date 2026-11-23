@@ -15,6 +15,7 @@ import re
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from unittest import mock
@@ -286,9 +287,9 @@ class Page(unittest.TestCase):
 
     def test_device_info_in_plain_words(self):
         js = self.page
-        for s in ("function ruUptime(up)", "function ruNextCheck(next,now)", "const ruDate=", "const ruDur=", "'меньше минуты'",
-                  "'следующая проверка через '", "'слабый блок питания — приставка может тормозить'", "dot(true)+'в норме'",
-                  "const POWER_LOW=0x10000|0x1|0x40000|0x4;", "const HOT_C=75;", "' · '+dot(false)+'высокая'",
+        for s in ("function ruUptime(up)", "function ruNextCheck(next,mins)", "const ruDate=", "const ruDur=", "'меньше минуты'",
+                  "function ruAgo(mins)", "'слабый блок питания — приставка может тормозить'", "dot(true)+'в норме'",
+                  "const POWER_NOW=0x1|0x2|0x4,", "const HOT_C=75;", "' · '+dot(false)+'высокая'",
                   "class=\"dsub\"", "ruDate(s.commit_date)", "['Версия',", "['Сеть',", "['Температура',"):
             self.assertIn(s, js)
         for hex_or_english in ("esc(s.throttled)", "просадка", "esc(s.uptime)", "esc(s.next_update", "['Kodi',"):
@@ -352,6 +353,96 @@ class Page(unittest.TestCase):
         self.assertIsNotNone(unbalanced("function f(){ if(a){ } "))
         self.assertIsNotNone(unbalanced("f(]"))
         self.assertIsNone(unbalanced("a('}'); b(/[)]\"/g); // {\n`x${y}`; /* ( */"))
+
+
+class Settings(unittest.TestCase):
+    """The settings list and its pages, the status of the last check, the power rule (stage 4). The page's script
+    cannot run here (no node): its formatters are checked as text, the server's side as code."""
+    @classmethod
+    def setUpClass(cls):
+        cls.panel = load_panel("panel_tabs_settings")
+        cls.page = cls.panel.PAGE
+
+    def test_the_list_has_these_rows_and_every_row_has_its_page(self):
+        rows = re.findall(r'<button class="srow" data-sp="(\w+)">.*?<span class="sname">([^<]+)</span>', self.page)
+        self.assertEqual(sorted(r[0] for r in rows), ["acc", "act", "https", "info", "wifi"])
+        names = dict(rows)
+        self.assertEqual(names["info"], "О приставке")
+        self.assertEqual(names["act"], "Обслуживание")
+        for key, _ in rows:
+            self.assertRegex(self.page, r'data-spage="%s"' % key)
+        pages = re.findall(r'<section id="(t-\w+)"[^>]*data-spage="(\w+)"', self.page)
+        self.assertTrue({"acc", "wifi", "https", "info", "act"} <= {p[1] for p in pages}, pages)
+
+    def test_each_hash_maps_to_its_page_and_its_section_id(self):
+        m = re.search(r"const SP_HASH=\{([^}]*)\}, SP_OF=\{\}, SP_ID=\{([^}]*)\}", self.page)
+        hashes = dict(re.findall(r"(\w+):'(\w+)'", m.group(1)))
+        ids = dict(re.findall(r"(\w+):'([\w-]+)'", m.group(2)))
+        self.assertEqual(hashes, {"acc": "accounts", "wifi": "wifi", "https": "https", "info": "device", "act": "maintenance"})
+        self.assertEqual(set(ids), set(hashes))
+        for page, sid in ids.items():
+            self.assertRegex(self.page, r'<section id="%s"[^>]*data-spage="%s"' % (sid, page))
+        self.assertIn("SP_OF[h.replace(/[?].*$/,'').slice(1)]", self.page)   # #https?sub=x still finds the page
+        for h in ("#air", "#screen"):
+            self.assertIn("h==='#air'||h==='#screen'", self.page)
+
+    def test_leaving_settings_clears_the_hash_of_a_page(self):
+        js = self.page.split("document.querySelectorAll('[data-go]')", 1)[1].split("// The remote has three modes", 1)[0]
+        self.assertIn("tab!=='settings'&&SP_OF[location.hash", js)
+        self.assertIn("history.replaceState(null,'',location.pathname+location.search);spPushed=false;setPage('')", js)
+
+    def test_an_empty_value_is_a_dash(self):
+        self.assertIn("const dash=(v,html)=>v?html:'—'", self.page)
+        self.assertIn("['Температура',dash(s.temp,", self.page)
+        self.assertIn("['Версия',dash(hash,", self.page)
+
+    def test_the_power_rule_looks_at_the_bits_of_now_only(self):
+        self.assertIn("const POWER_NOW=0x1|0x2|0x4,", self.page)
+        self.assertIn("POWER_PAST=0x10000|0x20000|0x40000|0x80000", self.page)
+        self.assertIn("(t&POWER_NOW)!==0", self.page)
+        self.assertIn("const needAttention=s=>powerState(s)===true||", self.page)
+        self.assertNotIn("needAttention=s=>powerPast", self.page)
+        self.assertIn("были просадки питания с момента включения", self.page)
+
+    def test_the_maintenance_row_and_page_say_when_the_last_check_was(self):
+        self.assertIn('<span class="sval" id="sv-act"></span>', self.page)
+        self.assertIn('id="act-last"', self.page)
+        self.assertIn("v('sv-act',s.last_check_min==null?'—':'проверено '+ruAgo(s.last_check_min))", self.page)
+        for s in ("через '+mins+' мин", "через '+Math.round(mins/60)+' ч", "'завтра в '+c[1]", "' мин назад'", "' ч назад'", "' дн назад'"):
+            self.assertIn(s, self.page)
+
+    def test_dead_leftovers_are_gone(self):
+        for gone in ("AIR_SMOOTH", "show('a-msg'", 'id="a-msg"'):
+            self.assertNotIn(gone, self.page)
+
+    def test_minutes_from_a_systemd_timestamp(self):
+        sd, now = self.panel.sd_minutes, time.mktime((2026, 11, 23, 12, 0, 0, 0, 0, -1))
+        self.assertEqual(sd("Mon 2026-11-23 15:05:00 UTC", now), 185)
+        self.assertEqual(sd("Mon 2026-11-23 11:55:30 UTC", now), -5)
+        self.assertEqual(sd("Tue 2026-11-24 04:00:00 UTC", now), 960)
+        for empty in ("", "n/a", None, "0"):
+            self.assertIsNone(sd(empty, now))
+
+    def test_the_status_has_the_last_check_and_the_next_one(self):
+        out = {"systemctl": ""}
+
+        def fake_run(cmd, stdin=None, timeout=20):
+            if cmd[:2] == ["systemctl", "show"]:
+                unit = cmd[2]
+                return 0, out.get(unit, "")
+            return 0, ""
+        t = time.time()
+        stamp = lambda dt: time.strftime("Mon %Y-%m-%d %H:%M:%S UTC", time.localtime(t + dt))
+        out["media-stick-update.timer"] = stamp(3 * 3600)
+        out["media-stick-update.service"] = stamp(-20 * 60)
+        with mock.patch.object(self.panel, "run", fake_run):
+            st = self.panel._status()
+        self.assertIn(st["next_update_min"], range(178, 182))
+        self.assertIn(st["last_check_min"], range(19, 22))
+        out["media-stick-update.service"] = ""
+        with mock.patch.object(self.panel, "run", fake_run):
+            st = self.panel._status()
+        self.assertIsNone(st["last_check_min"])
 
 
 class Screen(unittest.TestCase):

@@ -490,6 +490,16 @@ def status():
         status_cache.update(t=time.time(), s=s)
         return s
 
+def sd_minutes(ts, now=None):
+    """Whole minutes from `now` to a systemd timestamp ("Mon 2026-11-23 15:05:00 UTC", box-local time);
+    negative = in the past, None = empty or "n/a"."""
+    m = re.search(r"(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)", ts or "")
+    if not m:
+        return None
+    t = time.mktime(tuple(int(x) for x in m.groups()) + (0, 0, -1))
+    return int((t - (time.time() if now is None else now)) // 60)
+
+
 def _status():
     s = {"time": time.strftime("%H:%M")}
     s["wifi"] = wifi_status()
@@ -510,6 +520,11 @@ def _status():
     s["bad_commit"] = read("/var/lib/media-stick/bad-commit")[:7]
     nxt = run(["systemctl", "show", "media-stick-update.timer", "-p", "NextElapseUSecRealtime", "--value"])[1]
     s["next_update"] = nxt
+    s["next_update_min"] = sd_minutes(nxt)
+    # when the last check finished: the oneshot service's exit time (empty until the first run after the start)
+    last = run(["systemctl", "show", "media-stick-update.service", "-p", "ExecMainExitTimestamp", "--value"])[1]
+    s["last_check"] = last
+    s["last_check_min"] = None if sd_minutes(last) is None else -sd_minutes(last)
     s["playing"] = ""
     s["kb"] = None
     players = []
@@ -862,7 +877,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <button class="srow" data-sp="wifi"><svg class="i"><use href="#i-wifi"/></svg><span class="sname">Wi-Fi</span><span class="sval" id="sv-wifi"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="https"><svg class="i"><use href="#i-lock"/></svg><span class="sname">Пульт как приложение</span><span class="sval" id="sv-https"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="info"><svg class="i"><use href="#i-info"/></svg><span class="sname">О приставке</span><span class="sval" id="sv-info"></span><span class="chev" aria-hidden="true">›</span></button>
-      <button class="srow" data-sp="act"><svg class="i"><use href="#i-rot"/></svg><span class="sname">Обслуживание</span><span class="sval"></span><span class="chev" aria-hidden="true">›</span></button>
+      <button class="srow" data-sp="act"><svg class="i"><use href="#i-rot"/></svg><span class="sname">Обслуживание</span><span class="sval" id="sv-act"></span><span class="chev" aria-hidden="true">›</span></button>
     </div>
   </section>
 
@@ -911,6 +926,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 
   <section id="t-act" data-tab="settings" data-spage="act" class="hide">
     <div class="card"><h2>Обслуживание</h2>
+      <p class="dsub" id="act-last"></p>
       <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
       <button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз, чтобы перезагрузить'))act('reboot')">Перезагрузить</button></div>
     </div>
@@ -1024,6 +1040,9 @@ document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=
   lsSet('tab',tab);
   if(tab==='settings'){loadNets('w-ssid');httpsLoad()}
   if(again&&spage)spBack();
+  else if(tab!=='settings'&&SP_OF[location.hash.replace(/[?].*$/,'').slice(1)]){   // a reload must not reopen the page
+    history.replaceState(null,'',location.pathname+location.search);spPushed=false;setPage('')
+  }
   screenSync()
 }));
 // The remote has three modes: the buttons, the air pointer (the pad in the D-pad's place) and the screen.
@@ -1130,32 +1149,46 @@ function ruUptime(up){
   String(up||'').replace(/(\d+)\s+(week|day|hour|minute)s?/g,(x,n,k)=>{m+=n*({week:10080,day:1440,hour:60,minute:1})[k];return x});
   return ruDur(m)
 }
-// systemd's next run, "Mon 2026-11-23 15:05:00 UTC", against the box's own clock "HH:MM" (the status has no time of the last check)
-function ruNextCheck(next,now){
-  const a=/(\d\d):(\d\d):\d\d/.exec(next||''), b=/^(\d\d):(\d\d)$/.exec(now||'');
-  if(!a||!b)return '—';
-  const d=((+a[1]*60+ +a[2])-(+b[1]*60+ +b[2])+1440)%1440;
-  return d<1?'сейчас':'следующая проверка через '+ruDur(d)
+// minutes to the next check (the server counts them, systemd's clock is the box's own) and the clock time systemd gives
+function ruNextCheck(next,mins){
+  if(mins==null)return '—';
+  if(mins<1)return 'сейчас';
+  if(mins<60)return 'через '+mins+' мин';
+  if(mins<1440)return 'через '+Math.round(mins/60)+' ч';
+  const c=/(\d\d:\d\d):\d\d/.exec(next||''), days=Math.floor(mins/1440);
+  return days<2&&c?'завтра в '+c[1]:'через '+days+' дн'
+}
+// minutes since the last check finished
+function ruAgo(mins){
+  if(mins==null)return '—';
+  if(mins<1)return 'только что';
+  if(mins<60)return mins+' мин назад';
+  if(mins<1440)return Math.floor(mins/60)+' ч назад';
+  return Math.floor(mins/1440)+' дн назад'
 }
 const ruDate=v=>{const m=/^(\d{4})-(\d\d)-(\d\d)$/.exec(v||'');return m?m[3]+'.'+m[2]+'.'+m[1]:''};
-// vcgencmd get_throttled: 0x1 / 0x10000 under-voltage (now / since the start), 0x4 / 0x40000 throttled; never shown as hex
-const POWER_LOW=0x10000|0x1|0x40000|0x4;
-const powerState=s=>{const t=parseInt(s.throttled,16);return isNaN(t)?null:(t&POWER_LOW)!==0};   // true = weak, null = unknown
+// vcgencmd get_throttled, never shown as hex. Now: 0x1 under-voltage, 0x2 frequency capped, 0x4 throttled (0x8, the soft
+// temperature limit, is the temperature's business). Since the start: the same bits shifted by 16 (0x10000 and up).
+const POWER_NOW=0x1|0x2|0x4, POWER_PAST=0x10000|0x20000|0x40000|0x80000;
+const powerBits=s=>{const t=parseInt(s.throttled,16);return isNaN(t)?null:t};
+const powerState=s=>{const t=powerBits(s);return t===null?null:(t&POWER_NOW)!==0};   // true = weak right now, null = unknown
+const powerPast=s=>{const t=powerBits(s);return t!==null&&(t&POWER_PAST)!==0&&(t&POWER_NOW)===0};
 const tempC=s=>parseFloat(s.temp)||0;
 const HOT_C=75;
 const needAttention=s=>powerState(s)===true||tempC(s)>HOT_C||s.disk_free_gb<1;
+const dash=(v,html)=>v?html:'—';
 const fmt=s=>{
   const cm=String(s.commit||''), sp=cm.indexOf(' '), hash=sp<0?cm:cm.slice(0,sp), subject=sp<0?'':cm.slice(sp+1), pw=powerState(s);
   return [
  ['Сеть',dot(s.wifi.online)+esc(s.wifi.ssid||'кабель')+' · '+esc((s.ip||[]).join(', '))],
  ['ТВ',s.kodi==='up'?(s.playing?'<svg class="i s"><use href="#i-play"/></svg> '+esc(s.playing):'работает'):dot(false)+'не отвечает'],
- ['Температура',esc(s.temp)+(tempC(s)>HOT_C?' · '+dot(false)+'высокая':'')],
- ['Питание',pw===null?'нет данных':pw?dot(false)+'слабый блок питания — приставка может тормозить':dot(true)+'в норме'],
+ ['Температура',dash(s.temp,esc(s.temp)+(tempC(s)>HOT_C?' · '+dot(false)+'высокая':''))],
+ ['Питание',pw===null?'нет данных':pw?dot(false)+'слабый блок питания — приставка может тормозить':dot(true)+'в норме'+(powerPast(s)?'<span class="dsub">были просадки питания с момента включения</span>':'')],
  ['Память',s.mem_free_mb+' МБ свободно'],
  ['Диск',s.disk_free_gb+' ГБ свободно'],
  ['Работает',esc(ruUptime(s.uptime))],
- ['Версия',esc(hash)+(s.commit_date?' · '+esc(ruDate(s.commit_date)):'')+(s.bad_commit?' '+dot(false)+'откат с '+esc(s.bad_commit):'')+(subject?'<span class="dsub">'+esc(subject)+'</span>':'')],
- ['Обновление',esc(ruNextCheck(s.next_update,s.time))],
+ ['Версия',dash(hash,esc(hash)+(s.commit_date?' · '+esc(ruDate(s.commit_date)):'')+(s.bad_commit?' '+dot(false)+'откат с '+esc(s.bad_commit):'')+(subject?'<span class="dsub">'+esc(subject)+'</span>':''))],
+ ['Обновление',esc(ruNextCheck(s.next_update,s.next_update_min))+(s.last_check_min==null?'':'<span class="dsub">проверено '+esc(ruAgo(s.last_check_min))+'</span>')],
 ].map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('')};
 // the rows of the settings list: a short state on the right of each
 function setRows(s){
@@ -1164,6 +1197,8 @@ function setRows(s){
   v('sv-acc',window.accRowText?accRowText():'');
   v('sv-wifi',s.wifi.ssid||'кабель');
   v('sv-https',HTTPS_RE.test(httpsUrl)?'включено':'выключено');
+  v('sv-act',s.last_check_min==null?'—':'проверено '+ruAgo(s.last_check_min));
+  v('act-last','Автообновление: '+(s.last_check_min==null?'ещё не проверяло с включения':'проверено '+ruAgo(s.last_check_min))+'. '+(s.next_update_min==null?'':ruNextCheck(s.next_update,s.next_update_min)==='сейчас'?'Следующая проверка сейчас.':'Следующая проверка '+ruNextCheck(s.next_update,s.next_update_min)+'.'));
   const need=needAttention(s);v('sv-info',need?'нужно внимание':'всё в порядке');$('sv-info').classList.toggle('warnt',need)
 }
 
@@ -1495,7 +1530,7 @@ if(wide())httpsLoad();
 // Deltas are summed and sent at most every AIR_GAP_MS, one request in flight, as screen
 // fractions (the same unit as /api/pointer). A short press without motion is a click.
 const airOk=window.isSecureContext&&'DeviceMotionEvent' in window;
-const AIR_GAP_MS=33, AIR_MAX=0.25, AIR_DZ=2, AIR_SMOOTH=0.5, AIR_DEG_FULL=45, TAP_MS=350, TAP_DEG=5;
+const AIR_GAP_MS=33, AIR_MAX=0.25, AIR_DZ=2, AIR_DEG_FULL=45, TAP_MS=350, TAP_DEG=5;
 const AIR_HINT='Отпустите — указка остановится.';
 let airG=null, airGs=1, airSw=null, airPx=0, airPy=0, airFT=null;   // smoothed gravity while held, and its sign
 let airHeld=false, airOn=false, airK=5, airAcc={x:0,y:0}, airSm={x:0,y:0}, airBusy=false, airLast=0,
@@ -1977,8 +2012,19 @@ def start_https():
     https_state["up"] = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
+SETTLE_EVERY = 5   # s between looks at a given-up sign-in with another account
+
+def settle_loop():
+    while True:
+        time.sleep(SETTLE_EVERY)
+        try:
+            panel_accounts.settle(kodi)
+        except Exception as e:
+            print("panel: sign-in settle failed: %s" % e, file=sys.stderr, flush=True)
+
 if __name__ == "__main__":
     os.makedirs(SHOTS, exist_ok=True)
     POINTER.start()
+    threading.Thread(target=settle_loop, daemon=True).start()
     start_https()
     DualStack(("::", PORT), H).serve_forever()
