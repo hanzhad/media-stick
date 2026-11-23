@@ -219,11 +219,52 @@ class Guide(unittest.TestCase):
         self.assertEqual(d["action"]["kind"], "link")
         self.assertTrue(all(s["tv"] and s["phone"] for s in d["steps"]))
 
-    def test_the_kicker_has_no_counter_of_codes(self):
+    def test_the_add_ons_own_count_of_codes_is_never_shown(self):
         for step, steps in ((1, 1), (2, 4), (4, 4)):
             d = guide.document("youtube", "active", "A", "", step=step, steps=steps)
             self.assertEqual((d["kicker"]["tv"], d["kicker"]["phone"]), ("YouTube · sign in", "YouTube · вход"))
+            self.assertEqual(d["step"], 1)                      # the three steps are the recipe of each approval, not a counter
+            self.assertEqual(d["hint"]["phone"], guide.HINT["phone"])
         self.assertNotIn("action", guide.document("youtube", "active", "A", "", step=2, steps=4))
+
+    def test_the_one_counter_is_the_approval_and_only_when_more_than_one_comes(self):
+        one = guide.document("youtube", "active", "A-B", "https://x", round=1, rounds=1)
+        self.assertEqual(one["kicker"]["phone"], "YouTube · вход")
+        d = guide.document("youtube", "active", "A-B", "https://www.youtube.com/activate?user_code=A-B", round=2, rounds=3)
+        self.assertEqual((d["kicker"]["tv"], d["kicker"]["phone"]), ("YouTube · Approval 2 of 3", "YouTube · подтверждение 2 из 3"))
+        self.assertNotIn("Code", d["kicker"]["tv"])
+        self.assertEqual(d["step"], 1)
+        # a number out of range is held inside the range, a round of the first of one is not a counter
+        d = guide.document("youtube", "active", "A-B", "", round=9, rounds=3)
+        self.assertEqual(d["kicker"]["phone"], "YouTube · подтверждение 3 из 3")
+        self.assertEqual(guide.document("youtube", "active", "A-B", "", round=0, rounds=2)["kicker"]["tv"], "YouTube · Approval 1 of 2")
+        # it counts a sign-in that waits, not its result
+        for state in ("done", "failed", "cancelled"):
+            self.assertNotIn("Approval", guide.document("youtube", state, round=2, rounds=3)["kicker"]["tv"])
+
+    def test_why_google_asks_again_is_said_once_in_one_plain_line_and_fits(self):
+        d = guide.document("youtube", "active", "A-B", "https://www.youtube.com/activate?user_code=A-B", round=2, rounds=3)
+        why = d["hint"]["phone"]
+        self.assertEqual(why, guide.WHY_AGAIN)
+        self.assertIn("отдельно для каждого способа", why)
+        self.assertIn("выберите тот же аккаунт и нажмите «Разрешить»", why)
+        self.assertLessEqual(len(why), ob.LIMITS["hint"])
+        built = ob.build("youtube", d, now=NOW)
+        self.assertEqual(built["hint"]["phone"], why)            # not cut, no ellipsis
+        self.assertEqual(built["kicker"]["phone"], "YouTube · подтверждение 2 из 3")
+        self.assertEqual(built["hint"]["tv"], guide.HINT["tv"])   # the TV keeps its own line
+        single = guide.document("youtube", "active", "A-B", "https://www.youtube.com/activate?user_code=A-B")
+        self.assertNotEqual(single["hint"]["phone"], why)
+
+    def test_prefilled_is_what_the_writer_says_else_what_the_link_shows(self):
+        full = "https://www.google.com/device?user_code=ABCD-EFGH"
+        bare = "https://www.google.com/device"
+        self.assertEqual(guide.document("youtube", "active", "ABCD-EFGH", full)["steps"][0]["tv"], "Sign-in page opened, code filled in")
+        self.assertEqual(guide.document("youtube", "active", "ABCD-EFGH", bare)["steps"][0]["tv"], "Sign-in page opened, type the code")
+        self.assertEqual(guide.document("youtube", "active", "ABCD-EFGH", full, prefilled=False)["steps"][0]["tv"],
+                         "Sign-in page opened, type the code")
+        self.assertEqual(guide.document("youtube", "active", "ABCD-EFGH", bare, prefilled=True)["steps"][0]["tv"],
+                         "Sign-in page opened, code filled in")
 
     def test_the_steps_say_whether_the_link_has_the_code_in_it(self):
         carried = guide.document("youtube", "active", "ABCD-EFGH", "https://www.google.com/device?user_code=ABCD-EFGH")
@@ -276,6 +317,38 @@ class SigninFeedsOnboarding(unittest.TestCase):
         ms.publish("sweettv", "waiting", code="12345", url="https://sweet.tv/addDevice")
         self.assertEqual(ob.read("sweettv")["link"], "https://sweet.tv/addDevice?connectCode=12345")
         self.assertEqual(ob.read("sweettv")["kicker"]["tv"], "SWEET.TV · sign in")
+
+    def test_the_state_says_whether_the_link_carries_the_code_and_which_approval_this_is(self):
+        full = "https://www.google.com/device?user_code=ABCD-EFGH"
+        ms.publish("youtube", "waiting", code="ABCD-EFGH", url="https://www.google.com/device")
+        self.assertIs(ms.read("youtube")["prefilled"], False)             # the bare Google page: the code is typed there
+        ms.publish("youtube", "waiting", code="ABCD-EFGH", url="https://www.google.com/device", link=full)
+        self.assertIs(ms.read("youtube")["prefilled"], True)
+        ms.publish("youtube", "waiting", code="ABCD-EFGH", url="https://www.youtube.com/activate")
+        self.assertIs(ms.read("youtube")["prefilled"], True)             # YouTube's own page takes the code in the address
+        ms.publish("youtube", "waiting", code="ABCD-EFGH", url="https://www.google.com/device", round=2, rounds=3)
+        s = ms.read("youtube")
+        self.assertEqual((s["round"], s["rounds"]), (2, 3))
+        d = ob.read("youtube")
+        self.assertEqual(d["kicker"]["phone"], "YouTube · подтверждение 2 из 3")
+        self.assertEqual(d["steps"][0]["tv"], "Sign-in page opened, type the code")   # from the state's `prefilled`
+        self.assertTrue(ms.touch("youtube"))                              # a heartbeat keeps the document as it is
+        self.assertEqual(ob.read("youtube")["kicker"]["tv"], "YouTube · Approval 2 of 3")
+        self.assertEqual((ms.read("youtube")["round"], ms.read("youtube")["rounds"]), (2, 3))
+
+    def test_a_round_is_inside_its_rounds_and_a_plain_sign_in_is_one_of_one(self):
+        ms.publish("sweettv", "waiting", code="12345", url="https://sweet.tv/addDevice")
+        s = ms.read("sweettv")
+        self.assertEqual((s["round"], s["rounds"], s["prefilled"]), (1, 1, True))
+        self.assertEqual(ob.read("sweettv")["kicker"]["phone"], "SWEET.TV · вход")
+        ms.publish("youtube", "waiting", code="A-B", url="https://www.youtube.com/activate", round=7, rounds=3)
+        self.assertEqual((ms.read("youtube")["round"], ms.read("youtube")["rounds"]), (3, 3))
+        ms.publish("youtube", "waiting", code="A-B", url="https://www.youtube.com/activate", round=0, rounds=-5)
+        self.assertEqual((ms.read("youtube")["round"], ms.read("youtube")["rounds"]), (1, 1))
+        ms.publish("youtube", "waiting", code="A-B", url="https://www.youtube.com/activate", round=1, rounds=99)
+        self.assertEqual(ms.read("youtube")["rounds"], 9)
+        ms.publish("youtube", "failed")
+        self.assertNotIn("rounds", ms.read("youtube"))                   # a result has no approvals left to count
 
     def test_lifetime_is_short_and_a_heartbeat_extends_it(self):
         ms.publish("youtube", "waiting", code="A-B", url="https://www.youtube.com/activate")

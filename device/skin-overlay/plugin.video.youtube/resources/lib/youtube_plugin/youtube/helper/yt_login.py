@@ -106,6 +106,17 @@ def _do_login(provider, context, client=None, **kwargs):
     ) = access_manager.get_refresh_tokens()
     token_types = ['tv', 'user', 'vr', 'dev']
     new_access_tokens = dict.fromkeys(token_types, None)
+    # media-stick begin: how many approvals this sign-in will ask for: the token slots that still lack a token
+    ms_round, ms_rounds = 0, 0
+    if _ms:
+        for ms_idx in range(len(token_types)):
+            try:
+                if access_tokens[ms_idx] and refresh_tokens[ms_idx]:
+                    continue
+            except IndexError:
+                pass
+            ms_rounds += 1
+    # media-stick end
     for token_idx, token_type in enumerate(token_types):
         try:
             access_token = access_tokens[token_idx]
@@ -129,6 +140,9 @@ def _do_login(provider, context, client=None, **kwargs):
         try:
             json_data = client.request_device_and_user_code(token_idx)
             if not json_data:
+                # media-stick begin: Google gave no code for this slot: one approval fewer
+                ms_rounds -= 1
+                # media-stick end
                 continue
 
             interval = int(json_data.get('interval', 5))
@@ -145,10 +159,12 @@ def _do_login(provider, context, client=None, **kwargs):
 
             # media-stick begin
             if _ms:
+                ms_round += 1
                 _ms.publish('youtube', 'waiting', code=user_code,
                             url=('' if verification_url.startswith('http') else 'https://www.') + verification_url,
                             link=json_data.get('verification_url_complete') or '',
-                            step=token_idx + 1, steps=len(token_types), ttl=10 * 60)
+                            step=token_idx + 1, steps=len(token_types), ttl=10 * 60,
+                            round=ms_round, rounds=max(ms_rounds, ms_round))
             # media-stick end
 
             message = ''.join((

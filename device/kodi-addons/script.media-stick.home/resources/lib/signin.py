@@ -231,8 +231,8 @@ class Follow:
             props["headline"], props["status"] = "Cancelling…", "Stopping the sign-in."
         elif waiting:
             code = str(waiting.get("code", ""))
-            if waiting.get("steps", 1) > 1:
-                props["step"] = f"Code {waiting.get('step', 1)} of {waiting['steps']}"
+            if waiting.get("rounds", 1) > 1:      # the one counter, as on the phone and in the onboarding layout's kicker
+                props["step"] = f"Approval {waiting.get('round', 1)} of {waiting['rounds']}"
             props["code"] = spaced(code)
             props["codelong"] = "1" if len(code) > 14 else ""
             if self.partner:         # a person reads the code off the screen: no QR, no "scan", the time left instead

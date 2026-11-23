@@ -175,7 +175,7 @@ class Page(unittest.TestCase):
     def test_sheet_markup_and_hooks(self):
         page = ui.inject("<html><body>x</body></html>")
         for needle in ('id="ob-sheet"', 'role="dialog"', 'aria-live="polite"', 'id="ob-mini"', 'id="ob-hide"',
-                       "function obNote", "ykOpen(true)", "copyText(", "acc-sheet", "acc-yk", "ob-min", "ob-spin",
+                       "function obNote", "ykOpen(true)", "copyText(", "acc-yk", "ob-min", "ob-spin",
                        "Код, если спросят", "Скопировать", "Готово", "шаг "):
             self.assertIn(needle, page, needle)
         self.assertEqual(page.count("</body>"), 1)
@@ -186,7 +186,7 @@ class Page(unittest.TestCase):
 
     def test_buttons_are_real_buttons(self):
         self.assertNotRegex(ui.TAIL, r"<div[^>]*onclick")
-        for i in ("ob-hide", "ob-copy", "ob-paste", "ob-mini"):
+        for i in ("ob-hide", "ob-copy", "ob-paste", "ob-mini", "ob-cancel", "ob-renew"):
             self.assertRegex(ui.TAIL, r'<button id="%s"' % i)
 
     def test_links_only_through_the_safe_helper(self):
@@ -203,10 +203,42 @@ class Page(unittest.TestCase):
         self.assertNotRegex(ui.TAIL, r"confirm\(|alert\(|prompt\(")
         self.assertNotIn("fetch(", ui.TAIL)       # it only draws what the status poll brings
 
-    def test_does_not_pop_up_over_the_phones_own_flow(self):
+    def test_does_not_pop_up_over_the_key_wizard_but_the_sign_in_is_never_held_back_by_the_old_sheet(self):
         js = ui.TAIL
-        self.assertRegex(js, r"accSheet\.svc===d\.service")
         self.assertRegex(js, r"d\.flow==='keys'&&!!y&&!y\.classList\.contains\('hide'\)")
+        suppressed = js.split("function obSuppressed(d){", 1)[1].split("\n}\n", 1)[0]
+        self.assertNotIn("acc-sheet", suppressed)                    # the old sheet no longer makes this one yield ...
+        self.assertNotIn("accSheet", suppressed)
+        self.assertNotIn("acc-sheet", js)                            # ... nor is it looked at anywhere here
+        self.assertNotIn("accSheet", js)
+        self.assertIn("!obSuppressed(d)", js)
+
+    def test_a_new_code_brings_a_minimized_sheet_back_and_buzzes(self):
+        js = ui.TAIL
+        self.assertIn("const obKey=d=>d.service+'|'+d.flow+'|'+(d.step|0)+'|'+obStr(d.code);", js)
+        self.assertIn("if(obHid[d.service]&&obHid[d.service]!==obKey(d))delete obHid[d.service]", js)
+        self.assertIn("prevKey=obCurKey", js)
+        self.assertIn("if(!hid&&(fresh||wasMin||(prevKey&&prevKey!==obCurKey)))buzz()", js)    # also when it was already up
+        self.assertIn("obSig=sig;obRender(d)", js)                                             # the new code replaces the old in the same sheet
+        self.assertIn("d.code,d.link", js.split("sig=JSON.stringify(", 1)[1].split(")", 1)[0])
+
+    def test_the_sign_in_sheet_can_cancel_and_sweettv_can_renew(self):
+        js = ui.TAIL
+        self.assertIn("accCall('cancel',{service:svc})", js)         # the Accounts page's own call, no fetch here
+        self.assertIn("accCall('renew',{service:obCur})", js)
+        self.assertIn("armed('ob-renew','Нажмите ещё раз, чтобы обновить код')", js)   # the old code dies: two taps, the same words
+        self.assertIn("bc.classList.toggle('hide',!signin)", js)
+        self.assertIn("br.classList.toggle('hide',!(signin&&d.service==='sweettv'))", js)
+        self.assertIn('<button id="ob-cancel" class="btn wide hide" type="button">Отмена</button>', js)
+        self.assertIn('<button id="ob-renew" class="btn wide hide" type="button">Обновить код</button>', js)
+        self.assertIn("Скопировать", js)                                                   # nothing else is lost
+        self.assertIn('id="ob-open"', js)
+
+    def test_a_sign_in_counts_by_its_kicker_only_not_by_steps(self):
+        js = ui.TAIL
+        self.assertIn("const prog=n&&cur&&!signin?'шаг '+cur+' из '+n:''", js)           # a key wizard keeps its step counter
+        self.assertIn("kick.match(/подтверждение \\d+ из \\d+/)", js)                     # the minimized bar says which approval
+        self.assertIn("Введите этот код на странице входа", js)                         # a link without the code: the code is needed
 
     def test_hidden_doc_stays_hidden_until_the_step_changes(self):
         self.assertIn("obHid[d.service]!==obKey(d)", ui.TAIL)

@@ -1,7 +1,11 @@
 """The Accounts part of the page: markup, style and script, as strings. No logic worth testing
 here; panel_accounts.inject() puts them into the page. Everything is prefixed `acc-` / `acc`
 so it cannot collide with the page's own ids, classes and functions. The YouTube keys wizard's
-sheet is panel_ytkeys_ui.py; the card's "Ключи" button here opens it."""
+sheet is panel_ytkeys_ui.py; the card's "Ключи" button here opens it.
+
+The code sheet `#acc-sheet` is the FALLBACK sign-in sheet: a normal sign-in is drawn by the onboarding sheet
+(panel_onboarding_ui.py, `#ob-sheet`), and while its document is there this script only watches the sign-in (accTrk) so
+the card and the result stay right. The old sheet opens only when there is no document (partner mode, no library)."""
 import json
 
 SECTION = """<section id="t-acc" data-tab="settings" data-spage="acc" class="hide">
@@ -92,15 +96,17 @@ async function accCall(what,body){
   return j
 }
 let accData=null, accTimer=null, accBusy=false, accKey='', accSheet=null, accCloseT=null, accAsked={}, accSig={}, accWaiting={}, accFastUntil=0, accExpired={};   // accExpired: a SWEET.TV code that ran out, until a new one is asked for
+let accTrk=null;   // a sign-in the onboarding sheet draws: {svc, score}; the old sheet stays shut and only its end is handled here
+const accShown=()=>accSheet||accTrk;   // some sign-in is on screen: poll often
 // a profile's progress: how many of YouTube's four sign-ins it has; SWEET.TV is 0 or 1
 const accScore=a=>!a?0:a.service==='youtube'?a.profiles.reduce((n,p)=>n+p.tokens,0):(a.signed_in?1:0);
 // polled while the card can be seen: a sheet is open, the settings are open, or the whole panel is on one wide screen
-const accLive=()=>!document.hidden&&(accSheet||tab==='settings'||wide());
+const accLive=()=>!document.hidden&&(accShown()||tab==='settings'||wide());
 // after a cancel, a closed sheet or a switch the device changes things on its own (it puts the TV back): look often for a while
 const accWatch=ms=>{accFastUntil=Date.now()+ms;accPoll()};
 function accLoop(){
   clearTimeout(accTimer);accTimer=null;
-  if(accLive())accTimer=setTimeout(accPoll,accSheet||Date.now()<accFastUntil?1500:5000)
+  if(accLive())accTimer=setTimeout(accPoll,accShown()||Date.now()<accFastUntil?1500:5000)
 }
 async function accPoll(){
   if(accBusy)return;accBusy=true;
@@ -110,7 +116,7 @@ async function accPoll(){
 // called with the status the page polls anyway: which sign-ins wait (names only)
 function accNote(names){
   names=Array.isArray(names)?names:[];const k=names.join(',');
-  if(k!==accKey||(names.length&&!accSheet)){accKey=k;accPoll()}
+  if(k!==accKey||(names.length&&!accShown())){accKey=k;accPoll()}
 }
 function accApply(d){accData=d;accRender(d.accounts||[]);accSync(d);if(window.setRows)setRows()}
 // the one name of a profile on the phone (rows, avatar, toast, sign-out, the list state): the person's channel when it
@@ -218,7 +224,7 @@ async function accStart(svc){
   buzz();accExpired[svc]=false;
   if(await accRun(svc,'signin',{service:svc},'Прошу у приставки код…','Жду код от приставки…')){
     accWaiting[svc]=true;
-    setTimeout(()=>{if(accWaiting[svc]&&!accSheet&&Date.now()-accAsked[svc]>=14000){accWaiting[svc]=false;accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)}},15000)
+    setTimeout(()=>{if(accWaiting[svc]&&!accShown()&&Date.now()-accAsked[svc]>=14000){accWaiting[svc]=false;accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)}},15000)
   }
 }
 // the TV switches a profile a moment after it is asked: the card is read often until the chosen one is current
@@ -234,7 +240,7 @@ async function accAnother(svc){
   try{
     await accCall('another',{service:svc});   // when it is given up the device itself puts the TV back on who was signed in
     accMsg(svc,'Жду код от приставки…');accWaiting[svc]=true;accAsked[svc]=Date.now();accPoll();
-    setTimeout(()=>{if(accWaiting[svc]&&!accSheet&&Date.now()-accAsked[svc]>=14000){accWaiting[svc]=false;accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)}},15000)
+    setTimeout(()=>{if(accWaiting[svc]&&!accShown()&&Date.now()-accAsked[svc]>=14000){accWaiting[svc]=false;accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)}},15000)
   }catch(e){accMsg(svc,e.message,true)}
 }
 function accOut(svc){accRun(svc,'signout',{service:svc},'Выхожу…','','Вы вышли.')}
@@ -269,16 +275,17 @@ function accShow(s){
   const was=accSheet.code, link=accSafe(s.link), url=accSafe(s.url);
   $('acc-renew').classList.toggle('hide',s.service!=='sweettv');
   $('acc-ttl').textContent=s.name;
-  $('acc-stp').textContent=s.steps>1?'Код '+s.step+' из '+s.steps:'';
+  const cnt=s.rounds>1?'подтверждение '+s.round+' из '+s.rounds:'';   // the one counter: Google's approvals, not the add-on's slots
+  $('acc-stp').textContent=cnt?cnt.charAt(0).toUpperCase()+cnt.slice(1):'';
   $('acc-code').textContent=s.code;
   const o=$('acc-open');o.classList.toggle('hide',!link);if(link)o.href=link;
   const left=accLeft(s.left);
-  $('acc-hint').textContent=(link?'Страница откроется с уже введённым кодом.':url?'Откройте '+url.replace(/^https:\/\//,'')+' и введите код.':'Введите код на странице входа.')+left;
-  $('acc-mt').textContent=s.name+(s.steps>1?' · код '+s.step+' из '+s.steps:' · ждёт код');
+  $('acc-hint').textContent=(link&&s.prefilled?'Страница откроется с уже введённым кодом.':url?'Откройте '+url.replace(/^https:\/\//,'')+' и введите код.':'Введите код на странице входа.')+left;
+  $('acc-mt').textContent=s.name+(cnt?' · '+cnt:' · ждёт код');
   const moved=was&&(was!==s.code||accSheet.step!==s.step);
   if(moved&&!accSheet.renew){   // YouTube moved on to its next code
     $('acc-sheet').classList.remove('acc-min');buzz();
-    $('acc-hint').textContent='Новый код: нажмите «Открыть страницу входа» ещё раз.'
+    $('acc-hint').textContent=link&&s.prefilled?'Новый код: нажмите «Открыть страницу входа» ещё раз.':'Новый код: введите его на странице входа.'
   }
   if(moved&&accSheet.renew){accSheet.renew=0;$('acc-renew').disabled=false;$('acc-renew').textContent='Обновить код';$('acc-sheet').classList.remove('acc-min');buzz()}   // the code asked for has come
   accSheet.code=s.code;accSheet.step=s.step
@@ -296,6 +303,13 @@ function accEnd(res,st){
   if(!expired)accCloseT=setTimeout(()=>{sh.classList.add('hide');accCloseT=null;accLoop()},2600);   // an expired one stays until the person chooses
   if(res==='done')buzz()
 }
+// the onboarding sheet draws this sign-in: the server says so (`guided`: a live sign-in document), and so does the status the
+// page polls (status.onboarding); only when neither does, the old sheet is the one to open
+function accGuided(s){
+  if(s.guided)return true;
+  const o=typeof lastStatus!=='undefined'&&lastStatus&&Array.isArray(lastStatus.onboarding)?lastStatus.onboarding:[];
+  return o.some(x=>x&&x.service===s.service&&x.flow==='signin'&&(!x.state||x.state==='active'))
+}
 function accSync(d){
   const w=d.waiting||[];
   if(accSheet){
@@ -305,7 +319,20 @@ function accSync(d){
     const a=(d.accounts||[]).find(x=>x.service===accSheet.svc), st=a&&a.signin;
     // a state that vanished (the add-on went away, or we were away too long) counts as done only if the account grew
     accEnd(st&&st.state!=='waiting'?st.state:accScore(a)>accSheet.score?'done':'failed',st)
-  }else if(w.length)accOpen(w[0])
+  }else if(accTrk){
+    if(w.some(x=>x.service===accTrk.svc))return;   // still waiting: the onboarding sheet has it
+    const t=accTrk, a=(d.accounts||[]).find(x=>x.service===t.svc), st=a&&a.signin;
+    accTrk=null;accSheet={svc:t.svc,code:'',step:0,renew:0,score:t.score};   // it is over: the result and a SWEET.TV code that ran out are told here, as before
+    clearTimeout(accCloseT);accCloseT=null;$('acc-sheet').classList.remove('hide','acc-min');
+    if(typeof obClose==='function')obClose();
+    accEnd(st&&st.state!=='waiting'?st.state:accScore(a)>t.score?'done':'failed',st)
+  }else if(w.length){
+    const s=w[0];
+    if(accGuided(s)){
+      accTrk={svc:s.service,score:accScore((d.accounts||[]).find(x=>x.service===s.service))};
+      accExpired[s.service]=false;accWaiting[s.service]=false;accMsg(s.service,'');accLoop()
+    }else accOpen(s)
+  }
 }
 $('acc-hide').onclick=()=>$('acc-sheet').classList.add('acc-min');
 $('acc-back').onclick=()=>$('acc-sheet').classList.add('acc-min');

@@ -157,11 +157,21 @@ def link_for(service, code, url="", complete="") -> str:
     return url
 
 
-def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NORMAL, link="", reason=""):
+def carries(code, link) -> bool:
+    """Whether `link` opens the sign-in page with `code` already typed in. A bare page (a personal Google client's
+    google.com/device) does not: the person types the code there."""
+    return bool(code) and bool(link) and (code in link or quote(code, safe="-") in link)
+
+
+def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NORMAL, link="", reason="", round=1, rounds=1):
     """Say what the add-on is doing: WAITING with the code to enter, or how it ended.
     `ttl` is how long the code is waited for (seconds); by default what the service or the mode allows. `url` is the
     page the code is entered on and `link` the provider's complete link with the code in it, when its answer had one
-    (link_for). `reason` says why a FAILED sign-in failed, when it is known (REASONS)."""
+    (link_for). `reason` says why a FAILED sign-in failed, when it is known (REASONS).
+    `step`/`steps` are the add-on's own count (YouTube: the token slot, of at most four). What a person is told is
+    `round` of `rounds`: this approval, of the approvals Google will ask for in this sign-in (the slots that still lack
+    a token and for which Google gave a code; the add-on lowers `rounds` when it skips one). A WAITING state also says
+    `prefilled`: whether the link has the code in it, so the page says "opens with the code" only when that is true."""
     if service not in SERVICES or state not in STATES:
         return False
     now = int(time.time())
@@ -169,7 +179,10 @@ def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NOR
     data = {"service": service, "state": state, "mode": mode, "step": int(step), "steps": int(steps),
             "updated": now, "expires": now + int(ttl_for(mode, service) if ttl is None else ttl)}
     if state == WAITING:
-        data.update(code=code, url=url, link=link_for(service, code, url, link) if code else url)
+        shown = link_for(service, code, url, link) if code else url
+        rounds = max(1, min(int(rounds), 9))
+        data.update(code=code, url=url, link=shown, prefilled=carries(code, shown),
+                    round=max(1, min(int(round), rounds)), rounds=rounds)
     elif state == FAILED and reason in REASONS:
         data["reason"] = reason
     stored = _store(service, data)
@@ -218,7 +231,8 @@ def _onboard(service, data):
             onboarding.clear(service)        # the code is typed into the Friendly Share page by hand: nobody follows it on the phone
             return
         state = onboarding.ACTIVE if data["state"] == WAITING else data["state"]
-        doc = guide.document(service, state, data.get("code", ""), data.get("link", ""), data["step"], data["steps"])
+        doc = guide.document(service, state, data.get("code", ""), data.get("link", ""), data["step"], data["steps"],
+                             prefilled=data.get("prefilled"), round=data.get("round", 1), rounds=data.get("rounds", 1))
         ttl = min(data["expires"] - data["updated"], ONBOARD_ALIVE) if state == onboarding.ACTIVE else None
         onboarding.write(service, doc, data["updated"], ttl)
     except Exception:

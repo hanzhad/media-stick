@@ -71,6 +71,32 @@ class State(unittest.TestCase):
             self.assertEqual(ms.link_for("youtube", "A-B", "https://www.google.com/device", bad), "https://www.google.com/device", bad)
         self.assertEqual(ms.link_for("youtube", "A-B", "ftp://x"), "https://www.youtube.com/activate?user_code=A-B")
 
+    def test_prefilled_says_whether_the_link_has_the_code_in_it(self):
+        def prefilled(service, url="", complete="", code="ABCD-EFGH"):
+            ms.publish(service, "waiting", code=code, url=url, link=complete)
+            return ms.read(service)["prefilled"]
+        self.assertIs(prefilled("youtube", "https://www.google.com/device"), False)       # a personal client: type it there
+        self.assertIs(prefilled("youtube", "https://www.google.com/device", "https://www.google.com/device?user_code=ABCD-EFGH"), True)
+        self.assertIs(prefilled("youtube", "https://www.youtube.com/activate"), True)
+        self.assertIs(prefilled("youtube"), True)
+        self.assertIs(prefilled("youtube", "https://accounts.google.com/o/oauth2/device/usercode"), False)
+        self.assertIs(prefilled("sweettv", "https://sweet.tv/addDevice", code="12345"), True)
+        self.assertIs(prefilled("youtube", "https://www.youtube.com/activate", code="A&b=c d"), True)   # the quoted code is in the link
+        self.assertTrue(ms.carries("A-B", "https://x/?c=A-B"))
+        self.assertFalse(ms.carries("A-B", "https://x/"))
+        self.assertFalse(ms.carries("", "https://x/"))
+        self.assertFalse(ms.carries("A-B", ""))
+
+    def test_round_and_rounds_are_kept_inside_their_range(self):
+        ms.publish("youtube", "waiting", code="A-B", url="https://www.youtube.com/activate", round=2, rounds=3)
+        s = ms.read("youtube")
+        self.assertEqual((s["round"], s["rounds"]), (2, 3))
+        ms.publish("youtube", "waiting", code="A-B", url="https://www.youtube.com/activate")
+        s = ms.read("youtube")
+        self.assertEqual((s["round"], s["rounds"]), (1, 1))
+        ms.publish("youtube", "waiting", code="A-B", url="https://www.youtube.com/activate", round=5, rounds=2)
+        self.assertEqual(ms.read("youtube")["round"], 2)
+
     def test_a_code_cannot_break_out_of_the_link(self):
         ms.publish("youtube", "waiting", code="A&b=c d", url="https://www.youtube.com/activate")
         self.assertEqual(ms.read("youtube")["link"], "https://www.youtube.com/activate?user_code=A%26b%3Dc%20d")
@@ -697,6 +723,67 @@ class YouTubeSignIn(unittest.TestCase):
         self.assertEqual(context.ui.ok, [])               # the upstream "sign in several times" dialog is skipped
         self.assertEqual(context.ui.dialogs, [])          # and the code is not shown in a dialog either: the TV screen has it
         self.assertEqual(ms.read("youtube")["state"], "done")
+
+    def rounds_seen(self):
+        return [(k["round"], k["rounds"]) for a, k in self.seen if a[1] == "waiting"]
+
+    def test_the_approvals_are_the_slots_that_still_need_a_code_counted_from_one(self):
+        self.run_login(Client(pending=1))
+        self.assertEqual(self.rounds_seen(), [(1, 4), (2, 4), (3, 4), (4, 4)])
+        self.assertEqual({k["steps"] for a, k in self.seen[:4]}, {4})      # the add-on's own count is still the four slots
+
+    def test_a_slot_that_already_has_its_tokens_is_not_an_approval(self):
+        class Partial(AccessManager):
+            def get_access_tokens(self):
+                return ["a0", "a1", "", ""], 0, 0
+
+            def get_refresh_tokens(self):
+                return ["r0", "r1", "", ""], 0
+        client = Client(pending=1)
+        context = Context()
+        context.am = Partial()
+        self.yt._do_login(Provider(client), context)
+        self.assertEqual(client.codes, [2, 3])
+        self.assertEqual(self.rounds_seen(), [(1, 2), (2, 2)])
+        self.assertEqual([k["step"] for a, k in self.seen if a[1] == "waiting"], [3, 4])
+        # a slot with only one of the two tokens is asked for again
+        class Half(AccessManager):
+            def get_access_tokens(self):
+                return ["a0", "a1", "a2", ""], 0, 0
+
+            def get_refresh_tokens(self):
+                return ["r0", "", "r2", ""], 0
+        self.seen.clear()
+        context.am = Half()
+        client = Client(pending=1)
+        self.yt._do_login(Provider(client), context)
+        self.assertEqual(client.codes, [1, 3])
+        self.assertEqual(self.rounds_seen(), [(1, 2), (2, 2)])
+
+    def test_a_slot_google_gives_no_code_for_lowers_the_count(self):
+        class Skips(Client):
+            def request_device_and_user_code(self, idx):
+                if idx == 1:
+                    self.codes.append(idx)
+                    return None
+                return super().request_device_and_user_code(idx)
+        client = Skips(pending=1)
+        self.run_login(client)
+        self.assertEqual(client.codes, [0, 1, 2, 3])
+        # the first code was asked for before anybody knew; the ones after the skipped slot know
+        self.assertEqual(self.rounds_seen(), [(1, 4), (2, 3), (3, 3)])
+        self.assertEqual([k["step"] for a, k in self.seen if a[1] == "waiting"], [1, 3, 4])
+
+    def test_the_phone_and_the_tv_get_one_counter_and_the_reason_from_the_overlays_numbers(self):
+        client = Client(pending=1, on_poll=lambda idx, n: self.captured.append(
+            (ms.read("youtube")["round"], ms.read("youtube")["rounds"], ob_read()["kicker"], ob_read()["hint"]["phone"])) if n == 1 else None)
+        self.captured = []
+        import mediastick_onboarding as ob
+        ob_read = lambda: ob.read("youtube")  # noqa: E731
+        self.run_login(client)
+        self.assertEqual([c[:2] for c in self.captured], [(1, 4), (2, 4), (3, 4), (4, 4)])
+        self.assertEqual(self.captured[1][2], {"tv": "YouTube · Approval 2 of 4", "phone": "YouTube · подтверждение 2 из 4"})
+        self.assertTrue(all("отдельно для каждого способа" in c[3] for c in self.captured))
 
     def test_a_personal_client_answer_gives_its_own_page_and_complete_link_to_the_screens(self):
         client = Client(pending=1, reply={"verification_url": "https://www.google.com/device"})

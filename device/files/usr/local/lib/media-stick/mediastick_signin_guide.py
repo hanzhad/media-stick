@@ -4,11 +4,13 @@ says while the person does the three steps on the phone. Ready data in, a docume
 The TV texts are English, the phone page's are Russian like the rest of that page. The steps are the same for
 every service; only the account step and the last one differ in words.
 
-The small line over the title is only "<service> · sign in": that YouTube asks for a code for each of the add-on's
-token types in a row is the add-on's business, and a counter ("code 2 of 4") reads as a failure or as a retry. A link
-that has the code in it (the page opens with the code typed in) is told as such; a link that does not (a personal
-Google client's google.com/device) says the code is typed there."""
-from urllib.parse import quote
+The small line over the title is "<service> · sign in". YouTube asks for a code for each of the add-on's token types
+in a row, and to the person that is the same action four times: so when more than one approval is coming the line says
+"YouTube · approval 2 of 3" (one counter, on the phone and on the TV; `round` of `rounds` is what the writer counted:
+the slots that still lack a token, minus those Google gave no code for), and the phone's hint says once why Google asks
+again. The three steps below are the recipe of every approval, not a progress bar, so nothing counts them. A link that
+has the code in it (the page opens with the code typed in) is told as such; a link that does not (a personal Google
+client's google.com/device) says the code is typed there."""
 
 FLOW = "signin"
 TITLE = {"tv": "Continue on your phone", "phone": None}      # the phone's title says which service: see title()
@@ -18,6 +20,8 @@ HINT_TYPED = "The Media Stick page on your phone shows the next step. Type the c
 OPEN_TYPED = ("Sign-in page opened, type the code", "Страница входа открыта, введите код с экрана")
 ACTION_LABEL = "Открыть страницу входа"        # the phone's button: it opens the link with the code typed in
 STEP_IDS = ("open", "account", "allow")
+WHY_AGAIN = ("Google спрашивает разрешение отдельно для каждого способа, которым приставка обращается к YouTube. "
+             "Каждый раз выберите тот же аккаунт и нажмите «Разрешить».")      # the phone's one line when several approvals come
 
 GUIDES = {
     "youtube": {
@@ -48,28 +52,35 @@ NO_CHANNEL_HINT = {      # after a YouTube sign-in whose Google account has no c
 }
 
 
-def _carries(code, link) -> bool:
-    """Whether the link opens the page with the code already in it."""
-    return bool(link) and (code in link or quote(code, safe="-") in link)
-
-
 def known(service) -> bool:
     return service in GUIDES
 
 
-def document(service, state, code="", link="", step=1, steps=1, channel=""):
+def document(service, state, code="", link="", step=1, steps=1, channel="", prefilled=None, round=1, rounds=1):
     """The onboarding document of a sign-in of `service` that is `state` ("active" or how it ended), or None for a
-    service this module has no words for. `code` and `link` are the active one's; `step`/`steps` count the codes
-    the add-on asks for in a row (YouTube asks up to four). `channel` is "no" when the signed-in account is known to
-    have no YouTube channel: the finished document then carries a hint that says what will be empty."""
+    service this module has no words for. `code` and `link` are the active one's; `step`/`steps` are the add-on's own
+    count of its codes and are not shown: `round` of `rounds` is (see mediastick_signin.publish), and only `rounds` above
+    one puts a counter in the kicker. `prefilled` says whether the link carries the code (None: work it out from the
+    link). `channel` is "no" when the signed-in account is known to have no YouTube channel: the finished document then
+    carries a hint that says what will be empty."""
     guide = GUIDES.get(service)
     if guide is None:
         return None
-    typed = state == "active" and bool(code) and not _carries(code, link)
+    if prefilled is None:
+        from mediastick_signin import carries      # here, not at the top: mediastick_signin imports this module
+        prefilled = carries(code, link)
+    typed = state == "active" and bool(code) and not prefilled
+    again = state == "active" and isinstance(rounds, int) and rounds > 1
     texts = ((OPEN_TYPED,) if typed else guide["steps"][:1]) + tuple(guide["steps"][1:])
     parts = [{"id": ident, "tv": tv, "phone": phone} for ident, (tv, phone) in zip(STEP_IDS, texts)]
     hint = {"tv": HINT_TYPED, "phone": HINT["phone"]} if typed else dict(HINT)
-    doc = {"flow": FLOW, "state": state, "kicker": {"tv": f"{guide['name']} · sign in", "phone": f"{guide['name']} · вход"},
+    kicker = {"tv": f"{guide['name']} · sign in", "phone": f"{guide['name']} · вход"}
+    if again:
+        which = max(1, min(int(round), rounds))
+        kicker = {"tv": f"{guide['name']} · Approval {which} of {rounds}",
+                  "phone": f"{guide['name']} · подтверждение {which} из {rounds}"}
+        hint["phone"] = WHY_AGAIN
+    doc = {"flow": FLOW, "state": state, "kicker": kicker,
            "title": {"tv": TITLE["tv"], "phone": f"Войти в {guide['name']}"},
            "step": 1, "steps": parts, "hint": hint}
     if state == "active":

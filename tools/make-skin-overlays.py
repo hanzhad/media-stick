@@ -66,6 +66,26 @@ OVERLAYS = [
     ("plugin.video.youtube", "resources/lib/youtube_plugin/youtube/helper/yt_login.py", [
         ("from ...kodion import logging\n",
          "from ...kodion import logging\n\n" + IMPORT + "\n" + NO_DIALOG),
+        ("    new_access_tokens = dict.fromkeys(token_types, None)\n",
+         "    new_access_tokens = dict.fromkeys(token_types, None)\n"
+         "    # media-stick begin: how many approvals this sign-in will ask for: the token slots that still lack a token\n"
+         "    ms_round, ms_rounds = 0, 0\n"
+         "    if _ms:\n"
+         "        for ms_idx in range(len(token_types)):\n"
+         "            try:\n"
+         "                if access_tokens[ms_idx] and refresh_tokens[ms_idx]:\n"
+         "                    continue\n"
+         "            except IndexError:\n"
+         "                pass\n"
+         "            ms_rounds += 1\n"
+         "    # media-stick end\n"),
+        ("            json_data = client.request_device_and_user_code(token_idx)\n            if not json_data:\n                continue\n",
+         "            json_data = client.request_device_and_user_code(token_idx)\n"
+         "            if not json_data:\n"
+         "                # media-stick begin: Google gave no code for this slot: one approval fewer\n"
+         "                ms_rounds -= 1\n"
+         "                # media-stick end\n"
+         "                continue\n"),
         ("    ui.on_ok(localize('sign.multi.title'), localize('sign.multi.text'))\n",
          "    # media-stick begin: the TV screen and the phone page explain the several codes\n"
          "    if _ms is None:\n"
@@ -77,10 +97,12 @@ OVERLAYS = [
          "            else:\n                verification_url = 'youtube.com/activate'\n\n"
          "            # media-stick begin\n"
          "            if _ms:\n"
+         "                ms_round += 1\n"
          "                _ms.publish('youtube', 'waiting', code=user_code,\n"
          "                            url=('' if verification_url.startswith('http') else 'https://www.') + verification_url,\n"
          "                            link=json_data.get('verification_url_complete') or '',\n"
-         "                            step=token_idx + 1, steps=len(token_types), ttl=10 * 60)\n"
+         "                            step=token_idx + 1, steps=len(token_types), ttl=10 * 60,\n"
+         "                            round=ms_round, rounds=max(ms_rounds, ms_round))\n"
          "            # media-stick end\n\n"),
         ("            with ui.create_progress_dialog(\n"
          "                    heading=localize('sign.in'),\n"

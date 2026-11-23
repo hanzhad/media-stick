@@ -18,6 +18,10 @@ try:
     import mediastick_ytchannel as ytchannel   # does the signed-in Google account have a YouTube channel
 except ImportError:
     ytchannel = None
+try:
+    import mediastick_onboarding as onboarding   # is the sign-in drawn by the onboarding sheet? (without it, the old sheet is)
+except ImportError:
+    onboarding = None
 import panel_accounts_ui as ui
 import panel_ytkeys
 import panel_ytkeys_ui
@@ -104,11 +108,16 @@ def public_signin(state):
         return None
     code = state.get("code") if CODE_RE.match(str(state.get("code", ""))) else ""
     partner = state.get("mode") == signin.PARTNER
+    link = safe_link(state.get("link", "")) if code and not partner else ""
+    # does the link have the code in it? what the writer said; a state from before it said so is worked out from the link
+    prefilled = state["prefilled"] if isinstance(state.get("prefilled"), bool) else signin.carries(code, link)
+    rounds = _int(state.get("rounds"), 1, 1, 9)
     return {"service": state.get("service"), "name": state.get("name"), "state": state.get("state"),
             "mode": signin.PARTNER if partner else signin.NORMAL,
             "code": code, "url": "" if partner else safe_link(state.get("url", "")),
-            "link": safe_link(state.get("link", "")) if code and not partner else "",
+            "link": link, "prefilled": bool(link) and prefilled,
             "step": _int(state.get("step"), 1, 1, 9), "steps": _int(state.get("steps"), 1, 1, 9),
+            "round": min(_int(state.get("round"), 1, 1, 9), rounds), "rounds": rounds,
             "left": _int(state.get("left"), 0, 0, 86400), "updated": _int(state.get("updated"), 0, 0, 2 ** 40),
             "reason": state.get("reason") if state.get("reason") in signin.REASONS else ""}
 
@@ -140,10 +149,22 @@ def _public_account(a):
 
 # ---- what the page reads ---------------------------------------------------------------------
 
+def guided(service):
+    """True while the onboarding sheet draws this service's sign-in (a live document of the sign-in flow): the page then
+    leaves its old code sheet shut. False without the library, a document, or a document of another flow."""
+    if onboarding is None:
+        return False
+    try:
+        doc = onboarding.read(service)
+    except Exception:
+        return False
+    return bool(doc) and doc.get("state") == onboarding.ACTIVE and doc.get("flow") == "signin"
+
+
 def view():
     """GET /api/accounts"""
     return {"accounts": [_public_account(a) for a in signin.accounts()],
-            "waiting": [public_signin(s) for s in signin.active()]}
+            "waiting": [dict(public_signin(s), guided=guided(s["service"])) for s in signin.active()]}
 
 
 def with_signin(status):

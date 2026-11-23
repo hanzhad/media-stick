@@ -3,7 +3,11 @@ from mediastick_onboarding (status()["onboarding"]); this draws ONE universal sh
 flow (the device-code sign-in, the Google keys wizard, whatever comes next). No logic worth testing here;
 inject() puts it at the end of the page, after the Accounts script, whose helpers it uses ($, buzz, copyText,
 accSafe, accEl, ykOpen). Everything is prefixed `ob` / `ob-` so it cannot collide with the page's own names.
-The page's status poll calls obNote(status.onboarding)."""
+The page's status poll calls obNote(status.onboarding).
+
+This is THE sign-in sheet: the old code sheet of panel_accounts_ui (`#acc-sheet`) is only the fallback for a sign-in with
+no document, so there is no "yield to it" here. A new code replaces the old one in the same sheet (and un-minimizes and
+buzzes); «Отмена» and, for SWEET.TV, «Обновить код» are here too, through the Accounts page's accCall."""
 
 TAIL = r"""
 <style>
@@ -58,11 +62,13 @@ TAIL = r"""
       <ol id="ob-steps" class="ob-steps"></ol>
       <div id="ob-warn" class="ob-warn hide"></div>
       <div id="ob-items" class="ob-items hide"></div>
-      <div id="ob-codebox" class="ob-codebox hide"><small>Код, если спросят</small><div id="ob-code" class="ob-code"></div><button id="ob-copy" class="btn sm wide" type="button">Скопировать</button></div>
+      <div id="ob-codebox" class="ob-codebox hide"><small id="ob-cap">Код, если спросят</small><div id="ob-code" class="ob-code"></div><button id="ob-copy" class="btn sm wide" type="button">Скопировать</button></div>
       <div id="ob-hint" class="ob-hint hide"></div>
       <a id="ob-open" class="btn acc wide hide" target="_blank" rel="noopener"></a>
       <button id="ob-paste" class="btn acc wide hide" type="button"></button>
       <div id="ob-wait" class="ob-wait hide"><span class="ob-spin" aria-hidden="true"></span><span id="ob-waitt"></span></div>
+      <button id="ob-renew" class="btn wide hide" type="button">Обновить код</button>
+      <button id="ob-cancel" class="btn wide hide" type="button">Отмена</button>
     </div>
     <div id="ob-fin" class="ob-fin" role="status"></div>
   </div>
@@ -74,11 +80,10 @@ let obCur=null, obCurKey='', obSig='', obHid={}, obEnded={}, obCloseT=null;
 const obStr=v=>typeof v==='string'?v:'';
 const obPh=p=>p&&typeof p==='object'?(obStr(p.phone)||obStr(p.tv)):'';
 const obSafe=u=>typeof accSafe==='function'?accSafe(u):'';   // every link goes through the sign-in pages' whitelist
-const obKey=d=>d.service+'|'+d.flow+'|'+(d.step|0);
-// this phone already shows that flow: the sign-in sheet of the service, or the key wizard
+// what a minimized sheet is minimized for: a new step or a NEW CODE of the same sign-in brings it back (and buzzes)
+const obKey=d=>d.service+'|'+d.flow+'|'+(d.step|0)+'|'+obStr(d.code);
+// this phone already shows that flow: the key wizard (the sign-in has no other sheet: the old code sheet is only its fallback)
 function obSuppressed(d){
-  const a=$('acc-sheet');
-  if(a&&!a.classList.contains('hide')&&typeof accSheet!=='undefined'&&accSheet&&accSheet.svc===d.service)return true;
   const y=$('acc-yk');
   return d.flow==='keys'&&!!y&&!y.classList.contains('hide')
 }
@@ -91,10 +96,11 @@ function obRender(d){
   ico.className='ob-ico ob-'+name;ico.textContent=name.charAt(0).toUpperCase();
   const title=obPh(d.title)||'Нужна ваша помощь';
   $('ob-ttl').textContent=title;
-  const kick=obPh(d.kicker)||(d.flow==='signin'?'ТВ попросил вход':'ТВ ждёт вас');
-  const prog=n&&cur?'шаг '+cur+' из '+n:'';
+  const kick=obPh(d.kicker)||(d.flow==='signin'?'ТВ попросил вход':'ТВ ждёт вас'), signin=d.flow==='signin';
+  // a sign-in's steps are the recipe of every approval, not a progress bar: its one counter is the kicker's «подтверждение 2 из 3»
+  const prog=n&&cur&&!signin?'шаг '+cur+' из '+n:'', cnt=prog||(kick.match(/подтверждение \d+ из \d+/)||[''])[0];
   $('ob-sub').textContent=kick+(prog?' · '+prog:'');
-  $('ob-mt').textContent=title+(prog?' · '+prog:'');
+  $('ob-mt').textContent=title+(cnt?' · '+cnt:'');
   const ol=$('ob-steps');ol.textContent='';
   steps.forEach((s,i)=>{
     const k=i+1<cur?'done':i+1===cur?'now':'todo';
@@ -109,13 +115,19 @@ function obRender(d){
   const items=Array.isArray(d.items)?d.items.slice(0,6):[], box=$('ob-items');box.textContent='';
   items.forEach(it=>{if(it&&obStr(it.label))box.append(accEl('span','ob-item'+(it.s==='ok'?' ok':''),(it.s==='ok'?'✓ ':'… ')+obStr(it.label)))});
   box.classList.toggle('hide',!box.childNodes.length);
-  const code=obStr(d.code);$('ob-code').textContent=code;$('ob-codebox').classList.toggle('hide',!code);
+  const code=obStr(d.code), lk=obStr(d.link), carried=!!code&&!!lk&&(lk.indexOf(code)>=0||lk.indexOf(encodeURIComponent(code))>=0);
+  $('ob-code').textContent=code;$('ob-codebox').classList.toggle('hide',!code);
+  $('ob-cap').textContent=signin&&!carried?'Введите этот код на странице входа':'Код, если спросят';   // the link does not carry it: the code is needed, not a spare
   const act=d.action&&typeof d.action==='object'?d.action:null, kind=act?act.kind:(d.link?'link':''), lbl=act?obStr(act.label):'';
   const url=kind==='link'?obSafe((act&&act.url)||d.link):'', o=$('ob-open');
   o.classList.toggle('hide',!url);if(url){o.href=url;o.textContent=lbl||'Открыть страницу'}
   const pb=$('ob-paste'), keys=kind==='paste'&&d.flow==='keys'&&typeof ykOpen==='function';
   pb.classList.toggle('hide',!keys);if(keys)pb.textContent=lbl||'Продолжить';
-  const w=kind==='wait'&&lbl;$('ob-wait').classList.toggle('hide',!w);$('ob-waitt').textContent=w?lbl:''
+  const w=kind==='wait'&&lbl;$('ob-wait').classList.toggle('hide',!w);$('ob-waitt').textContent=w?lbl:'';
+  // the sign-in's own way out: nothing is lost with the old sheet (a new code was asked for, or the person gave up)
+  const bc=$('ob-cancel'), br=$('ob-renew');
+  bc.classList.toggle('hide',!signin);bc.disabled=false;bc.textContent='Отмена';
+  br.classList.toggle('hide',!(signin&&d.service==='sweettv'));br.disabled=false;br.textContent='Обновить код'
 }
 function obEnd(d){
   if(obEnded[d.service]===d.updated)return;obEnded[d.service]=d.updated;
@@ -136,19 +148,33 @@ function obNote(list){
   const d=act.find(x=>obCur&&x.service===obCur)||act[0];
   if(!d){obClose();return}
   if(obCloseT){clearTimeout(obCloseT);obCloseT=null}
-  const fresh=obCur!==d.service, sig=JSON.stringify([d.flow,d.kicker,d.title,d.step,d.steps,d.code,d.link,d.action,d.hint,d.warn,d.items]);
+  const fresh=obCur!==d.service, prevKey=obCurKey, sig=JSON.stringify([d.flow,d.kicker,d.title,d.step,d.steps,d.code,d.link,d.action,d.hint,d.warn,d.items]);
   if(obHid[d.service]&&obHid[d.service]!==obKey(d))delete obHid[d.service];   // moved on to its next step: it comes back
   const hid=!!obHid[d.service], s=$('ob-sheet'), wasMin=s.classList.contains('ob-min');
   obCur=d.service;obCurKey=obKey(d);
   if(sig!==obSig||fresh){obSig=sig;obRender(d)}
   s.classList.remove('hide','ob-end');s.classList.toggle('ob-min',hid);
-  if(!hid&&(fresh||wasMin))buzz()
+  if(!hid&&(fresh||wasMin||(prevKey&&prevKey!==obCurKey)))buzz()   // a new code is news even when the sheet is already up
 }
 function obMin(){if(!obCur)return;obHid[obCur]=obCurKey;$('ob-sheet').classList.add('ob-min')}
 $('ob-hide').onclick=obMin;
 $('ob-back').onclick=obMin;
 $('ob-mini').onclick=()=>{if(obCur)delete obHid[obCur];$('ob-sheet').classList.remove('ob-min')};
 $('ob-paste').onclick=()=>{buzz();obMin();ykOpen(true)};
+$('ob-cancel').onclick=async()=>{
+  if(!obCur)return;const b=$('ob-cancel'), svc=obCur, back=()=>{b.disabled=false;b.textContent='Отмена'};
+  b.disabled=true;b.textContent='Отменяю…';buzz();
+  try{await accCall('cancel',{service:svc});if(typeof accWatch==='function')accWatch(20000);setTimeout(back,15000)}   // the sheet goes by itself when the TV stops; if it does not, the button is back
+  catch(e){back();obPut('ob-hint',e.message)}
+};
+// «Обновить код» (SWEET.TV): the running sign-in is asked for a new code in the same run; the new code arrives in this sheet
+$('ob-renew').onclick=async()=>{
+  if(!obCur||!armed('ob-renew','Нажмите ещё раз, чтобы обновить код'))return;const b=$('ob-renew');
+  b.disabled=true;b.textContent='Обновляю…';buzz();
+  try{await accCall('renew',{service:obCur});if(typeof accWatch==='function')accWatch(20000)}
+  catch(e){obPut('ob-hint',e.message)}
+  finally{b.disabled=false;b.textContent='Обновить код'}
+};
 $('ob-copy').onclick=()=>{
   const b=$('ob-copy'),el=$('ob-code');buzz();
   copyText(el.textContent).then(ok=>{

@@ -170,9 +170,9 @@ def acct(service, profile_list=(), signed_in=False, state=None):
 YT, SW = "plugin.video.youtube", "plugin.video.sweettv"
 
 
-def waiting(code="ABC-DEF", step=2, steps=4, updated=1000, url="https://www.youtube.com/activate"):
+def waiting(code="ABC-DEF", step=2, steps=4, updated=1000, url="https://www.youtube.com/activate", round=2, rounds=3):
     return {"service": "youtube", "state": "waiting", "code": code, "step": step, "steps": steps, "updated": updated,
-            "url": url, "link": f"{url}?user_code={code}"}
+            "url": url, "link": f"{url}?user_code={code}", "round": round, "rounds": rounds}
 
 
 def ended(kind, updated=1000):
@@ -464,17 +464,20 @@ class FollowState(unittest.TestCase):
         frame = f.feed(waiting(updated=1002), 1002)
         self.assertEqual(frame.props["headline"], "")
         self.assertEqual(frame.props["code"], "A B C  -  D E F")
-        self.assertEqual(frame.props["step"], "Code 2 of 4")
+        self.assertEqual(frame.props["step"], "Approval 2 of 3")      # one counter: the approval, not the add-on's slot
         self.assertEqual(frame.props["site"], "Or open youtube.com/activate and type the code")
         self.assertEqual(frame.link, "https://www.youtube.com/activate?user_code=ABC-DEF")
-        frame = f.feed(waiting(code="GHI-JKL", step=3, updated=1010), 1010)      # YouTube moved on by itself
-        self.assertEqual((frame.props["code"], frame.props["step"]), ("G H I  -  J K L", "Code 3 of 4"))
+        frame = f.feed(waiting(code="GHI-JKL", step=3, round=3, updated=1010), 1010)      # YouTube moved on by itself
+        self.assertEqual((frame.props["code"], frame.props["step"]), ("G H I  -  J K L", "Approval 3 of 3"))
         self.assertTrue(frame.link.endswith("GHI-JKL"))
 
     def test_one_code_services_have_no_step_line_and_long_codes_get_a_smaller_font(self):
         f = self.follow()
-        frame = f.feed(waiting(code="12345678", step=1, steps=1, updated=1001, url="https://sweet.tv/addDevice"), 1001)
+        frame = f.feed(waiting(code="12345678", step=1, steps=1, round=1, rounds=1, updated=1001, url="https://sweet.tv/addDevice"), 1001)
         self.assertEqual(frame.props["step"], "")
+        old = waiting(code="12345678", step=2, steps=4, updated=1001)      # a state written by the old add-on code
+        del old["round"], old["rounds"]
+        self.assertEqual(f.feed(old, 1001).props["step"], "")                                 # no "Code 2 of 4" any more
         self.assertEqual(frame.props["site"], "Or open sweet.tv/addDevice and type the code")
         self.assertEqual(frame.props["codelong"], "")
         frame = f.feed(waiting(code="ABCDEFGHIJKLMNOPQ", updated=1002), 1002)
@@ -682,7 +685,7 @@ class SigninScreen(unittest.TestCase):
 
 
 def partner_state(code="12345", updated=1000, left=21540):
-    return dict(waiting(code=code, step=1, steps=1, updated=updated, url="https://sweet.tv/addDevice"),
+    return dict(waiting(code=code, step=1, steps=1, round=1, rounds=1, updated=updated, url="https://sweet.tv/addDevice"),
                 service="sweettv", mode="partner", left=left)
 
 

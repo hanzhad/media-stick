@@ -147,6 +147,27 @@ class Validation(unittest.TestCase):
         self.assertIsNone(pa.public_signin(None))
         self.assertEqual(out["mode"], "normal")
 
+    def test_the_page_is_told_whether_the_link_has_the_code_and_which_approval_it_is(self):
+        s = {"service": "youtube", "name": "YouTube", "state": "waiting", "code": "ABCD-EFGH",
+             "url": "https://www.google.com/device", "link": "https://www.google.com/device", "step": 3, "steps": 4,
+             "left": 300, "updated": 5, "prefilled": False, "round": 2, "rounds": 3}
+        out = pa.public_signin(s)
+        self.assertEqual((out["prefilled"], out["round"], out["rounds"]), (False, 2, 3))
+        self.assertEqual((out["step"], out["steps"]), (3, 4))
+        carried = dict(s, link="https://www.google.com/device?user_code=ABCD-EFGH", prefilled=True)
+        self.assertIs(pa.public_signin(carried)["prefilled"], True)
+        # a state from before the add-on said so: worked out from the link; never "prefilled" without a link
+        old = {k: v for k, v in carried.items() if k not in ("prefilled", "round", "rounds")}
+        self.assertEqual((pa.public_signin(old)["prefilled"], pa.public_signin(old)["round"], pa.public_signin(old)["rounds"]), (True, 1, 1))
+        bare = {k: v for k, v in s.items() if k not in ("prefilled", "round", "rounds")}
+        self.assertIs(pa.public_signin(bare)["prefilled"], False)
+        self.assertIs(pa.public_signin(dict(carried, link="https://evil.example/?c=ABCD-EFGH"))["prefilled"], False)
+        self.assertIs(pa.public_signin(dict(carried, prefilled="yes"))["prefilled"], True)      # not a bool: the link decides
+        # the numbers are held inside their range, and a round is never past its rounds
+        odd = pa.public_signin(dict(s, round=9, rounds=3))
+        self.assertEqual((odd["round"], odd["rounds"]), (3, 3))
+        self.assertEqual((pa.public_signin(dict(s, round="x", rounds=-4))["round"], pa.public_signin(dict(s, round="x", rounds=-4))["rounds"]), (1, 1))
+
     def test_a_partner_state_reaches_the_page_without_the_link_that_the_qr_holds(self):
         s = {"service": "sweettv", "name": "SWEET.TV", "state": "waiting", "mode": "partner", "code": "12345",
              "url": "https://sweet.tv/addDevice", "link": "https://sweet.tv/addDevice?connectCode=12345", "step": 1,
@@ -192,6 +213,31 @@ class Reading(unittest.TestCase):
         self.assertEqual([w["service"] for w in v["waiting"]], ["youtube"])
         self.assertEqual(v["waiting"][0]["link"], "https://www.youtube.com/activate?user_code=ABC-DEF-GHI")
         self.assertEqual(by["youtube"]["signin"]["step"], 2)
+
+    def test_a_waiting_sign_in_says_whether_the_onboarding_sheet_draws_it(self):
+        ms.publish("youtube", "waiting", code="ABC-DEF-GHI", url="https://www.google.com/device", round=2, rounds=3)
+        w = pa.view()["waiting"][0]
+        self.assertIs(w["guided"], True)                                  # a live sign-in document: the old sheet stays shut
+        self.assertEqual((w["prefilled"], w["round"], w["rounds"]), (False, 2, 3))
+        pa.onboarding.clear("youtube")                                    # no document (it could not be written): the old sheet
+        self.assertIs(pa.view()["waiting"][0]["guided"], False)
+        ms.publish("sweettv", "waiting", code="12345", url="https://sweet.tv/addDevice", mode="partner")
+        self.assertIs([x for x in pa.view()["waiting"] if x["service"] == "sweettv"][0]["guided"], False)   # partner: nobody follows it on the phone
+        ms.publish("sweettv", "waiting", code="12345", url="https://sweet.tv/addDevice")
+        pa.onboarding.write("sweettv", {"flow": "keys", "title": "t", "steps": [{"phone": "a"}]})
+        self.assertIs([x for x in pa.view()["waiting"] if x["service"] == "sweettv"][0]["guided"], False)   # another flow's document is not this sign-in's
+
+    def test_without_the_onboarding_library_the_old_sheet_is_the_sheet(self):
+        ms.publish("youtube", "waiting", code="ABC-DEF-GHI", url="https://www.youtube.com/activate")
+        saved, pa.onboarding = pa.onboarding, None
+        try:
+            self.assertIs(pa.view()["waiting"][0]["guided"], False)
+            boom = mock.Mock()
+            boom.read.side_effect = RuntimeError("x")
+            pa.onboarding = boom
+            self.assertIs(pa.view()["waiting"][0]["guided"], False)
+        finally:
+            pa.onboarding = saved
 
     def test_a_profile_says_whether_its_google_account_has_a_channel(self):
         yt({"0": {"name": "Основной", "refresh_token": SECRET}, "1": {"name": "Дети", "refresh_token": ""}})
@@ -554,10 +600,11 @@ class GivenUpAnother(unittest.TestCase):
         self.assertNotIn("accSettle", page)
         self.assertIn("accWatch(20000)", page)                      # after a switch, a cancel and a closed sheet
         self.assertIn("try{await accCall('cancel',{service:accSheet.svc});accWatch(20000)}", page)
-        self.assertIn("const accLive=()=>!document.hidden&&(accSheet||tab==='settings'||wide())", page)   # also the wide card
-        self.assertIn("accSheet||Date.now()<accFastUntil?1500:5000", page)   # every 5 s when idle, hidden pages stop
+        self.assertIn("const accLive=()=>!document.hidden&&(accShown()||tab==='settings'||wide())", page)   # also the wide card
+        self.assertIn("accShown()||Date.now()<accFastUntil?1500:5000", page)   # every 5 s when idle, hidden pages stop
+        self.assertIn("const accShown=()=>accSheet||accTrk", page)         # a sign-in the onboarding sheet draws is on screen too
         self.assertIn("accWaiting[svc]=false;accMsg(svc,expired?ACC_EXPIRED:'',expired)", page)   # «Жду код…» goes with the sign-in
-        self.assertIn("if(accWaiting[svc]&&!accSheet", page)
+        self.assertIn("if(accWaiting[svc]&&!accShown()", page)
 
 
 class ListPage(unittest.TestCase):
@@ -671,6 +718,33 @@ class Page(unittest.TestCase):
         self.assertIn("Открыть страницу входа", page)
         self.assertIn('rel="noopener"', page)
         self.assertIn("Готово — вы вошли", page)
+
+    def test_the_old_sheet_opens_only_when_the_onboarding_sheet_does_not_draw_the_sign_in(self):
+        page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")
+        sync = page.split("function accSync(d){", 1)[1].split("\n}\n", 1)[0]
+        # the only accOpen in accSync is the last branch, and it is behind accGuided
+        self.assertEqual(sync.count("accOpen("), 1)
+        self.assertRegex(sync, r"if\(accGuided\(s\)\)\{[^}]*accTrk=\{svc:s\.service")
+        self.assertRegex(sync, r"\}else accOpen\(s\)\s*\}\s*$")
+        guided = page.split("function accGuided(s){", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("if(s.guided)return true", guided)                        # the server's word ...
+        self.assertIn("lastStatus.onboarding", guided)                          # ... and the status the page polls: an active sign-in document
+        self.assertIn("x.service===s.service&&x.flow==='signin'&&(!x.state||x.state==='active')", guided)
+        # only the end of such a sign-in is the old sheet's: the result, and a SWEET.TV code that ran out
+        self.assertIn("if(w.some(x=>x.service===accTrk.svc))return;", sync)
+        self.assertIn("accEnd(", sync.split("accTrk=null", 1)[1])
+        self.assertIn("if(typeof obClose==='function')obClose()", sync)        # one sheet at a time, the result's or the sign-in's
+        self.assertEqual(page.count("accTrk={svc:"), 1)
+
+    def test_the_old_sheet_as_a_fallback_has_no_code_n_of_4_and_a_hint_that_follows_prefilled(self):
+        page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")
+        self.assertNotIn("'Код '+s.step", page)
+        self.assertNotIn("' · код '+s.step", page)
+        self.assertNotIn("из '+s.steps", page)                                  # the add-on's slots are nobody's counter
+        self.assertIn("s.rounds>1?'подтверждение '+s.round+' из '+s.rounds:''", page)
+        self.assertIn("link&&s.prefilled?'Страница откроется с уже введённым кодом.'", page)
+        self.assertNotIn("(link?'Страница откроется", page)                     # a link alone says nothing about the code
+        self.assertIn("link&&s.prefilled?'Новый код: нажмите «Открыть страницу входа» ещё раз.':'Новый код: введите его на странице входа.'", page)
 
     def test_the_page_has_one_sweettv_sign_in_and_no_friendly_share_button(self):
         page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")
