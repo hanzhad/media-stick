@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media Stick</title>
+<style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#1a1c22;--muted:#5b6170}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#f2f3f5;--muted:#a3a8b3}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,sans-serif}
+main{max-width:680px;margin:0 auto;padding:32px 16px}
+h1{font-size:28px;margin:0 0 8px}h2{font-size:19px;margin:28px 0 6px}p,li{color:var(--fg)}small{color:var(--muted)}
+a{color:#3b7be0}
+</style>
+</head>
+<body>
+<main>
+<h1>Media Stick</h1>
+<p>Media Stick is a small open-source TV box built on a single-board computer and Kodi. You control it from a page in your phone's browser: pick an app, pick what to watch, and it plays on the TV.</p>
+
+<h2>Why it has a Google app</h2>
+<p>To show your own YouTube subscriptions, playlists and history on the TV, each Media Stick owner creates their own Google Cloud project and signs in to it from the TV. The Google app named on the consent screen is that owner's own project. There is no central Media Stick server: the box talks to Google directly.</p>
+
+<h2>What happens when you sign in</h2>
+<ul>
+<li>The TV shows a code; you confirm it on your phone on Google's own page.</li>
+<li>The access token Google issues is stored only on your Media Stick, in your home.</li>
+<li>It is used only to show your YouTube content on your TV.</li>
+</ul>
+
+<p><a href="privacy.html">Privacy policy</a> · <a href="https://github.com/hanzhad/media-stick">Source code</a></p>
+
+<h2 lang="ru">По-русски</h2>
+<p lang="ru">Media Stick — приставка к телевизору с открытым кодом, которой управляют с телефона. Чтобы на ТВ были ваши подписки и плейлисты YouTube, владелец приставки создаёт свой проект Google и входит в него с телевизора. Общего сервера нет: приставка обращается к Google напрямую, токен хранится только на ней.</p>
+</main>
+</body>
+</html>
