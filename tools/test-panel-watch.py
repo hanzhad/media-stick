@@ -381,7 +381,8 @@ class Page(unittest.TestCase):
         self.assertNotIn('data-go="remote" class="on"', p)
         self.assertIn('<section id="t-watch" data-tab="watch">', p)
         self.assertIn('<section id="t-remote" data-tab="remote" class="hide">', p)
-        self.assertIn('id="wt-npbox"', p)
+        self.assertEqual(p.count('<div data-wtbar class="hide"></div>'), 2)   # the bar of «Смотреть» and the bar of «Пульт»
+        self.assertLess(p.index('<div data-wtbar class="hide"></div>', p.index('id="t-remote"')), p.index('class="modes"'))
         self.assertEqual(p.count("</body>"), 1)
 
     def test_wide_grid(self):
@@ -396,13 +397,44 @@ class Page(unittest.TestCase):
 
     def test_a_missing_marker_raises(self):
         # the page must not come out without the tab, or with half of it
-        for marker in ("@@WATCH_NAV@@", "@@WATCH_SECTION@@", "@@WATCH_NPBOX@@", "@@WATCH_TAIL@@"):
+        for marker in ("@@WATCH_NAV@@", "@@WATCH_SECTION@@", "@@WATCH_BAR@@", "@@WATCH_TAIL@@"):
             self.assertIn(marker, self.base)
             with self.assertRaises(ValueError) as e:
                 pw.inject(self.base.replace(marker, ""))
             self.assertIn(marker, str(e.exception))
         with self.assertRaises(ValueError):
             pw.inject("<html></html>")
+
+    def test_one_player_in_a_sheet_and_a_bar_to_open_it(self):
+        import panel_watch_ui as ui
+        js, everything = ui.JS, ui.JS + ui.CSS + ui.SECTION + ui.BAR
+        self.assertEqual(js.count("mkPlayer("), 2)                   # its definition and the one call: one instance
+        self.assertIn("W.wp=mkPlayer();", js)
+        for gone in ("W.rp", "wtdp", "wtnp", "wt-pfull", "wt-pback", "Крестовина", "wt-npbox", "wt-now", "'player'", "wt-toast"):
+            self.assertNotIn(gone, everything)
+        for text in ("Меню плеера", "Описание", "Остановить", "Закрыть", "pressKey('osd')", "pressKey('info')", "Субтитры", "Аудио",
+                     "'Перемотка'", "'Громкость'", "text:'−10'", "text:'+10'"):
+            self.assertIn(text, js)
+        # the sheet closes on the backdrop, on «Закрыть» and on a swipe down
+        self.assertIn("h('div',{class:'wt-back',onclick:closeSheet})", js)
+        self.assertIn("h('button',{class:'wt-btn wide',text:'Закрыть',onclick:closeSheet})", js)
+        self.assertIn("e.changedTouches[0].clientY-swipeY>80)closeSheet()", js)
+        self.assertIn(".wt-psheet .wt-box{max-width:480px", ui.CSS)  # centred, 480 px at most on a wide screen
+        # the bar: a tap opens the sheet, its own button only plays/pauses
+        self.assertIn("function mkBar(host)", js)
+        self.assertIn("onclick:openSheet", js)
+        self.assertIn("e.stopPropagation();buzz();ctl({op:'playpause'})", js)
+        self.assertIn("W.bars=[...document.querySelectorAll('[data-wtbar]')].map(mkBar)", js)
+        self.assertIn("W.bars.forEach(b=>b.update(on?st:null))", js)   # shown only while something plays
+        # polling rules as before
+        self.assertIn("if(document.hidden||W.busy||!(wide()||tab==='watch'||tab==='remote'))return;", js)
+        self.assertNotIn("'/api/watch/'+p,b)).catch(()=>{})", js)
+
+    def test_the_toast_is_the_pages(self):
+        import panel_watch_ui as ui
+        self.assertNotIn("function toast", ui.JS)
+        self.assertNotIn("toastT", ui.JS)
+        self.assertIn("toast(errText(e))", ui.JS)
 
     def test_it_takes_the_pages_palette(self):
         import panel_watch_ui as ui

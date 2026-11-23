@@ -664,6 +664,11 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
    wide at most, so it grows on tall phones and shrinks on short ones and nothing scrolls. */
 .rc{position:relative;padding:14px;display:flex;flex-direction:column;height:calc(100vh - 208px);min-height:400px}
 @supports (height:1svh){.rc{height:calc(100svh - 208px - env(safe-area-inset-bottom))}}
+/* the now-playing bar (64px and its gap) is above the mode switch while something plays: the card gets shorter, it never changes shape */
+@media (max-width:899px){body.np .rc{height:calc(100vh - 284px)}}
+@media (max-width:899px){@supports (height:1svh){body.np .rc{height:calc(100svh - 284px - env(safe-area-inset-bottom))}}}
+/* the one toast: a short word at the bottom, above the sheets */
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom));z-index:80;max-width:calc(100vw - 32px);padding:12px 20px;border-radius:999px;background:#fff;color:var(--bg);font-weight:600;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.4)}
 .dwrap{position:relative;flex:1 1 0;min-height:120px}
 .dwrap .dpad{position:absolute;inset:0;width:100%;height:100%}
 .rc .row input,.rc .row .btn{min-height:48px!important}
@@ -695,6 +700,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act";gap:20px;padding:28px}
   .top{grid-area:top;margin-bottom:0}
   .tabs,.modes{display:none}
+  .toast{bottom:28px}
   [data-tab]{display:block!important;margin:0!important}
   [data-tab]>.card{height:100%}
   #t-remote{display:contents!important}
@@ -716,12 +722,9 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
 <symbol id="i-back" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
 <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></symbol>
-<symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
-<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></symbol>
-<symbol id="i-rew" viewBox="0 0 24 24"><path d="M11 7l-7 5 7 5z"/><path d="M20 7l-7 5 7 5z"/></symbol>
-<symbol id="i-pp" viewBox="0 0 24 24"><path d="M5 5l9 7-9 7z"/><path d="M19 5v14"/></symbol>
-<symbol id="i-ff" viewBox="0 0 24 24"><path d="M13 7l7 5-7 5z"/><path d="M4 7l7 5-7 5z"/></symbol>
 <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></symbol>
+<symbol id="i-text" viewBox="0 0 24 24"><path d="M5 7V5h14v2M12 5v14M9 19h6"/></symbol>
 <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></symbol>
 <symbol id="i-vdn" viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6l-5 4z"/><path d="M16.5 9.5a4 4 0 0 1 0 5"/></symbol>
 <symbol id="i-vup" viewBox="0 0 24 24"><path d="M3 10v4h4l5 4V6l-5 4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18.5 6a8 8 0 0 1 0 12"/></symbol>
@@ -752,12 +755,13 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   <div class="top"><b>Media Stick</b><div class="pill" id="hdr"><i class="dot" id="hdr-dot"></i><span id="hdr-t"></span></div></div>
 
   @@WATCH_SECTION@@<section id="t-remote" data-tab="remote" class="hide">
+    @@WATCH_BAR@@
     <div class="modes" role="tablist" aria-label="Режим пульта">
       <button data-m="keys" role="tab" class="on" aria-selected="true">Кнопки</button>
       <button data-m="air" role="tab" aria-selected="false">Указка</button>
       <button data-m="screen" role="tab" aria-selected="false">Экран</button>
     </div>
-    <div class="card rc">@@WATCH_NPBOX@@
+    <div class="card rc">
       <div class="dwrap" id="stage"><svg class="dpad" viewBox="0 0 240 240" role="group" aria-label="Навигация">
         <g class="seg" data-a="up" role="button" aria-label="Вверх"><path d="M38 38A116 116 0 0 1 202 38L154 86A48 48 0 0 0 86 86Z"/><use href="#i-up" x="108" y="50" width="24" height="24"/></g>
         <g class="seg" data-a="right" role="button" aria-label="Вправо"><path d="M202 38A116 116 0 0 1 202 202L154 154A48 48 0 0 0 154 86Z"/><use href="#i-right" x="166" y="108" width="24" height="24"/></g>
@@ -789,24 +793,13 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <div class="grp">
         <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
         <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
-        <button class="btn" data-a="contextmenu" aria-label="Меню"><svg class="i"><use href="#i-menu"/></svg></button>
-        <button class="btn" data-a="info" aria-label="Инфо"><svg class="i"><use href="#i-info"/></svg></button>
-        <button class="btn" data-a="osd" aria-label="Панель"><svg class="i"><use href="#i-sliders"/></svg></button>
-      </div>
-      <div class="grp">
-        <button class="btn" data-a="rewind" aria-label="Назад по записи"><svg class="i"><use href="#i-rew"/></svg></button>
-        <button class="btn" data-a="playpause" aria-label="Пауза"><svg class="i"><use href="#i-pp"/></svg></button>
-        <button class="btn" data-a="fastforward" aria-label="Вперёд по записи"><svg class="i"><use href="#i-ff"/></svg></button>
-        <button class="btn" data-a="stop" aria-label="Стоп"><svg class="i"><use href="#i-stop"/></svg></button>
+        <button class="btn" data-a="contextmenu" aria-label="Ещё"><svg class="i"><use href="#i-more"/></svg></button>
+        <button class="btn" id="txt-open" aria-label="Текст"><svg class="i"><use href="#i-text"/></svg></button>
       </div>
       <div class="grp">
         <button class="btn" data-a="volumedown" aria-label="Тише"><svg class="i"><use href="#i-vdn"/></svg></button>
         <button class="btn" data-a="mute" aria-label="Без звука"><svg class="i"><use href="#i-mute"/></svg></button>
         <button class="btn" data-a="volumeup" aria-label="Громче"><svg class="i"><use href="#i-vup"/></svg></button>
-      </div>
-      <div class="row gap">
-        <input id="txt" placeholder="Текст в поиск Kodi" enterkeyhint="send">
-        <button class="btn fit" style="min-height:52px" onclick="sendText()" aria-label="Отправить"><svg class="i"><use href="#i-send"/></svg></button>
       </div>
     </div>
     <div id="t-screen">
@@ -822,8 +815,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <div class="grp">
         <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
         <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
-        <button class="btn" data-a="contextmenu" aria-label="Меню"><svg class="i"><use href="#i-menu"/></svg></button>
-        <button class="btn" data-a="playpause" aria-label="Пауза"><svg class="i"><use href="#i-pp"/></svg></button>
+        <button class="btn" data-a="contextmenu" aria-label="Ещё"><svg class="i"><use href="#i-more"/></svg></button>
       </div>
       <div id="shot-ms" class="cap"></div>
       <div id="shot-h" class="cap" title="Удерживайте — контекстное меню; проведите пальцем вверх или вниз — прокрутка, влево или вправо — по карточкам">Нажмите на картинку, чтобы кликнуть на телевизоре</div>
@@ -896,6 +888,8 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   </nav>
 </div>
 
+<div id="toast" class="toast hide" role="status" aria-live="polite"></div>
+
 <script>
 const PAGE_VER='@@PAGE_VER@@';   // filled in by the server: a hash of this page
 const $=id=>document.getElementById(id);
@@ -903,7 +897,7 @@ const wide=()=>matchMedia('(min-width:900px)').matches;
 const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
 async function api(path,body){
   const o=body===undefined?{}:{method:'POST',headers:{'X-Panel':'1','Content-Type':'application/json'},body:JSON.stringify(body)};
-  const r=await fetch(path,o); if(!r.ok) throw new Error(await r.text()); return r.json();
+  const r=await fetch(path,o); if(!r.ok){const e=new Error(await r.text());e.http=r.status;throw e} return r.json();
 }
 // Haptics. Android: navigator.vibrate. iPhone has no vibrate for pages, but since iOS 18 a
 // switch-style checkbox ticks when it flips, so a hidden one is flipped instead.
@@ -921,15 +915,17 @@ const NAV=new Set(['up','down','left','right']);
 // every key ticks on the tap; Android ticks arrows only when the focus really moved.
 const late=!!navigator.vibrate;
 let tickSoon=null;
-document.querySelectorAll('[data-a]').forEach(b=>b.addEventListener('click',()=>{
-  const a=b.dataset.a, nav=late&&NAV.has(a);if(!nav)buzz();
-  api('/api/key',{action:a}).then(r=>{if(nav)fcNote(r);else if(r&&typeof r.fc==='number')fcSeen=r.fc;if(r&&r.kb)kbUi(r.kb)}).catch(()=>{});
-  clearTimeout(tickSoon);tickSoon=setTimeout(tick,1200)}));   // playback may have started or stopped
+function pressKey(a){
+  const nav=late&&NAV.has(a);if(!nav)buzz();
+  api('/api/key',{action:a}).then(r=>{if(nav)fcNote(r);else if(r&&typeof r.fc==='number')fcSeen=r.fc;if(r&&r.kb)kbUi(r.kb)}).catch(keyFailed);
+  clearTimeout(tickSoon);tickSoon=setTimeout(tick,1200)   // playback may have started or stopped
+}
+document.querySelectorAll('[data-a]').forEach(b=>b.addEventListener('click',()=>pressKey(b.dataset.a)));
 // Kodi's on-screen keyboard is slow to type on with a remote. While it is up the phone shows
 // its own text box in the air pad's place: what is typed there shows in Kodi's field as it
 // goes (and what is typed on the TV shows here), Done or the phone's Enter confirms it on the
 // TV, Cancel closes it there. «Пульт» = back to the pad, type with the remote.
-let kbOpen=false, kbHid=false, kbT=null, kbSent='', kbQuiet=0, kbTyped=0, kbPoll=null, kbPb=false;
+let kbOpen=false, kbHid=false, kbT=null, kbSent='', kbQuiet=0, kbTyped=0, kbPoll=null, kbPb=false, kbMan=false;
 function kbPolling(on){
   clearInterval(kbPoll);kbPoll=null;
   if(on)kbPoll=setInterval(()=>{if(kbPb||document.hidden)return;kbPb=true;
@@ -938,11 +934,13 @@ function kbPolling(on){
 function kbUi(k){
   if(performance.now()<kbQuiet)return;   // a reply from before Done / Cancel
   const box=$('kb'), inp=$('kb-in');
+  if(!k&&kbMan)return;   // the manual overlay stays until it is closed
   if(!k){
     if(kbOpen&&document.activeElement===inp)inp.blur();
     kbOpen=kbHid=false;box.classList.add('hide');box.closest('.rc').classList.remove('kbon');kbPolling(false);return
   }
   if(kbHid)return;
+  if(kbMan){kbMan=false;kbOpen=false;$('kb-x').textContent='Пульт';$('kb-c').classList.remove('hide')}   // the TV opened its own keyboard: it takes over
   $('kb-t').textContent=k.title||'Ввод на телевизоре';
   inp.inputMode=k.num?'numeric':'text';
   // the TV says "type on your phone": the box is on the remote card (Кнопки), so go there from any other tab or mode
@@ -953,14 +951,24 @@ function kbUi(k){
 function kbSend(done){
   clearTimeout(kbT);kbT=null;const v=$('kb-in').value;
   if(!done&&v===kbSent)return;kbSent=v;
-  api('/api/text',{text:v,done:!!done}).catch(()=>{})
+  api('/api/text',{text:v,done:!!done}).catch(keyFailed)
 }
-function kbClose(){kbUi(null);kbQuiet=performance.now()+1500;clearTimeout(tickSoon);tickSoon=setTimeout(tick,1600)}
+function kbClose(){kbMan=false;kbUi(null);kbQuiet=performance.now()+1500;clearTimeout(tickSoon);tickSoon=setTimeout(tick,1600)}
 $('kb-in').addEventListener('input',()=>{kbTyped=performance.now();clearTimeout(kbT);kbT=setTimeout(()=>kbSend(false),150)});
 $('kb-in').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();buzz();kbSend(true);kbClose()}});
 $('kb-ok').addEventListener('click',()=>{buzz();kbSend(true);kbClose()});
-$('kb-c').addEventListener('click',()=>{buzz();clearTimeout(kbT);api('/api/key',{action:'back'}).catch(()=>{});kbClose()});
-$('kb-x').addEventListener('click',()=>{kbHid=true;$('kb-in').blur();$('kb').classList.add('hide');$('kb').closest('.rc').classList.remove('kbon');kbPolling(false)});
+$('kb-c').addEventListener('click',()=>{buzz();clearTimeout(kbT);api('/api/key',{action:'back'}).catch(keyFailed);kbClose()});
+$('kb-x').addEventListener('click',()=>{if(kbMan){kbMan=false;kbOpen=false;$('kb-in').blur();$('kb').classList.add('hide');$('kb').closest('.rc').classList.remove('kbon');return}kbHid=true;$('kb-in').blur();$('kb').classList.add('hide');$('kb').closest('.rc').classList.remove('kbon');kbPolling(false)});
+// «Текст»: the same overlay as when the TV asks for text, opened by hand (it types into whatever has focus on the TV)
+function kbManual(){
+  if(kbOpen)return;
+  const box=$('kb'), inp=$('kb-in');
+  kbMan=true;kbHid=false;kbOpen=true;
+  $('kb-t').textContent='Текст на ТВ';$('kb-x').textContent='Закрыть';$('kb-c').classList.add('hide');
+  inp.inputMode='text';inp.value=kbSent='';
+  box.classList.remove('hide');box.closest('.rc').classList.add('kbon');inp.focus()
+}
+$('txt-open').addEventListener('click',()=>{buzz();kbManual()});
 function keysUi(dead){
   const d=new Set(dead||[]);
   document.querySelectorAll('button[data-a]').forEach(b=>{b.disabled=d.has(b.dataset.a)})
@@ -989,8 +997,6 @@ function setMode(m){
   $('t-remote').dataset.mode=m;
   document.querySelectorAll('.modes [data-m]').forEach(b=>{const on=b.dataset.m===m;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
   if(m!=='air')airStop(true);
-  // while something plays, the Смотреть module puts its player over the remote card unless the card is asked for (wtdp)
-  $('stage').closest('.rc').classList.toggle('wtdp',m==='air');
   airUi();screenSync()
 }
 document.querySelectorAll('.modes [data-m]').forEach(b=>b.addEventListener('click',()=>{buzz();setMode(b.dataset.m)}));
@@ -998,8 +1004,15 @@ function openAccounts(){
   document.querySelector('[data-go=settings]').click();
   setTimeout(()=>$('t-acc').scrollIntoView({behavior:'smooth',block:'start'}),150)
 }
-function sendText(){const t=$('txt');if(!t.value)return;api('/api/text',{text:t.value}).then(()=>t.value='');}
-$('txt').addEventListener('keydown',e=>{if(e.key==='Enter')sendText()});
+// The one toast of the page (Смотреть uses it too). A key that did not get through says why, at most once in 2 s.
+let toastT=null, failAt=0;
+function toast(text){const e=$('toast');e.textContent=text;e.classList.remove('hide');clearTimeout(toastT);toastT=setTimeout(()=>e.classList.add('hide'),2200)}
+function tvErr(e){
+  if(!e||!e.http)return 'ТВ не ответил';
+  let m=e.message;try{m=JSON.parse(m).error||m}catch(_){}
+  return m&&m.length<=140?m:'ТВ не ответил'
+}
+function keyFailed(e){const now=Date.now();if(now-failAt<2000)return;failAt=now;toast(tvErr(e))}
 // keyboard on a computer drives Kodi like a remote
 const KEYS={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Enter:'select',Backspace:'back',Escape:'back',' ':'playpause',c:'contextmenu',i:'info',h:'home','+':'volumeup','-':'volumedown',m:'mute'};
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;const a=KEYS[e.key];if(a){e.preventDefault();api('/api/key',{action:a}).catch(()=>{})}});

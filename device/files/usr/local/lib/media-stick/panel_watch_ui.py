@@ -1,6 +1,6 @@
 """The Смотреть part of the page: markup, style and script, as strings. No logic worth testing here;
 inject() puts them into the panel's page at its four @@WATCH_...@@ markers (the first tab, the section before the
-remote's, the remote card's top box, the page's tail) and raises when one is missing: a page that silently lost
+remote's, the remote's bar, the page's tail) and raises when one is missing: a page that silently lost
 the whole tab is worse than one that does not start. Everything is prefixed `wt` / `wt-` so it
 cannot collide with the page's own ids, classes and functions (the page already uses w-ssid, w-btn...).
 Pure DOM and fetch; text goes in with textContent, pictures only as https addresses."""
@@ -15,15 +15,14 @@ SECTION = """<section id="t-watch" data-tab="watch">
       <symbol id="wt-i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
     </defs></svg>
     <div class="wt">
+      <div data-wtbar class="hide"></div>
       <div id="wt-head" class="wt-head hide"></div>
-      <div id="wt-nowslot"></div>
       <div id="wt-body"></div>
     </div>
-    <div id="wt-toast" class="wt-toast hide" role="status" aria-live="polite"></div>
   </section>
   """
 
-NPBOX = """<div id="wt-npbox" class="wt-npbox hide"></div>"""
+BAR = """<div data-wtbar class="hide"></div>"""
 
 CSS = r"""
 <style>
@@ -73,7 +72,6 @@ CSS = r"""
 .wt-box{position:relative;width:100%;max-width:440px;background:var(--card);border-radius:24px 24px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
 .wt-box .wt-thumb{width:100%}
 .wt-box h3{margin:4px 0 0;font-size:17px}
-.wt-now{display:flex;gap:12px;align-items:center;width:100%;text-align:left;margin-bottom:12px}
 .wt-art{flex:none;width:96px;aspect-ratio:16/9;border-radius:12px;background:var(--card2) center/cover no-repeat}
 .wt-p .wt-art{width:100%;max-width:360px;margin:0 auto;border-radius:18px}
 .wt-p{display:flex;flex-direction:column;gap:14px;color:#fff}
@@ -88,16 +86,26 @@ CSS = r"""
 .wt-opts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 .wt-vol{display:flex;align-items:center;gap:6px}
 .wt-two{display:flex;gap:10px}.wt-two>*{flex:1}
-.wt-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom));z-index:70;padding:12px 20px;border-radius:999px;background:#fff;color:var(--bg);font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.4)}
-.wt-npbox{margin-bottom:6px}
-.rc.wtnp:not(.wtdp)>:not(.wt-npbox){display:none}
-.rc.wtdp .wt-pfull{display:none}
-.rc:not(.wtdp) .wt-pback{display:none}
+/* the now-playing bar: one line, above the tabs' content; a tap opens the player sheet */
+.wt-nb{display:flex;align-items:center;gap:10px;height:64px;margin-bottom:12px;padding:8px 10px 8px 8px;border:1px solid var(--line);border-radius:18px;background:var(--card);cursor:pointer;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.wt-nb:active{background:var(--card2)}
+.wt-nb .wt-art{width:72px;height:100%;aspect-ratio:auto;border-radius:10px}
+.wt-nb .wt-txt{display:flex;flex-direction:column;gap:6px;justify-content:center}
+.wt-nb .wt-txt b{font-size:14px;-webkit-line-clamp:1}
+.wt-nb .wt-bar{margin:0}
+.wt-nb .wt-btn{flex:none;width:44px;height:44px;min-width:0;padding:0;border-radius:50%}
+.wt-nb .wt-btn .i{fill:currentColor}
+/* the player sheet */
+.wt-pbox{max-height:92vh;overflow-y:auto;overscroll-behavior:contain}
+.wt-grab{align-self:center;flex:none;width:44px;height:5px;border-radius:3px;background:var(--line)}
+.wt-pbox .wt-p{gap:12px}
 @media (min-width:900px){
   #t-watch{grid-area:watch}
+  #t-remote>[data-wtbar]{display:none!important}
+  .wt-psheet{align-items:center}
+  .wt-psheet .wt-box{max-width:480px;border-radius:24px}
   .wt-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
   .wt-tiles{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
-  .wt-toast{bottom:28px}
 }
 </style>"""
 
@@ -119,16 +127,14 @@ const tm=s=>{s=Math.max(0,Math.floor(s||0));const H=Math.floor(s/3600),M=Math.fl
 const picture=u=>/^https:\/\//.test(u||'')?'url("'+u.replace(/["\\()\s]/g,encodeURIComponent)+'")':'';
 const errText=e=>{try{return JSON.parse(e.message).error||e.message}catch(_){return e.message}};
 const g=p=>api('/api/watch/'+p), pst=(p,b)=>api('/api/watch/'+p,b);
-let toastT=null;
-function toast(t){const e=$('wt-toast');e.textContent=t;e.classList.remove('hide');clearTimeout(toastT);toastT=setTimeout(()=>e.classList.add('hide'),2200)}
 function views(n){if(!n)return'';if(n>=1e6)return (n/1e6).toFixed(1).replace('.',',')+' млн просмотров';
   return n>=1e3?Math.round(n/1e3)+' тыс. просмотров':n+' просмотров'}
 function sub(it){return [it.channel,views(it.views),it.published?new Date(it.published*1000).toLocaleDateString('ru'):''].filter(Boolean).join(' · ')}
 const COLORS=['#e5484d','#3e63dd','#30a46c','#f76b15','#8e4ec6','#12a594','#d6409f'];
 const colorOf=s=>{let n=0;for(const c of s)n=(n*31+c.charCodeAt(0))>>>0;return COLORS[n%COLORS.length]};
 
-// ---- the player: one builder, two places (the «Смотреть» tab and the top of «Пульт») ----
-function mkPlayer(o){
+// ---- the player: one, in a sheet (opened from the bar of «Смотреть» or of «Пульт») ----
+function mkPlayer(){
   const P={hold:0,drag:false,open:null,st:null};
   const art=h('div',{class:'wt-art'}),title=h('div',{class:'wt-pt'}),subl=h('div',{class:'wt-ps'});
   const t1=h('span',{text:'0:00'}),t2=h('span',{text:'0:00'});
@@ -147,11 +153,12 @@ function mkPlayer(o){
   vol.addEventListener('change',()=>{P.vdrag=false;P.vhold=Date.now()+1500;ctl({op:'volume',level:+vol.value})});
   const vm=h('button',{class:'wt-btn ico','aria-label':'Тише',onclick:()=>ctl({op:'volume',by:-5})},ico('i-vdn'));
   const vp=h('button',{class:'wt-btn ico','aria-label':'Громче',onclick:()=>ctl({op:'volume',by:5})},ico('i-vup'));
-  const stop=h('button',{class:'wt-btn',text:'Остановить',onclick:()=>{buzz();ctl({op:'stop'});toast('Останавливаю…')}});
-  const dpad=h('button',{class:'wt-btn',text:'Крестовина',onclick:o.dpad});
+  const stop=h('button',{class:'wt-btn wide',text:'Остановить',onclick:()=>{buzz();ctl({op:'stop'});toast('Останавливаю…')}});
+  const osd=h('button',{class:'wt-btn','data-a':'osd',text:'Меню плеера',onclick:()=>pressKey('osd')});
+  const inf=h('button',{class:'wt-btn','data-a':'info',text:'Описание',onclick:()=>pressKey('info')});
   const root=h('div',{class:'wt-p'},art,title,subl,seekRow,
     h('div',{class:'wt-tr'},rw,pp,ff),h('div',{class:'wt-opts'},bSub,bAud),optBox,
-    h('div',{class:'wt-vol'},vm,vol,vp),h('div',{class:'wt-two'},dpad,stop));
+    h('div',{class:'wt-vol'},vm,vol,vp),h('div',{class:'wt-two'},osd,inf),stop);
   function pick(kind){
     P.open=P.open===kind?null:kind;draw()}
   function draw(){
@@ -207,11 +214,9 @@ function header(title,extra){
 
 function render(){
   const d=cur(),b=body();b.replaceChildren();
-  $('wt-nowslot').classList.toggle('hide',d.t!=='apps');
   if(d.t==='apps')return renderApps(b);
   if(d.t==='yt')return renderYt(b,d);
   if(d.t==='sweet')return renderSweet(b,d);
-  if(d.t==='player'){header('Сейчас на ТВ');b.append(W.wp.root);W.wp.open=null;if(W.last&&W.last.playing)W.wp.update(W.last);else b.prepend(h('div',{class:'wt-msg',text:'Открываю на ТВ…'}))}
 }
 function openOnTv(id){return pst('launch',{app:id}).then(()=>toast('Открываю на ТВ…')).catch(e=>toast(errText(e)))}
 async function renderApps(b){
@@ -232,7 +237,7 @@ async function renderApps(b){
 const SECS=[['home','Главная'],['subscriptions','Подписки'],['history','История'],['playlists','Плейлисты']];
 function sheet(it){
   const close=()=>s.remove();
-  const play=r=>{close();buzz();pst('play',{file:it.file,resume:r}).catch(e=>toast(errText(e)));toast('Открываю на ТВ…');W.wait=Date.now()+25000;W.last=null;go({t:'player'})};
+  const play=r=>{close();buzz();pst('play',{file:it.file,resume:r}).catch(e=>toast(errText(e)));toast('Открываю на ТВ…');W.wait=Date.now()+25000;W.last=null;openSheet()};
   const s=h('div',{class:'wt-sheet',role:'dialog','aria-label':it.title},h('div',{class:'wt-back',onclick:close}),
     h('div',{class:'wt-box'},h('div',{class:'wt-thumb',style:'background-image:'+picture(it.thumb)}),
       h('h3',{text:it.title}),h('div',{class:'wt-sub',text:sub(it)}),
@@ -285,7 +290,7 @@ async function renderSweet(b,d){
     chips.replaceChildren(...cats.map(c=>h('button',{class:'wt-chip'+(d.cat===c.key?' on':''),role:'tab','aria-selected':d.cat===c.key,text:c.name,onclick:()=>{d.cat=c.key;fill()}})));
     list.replaceChildren();
     lazy(list,r.channels.filter(c=>d.cat==='all'||c.cats.includes(d.cat)),chRow)};
-  const play=c=>{buzz();pst('play',{file:c.play}).catch(e=>toast(errText(e)));toast('Открываю на ТВ…');W.wait=Date.now()+25000;W.last=null;go({t:'player'})};
+  const play=c=>{buzz();pst('play',{file:c.play}).catch(e=>toast(errText(e)));toast('Открываю на ТВ…');W.wait=Date.now()+25000;W.last=null;openSheet()};
   function chRow(c){
     const n=c.now;
     return h('div',{class:'wt-item'},
@@ -297,44 +302,58 @@ async function renderSweet(b,d){
       h('button',{class:'wt-go','aria-label':'Смотреть '+c.name+' на ТВ',onclick:()=>play(c)},ico('i-play')))}
   fill()}
 
-// ---- now playing ----
-function nowCard(st){
-  const slot=$('wt-nowslot');slot.replaceChildren();
-  if(!st||!st.playing)return;
-  const pct=st.total>0?Math.min(100,100*st.time/st.total):0;
-  slot.append(h('button',{class:'wt-card wt-now','aria-label':'Сейчас на ТВ: '+st.title+'. Открыть плеер',onclick:()=>go({t:'player'})},
-    h('div',{class:'wt-art',style:'background-image:'+picture(st.thumb)}),
-    h('div',{class:'wt-txt'},h('span',{class:'wt-sub',text:'Сейчас на ТВ'}),h('b',{text:st.title||'Без названия'}),
-      pct?h('div',{class:'wt-bar'},h('i',{style:'width:'+pct+'%'})):'')))}
+// ---- now playing: a bar (one at the top of «Смотреть», one of «Пульт») and the one player, in a sheet ----
+function mkBar(host){
+  const art=h('div',{class:'wt-art'}), title=h('b'), fill=h('i'), line=h('div',{class:'wt-bar'},fill);
+  const pp=h('button',{class:'wt-btn pri ico','aria-label':'Пауза или воспроизведение',onclick:e=>{e.stopPropagation();buzz();ctl({op:'playpause'})}});
+  host.append(h('div',{class:'wt-nb',role:'button',tabindex:'0','aria-label':'Сейчас на ТВ. Открыть плеер',onclick:openSheet,
+      onkeydown:e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openSheet()}}},
+    art,h('div',{class:'wt-txt'},title,line),pp));
+  return {update(st){
+    host.classList.toggle('hide',!st);if(!st)return;
+    title.textContent=st.title||'Без названия';
+    const pic=picture(st.thumb);art.classList.toggle('hide',!pic);art.style.backgroundImage=pic;
+    const pct=st.total>0?Math.min(100,100*st.time/st.total):0;line.classList.toggle('hide',!pct);fill.style.width=pct+'%';
+    pp.replaceChildren(ico(st.speed===0?'i-play':'wt-i-pause'))}}}
+const sheetOpen=()=>!W.sheet.classList.contains('hide');
+function showSheet(){
+  const on=!!(W.last&&W.last.playing);
+  W.pmsg.classList.toggle('hide',on);W.wp.root.classList.toggle('hide',!on);
+  if(on)W.wp.update(W.last)}
+function openSheet(){W.sheet.classList.remove('hide');showSheet()}
+function closeSheet(){W.sheet.classList.add('hide');W.wait=0}
 function applyNow(st){
-  W.last=st;window.wtLast=st;if(window.hdrDraw)hdrDraw();const on=!!(st&&st.playing);
-  const rc=document.querySelector('#t-remote .rc'),nb=$('wt-npbox');
-  if(rc&&nb){nb.classList.toggle('hide',!on);rc.classList.toggle('wtnp',on);if(!on)rc.classList.remove('wtdp');if(on)W.rp.update(st)}
-  const d=cur();
-  if(d.t==='apps')nowCard(st);
-  if(d.t==='player'){
-    if(on){W.wait=0;if(!W.wp.root.isConnected)render();const m=body().querySelector('.wt-msg');if(m)m.remove();W.wp.update(st)}
-    else if(Date.now()>W.wait){W.stack=W.stack.filter(x=>x.t!=='player');if(!W.stack.length)W.stack=[{t:'apps'}];render()}}}
+  W.last=st;window.wtLast=st;if(window.hdrDraw)hdrDraw();
+  const on=!!(st&&st.playing);
+  document.body.classList.toggle('np',on);   // the remote card is a little shorter under the bar
+  W.bars.forEach(b=>b.update(on?st:null));
+  if(!sheetOpen())return;
+  if(on)W.wait=0;
+  if(on||Date.now()<W.wait)showSheet();else closeSheet()}
 function tick(){
   if(document.hidden||W.busy||!(wide()||tab==='watch'||tab==='remote'))return;
   W.busy=true;g('now').then(applyNow).catch(()=>{}).finally(()=>{W.busy=false})}
 
 // ---- wiring ----
-const toDpad=()=>{setMode('keys');
-  if(!wide())document.querySelector('[data-go=remote]').click();
-  document.querySelector('#t-remote .rc').classList.add('wtdp')};
-W.wp=mkPlayer({dpad:toDpad});
-W.rp=mkPlayer({dpad:toDpad});
-$('wt-npbox').append(h('div',{class:'wt-pfull'},W.rp.root),
-  h('button',{class:'wt-btn wide wt-pback',text:'Плеер',onclick:()=>document.querySelector('#t-remote .rc').classList.remove('wtdp')}));
+W.wp=mkPlayer();
+W.pmsg=h('div',{class:'wt-msg',text:'Открываю на ТВ…'});
+W.sheet=h('div',{class:'wt-sheet wt-psheet hide',role:'dialog','aria-label':'Сейчас на ТВ'},
+  h('div',{class:'wt-back',onclick:closeSheet}),
+  W.pbox=h('div',{class:'wt-box wt-pbox'},h('div',{class:'wt-grab','aria-hidden':'true'}),W.pmsg,W.wp.root,
+    h('button',{class:'wt-btn wide',text:'Закрыть',onclick:closeSheet})));
+document.body.append(W.sheet);
+// a swipe down closes the sheet (not one that starts on a slider, and not while the sheet is scrolled)
+let swipeY=null;
+W.pbox.addEventListener('touchstart',e=>{swipeY=W.pbox.scrollTop===0&&e.target.type!=='range'?e.touches[0].clientY:null},{passive:true});
+W.pbox.addEventListener('touchend',e=>{if(swipeY!==null&&e.changedTouches[0].clientY-swipeY>80)closeSheet();swipeY=null});
+W.bars=[...document.querySelectorAll('[data-wtbar]')].map(mkBar);
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>setTimeout(tick,0)));
-document.body.append($('wt-toast'));
 setInterval(tick,1500);
 render();tick();
 })();
 </script>"""
 
-MARKERS = {"@@WATCH_NAV@@": NAV, "@@WATCH_SECTION@@": SECTION, "@@WATCH_NPBOX@@": NPBOX,
+MARKERS = {"@@WATCH_NAV@@": NAV, "@@WATCH_SECTION@@": SECTION, "@@WATCH_BAR@@": BAR,
            "@@WATCH_TAIL@@": CSS + JS}
 
 def inject(page):

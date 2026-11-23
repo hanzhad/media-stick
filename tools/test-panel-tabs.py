@@ -153,7 +153,8 @@ class Page(unittest.TestCase):
         for root, _, files in os.walk(os.path.join(ROOT, "device")):
             for name in files:
                 if name.endswith((".py", ".xml", ".sh")) and root != os.path.join(ROOT, "device", "files", "usr", "local", "bin"):
-                    text = open(os.path.join(root, name), encoding="utf-8", errors="ignore").read()
+                    with open(os.path.join(root, name), encoding="utf-8", errors="ignore") as f:
+                        text = f.read()
                     for h in re.findall(r"/#(\w+)", text):
                         self.assertIn(h, ("https", "air", "screen", "accounts"), (name, h))
 
@@ -194,6 +195,66 @@ class Page(unittest.TestCase):
         self.assertIn(".tabs,.modes{display:none}", wide)
         self.assertIn("#t-remote{display:contents!important}", wide)
         self.assertIn("#t-screen{display:block!important", wide)
+
+    def rc(self):
+        return self.page.split('<div class="card rc">', 1)[1].split('<div id="t-screen">', 1)[0]
+
+    def test_the_remote_card_is_never_replaced_by_the_player(self):
+        for gone in ("wtdp", "wtnp", "wt-npbox", "wt-pback", "wt-pfull", "Крестовина", "W.rp"):
+            self.assertNotIn(gone, self.page)
+        self.assertEqual(self.page.count('<div data-wtbar'), 2)       # the bar of «Смотреть» and the bar of «Пульт»
+        # the bar is above the mode switch, in all modes, and the card only gets a little shorter under it
+        remote = self.page.split('<section id="t-remote"', 1)[1]
+        self.assertLess(remote.index("data-wtbar"), remote.index('class="modes"'))
+        self.assertIn("@media (max-width:899px){body.np .rc{height:calc(100vh - 284px)}}", self.page)
+
+    def test_the_buttons_mode_rows(self):
+        rows = [re.findall(r'(?:data-a|id)="([\w-]+)"', g) for g in self.rc().split('<div class="grp">')[1:]]
+        self.assertEqual(rows, [["back", "home", "contextmenu", "txt-open"], ["volumedown", "mute", "volumeup"]])
+        self.assertIn('data-a="contextmenu" aria-label="Ещё"', self.rc())
+        self.assertIn('id="txt-open" aria-label="Текст"', self.rc())
+        for gone in ("rewind", "fastforward", "playpause", '"stop"', '"info"', '"osd"', "Инфо", "Панель"):
+            self.assertNotIn(gone, self.rc())
+        self.assertIn('data-a="select"', self.rc())                  # the D-pad stays
+
+    def test_the_screen_mode_row(self):
+        screen = self.page.split('<div id="t-screen">', 1)[1].split("</section>", 1)[0]
+        row = screen.split('<div class="grp">', 1)[1].split("</div>", 1)[0]
+        self.assertEqual(re.findall(r'data-a="(\w+)"', row), ["back", "home", "contextmenu"])
+
+    def test_the_computer_keyboard_shortcuts_stay(self):
+        self.assertIn("const KEYS={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Enter:'select',Backspace:'back',"
+                      "Escape:'back',' ':'playpause',c:'contextmenu',i:'info',h:'home','+':'volumeup','-':'volumedown',m:'mute'};", self.page)
+
+    def test_the_text_field_is_gone_and_the_button_opens_the_overlay(self):
+        for gone in ('id="txt"', "Текст в поиск Kodi", "sendText"):
+            self.assertNotIn(gone, self.page)
+        js = self.page
+        self.assertIn("function kbManual()", js)
+        self.assertIn("$('txt-open').addEventListener('click',()=>{buzz();kbManual()})", js)
+        self.assertIn("$('kb-t').textContent='Текст на ТВ';$('kb-x').textContent='Закрыть'", js)
+        self.assertIn("if(!k&&kbMan)return;", js)                    # the status poll does not close it
+        self.assertIn("if(kbMan){kbMan=false;kbOpen=false;", js)     # the TV's own keyboard takes over
+        self.assertIn("function kbClose(){kbMan=false;kbUi(null);", js)     # «Готово» (done:true) closes it
+        self.assertIn("kbSend(true);kbClose()", js)
+        self.assertIn("api('/api/text',{text:v,done:!!done}).catch(keyFailed)", js)
+        # «Закрыть» only hides it
+        self.assertIn("$('kb-x').addEventListener('click',()=>{if(kbMan){kbMan=false;kbOpen=false;$('kb-in').blur();"
+                      "$('kb').classList.add('hide')", js)
+
+    def test_one_toast_and_failed_keys_say_so(self):
+        js = self.page
+        self.assertEqual(js.count('id="toast"'), 1)
+        self.assertIn("function toast(text)", js)
+        self.assertIn("function keyFailed(e){const now=Date.now();if(now-failAt<2000)return;failAt=now;toast(tvErr(e))}", js)
+        self.assertIn("return 'ТВ не ответил'", js)
+        self.assertIn("if(!e||!e.http)return 'ТВ не ответил';", js)  # unreachable box: no server message to quote
+        self.assertIn("e.http=r.status", js)                         # a rejected reply carries its status and text
+        self.assertIn("api('/api/key',{action:a}).then(", js)
+        self.assertIn(".catch(keyFailed);\n  clearTimeout(tickSoon)", js)
+        self.assertIn("function pressKey(a)", js)
+        self.assertIn(".toast{position:fixed", js)
+        self.assertNotIn("wt-toast", js)
 
     def test_scripts_have_balanced_brackets_and_no_marker(self):
         scripts = re.findall(r"<script>(.*?)</script>", self.page, re.S)
