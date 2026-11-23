@@ -300,7 +300,7 @@ class Page(unittest.TestCase):
         self.assertGreaterEqual(len(labels), 6)
         for l in labels:
             self.assertTrue(l.startswith("Нажмите ещё раз, чтобы "), l)
-        for want in ("перезагрузить", "сменить", "отключить", "выйти", "удалить", "отменить"):
+        for want in ("перезагрузить", "сменить", "отключить", "выйти", "удалить", "обновить код"):
             self.assertIn("Нажмите ещё раз, чтобы " + want, labels)
         for gone in ("Точно ", "чтобы подтвердить"):
             self.assertNotIn(gone, self.page)

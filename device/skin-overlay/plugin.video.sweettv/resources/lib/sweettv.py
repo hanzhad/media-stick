@@ -430,7 +430,7 @@ def show_popup(auth_code, qrcode_path=None):
 
 @plugin.route('/login')
 def login(ms_mode=None):
-    # media-stick begin: `partner` (the code is typed into the Friendly Share page by hand, for hours) comes as the argument or as the phone's request
+    # media-stick begin: the mode comes as the argument or as the phone's request (the phone asks for none: normal)
     if _ms:
         _ms.begin('sweettv')
         ms_mode = _ms.clean_mode(ms_mode or _ms.take_mode('sweettv'))
@@ -454,10 +454,9 @@ def login(ms_mode=None):
     # media-stick begin: the code and the link the QR holds, for the TV screen and the phone page
     ms_poll = None
     if _ms:
-        _ms.publish('sweettv', 'waiting', code=auth_code, url='https://sweet.tv/addDevice', mode=ms_mode)   # ten minutes, six hours in that mode
-        ms_deadline = time.time() + _ms.ttl_for(ms_mode)  # no popup to close: the code runs out on its own
-        if ms_mode == _ms.PARTNER:
-            ms_poll = _ms.PartnerPoll(time.time())
+        _ms.publish('sweettv', 'waiting', code=auth_code, url='https://sweet.tv/addDevice', mode=ms_mode)   # six hours: the code is typed into a reseller's page, maybe much later
+        ms_deadline = time.time() + _ms.ttl_for(ms_mode, 'sweettv')  # no popup to close: the code runs out on its own
+        ms_poll = _ms.PartnerPoll(time.time())   # patient checks: gentle pace, a lost network is waited out, an expired code is told
 
     def ms_wait(seconds):
         # a long pause in short slices: the heartbeat goes on (a minute of silence reads as dead) and a stop request is seen
@@ -505,7 +504,7 @@ def login(ms_mode=None):
                         xbmcvfs.delete(path)
                     return
                 if time.time() > ms_deadline:
-                    _ms.publish('sweettv', 'failed')
+                    _ms.publish('sweettv', 'failed', reason=_ms.EXPIRED)
                     helper.set_setting('logged', 'false')
                     if path is not None:
                         xbmcvfs.delete(path)
@@ -517,7 +516,7 @@ def login(ms_mode=None):
                 if path is not None:
                     xbmcvfs.delete(path)
                 return
-            # media-stick begin: partner: a check that raises (upstream's json() on a missing response, a page that is not JSON) or answers
+            # media-stick begin: patient: a check that raises (upstream's json() on a missing response, a page that is not JSON) or answers
             # with something that is not an object is "no answer" or an unknown answer, not the end of the sign-in
             try:
                 jsdata = helper.request_sess(helper.check_auth_url, 'post', headers=headers, data=json_data, json=True,
@@ -532,11 +531,17 @@ def login(ms_mode=None):
             # media-stick end
 
             if jsdata is None:
-                # media-stick begin: partner: no answer (the network is down) is waited out with growing pauses until the code runs out
+                # media-stick begin: patient: no answer (the network is down) is waited out with growing pauses until the code runs out or, after half an hour of silence, is given up
                 if ms_poll is not None:
                     ms_pause, ms_note = ms_poll.no_answer(time.time())
                     if ms_note:
                         xbmc.log(ms_note, xbmc.LOGWARNING)
+                    if ms_poll.lost(time.time()):
+                        _ms.publish('sweettv', 'failed', reason=_ms.EXPIRED)
+                        helper.set_setting('logged', 'false')
+                        if path is not None:
+                            xbmcvfs.delete(path)
+                        return
                     ms_wait(ms_pause)
                     continue
                 if _ms:
@@ -548,14 +553,14 @@ def login(ms_mode=None):
             if jsdata.get("result") == "COMPLETED":
                 result = jsdata
             else:
-                # media-stick begin: partner: a refusal ends it, an answer nobody has described is logged and waited on, and after
+                # media-stick begin: patient: a refusal ends it, an answer nobody has described is logged and waited on, and after
                 # ten minutes the checks come slower
                 if ms_poll is not None:
                     ms_verdict, ms_note = ms_poll.answer(jsdata, time.time())
                     if ms_note:
                         xbmc.log(ms_note, xbmc.LOGWARNING)
                     if ms_verdict == 'refused':
-                        _ms.publish('sweettv', 'failed')
+                        _ms.publish('sweettv', 'failed', reason=_ms.EXPIRED)
                         helper.set_setting('logged', 'false')
                         if path is not None:
                             xbmcvfs.delete(path)

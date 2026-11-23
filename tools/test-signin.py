@@ -161,11 +161,18 @@ class Partner(unittest.TestCase):
             ms.clear_mode(service)
 
     def test_a_sign_in_is_normal_unless_it_says_partner_and_each_lives_as_long_as_its_mode_allows(self):
-        ms.publish("sweettv", "waiting", code="12345")
-        s = ms.read("sweettv")
+        ms.publish("youtube", "waiting", code="ABC-DEF-GHI")
+        s = ms.read("youtube")
         self.assertEqual(s["mode"], "normal")
         self.assertLessEqual(s["left"], 10 * 60)
         self.assertGreater(s["left"], 10 * 60 - 5)
+        ms.publish("sweettv", "waiting", code="12345")                           # SWEET.TV's own wait: six hours in the normal mode too
+        s = ms.read("sweettv")
+        self.assertEqual(s["mode"], "normal")
+        self.assertLessEqual(s["left"], 6 * 60 * 60)
+        self.assertGreater(s["left"], 6 * 60 * 60 - 5)
+        self.assertEqual(ms.ttl_for("normal", "sweettv"), 6 * 60 * 60)
+        self.assertEqual((ms.ttl_for("normal", "youtube"), ms.ttl_for("normal")), (10 * 60, 10 * 60))
         ms.publish("sweettv", "waiting", code="12345", mode="partner")
         s = ms.read("sweettv")
         self.assertEqual(s["mode"], "partner")
@@ -282,15 +289,45 @@ class Partner(unittest.TestCase):
         self.assertIn("WAITING_FOR_PARTNER", poll.answer({"result": "WAITING_FOR_PARTNER", "code": 13}, 10 + ms.LOG_AGAIN)[1])
         self.assertIn("OTHER", poll.answer({"result": "OTHER"}, 11)[1])           # a different one is logged at once
 
-    def test_no_text_means_refused_until_one_is_named(self):
+    def test_no_text_means_refused_until_one_is_named_but_an_expired_code_is_told(self):
         self.assertEqual(ms.SWEETTV_REFUSED, frozenset())
-        self.assertEqual(ms.PartnerPoll(0).answer({"result": "CODE_EXPIRED"}, 1)[0], "unknown")
-        with unittest.mock.patch.object(ms, "SWEETTV_REFUSED", frozenset({"CODE_EXPIRED"})):
-            verdict, note = ms.PartnerPoll(0).answer({"result": "CODE_EXPIRED"}, 1)
+        self.assertEqual(ms.PartnerPoll(0).answer({"result": "SOMETHING_NEW"}, 1)[0], "unknown")
+        with unittest.mock.patch.object(ms, "SWEETTV_REFUSED", frozenset({"SOMETHING_NEW"})):
+            verdict, note = ms.PartnerPoll(0).answer({"result": "SOMETHING_NEW"}, 1)
         self.assertEqual(verdict, "refused")
-        self.assertIn("CODE_EXPIRED", note)
+        self.assertIn("SOMETHING_NEW", note)
+        for text in ("CODE_EXPIRED", "AUTH_CODE_EXPIRED", "expired"):         # whatever the exact word: it says the code ran out
+            verdict, note = ms.PartnerPoll(0).answer({"result": text}, 1)
+            self.assertEqual(verdict, "refused", text)
+            self.assertIn(text, note)
+        self.assertEqual(ms.PartnerPoll(0).answer({"result": ["EXPIRED"]}, 1)[0], "unknown")   # not even a text
         self.assertEqual(ms.PartnerPoll(0, refused={"NO"}).answer({"result": "NO"}, 1)[0], "refused")
         self.assertEqual(ms.PartnerPoll(0, refused={"NO"}).answer({"result": ["NO"]}, 1)[0], "unknown")   # not even a text
+
+    def test_a_check_with_no_answer_for_half_an_hour_is_given_up_and_one_answer_starts_it_over(self):
+        poll = ms.PartnerPoll(0)
+        self.assertFalse(poll.lost(10 ** 6))                                      # nothing failed yet
+        poll.no_answer(100)
+        self.assertFalse(poll.lost(100 + ms.NO_ANSWER_LIMIT - 1))
+        self.assertTrue(poll.lost(100 + ms.NO_ANSWER_LIMIT))
+        poll.no_answer(100 + 600)
+        self.assertTrue(poll.lost(100 + ms.NO_ANSWER_LIMIT))                      # the first miss counts, not the last
+        poll.answer({"result": "PENDING"}, 5000)
+        self.assertFalse(poll.lost(5000 + ms.NO_ANSWER_LIMIT * 2))
+        poll.no_answer(9000)
+        self.assertFalse(poll.lost(9000 + ms.NO_ANSWER_LIMIT - 1))
+
+    def test_a_failed_state_says_why_only_with_a_reason_it_knows(self):
+        ms.publish("sweettv", "failed", reason=ms.EXPIRED)
+        self.assertEqual(ms.read("sweettv")["reason"], "expired")
+        ms.publish("sweettv", "failed", reason="<script>")
+        self.assertEqual(ms.read("sweettv")["reason"], "")
+        ms.publish("sweettv", "failed")
+        self.assertEqual(ms.read("sweettv")["reason"], "")
+        ms.publish("sweettv", "cancelled", reason=ms.EXPIRED)                      # a reason belongs to a failure only
+        self.assertEqual(ms.read("sweettv")["reason"], "")
+        ms.publish("sweettv", "waiting", code="1", reason=ms.EXPIRED)
+        self.assertEqual(ms.read("sweettv")["reason"], "")
 
     def test_a_logged_reply_is_short_and_hides_what_looks_like_a_secret(self):
         reply = {"result": "ODD", "access_token": "SECRET-1", "refresh_token": "SECRET-2", "auth_code": "SECRET-3",
@@ -901,15 +938,20 @@ class SweetTVSignIn(unittest.TestCase):
         sweet.login()
         self.assertEqual(self.states(), ["waiting", "failed"])
         self.assertEqual(sweet.helper.settings["logged"], "false")
-        self.assertGreaterEqual(clock.now - start, 10 * 60)
-        self.assertLess(clock.now - start, 10 * 60 + 10)
+        self.assertGreaterEqual(clock.now - start, 6 * 60 * 60)         # the code is not given up on for six hours
+        self.assertLess(clock.now - start, 6 * 60 * 60 + 20)
+        self.assertEqual(self.seen[1][1]["reason"], "expired")           # and the phone is told to ask for a new one
 
-    def test_a_check_that_gets_no_answer_ends_as_failed(self):
-        sweet, _ = self.device()
-        sweet.helper.checks = [None]
+    def test_a_check_that_keeps_getting_no_answer_ends_as_failed_and_expired(self):
+        sweet, clock = self.device()
+        start = clock.now
+        sweet.helper.checks = [None] * 2000
         sweet.login()
         self.assertEqual(self.states(), ["waiting", "failed"])
         self.assertEqual(ms.read("sweettv")["state"], "failed")
+        self.assertEqual(ms.read("sweettv")["reason"], "expired")
+        self.assertGreaterEqual(clock.now - start, ms.NO_ANSWER_LIMIT)
+        self.assertLess(clock.now - start, ms.NO_ANSWER_LIMIT + 70)
 
     def test_a_refused_code_request_ends_as_failed(self):
         sweet, _ = self.device()
@@ -991,16 +1033,36 @@ class SweetTVPartnerSignIn(unittest.TestCase):
         sweet.login()
         self.assertEqual(self.seen[0][1]["mode"], "normal")
 
-    def test_a_normal_sign_in_is_what_it_was(self):
+    def test_the_one_sweettv_sign_in_is_the_normal_mode_with_the_long_wait(self):
         sweet, clock = self.device()
         start = clock.now
         left = []
         sweet.helper.on_check = lambda n: left.append(ms.read("sweettv")["left"])
         sweet.login()
         self.assertEqual(self.states(), ["waiting", "failed"])
-        self.assertEqual(self.seen[0][1]["mode"], "normal")
-        self.assertLessEqual(left[0], 10 * 60)
-        self.assertLess(clock.now - start, 10 * 60 + 10)
+        self.assertEqual(self.seen[0][1]["mode"], "normal")             # the normal screens: code, link, QR
+        self.assertGreater(left[0], 6 * 60 * 60 - 5)
+        self.assertGreaterEqual(clock.now - start, 6 * 60 * 60)
+        self.assertLess(clock.now - start, 6 * 60 * 60 + 20)
+        self.assertEqual(self.seen[1][1]["reason"], "expired")
+
+    def test_the_code_is_never_replaced_while_it_waits(self):
+        sweet, _ = self.device()
+        sweet.helper.checks = [{"result": "PENDING"}] * 300 + [COMPLETED]
+        sweet.login()
+        self.assertEqual(sweet.helper.requests.count(sweet.helper.auth_url), 1)        # one Start.json: one code, for the whole wait
+        self.assertEqual(self.states(), ["waiting", "done"])
+        self.assertEqual(len([1 for a, k in self.seen if a[1] == "waiting"]), 1)
+
+    def test_an_expired_code_that_sweettv_names_ends_as_failed_with_the_reason(self):
+        sweet, _ = self.device()
+        sweet.helper.checks = [{"result": "PENDING"}, {"result": "CODE_EXPIRED"}, COMPLETED]
+        sweet.login()
+        self.assertEqual(self.states(), ["waiting", "failed"])
+        self.assertEqual(self.seen[1][1]["reason"], "expired")
+        self.assertEqual(len(self.checked), 2)                           # it stopped asking
+        self.assertEqual(sweet.helper.settings["logged"], "false")
+        self.assertTrue(any("CODE_EXPIRED" in m for m in self.warnings(sweet)))
 
     def test_checks_come_every_three_seconds_then_every_twelve_after_ten_minutes(self):
         sweet, clock = self.device()
@@ -1038,24 +1100,35 @@ class SweetTVPartnerSignIn(unittest.TestCase):
         self.assertEqual(self.gaps(), [5.0, 10.0, 20.0])
         self.assertTrue(any("check failed" in m for m in self.warnings(sweet)))
 
-    def test_a_normal_sign_in_does_not_swallow_an_exception(self):
+    def test_a_plain_sign_in_survives_a_check_that_raises(self):
         sweet, _ = self.device()
 
         def on_check(n):
-            raise AttributeError("no response")
+            if n == 1:
+                raise AttributeError("no response")
         sweet.helper.on_check = on_check
-        with self.assertRaises(AttributeError):
-            sweet.login()
+        sweet.helper.checks = [COMPLETED]
+        sweet.login()
+        self.assertEqual(self.states(), ["waiting", "done"])
 
-    def test_without_an_answer_all_the_way_it_ends_failed_at_the_deadline_and_not_before(self):
+    def test_without_an_answer_for_half_an_hour_it_ends_failed_and_expired_and_not_before(self):
         sweet, clock = self.device()
         start = clock.now
         sweet.helper.checks = [None] * 2000
         sweet.login(ms_mode="partner")
         self.assertEqual(self.states(), ["waiting", "failed"])
-        self.assertGreaterEqual(clock.now - start, 6 * 60 * 60)
-        self.assertLess(clock.now - start, 6 * 60 * 60 + 70)
+        self.assertGreaterEqual(clock.now - start, ms.NO_ANSWER_LIMIT)
+        self.assertLess(clock.now - start, ms.NO_ANSWER_LIMIT + 70)
+        self.assertEqual(self.seen[1][1]["reason"], "expired")
         self.assertEqual(sweet.helper.settings["logged"], "false")
+
+    def test_a_network_that_comes_back_in_time_is_waited_out(self):
+        sweet, clock = self.device()
+        start = clock.now
+        sweet.helper.checks = [None] * 20 + [COMPLETED]                    # about 20 minutes of silence
+        sweet.login(ms_mode="partner")
+        self.assertEqual(self.states(), ["waiting", "done"])
+        self.assertLess(clock.now - start, ms.NO_ANSWER_LIMIT)
 
     def test_the_heartbeat_never_goes_quiet_for_as_long_as_the_state_would_be_read_as_dead(self):
         sweet, clock = self.device()

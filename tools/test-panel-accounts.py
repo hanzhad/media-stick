@@ -159,13 +159,19 @@ class Validation(unittest.TestCase):
         self.assertEqual(pa.public_signin(dict(s, mode="admin"))["mode"], "normal")
         self.assertEqual(pa.public_signin({k: v for k, v in s.items() if k != "mode"})["mode"], "normal")
 
+    def test_a_failed_state_tells_the_page_only_a_reason_it_knows(self):
+        s = {"service": "sweettv", "name": "SWEET.TV", "state": "failed", "reason": "expired", "updated": 5}
+        self.assertEqual(pa.public_signin(s)["reason"], "expired")
+        for odd in ("<script>", "", None, 1):
+            self.assertEqual(pa.public_signin(dict(s, reason=odd))["reason"], "", odd)
+        self.assertEqual(pa.public_signin({k: v for k, v in s.items() if k != "reason"})["reason"], "")
+
     def test_the_mode_of_a_sign_in(self):
         for value in (None, "", "normal"):
             self.assertEqual(pa.clean_mode(value, "sweettv"), "normal")
             self.assertEqual(pa.clean_mode(value, "youtube"), "normal")
-        self.assertEqual(pa.clean_mode("partner", "sweettv"), "partner")
-        for value, service in (("partner", "youtube"), ("Partner", "sweettv"), ("admin", "sweettv"), (1, "sweettv"),
-                               (["partner"], "sweettv"), (True, "sweettv")):
+        for value, service in (("partner", "youtube"), ("partner", "sweettv"), ("Partner", "sweettv"),
+                               ("admin", "sweettv"), (1, "sweettv"), (["partner"], "sweettv"), (True, "sweettv")):
             with self.assertRaises(pa.Refused, msg=repr((value, service))):
                 pa.clean_mode(value, service)
 
@@ -257,13 +263,18 @@ class Actions(unittest.TestCase):
             self.assertEqual((code, reply), (200, {"ok": True}), action)
             self.assertEqual(self.k.calls, [("Addons.ExecuteAddon", {"addonid": "script.media-stick.home", "params": params})])
 
-    def test_a_partner_sign_in_asks_for_the_mode_in_a_file_and_sends_the_launcher_the_same_words_as_ever(self):
-        reply, code = self.post("signin", {"service": "sweettv", "mode": "partner"})
+    def test_a_sweettv_sign_in_with_no_mode_is_the_one_sign_in_and_asks_for_no_other_mode(self):
+        reply, code = self.post("signin", {"service": "sweettv"})
         self.assertEqual((code, reply), (200, {"ok": True}))
         self.assertEqual(self.k.calls, [("Addons.ExecuteAddon", {"addonid": "script.media-stick.home",
                                                                   "params": ["accounts", "signin", "sweettv"]})])
-        self.assertEqual(ms.requested_mode("sweettv"), "partner")
-        self.assertEqual(ms.requested_mode("youtube"), "normal")
+        self.assertEqual(ms.requested_mode("sweettv"), "normal")
+
+    def test_the_partner_button_is_gone_an_explicit_partner_mode_is_refused(self):
+        reply, code = self.post("signin", {"service": "sweettv", "mode": "partner"})
+        self.assertEqual((code, reply["ok"]), (400, False))
+        self.assertEqual(self.k.calls, [])
+        self.assertEqual(ms.requested_mode("sweettv"), "normal")
 
     def test_a_plain_sign_in_withdraws_a_partner_request_nobody_took(self):
         ms.request_mode("sweettv", "partner")
@@ -282,23 +293,67 @@ class Actions(unittest.TestCase):
         self.assertEqual(ms.requested_mode("youtube"), "normal")
         self.assertFalse(os.path.exists(os.path.join(ms.DIR, "youtube.mode")))
 
-    def test_a_partner_sign_in_that_is_already_waiting_is_left_alone(self):
+    def test_a_sign_in_that_is_already_waiting_is_left_alone(self):
         ms.publish("sweettv", "waiting", code="12345")
-        reply, code = self.post("signin", {"service": "sweettv", "mode": "partner"})
+        reply, code = self.post("signin", {"service": "sweettv"})
         self.assertEqual((code, reply.get("already")), (200, True))
         self.assertEqual((self.k.calls, ms.requested_mode("sweettv")), ([], "normal"))
 
-    def test_a_kodi_that_is_down_leaves_no_partner_request_behind(self):
+    def test_a_kodi_that_is_down_leaves_no_mode_request_behind(self):
         self.k.down = True
-        reply, code = self.post("signin", {"service": "sweettv", "mode": "partner"})
+        reply, code = self.post("signin", {"service": "sweettv"})
         self.assertEqual((code, reply["error"]), (503, pa.KODI_DOWN))
         self.assertEqual(ms.requested_mode("sweettv"), "normal")        # or the next, plain sign-in would become one
 
     def test_a_request_that_cannot_be_written_is_an_error_not_a_quiet_normal_sign_in(self):
         with mock.patch.object(ms, "request_mode", return_value=False):
-            reply, code = self.post("signin", {"service": "sweettv", "mode": "partner"})
+            reply, code = self.post("signin", {"service": "sweettv"})
         self.assertEqual((code, reply["ok"]), (500, False))
         self.assertEqual(self.k.calls, [])
+
+    def stops_when_asked(self):
+        """The add-on's side of a cancel: the waiting state ends as soon as a stop is asked for."""
+        real = ms.request_cancel
+        def request_cancel(service):
+            ok = real(service)
+            ms.publish(service, "cancelled")
+            return ok
+        return mock.patch.object(ms, "request_cancel", request_cancel)
+
+    def test_renew_stops_the_waiting_sweettv_sign_in_and_starts_a_new_one(self):
+        ms.publish("sweettv", "waiting", code="12345")
+        with self.stops_when_asked():
+            reply, code = self.post("renew", {"service": "sweettv"})
+        self.assertEqual((code, reply), (200, {"ok": True}))
+        self.assertEqual(ms.read("sweettv")["state"], "cancelled")          # the old code was given up, no other sign-in was touched
+        self.assertEqual(self.k.calls, [("Addons.ExecuteAddon", {"addonid": "script.media-stick.home",
+                                                                  "params": ["accounts", "signin", "sweettv"]})])
+        self.assertFalse(ms.cancel_requested("youtube"))
+
+    def test_renew_with_nothing_waiting_just_starts_a_sign_in(self):
+        ms.publish("sweettv", "failed", reason="expired")
+        reply, code = self.post("renew", {"service": "sweettv"})
+        self.assertEqual((code, reply), (200, {"ok": True}))
+        self.assertFalse(ms.cancel_requested("sweettv"))
+        self.assertEqual(len(self.k.calls), 1)
+
+    def test_renew_is_for_sweettv_only(self):
+        for body in ({"service": "youtube"}, {"service": "nope"}, {}):
+            reply, code = self.post("renew", body)
+            self.assertEqual((code, reply["ok"]), (400, False), body)
+        self.assertEqual(self.k.calls, [])
+
+    def test_renew_that_the_tv_does_not_follow_is_an_error_and_starts_nothing(self):
+        ms.publish("sweettv", "waiting", code="12345")
+        with mock.patch.object(pa, "RENEW_WAIT", 0.3):
+            reply, code = self.post("renew", {"service": "sweettv"})
+        self.assertEqual((code, reply["ok"]), (504, False))
+        self.assertEqual(self.k.calls, [])
+
+    def test_nothing_renews_a_code_by_itself(self):
+        ms.publish("sweettv", "waiting", code="12345")
+        self.post("signin", {"service": "sweettv"})                         # a second tap on «Войти» is left alone
+        self.assertEqual((ms.read("sweettv")["code"], ms.cancel_requested("sweettv"), self.k.calls), ("12345", False, []))
 
     def test_cancel_is_a_file_not_a_kodi_call(self):
         self.k.down = True   # works with Kodi off
@@ -491,7 +546,7 @@ class GivenUpAnother(unittest.TestCase):
         self.assertIn("try{await accCall('cancel',{service:accSheet.svc});accWatch(20000)}", page)
         self.assertIn("const accLive=()=>!document.hidden&&(accSheet||tab==='settings'||wide())", page)   # also the wide card
         self.assertIn("accSheet||Date.now()<accFastUntil?1500:5000", page)   # every 5 s when idle, hidden pages stop
-        self.assertIn("accWaiting[svc]=false;accMsg(svc,'')", page)         # «Жду код…» goes with the sign-in
+        self.assertIn("accWaiting[svc]=false;accMsg(svc,expired?ACC_EXPIRED:'',expired)", page)   # «Жду код…» goes with the sign-in
         self.assertIn("if(accWaiting[svc]&&!accSheet", page)
 
 
@@ -508,20 +563,26 @@ class Page(unittest.TestCase):
         self.assertIn('rel="noopener"', page)
         self.assertIn("Готово — вы вошли", page)
 
-    def test_the_page_has_the_partner_action_and_its_hint_and_no_qr_link_for_it(self):
+    def test_the_page_has_one_sweettv_sign_in_and_no_friendly_share_button(self):
         page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")
-        self.assertIn("Через Friendly Share", page)
-        self.assertIn("accStart(svc,'partner')", page)
-        self.assertIn("{service:svc,mode}", page)
-        self.assertIn("Скопируйте код и вставьте его в поле «Connection code» на странице Friendly Share, нажмите Save. "
-                      "Не выключайте ТВ на этой странице. Подключают с 14:00 до 00:00.'+left", page)    # then the time left, with hours
-        self.assertIn("ждём подключения", page)                         # the chip and the sheet's title line
-        for gone in ("партнёр", "Партнёр", "специалист", "Код передан", "Поддержка"):
-            self.assertNotIn(gone, page)                                # nobody is handed the code: the person types it
-        self.assertIn("partner=s.mode==='partner', link=partner?'':accSafe(s.link)", page)   # the sheet never opens addDevice
-        self.assertIn("acc-partner", page)
-        self.assertIn("armed('acc-cancel'", page)                      # cancelling a partner's wait asks for a second tap
-        self.assertIn("'Войти'", page)                                 # the old sign-in stays
+        for gone in ("Через Friendly Share", "accStart(svc,'partner')", "{service:svc,mode}", "Connection code", "ждём подключения",
+                     "acc-partner", "partner"):
+            self.assertNotIn(gone, page)
+        self.assertIn("'Войти'", page)                                 # the one button of the card, as for YouTube
+        self.assertIn("link=accSafe(s.link), url=accSafe(s.url)", page)   # the normal sheet: the link, the code, «Открыть страницу входа»
+
+    def test_the_page_can_renew_a_sweettv_code_while_waiting_and_when_it_has_run_out(self):
+        page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")
+        self.assertIn('<button id="acc-renew" class="btn wide hide">Обновить код</button>', page)   # on the sheet, SWEET.TV only
+        self.assertIn("$('acc-renew').classList.toggle('hide',s.service!=='sweettv')", page)
+        self.assertIn("accCall('renew',{service:svc})", page)
+        self.assertIn("armed('acc-renew'", page)                       # the old code stops working: a second tap
+        self.assertIn("const ACC_EXPIRED='Код устарел, нажмите «Обновить код»'", page)
+        self.assertIn("st.reason==='expired'", page)                   # only what the add-on says ran out, not any failure
+        self.assertIn('id="acc-fin-renew"', page)                      # the end of an expired sheet has the button too
+        self.assertIn("if(!expired)accCloseT=setTimeout", page)        # and stays until the person chooses
+        self.assertIn("bren.onclick=()=>accRenew(svc)", page)          # the card's own button, after the sheet is gone
+        self.assertIn("if(accSheet.renew&&Date.now()-accSheet.renew<20000)return", page)   # the sheet is kept while the new code comes
 
     def test_the_accounts_tab_has_a_hidden_bar_for_an_unfinished_keys_wizard(self):
         page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")
@@ -608,20 +669,27 @@ class Served(unittest.TestCase):
         self.assertEqual([a["service"] for a in d["accounts"]], ["youtube", "sweettv"])
         self.assertEqual(d["waiting"][0]["code"], "ABC-DEF-GHI")
 
-    def test_a_partner_sign_in_goes_through_http_and_its_state_comes_back_without_a_link(self):
-        status, d = self.post("signin", {"service": "sweettv", "mode": "partner"})
+    def test_a_sweettv_sign_in_goes_through_http_with_its_link_and_the_long_wait(self):
+        status, d = self.post("signin", {"service": "sweettv"})
         self.assertEqual((status, d), (200, {"ok": True}))
         self.assertEqual(self.kodi.calls[0][1]["params"], ["accounts", "signin", "sweettv"])
-        self.assertEqual(ms.requested_mode("sweettv"), "partner")
-        ms.publish("sweettv", "waiting", code="12345", url="https://sweet.tv/addDevice", mode="partner")
+        ms.publish("sweettv", "waiting", code="12345", url="https://sweet.tv/addDevice")
         status, raw = self.req("GET", "/api/accounts")
-        d = json.loads(raw)
-        w = d["waiting"][0]
-        self.assertEqual((w["mode"], w["code"], w["link"], w["url"]), ("partner", "12345", "", ""))
-        self.assertGreater(w["left"], 6 * 3600 - 10)
-        self.assertNotIn("addDevice", raw)
-        status, d = self.post("signin", {"service": "youtube", "mode": "partner"})
+        w = json.loads(raw)["waiting"][0]
+        self.assertEqual((w["mode"], w["code"], w["link"]), ("normal", "12345", "https://sweet.tv/addDevice?connectCode=12345"))
+        self.assertGreater(w["left"], 6 * 3600 - 10)                   # the code is not given up on our side for six hours
+        status, d = self.post("signin", {"service": "sweettv", "mode": "partner"})
         self.assertEqual(status, 400)
+
+    def test_a_failed_sweettv_code_says_it_ran_out_and_renew_starts_a_new_one(self):
+        ms.publish("sweettv", "failed", reason="expired")
+        status, raw = self.req("GET", "/api/accounts")
+        sweet = [a for a in json.loads(raw)["accounts"] if a["service"] == "sweettv"][0]
+        self.assertEqual((sweet["signin"]["state"], sweet["signin"]["reason"]), ("failed", "expired"))
+        self.kodi.calls.clear()
+        status, d = self.post("renew", {"service": "sweettv"})
+        self.assertEqual((status, d), (200, {"ok": True}))
+        self.assertEqual(self.kodi.calls[0][1]["params"], ["accounts", "signin", "sweettv"])
 
     def test_status_carries_only_the_names_of_waiting_sign_ins(self):
         status, raw = self.req("GET", "/api/status")

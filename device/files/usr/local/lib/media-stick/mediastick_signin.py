@@ -5,12 +5,14 @@ overlay in device/skin-overlay/. The TV screen and the phone page read it and sh
 as a link that opens on the phone with the code already typed in, instead of an address to
 type. Either of them can ask the add-on to stop (request_cancel).
 
-A sign-in has a mode. `normal` is a person at the TV with a phone: ten minutes. `partner` is
-SWEET.TV connected through the Friendly Share page: the person types the code from the TV screen into its
-"Connection code" field by hand, and the subscription is connected within a working day: six hours, polled gently, retried when the network
-drops (PartnerPoll). The phone asks for it (request_mode) and the add-on takes the request
-when it starts; the mode then travels in the published state. waiting_any() tells the update
-script that somebody is still entering a code.
+A sign-in has a mode. `normal` is a person at the TV with a phone, and it is the only one the phone page asks for.
+How long the code is waited for belongs to the service (SERVICES[...]["ttl"], else the mode): ten minutes, but SWEET.TV six
+hours, because the owner's subscription is connected by a reseller's specialist (Friendly Share) who may come hours later and
+the code must not run out on our side. The SWEET.TV add-on also polls gently and retries when the network drops
+(PartnerPoll), and says how it ended: `reason` of a failed state is EXPIRED when the code ran out, SWEET.TV refused it or
+the checks got no answer for too long, so the phone can say "refresh the code". `partner` is the older mode of the same
+patience with its own screens (no QR; the phone no longer asks for it, request_mode still understands it). The mode travels in the
+published state. waiting_any() tells the update script that somebody is still entering a code.
 
 State is plain JSON in a tmpfs directory, written whole and renamed into place, standard
 library only: it imports the same in Kodi's Python, in the panel and in a test.
@@ -50,7 +52,9 @@ RESULT_KEEP = 30    # a finished state stays readable this long, so a page that 
 
 NORMAL, PARTNER = "normal", "partner"
 MODES = (NORMAL, PARTNER)
-TTL = {NORMAL: 10 * 60, PARTNER: 6 * 60 * 60}    # how long the code is waited for, by mode
+TTL = {NORMAL: 10 * 60, PARTNER: 6 * 60 * 60}    # how long the code is waited for, by mode (a service's own "ttl" wins)
+EXPIRED = "expired"                              # the `reason` of a failed state: the code ran out and a new one is needed
+REASONS = (EXPIRED,)
 MODE_KEEP = 120     # a mode the phone asked for is forgotten after this many seconds if no sign-in took it
 CHANNEL_WAIT = 6    # s the end of a YouTube sign-in waits for the answer to "has the account a channel?" (it asks Google)
 ONBOARD_ALIVE = HEARTBEAT + 30    # the onboarding picture of a waiting sign-in dies this long after the last heartbeat
@@ -69,6 +73,7 @@ SERVICES = {
         "signin": "plugin://plugin.video.sweettv/login",
         "link": "https://sweet.tv/addDevice?connectCode={code}",
         "prefill": "sweet.tv/addDevice",
+        "ttl": 6 * 60 * 60,
     },
 }
 
@@ -121,8 +126,9 @@ def clean_mode(mode):
     return PARTNER if mode == PARTNER else NORMAL
 
 
-def ttl_for(mode):
-    return TTL[clean_mode(mode)]
+def ttl_for(mode, service=None):
+    """Seconds a code is waited for: the service's own wait if it has one, else what the mode allows."""
+    return SERVICES.get(service, {}).get("ttl") or TTL[clean_mode(mode)]
 
 
 def _web(url) -> str:
@@ -150,18 +156,21 @@ def link_for(service, code, url="", complete="") -> str:
     return url
 
 
-def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NORMAL, link=""):
+def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NORMAL, link="", reason=""):
     """Say what the add-on is doing: WAITING with the code to enter, or how it ended.
-    `ttl` is how long the code is waited for (seconds); by default what the mode allows. `url` is the page the code
-    is entered on and `link` the provider's complete link with the code in it, when its answer had one (link_for)."""
+    `ttl` is how long the code is waited for (seconds); by default what the service or the mode allows. `url` is the
+    page the code is entered on and `link` the provider's complete link with the code in it, when its answer had one
+    (link_for). `reason` says why a FAILED sign-in failed, when it is known (REASONS)."""
     if service not in SERVICES or state not in STATES:
         return False
     now = int(time.time())
     mode = clean_mode(mode)
     data = {"service": service, "state": state, "mode": mode, "step": int(step), "steps": int(steps),
-            "updated": now, "expires": now + int(ttl_for(mode) if ttl is None else ttl)}
+            "updated": now, "expires": now + int(ttl_for(mode, service) if ttl is None else ttl)}
     if state == WAITING:
         data.update(code=code, url=url, link=link_for(service, code, url, link) if code else url)
+    elif state == FAILED and reason in REASONS:
+        data["reason"] = reason
     stored = _store(service, data)
     _onboard(service, data)
     if service == "youtube" and state == DONE:
@@ -245,6 +254,7 @@ def read(service, now=None):
     out = dict(data)
     out["name"] = SERVICES.get(service, {}).get("name", service)
     out["mode"] = clean_mode(data.get("mode"))
+    out["reason"] = data["reason"] if data["state"] == FAILED and data.get("reason") in REASONS else ""
     out["left"] = max(0, int(expires - now)) if data["state"] == WAITING else 0
     return out
 
@@ -378,11 +388,12 @@ def settle_return(service, switch, now=None):
 
 POLL_FAST, POLL_SLOW, FAST_FOR = 3, 12, 10 * 60     # s between checks, and for how long the quick pace lasts
 RETRY_FIRST, RETRY_MAX = 5, 60                      # s of the pause after a check with no answer: doubles up to the cap
+NO_ANSWER_LIMIT = 30 * 60                           # s of checks in a row with no answer after which the code is given up
 LOG_AGAIN = 10 * 60                                 # the same unknown answer is logged again after this long
 NOTE_MAX = 200
-# The `result` texts of SWEET.TV's check reply that mean the code is refused or has run out. What
-# the server says is not known yet: stays empty until a first run's log (WARNING lines of
-# PartnerPoll) shows it. Anything else that is not COMPLETED is logged and waited on.
+# The `result` texts of SWEET.TV's check reply that mean the code is refused. What the server says is not known
+# yet: stays empty until a first run's log (WARNING lines of PartnerPoll) shows it. Any text with EXPIRED in it
+# (an expired code, whatever the exact word) is a refusal too. Anything else that is not COMPLETED is logged and waited on.
 SWEETTV_REFUSED = frozenset()
 SECRET_KEY = re.compile(r"token|secret|pass|auth|bearer|cookie|session|sign|key", re.I)
 
@@ -405,6 +416,7 @@ class PartnerPoll:
     def __init__(self, started, refused=None):
         self.started, self.refused = started, refused
         self.failures = 0                # checks in a row that got no answer
+        self.first_failure = None        # when the first of them was
         self.logged = {}                 # described unknown answer -> when it was last logged
 
     def delay(self, now):
@@ -412,7 +424,9 @@ class PartnerPoll:
         return POLL_FAST if now - self.started < FAST_FOR else POLL_SLOW
 
     def no_answer(self, now):
-        """(seconds to wait, what to log or "") after a check that got no answer; never gives up."""
+        """(seconds to wait, what to log or "") after a check that got no answer; lost() says when to give up."""
+        if not self.failures:
+            self.first_failure = now
         self.failures += 1
         wait = min(RETRY_MAX, RETRY_FIRST * 2 ** min(self.failures - 1, 6))
         note = ""
@@ -420,15 +434,20 @@ class PartnerPoll:
             note = f"media-stick: SWEET.TV check got no answer ({self.failures} in a row); trying again in {wait} s"
         return wait, note
 
+    def lost(self, now):
+        """True once the checks have got no answer for NO_ANSWER_LIMIT: the code is given up (it may be gone, or the
+        network is: either way the person is told to ask for a new one)."""
+        return bool(self.failures) and self.first_failure is not None and now - self.first_failure >= NO_ANSWER_LIMIT
+
     def answer(self, reply, now):
         """(verdict, what to log or ""): completed | refused | unknown (keep waiting)."""
-        self.failures = 0
+        self.failures, self.first_failure = 0, None
         result = reply.get("result") if isinstance(reply, dict) else None
         if result == "COMPLETED":
             return "completed", ""
         refused = SWEETTV_REFUSED if self.refused is None else self.refused
         text = describe(reply)
-        if isinstance(result, str) and result in refused:
+        if isinstance(result, str) and (result in refused or "EXPIRED" in result.upper()):
             return "refused", f"media-stick: SWEET.TV refused the code: {text}"
         last = self.logged.get(text)
         if last is not None and now - last < LOG_AGAIN:

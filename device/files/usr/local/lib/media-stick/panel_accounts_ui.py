@@ -40,10 +40,10 @@ TAIL = r"""
 .acc-stp{color:var(--dim);font-size:15px}
 .acc-x{background:none;border:0;color:var(--dim);font-size:15px;min-height:44px;padding:0 4px}
 .acc-code{font:700 clamp(26px,9vw,40px)/1.1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.06em;text-align:center;padding:18px 8px;background:var(--bg);border-radius:16px;user-select:all;-webkit-user-select:all;overflow-wrap:anywhere}
-.acc-sheet.acc-partner .acc-code{font-size:clamp(40px,14vw,64px);padding:26px 8px}
 .acc-box .btn{margin-top:10px}
 .acc-hint{margin-top:10px;color:var(--faint);font-size:13px;text-align:center;min-height:1.4em}
-.acc-fin{display:none;text-align:center;font-size:20px;font-weight:600;padding:28px 0}
+.acc-fin{display:none;text-align:center;font-size:20px;font-weight:600;padding:28px 0 8px}
+.acc-fin .btn{font-weight:400}
 .acc-sheet.acc-end .acc-live{display:none}
 .acc-sheet.acc-end .acc-fin{display:block}
 .acc-mini{display:none;width:calc(100% - 24px);max-width:416px;min-height:52px;align-items:center;justify-content:space-between;gap:10px;padding:0 18px;border:0;border-radius:16px;background:#fff;color:var(--bg);font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.4)}
@@ -65,10 +65,11 @@ TAIL = r"""
       <div id="acc-code" class="acc-code"></div>
       <button id="acc-copy" class="btn wide">Скопировать</button>
       <a id="acc-open" class="btn acc wide" target="_blank" rel="noopener">Открыть страницу входа</a>
+      <button id="acc-renew" class="btn wide hide">Обновить код</button>
       <div id="acc-hint" class="acc-hint"></div>
       <button id="acc-cancel" class="btn wide">Отмена</button>
     </div>
-    <div id="acc-fin" class="acc-fin"></div>
+    <div id="acc-fin" class="acc-fin"><div id="acc-fin-t"></div><button id="acc-fin-renew" class="btn acc wide hide">Обновить код</button><button id="acc-fin-close" class="btn wide hide">Закрыть</button></div>
   </div>
   <button id="acc-mini" class="acc-mini"><span id="acc-mt"></span><span>Показать</span></button>
 </div>
@@ -89,7 +90,7 @@ async function accCall(what,body){
   if(!r.ok||j.ok===false){const e=new Error(j.error||'Не получилось');e.data=j;throw e}   // the reply's other fields stay with the error
   return j
 }
-let accData=null, accTimer=null, accBusy=false, accKey='', accSheet=null, accCloseT=null, accAsked={}, accSig={}, accWaiting={}, accFastUntil=0;
+let accData=null, accTimer=null, accBusy=false, accKey='', accSheet=null, accCloseT=null, accAsked={}, accSig={}, accWaiting={}, accFastUntil=0, accExpired={};   // accExpired: a SWEET.TV code that ran out, until a new one is asked for
 // a profile's progress: how many of YouTube's four sign-ins it has; SWEET.TV is 0 or 1
 const accScore=a=>!a?0:a.service==='youtube'?a.profiles.reduce((n,p)=>n+p.tokens,0):(a.signed_in?1:0);
 // polled while the card can be seen: a sheet is open, the settings are open, or the whole panel is on one wide screen
@@ -128,12 +129,12 @@ function accCard(svc){
   const chips=accEl('div','acc-chips');
   const btns=accEl('div','acc-btns');
   const bin=accEl('button','btn','Войти'),bother=accEl('button','btn','Войти другим аккаунтом'),bout=accEl('button','btn','Выйти');
-  const bpar=accEl('button','btn','Через Friendly Share');   // SWEET.TV only: the code is typed into the Friendly Share page by hand
+  const bren=accEl('button','btn','Обновить код');   // SWEET.TV only, after its code ran out
   const bkeys=accEl('button','acc-lnk','Ключи Google ›');   // YouTube only: the Google keys wizard (panel_ytkeys_ui.py), needed once
-  bin.dataset.k='in';bother.dataset.k='another';bout.dataset.k='out';bpar.dataset.k='partner';bkeys.dataset.k='keys';bout.id='acc-out-'+svc;
-  bin.onclick=()=>accStart(svc);bpar.onclick=()=>accStart(svc,'partner');bkeys.onclick=()=>ykOpen();bother.onclick=()=>accAnother(svc);
+  bin.dataset.k='in';bother.dataset.k='another';bout.dataset.k='out';bren.dataset.k='renew';bkeys.dataset.k='keys';bout.id='acc-out-'+svc;
+  bin.onclick=()=>accStart(svc);bren.onclick=()=>accRenew(svc);bkeys.onclick=()=>ykOpen();bother.onclick=()=>accAnother(svc);
   bout.onclick=()=>{if(armed(bout.id,'Нажмите ещё раз, чтобы выйти'))accOut(svc)};
-  btns.append(bin,bother,bpar,bout);
+  btns.append(bin,bother,bren,bout);
   const who=accEl('div','acc-who hide');who.append(accEl('b'),accEl('small'));
   c.append(hd,who,accEl('div','acc-ch hide'),chips,btns,accEl('div','acc-m'),bkeys);
   $('acc-list').append(c);return c
@@ -142,15 +143,14 @@ function accMsg(svc,t,bad){const m=accCard(svc).querySelector('.acc-m');m.textCo
 function accRender(list){
   const box=$('acc-list');if(box.querySelector('.cap'))box.textContent='';
   list.forEach(a=>{
-    const sig=JSON.stringify([a.profiles,a.signed_in,!!(a.signin&&a.signin.state==='waiting'),a.signin&&a.signin.mode]);
+    const sig=JSON.stringify([a.profiles,a.signed_in,!!(a.signin&&a.signin.state==='waiting'),!!accExpired[a.service]]);
     const c=accCard(a.service);
     if(accSig[a.service]===sig)return;accSig[a.service]=sig;
     const yt=a.service==='youtube', cur=a.profiles.find(p=>p.current), waiting=!!(a.signin&&a.signin.state==='waiting');
-    const byPartner=waiting&&a.signin.mode==='partner';
     c.querySelector('.acc-hd b').textContent=a.name;
     // YouTube: the profile on the TV is who is signed in; any of the add-on's tokens is enough to watch
     const on=yt?!!(cur&&cur.signed_in):a.signed_in;
-    c.querySelector('.acc-st').textContent=byPartner?'ждём подключения':waiting?'ждёт ввода кода':on?'вы вошли':'вход не выполнен';
+    c.querySelector('.acc-st').textContent=waiting?'ждёт ввода кода':on?'вы вошли':'вход не выполнен';
     const who=c.querySelector('.acc-who');
     who.querySelector('b').textContent=yt&&on?accLabel(cur):'';
     who.querySelector('small').textContent=yt&&on?(cur.channel==='yes'?'Канал YouTube':cur.channel==='no'?'Аккаунт Google без канала':'Аккаунт Google')
@@ -169,9 +169,10 @@ function accRender(list){
     ch.textContent=cs==='no'?ACC_NO_CHANNEL:'';
     ch.classList.toggle('warn',cs==='no');ch.classList.toggle('hide',!ch.textContent);
     const q=k=>c.querySelector('[data-k='+k+']');
-    q('in').classList.toggle('hide',on);q('in').classList.add('acc');q('in').disabled=waiting;
+    const renew=a.service==='sweettv'&&!on&&!!accExpired[a.service];
+    q('in').classList.toggle('hide',on||renew);q('in').classList.add('acc');q('in').disabled=waiting;
     q('another').classList.toggle('hide',!(yt&&on));q('another').classList.add('acc');q('another').disabled=waiting;
-    q('partner').classList.toggle('hide',a.service!=='sweettv'||on);q('partner').disabled=waiting;
+    q('renew').classList.toggle('hide',!renew);q('renew').disabled=waiting;
     q('keys').classList.toggle('hide',!yt);
     q('out').classList.toggle('hide',!on);
   })
@@ -181,9 +182,9 @@ async function accRun(svc,what,body,doing,done){
   try{await accCall(what,body);accMsg(svc,done||'');accAsked[svc]=Date.now();accPoll();return true}
   catch(e){accMsg(svc,e.message,true);return false}
 }
-async function accStart(svc,mode){
-  buzz();
-  if(await accRun(svc,'signin',mode?{service:svc,mode}:{service:svc},'Прошу у приставки код…','Жду код от приставки…')){
+async function accStart(svc){
+  buzz();accExpired[svc]=false;
+  if(await accRun(svc,'signin',{service:svc},'Прошу у приставки код…','Жду код от приставки…')){
     accWaiting[svc]=true;
     setTimeout(()=>{if(accWaiting[svc]&&!accSheet&&Date.now()-accAsked[svc]>=14000){accWaiting[svc]=false;accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)}},15000)
   }
@@ -205,40 +206,61 @@ async function accAnother(svc){
 }
 function accOut(svc){accRun(svc,'signout',{service:svc},'Выхожу…','Вы вышли.')}
 
+// «Обновить код»: the waiting sign-in is stopped and a new one asks for a new code. Nothing does it by itself: the code
+// may have been typed into another page. From the sheet a second tap is needed (the old code stops working at once).
+async function accRenew(svc){
+  if(accSheet&&accSheet.svc===svc){
+    if(!armed('acc-renew','Нажмите ещё раз, чтобы обновить код'))return;
+    accSheet.renew=Date.now();$('acc-renew').disabled=true;$('acc-renew').textContent='Обновляю…'
+  }else{accMsg(svc,'Прошу у приставки новый код…');$('acc-fin-t').textContent='Прошу у приставки новый код…'}
+  buzz();accExpired[svc]=false;
+  try{
+    await accCall('renew',{service:svc});
+    accAsked[svc]=Date.now();accWaiting[svc]=true;accMsg(svc,'Жду код от приставки…');accPoll()
+  }catch(e){
+    if(accSheet){accSheet.renew=0;$('acc-renew').disabled=false;$('acc-renew').textContent='Обновить код';$('acc-hint').textContent=e.message}
+    else{$('acc-fin-t').textContent=e.message;accMsg(svc,e.message,true)}
+  }
+}
 // ---- the sheet ----
 function accOpen(s){
-  clearTimeout(accCloseT);accCloseT=null;
-  accSheet={svc:s.service,code:'',step:0,score:accScore((accData.accounts||[]).find(x=>x.service===s.service))};
+  clearTimeout(accCloseT);accCloseT=null;accExpired[s.service]=false;
+  accSheet={svc:s.service,code:'',step:0,renew:0,score:accScore((accData.accounts||[]).find(x=>x.service===s.service))};
   const sh=$('acc-sheet');sh.classList.remove('hide','acc-min','acc-end');
   $('acc-cancel').disabled=false;$('acc-cancel').textContent='Отмена';
   accShow(s);buzz();accLoop()
 }
-// a Friendly Share wait (the partner mode) lasts hours: "5 ч 58 мин"; a normal one minutes: "7 мин."
+// a SWEET.TV wait lasts hours: "5 ч 58 мин"; YouTube's minutes: "7 мин."
 const accLeft=sec=>{const m=Math.ceil(sec/60);return sec<=0?'':m>=60?' Осталось '+Math.floor(m/60)+' ч '+m%60+' мин.':' Осталось '+m+' мин.'};
 function accShow(s){
-  const was=accSheet.code, partner=s.mode==='partner', link=partner?'':accSafe(s.link), url=partner?'':accSafe(s.url);
-  accSheet.mode=s.mode;$('acc-sheet').classList.toggle('acc-partner',partner);
+  const was=accSheet.code, link=accSafe(s.link), url=accSafe(s.url);
+  $('acc-renew').classList.toggle('hide',s.service!=='sweettv');
   $('acc-ttl').textContent=s.name;
   $('acc-stp').textContent=s.steps>1?'Код '+s.step+' из '+s.steps:'';
   $('acc-code').textContent=s.code;
   const o=$('acc-open');o.classList.toggle('hide',!link);if(link)o.href=link;
   const left=accLeft(s.left);
-  $('acc-hint').textContent=partner?'Скопируйте код и вставьте его в поле «Connection code» на странице Friendly Share, нажмите Save. Не выключайте ТВ на этой странице. Подключают с 14:00 до 00:00.'+left
-    :(link?'Страница откроется с уже введённым кодом.':url?'Откройте '+url.replace(/^https:\/\//,'')+' и введите код.':'Введите код на странице входа.')+left;
-  $('acc-mt').textContent=s.name+(partner?' · ждём подключения':s.steps>1?' · код '+s.step+' из '+s.steps:' · ждёт код');
-  if(was&&(was!==s.code||accSheet.step!==s.step)){   // YouTube moved on to its next code
+  $('acc-hint').textContent=(link?'Страница откроется с уже введённым кодом.':url?'Откройте '+url.replace(/^https:\/\//,'')+' и введите код.':'Введите код на странице входа.')+left;
+  $('acc-mt').textContent=s.name+(s.steps>1?' · код '+s.step+' из '+s.steps:' · ждёт код');
+  const moved=was&&(was!==s.code||accSheet.step!==s.step);
+  if(moved&&!accSheet.renew){   // YouTube moved on to its next code
     $('acc-sheet').classList.remove('acc-min');buzz();
     $('acc-hint').textContent='Новый код: нажмите «Открыть страницу входа» ещё раз.'
   }
+  if(moved&&accSheet.renew){accSheet.renew=0;$('acc-renew').disabled=false;$('acc-renew').textContent='Обновить код';$('acc-sheet').classList.remove('acc-min');buzz()}   // the code asked for has come
   accSheet.code=s.code;accSheet.step=s.step
 }
-function accEnd(res){
+const ACC_EXPIRED='Код устарел, нажмите «Обновить код»';
+function accEnd(res,st){
   const sh=$('acc-sheet'), svc=accSheet&&accSheet.svc;
-  if(svc){accWaiting[svc]=false;accMsg(svc,'')}   // «Жду код…» has no meaning once the sign-in is over
+  const expired=res==='failed'&&svc==='sweettv'&&!!st&&st.reason==='expired';   // the code ran out (SWEET.TV said so, or nothing answered)
+  if(svc){accWaiting[svc]=false;accMsg(svc,expired?ACC_EXPIRED:'',expired);accExpired[svc]=expired}   // «Жду код…» has no meaning once the sign-in is over
   accWatch(20000);
-  $('acc-fin').textContent=res==='done'?'Готово — вы вошли':res==='cancelled'?'Отменено':'Не получилось';
-  sh.classList.remove('acc-min','acc-partner');sh.classList.add('acc-end');accSheet=null;
-  clearTimeout(accCloseT);accCloseT=setTimeout(()=>{sh.classList.add('hide');accCloseT=null;accLoop()},2600);
+  $('acc-fin-t').textContent=res==='done'?'Готово — вы вошли':res==='cancelled'?'Отменено':expired?ACC_EXPIRED:'Не получилось';
+  $('acc-fin-renew').classList.toggle('hide',!expired);$('acc-fin-close').classList.toggle('hide',!expired);
+  sh.classList.remove('acc-min');sh.classList.add('acc-end');accSheet=null;
+  clearTimeout(accCloseT);accCloseT=null;
+  if(!expired)accCloseT=setTimeout(()=>{sh.classList.add('hide');accCloseT=null;accLoop()},2600);   // an expired one stays until the person chooses
   if(res==='done')buzz()
 }
 function accSync(d){
@@ -246,9 +268,10 @@ function accSync(d){
   if(accSheet){
     const cur=w.find(x=>x.service===accSheet.svc);
     if(cur){accShow(cur);return}
+    if(accSheet.renew&&Date.now()-accSheet.renew<20000)return;   // the old sign-in is stopped and the new code is on its way
     const a=(d.accounts||[]).find(x=>x.service===accSheet.svc), st=a&&a.signin;
     // a state that vanished (the add-on went away, or we were away too long) counts as done only if the account grew
-    accEnd(st&&st.state!=='waiting'?st.state:accScore(a)>accSheet.score?'done':'failed')
+    accEnd(st&&st.state!=='waiting'?st.state:accScore(a)>accSheet.score?'done':'failed',st)
   }else if(w.length)accOpen(w[0])
 }
 $('acc-hide').onclick=()=>$('acc-sheet').classList.add('acc-min');
@@ -260,10 +283,11 @@ $('acc-copy').onclick=()=>{
     if(!ok){const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r)}
     b.textContent=ok?'Скопировано':'Выделено — скопируйте вручную';setTimeout(()=>b.textContent='Скопировать',2000)})
 };
+$('acc-renew').onclick=()=>{if(accSheet)accRenew(accSheet.svc)};
+$('acc-fin-renew').onclick=()=>accRenew('sweettv');
+$('acc-fin-close').onclick=()=>{$('acc-sheet').classList.add('hide');accLoop()};
 $('acc-cancel').onclick=async()=>{
   if(!accSheet)return;const b=$('acc-cancel');
-  // the code may be about to be typed into the Friendly Share page: the first tap only asks
-  if(accSheet.mode==='partner'&&!armed('acc-cancel','Нажмите ещё раз, чтобы отменить'))return;
   b.disabled=true;b.textContent='Отменяю…';
   try{await accCall('cancel',{service:accSheet.svc});accWatch(20000)}
   catch(e){b.disabled=false;b.textContent='Отмена';$('acc-hint').textContent=e.message}

@@ -90,14 +90,11 @@ def _int(value, default, low, high):
 
 
 def clean_mode(value, service):
-    """The sign-in mode the page asks for: normal when it says nothing; partner only where there is one."""
+    """The sign-in mode the page asks for: normal, which is also what it says when it says nothing. There is no other:
+    SWEET.TV has one sign-in (it waits six hours by itself), so the old partner button's mode is refused."""
     if value in (None, "", signin.NORMAL):
         return signin.NORMAL
-    if value != signin.PARTNER:
-        raise Refused("Неизвестный способ входа.")
-    if service != "sweettv":
-        raise Refused("Вход через Friendly Share есть только у SWEET.TV.")
-    return signin.PARTNER
+    raise Refused("Неизвестный способ входа.")
 
 
 def public_signin(state):
@@ -112,7 +109,8 @@ def public_signin(state):
             "code": code, "url": "" if partner else safe_link(state.get("url", "")),
             "link": safe_link(state.get("link", "")) if code and not partner else "",
             "step": _int(state.get("step"), 1, 1, 9), "steps": _int(state.get("steps"), 1, 1, 9),
-            "left": _int(state.get("left"), 0, 0, 86400), "updated": _int(state.get("updated"), 0, 0, 2 ** 40)}
+            "left": _int(state.get("left"), 0, 0, 86400), "updated": _int(state.get("updated"), 0, 0, 2 ** 40),
+            "reason": state.get("reason") if state.get("reason") in signin.REASONS else ""}
 
 
 def _channel(service, p):
@@ -185,6 +183,27 @@ def _cancel(body, rpc):
     if not signin.request_cancel(clean_service(body.get("service"))):
         raise Refused("Не получилось передать отмену.", 500)
     return {"ok": True}
+
+
+RENEW_WAIT = 8.0   # s the add-on gets to stop the old sign-in before the new one starts
+
+
+def _renew(body, rpc):
+    """«Обновить код» (SWEET.TV): the sign-in that is waiting is stopped and a new one starts, which asks SWEET.TV
+    for a new code. Nothing replaces a code by itself: the person may have typed it into another page, so only this
+    does, when they ask. With no sign-in waiting (it ran out, or failed) it simply starts one."""
+    service = clean_service(body.get("service"))
+    if service != "sweettv":
+        raise Refused("Обновить код можно только у SWEET.TV.")
+    if any(s["service"] == service for s in signin.active()):
+        if not signin.request_cancel(service):
+            raise Refused("Не получилось передать отмену.", 500)
+        deadline = time.monotonic() + RENEW_WAIT
+        while any(s["service"] == service for s in signin.active()):
+            if time.monotonic() >= deadline:
+                raise Refused("Телевизор не остановил прошлый вход. Посмотрите на ТВ.", 504)
+            time.sleep(0.25)
+    return _signin({"service": service}, rpc)
 
 
 def _youtube(body):
@@ -270,7 +289,7 @@ def _ytkeys(body, rpc):
     return reply
 
 
-ACTIONS = {"signin": _signin, "cancel": _cancel, "switch": _switch, "add": _add, "another": _another, "signout": _signout,
+ACTIONS = {"signin": _signin, "cancel": _cancel, "renew": _renew, "switch": _switch, "add": _add, "another": _another, "signout": _signout,
            "ytkeys": _ytkeys}
 
 
