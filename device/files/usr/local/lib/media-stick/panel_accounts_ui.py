@@ -89,13 +89,16 @@ async function accCall(what,body){
   if(!r.ok||j.ok===false){const e=new Error(j.error||'Не получилось');e.data=j;throw e}   // the reply's other fields stay with the error
   return j
 }
-let accData=null, accTimer=null, accBusy=false, accKey='', accSheet=null, accCloseT=null, accAsked={}, accSig={};
+let accData=null, accTimer=null, accBusy=false, accKey='', accSheet=null, accCloseT=null, accAsked={}, accSig={}, accWaiting={}, accFastUntil=0;
 // a profile's progress: how many of YouTube's four sign-ins it has; SWEET.TV is 0 or 1
 const accScore=a=>!a?0:a.service==='youtube'?a.profiles.reduce((n,p)=>n+p.tokens,0):(a.signed_in?1:0);
-const accLive=()=>!document.hidden&&(accSheet||(tab==='settings'&&!wide()));
+// polled while the card can be seen: a sheet is open, the settings are open, or the whole panel is on one wide screen
+const accLive=()=>!document.hidden&&(accSheet||tab==='settings'||wide());
+// after a cancel, a closed sheet or a switch the device changes things on its own (it puts the TV back): look often for a while
+const accWatch=ms=>{accFastUntil=Date.now()+ms;accPoll()};
 function accLoop(){
   clearTimeout(accTimer);accTimer=null;
-  if(accLive())accTimer=setTimeout(accPoll,1500)
+  if(accLive())accTimer=setTimeout(accPoll,accSheet||Date.now()<accFastUntil?1500:5000)
 }
 async function accPoll(){
   if(accBusy)return;accBusy=true;
@@ -180,20 +183,15 @@ async function accRun(svc,what,body,doing,done){
 }
 async function accStart(svc,mode){
   buzz();
-  if(await accRun(svc,'signin',mode?{service:svc,mode}:{service:svc},'Прошу у приставки код…','Жду код от приставки…'))
-    setTimeout(()=>{if(!accSheet&&Date.now()-accAsked[svc]>=14000)accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)},15000)
-}
-// the TV switches a profile a moment after it is asked: read the accounts again until the chosen one is current
-async function accSettle(svc,id){
-  for(let i=0;i<10;i++){
-    await new Promise(r=>setTimeout(r,700));await accPoll();
-    const a=((accData||{}).accounts||[]).find(x=>x.service===svc);
-    if(a&&a.profiles.some(p=>p.id===id&&p.current))return
+  if(await accRun(svc,'signin',mode?{service:svc,mode}:{service:svc},'Прошу у приставки код…','Жду код от приставки…')){
+    accWaiting[svc]=true;
+    setTimeout(()=>{if(accWaiting[svc]&&!accSheet&&Date.now()-accAsked[svc]>=14000){accWaiting[svc]=false;accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)}},15000)
   }
 }
+// the TV switches a profile a moment after it is asked: the card is read often until the chosen one is current
 async function accSwitch(svc,p){
   buzz();
-  if(await accRun(svc,'switch',{service:svc,id:p.id},'Переключаю на «'+p.name+'»…','Профиль «'+p.name+'» выбран.'))accSettle(svc,p.id)
+  if(await accRun(svc,'switch',{service:svc,id:p.id},'Переключаю на «'+p.name+'»…','Профиль «'+p.name+'» выбран.'))accWatch(20000)
 }
 // a profile's name on the phone: its channel when it has one ("Default" says nothing)
 const accLabel=p=>p.channel==='yes'&&p.channel_title?p.channel_title:p.name;
@@ -201,8 +199,8 @@ async function accAnother(svc){
   buzz();accMsg(svc,'Готовлю вход…');
   try{
     await accCall('another',{service:svc});   // when it is given up the device itself puts the TV back on who was signed in
-    accMsg(svc,'Жду код от приставки…');accAsked[svc]=Date.now();accPoll();
-    setTimeout(()=>{if(!accSheet&&Date.now()-accAsked[svc]>=14000)accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)},15000)
+    accMsg(svc,'Жду код от приставки…');accWaiting[svc]=true;accAsked[svc]=Date.now();accPoll();
+    setTimeout(()=>{if(accWaiting[svc]&&!accSheet&&Date.now()-accAsked[svc]>=14000){accWaiting[svc]=false;accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)}},15000)
   }catch(e){accMsg(svc,e.message,true)}
 }
 function accOut(svc){accRun(svc,'signout',{service:svc},'Выхожу…','Вы вышли.')}
@@ -235,7 +233,9 @@ function accShow(s){
   accSheet.code=s.code;accSheet.step=s.step
 }
 function accEnd(res){
-  const sh=$('acc-sheet');
+  const sh=$('acc-sheet'), svc=accSheet&&accSheet.svc;
+  if(svc){accWaiting[svc]=false;accMsg(svc,'')}   // «Жду код…» has no meaning once the sign-in is over
+  accWatch(20000);
   $('acc-fin').textContent=res==='done'?'Готово — вы вошли':res==='cancelled'?'Отменено':'Не получилось';
   sh.classList.remove('acc-min','acc-partner');sh.classList.add('acc-end');accSheet=null;
   clearTimeout(accCloseT);accCloseT=setTimeout(()=>{sh.classList.add('hide');accCloseT=null;accLoop()},2600);
@@ -265,7 +265,7 @@ $('acc-cancel').onclick=async()=>{
   // the code may be about to be typed into the Friendly Share page: the first tap only asks
   if(accSheet.mode==='partner'&&!armed('acc-cancel','Нажмите ещё раз, чтобы отменить'))return;
   b.disabled=true;b.textContent='Отменяю…';
-  try{await accCall('cancel',{service:accSheet.svc});accPoll()}
+  try{await accCall('cancel',{service:accSheet.svc});accWatch(20000)}
   catch(e){b.disabled=false;b.textContent='Отмена';$('acc-hint').textContent=e.message}
 };
 document.querySelector('[data-go=settings]').addEventListener('click',accPoll);

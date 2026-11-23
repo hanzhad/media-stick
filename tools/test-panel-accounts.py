@@ -486,7 +486,13 @@ class GivenUpAnother(unittest.TestCase):
         import panel_accounts_ui as ui
         page = ui.tail(pa.LINK_HOSTS)
         self.assertNotIn("accBackTo", page)
-        self.assertIn("accSettle", page)
+        self.assertNotIn("accSettle", page)
+        self.assertIn("accWatch(20000)", page)                      # after a switch, a cancel and a closed sheet
+        self.assertIn("try{await accCall('cancel',{service:accSheet.svc});accWatch(20000)}", page)
+        self.assertIn("const accLive=()=>!document.hidden&&(accSheet||tab==='settings'||wide())", page)   # also the wide card
+        self.assertIn("accSheet||Date.now()<accFastUntil?1500:5000", page)   # every 5 s when idle, hidden pages stop
+        self.assertIn("accWaiting[svc]=false;accMsg(svc,'')", page)         # «Жду код…» goes with the sign-in
+        self.assertIn("if(accWaiting[svc]&&!accSheet", page)
 
 
 class Page(unittest.TestCase):
