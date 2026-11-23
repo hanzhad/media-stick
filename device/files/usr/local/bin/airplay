@@ -43,6 +43,7 @@ LOG_MAX = 4 << 20
 DRAW_LOG = RUN + "/airplay-draw.log"   # the drawer's GStreamer warnings and errors
 CARD = "/dev/dri/card0"
 NAME = os.environ.get("AIRPLAY_NAME") or "Media Stick"
+AUDIO_BUFFER_US = 40000   # the sound card's buffer: less is closer to the picture, too little crackles
 AS_MEDIA = ["setpriv", "--reuid=media", "--regid=media", "--init-groups", "env", "HOME=/home/media"]
 
 
@@ -57,7 +58,9 @@ def uxplay(fd):
                " ! fdsink fd=%d sync=false async=false  videotestsrc num-buffers=1" % fd,
         "-vc", "videoconvert",
         "-vs", "fakesink",   # UxPlay appends " name=... sync=..."
-        "-as", "alsasink",
+        # sound 40 ms behind, not alsasink's default 200 ms: the picture is drawn as soon as
+        # it is decoded (-vsync no, drawer below), so a Mac's sound came noticeably after it
+        "-as", "alsasink buffer-time=%d latency-time=10000" % AUDIO_BUFFER_US,
         "-vsync", "no",   # no waiting to line the picture up with the sound: much less delay
         # no -hls: UxPlay 1.71's YouTube mode takes the video but never starts playing it (the
         # app shows "Something went wrong"); without it the YouTube app mirrors instead

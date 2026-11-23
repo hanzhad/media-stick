@@ -71,6 +71,14 @@ class UxPlayArgs(unittest.TestCase):
             self.assertNotIn(decoder, whole)
         self.assertEqual(args[args.index("-vs") + 1], "fakesink")
 
+    def test_sound_card_buffer_is_short_so_sound_keeps_up_with_the_picture(self):
+        args = airplay.uxplay(7)
+        sink = args[args.index("-as") + 1].split()
+        self.assertEqual(sink[0], "alsasink")
+        buffer_us = int(dict(p.split("=") for p in sink[1:])["buffer-time"])
+        self.assertLess(buffer_us, 200000)   # alsasink's own default
+        self.assertGreaterEqual(buffer_us, 40000)
+
     def test_drawer_decodes_straight_into_kmssink(self):
         args = airplay.drawer()
         launch = args[args.index("gst-launch-1.0") + 1:]
