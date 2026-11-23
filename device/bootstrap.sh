@@ -83,7 +83,7 @@ while IFS= read -r -d '' src; do
     [[ $rel == etc/systemd/system/* ]] && changed_units+=("$(basename "$rel")")
     [[ $rel == home/media/.kodi/* ]] && changed_units+=(kodi.service)   # keymaps load at start
     # the sound device: Kodi picks its output at start, UxPlay at its first stream
-    [[ $rel == etc/asound.conf ]] && changed_units+=(kodi.service airplay.service)
+    [[ $rel == etc/asound.conf ]] && changed_units+=(kodi.service airplay.service miracast.service)
     # a library the panel imports at start: restart the panel (Kodi loads it afresh at each sign-in)
     [[ $rel == usr/local/lib/media-stick/* ]] && changed_units+=("panel.service")
     # the boot picture is read from the initramfs: rebuilt below
@@ -131,7 +131,7 @@ done
 # HTTPS: media-stick-cert.timer runs the service daily and a minute after boot. Bootstrap
 # never issues a certificate itself, and the service does nothing until DUCKDNS_DOMAIN and
 # DUCKDNS_TOKEN are in secrets.env (the panel's HTTPS card writes them).
-for unit in kodi.service panel.service airplay.service wifi-fallback.service media-stick-update.timer media-stick-wallpapers.timer media-stick-cert.timer; do
+for unit in kodi.service panel.service airplay.service miracast.service wifi-fallback.service media-stick-update.timer media-stick-wallpapers.timer media-stick-cert.timer; do
   systemctl enable -q "$unit"
 done
 # The picture behind Kodi (console-splash): drawn again when it, its program or its unit changed
@@ -152,12 +152,40 @@ fi
 systemctl is-active -q media-stick-update.timer || systemctl start media-stick-update.timer
 systemctl is-active -q media-stick-wallpapers.timer || systemctl start media-stick-wallpapers.timer
 systemctl is-active -q media-stick-cert.timer || systemctl start media-stick-cert.timer
-# AirPlay first: a restarted receiver lets go of the screen, and Kodi then restarts to get
-# it back (Kodi keeps running without a picture when something else holds the screen).
-for unit in airplay.service kodi.service panel.service; do
-  # Kodi is stopped on purpose while a web app or an AirPlay phone has the screen.
+# Miracast: a PC finds the stick as "Media Stick" in Win+K. It advertises over Wi-Fi Direct
+# (miracast, through wpa_supplicant) and, as a second way to find it, mDNS: a static avahi
+# service _display._tcp on the MICE port 7250. The container id is a GUID made from the
+# machine id (hashed: the machine id itself is not to be published); written only when it
+# differs, and avahi picks the file up by itself.
+mice_name=${MIRACAST_NAME:-Media Stick}
+mice_guid=$(printf 'media-stick-miracast:%s' "$(cat /etc/machine-id)" | sha256sum | cut -c1-32 \
+  | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/')
+mice_xml=$(cat <<EOF
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name>${mice_name//&/&amp;}</name>
+  <service>
+    <type>_display._tcp</type>
+    <port>7250</port>
+    <txt-record>container_id=$mice_guid</txt-record>
+  </service>
+</service-group>
+EOF
+)
+if [ "$(cat /etc/avahi/services/miracast.service 2>/dev/null)" != "$mice_xml" ]; then
+  install -d /etc/avahi/services
+  printf '%s\n' "$mice_xml" > /etc/avahi/services/miracast.service
+  log "  updated /etc/avahi/services/miracast.service"
+fi
+# AirPlay and Miracast first: a restarted receiver lets go of the screen, and Kodi then
+# restarts to get it back (Kodi keeps running without a picture when something else holds
+# the screen).
+for unit in airplay.service miracast.service kodi.service panel.service; do
+  # Kodi is stopped on purpose while a web app, an AirPlay phone or a Miracast PC has the screen.
   [ $unit = kodi.service ] && systemctl is-active -q 'web-app@*' && continue
   [ $unit = kodi.service ] && [ -e /run/media-stick/airplay ] && continue
+  [ $unit = kodi.service ] && [ -e /run/media-stick/miracast ] && continue
   if [[ " ${changed_units[*]-} " == *" $unit "* ]] || ! systemctl is-active -q "$unit"; then
     # Kodi: below, in one stop/start with any settings, add-on or skin change (not twice)
     [ $unit = kodi.service ] && { kodi_restart=1; continue; }
@@ -250,7 +278,7 @@ for id in "${addon_ids[@]}"; do
   kodi-rpc Addons.SetAddonEnabled "{\"addonid\":\"$id\",\"enabled\":true}" >/dev/null || log "  could not enable $id"
 done
 # Kodi drops a setting its build does not support; say so instead of retrying forever.
-# (Not while a web app or an AirPlay phone has the screen: Kodi is stopped then.)
+# (Not while a web app, an AirPlay phone or a Miracast PC has the screen: Kodi is stopped then.)
 if systemctl is-active -q kodi.service; then
   for s in "${on_settings[@]}"; do
     kodi-rpc Settings.GetSettingValue "{\"setting\":\"$s\"}" | grep -q '"value":true' || log "  kodi has $s off"

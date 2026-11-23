@@ -24,12 +24,17 @@ A network cable (or the Mac's Internet Sharing) also works and skips step 3.
 | remote, live screen, device info, Wi-Fi | http://mediastick.local |
 | cast a video from a phone or PC | "Cast to device" / any UPnP-DLNA app |
 | show an iPhone, iPad or Mac screen on the TV | Screen Mirroring → Media Stick (AirPlay by UxPlay, `airplay.service`; sound too); Kodi comes back when the phone stops |
+| show a Windows 11 PC screen on the TV | Win+K, "Media Stick" (Miracast over the network, `miracast.service`; sound too); see "Casting from Windows (Win+K)" |
 | look at the SWEET.TV screen without an account | on the device `kodi-rpc Addons.ExecuteAddon '{"addonid":"script.media-stick.home","params":["sweettv","demo"]}'`: invented channels, marked DEMO, nothing is played |
 | look at the YouTube screen without a key or an account | on the device `kodi-rpc Addons.ExecuteAddon '{"addonid":"script.media-stick.home","params":["youtube","demo"]}'`: invented videos, marked DEMO, nothing is played; a third word (`signin`, `needkey`, `empty`, `error`, `loading`) shows that card instead of the list |
 | look at the onboarding screens (the phone does the action, the TV shows the hints) | on the device `kodi-rpc Addons.ExecuteAddon '{"addonid":"script.media-stick.home","params":["onboarding","demo","signin"]}'` (or `keys`): invented documents, nothing is written, Back closes |
 | add a Kodi add-on for good | add its id to `device/kodi-addons.want`, run `python3 tools/kodi-addons-lock.py`, commit |
 | apps on the home screen | none to set: any installed video or program add-on appears by itself, last used first |
 | Kodi phone app (Kore, Official Kodi Remote, Yatse) | finds `mediastick` by itself; user `kodi`, password: `ssh … sudo grep KODI_WEB /etc/media-stick/secrets.env` |
+
+## Casting from Windows (Win+K)
+
+The stick is a Miracast receiver: on a Windows 11 PC press Win+K, pick "Media Stick", and the PC's screen and sound appear on the TV; Kodi comes back when the PC stops casting (Disconnect in the same panel). It is Miracast over infrastructure (Microsoft's MS-MICE): the PC finds the stick by Wi-Fi Direct discovery or mDNS and then talks to it over the home network, so **the PC and the stick must be on the same network** (the stick's Wi-Fi or its Ethernet, no guest network with client isolation). The stick never opens a Wi-Fi Direct group. The PC needs a Wi-Fi adapter whose driver supports Wireless Display: `netsh wlan show drivers` must say `Wireless Display Supported: Yes` (a graphics driver and a Wi-Fi driver line; "Yes" for both is best). One PC at a time, and not while an iPhone or Mac is mirroring. The program is `device/files/usr/local/bin/miracast`, its offline test `tools/test-miracast.py`; logs: `journalctl -u miracast`, `/run/media-stick/miracast.log` and `/run/media-stick/miracast-draw.log`.
 
 ## The page
 

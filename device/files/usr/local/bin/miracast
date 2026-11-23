@@ -1,0 +1,1629 @@
+#!/usr/bin/python3
+"""Miracast over infrastructure (MS-MICE) receiver: Win+K "Cast" from a Windows 11 PC.
+
+The PC finds the stick through Wi-Fi Direct device discovery: the stick only listens, it
+never forms a P2P group (the home Wi-Fi is on a DFS channel, which a group would have to
+leave), and carries Microsoft's WSC vendor extension with its host name and IPv4 address, so
+the PC connects over the LAN instead (and mDNS, _display._tcp, written by bootstrap, backs
+that up). All of it is stock wpa_supplicant at runtime and is lost when it restarts, so the
+advertiser looks again every few seconds and puts it back. A listen that runs on makes the
+Wi-Fi link's latency jump, so it stops while a session runs.
+
+The PC opens TCP 7250 and sends SOURCE_READY (MS-MICE) with the port of its RTSP server;
+then it waits for the stick, the sink, to open RTSP to it (Wi-Fi Display, MS-WFDPE). The
+sink side of that dialogue is RtspSink: M1 and M2 OPTIONS, M3 GET_PARAMETER (what the stick
+can show), M4 SET_PARAMETER (what the PC picked), M5 trigger, M6 SETUP, M7 PLAY. The PC then
+sends MPEG-TS over RTP/UDP to the port given in M6.
+
+That RTP is received here, not by GStreamer (RtpRelay): a jitter buffer that drops what is
+late loses part of a 1080p picture whenever Wi-Fi delivers one in a burst, and Windows sends
+one keyframe and then P slices for good, so the picture stays torn. So the datagrams are
+checked for their sequence number, put back in order across a short reorder, their TS
+payload goes into the drawer's standard input, and a gap asks the PC for a new keyframe.
+
+The video goes the way airplay's does and for the same reason (see its docstring): one
+gst-launch, the drawer, decodes the H.264 in hardware (v4l2h264dec) straight into kmssink,
+and nothing but a queue sits between the two. All before the decoder is compressed data.
+tsdemux's pads are linked by their caps and not by name, and the audio branch hangs off the
+same demuxer: a stream with no audio pad still plays its picture. The screen is taken the
+way airplay does (web apps and Kodi stopped, the TV set to 1080p black, DRM master let go)
+just before PLAY is sent, so the drawer is listening when the PC starts sending, and given
+back, Kodi started, when the session ends. While it is taken /run/media-stick/miracast
+exists: bootstrap leaves Kodi alone then, and airplay ignores phones. A session is refused
+while /run/media-stick/airplay exists.
+
+Nothing here may wait for the drawer: the relay writes into a non-blocking pipe and keeps a
+payload whole in a bounded backlog when the pipe is full, and drops it whole when the backlog
+is full too (counted, and asked for as a lost one: a new keyframe);
+a drawer that shows no picture is restarted once and then the session ends; stopping a drawer
+is SIGTERM, a short wait, SIGKILL; and the MICE and RTSP sockets are served by a thread that
+never writes to the drawer, so a stuck drawer cannot make the receiver deaf.
+
+One session at a time; a second PC while one is busy is closed. Run by miracast.service as
+root; the drawer runs as media. Written from MS-MICE, MS-WFDPE and the Wi-Fi Display
+specification as far as they are public; what is a guess is said so where it is used.
+"""
+import collections
+import ctypes
+import fcntl
+import mmap
+import os
+import re
+import select
+import signal
+import socket
+import subprocess
+import sys
+import termios
+import threading
+import time
+
+RUN = "/run/media-stick"
+FLAG = RUN + "/miracast"
+AIRPLAY_FLAG = RUN + "/airplay"
+LOG = RUN + "/miracast.log"          # the protocol lines, next to the journal
+FPS30_FLAG = RUN + "/miracast-30fps"   # present at M3: only up to 1080p30 is offered (the default offers 1080p60)
+PROFILE_FLAG = RUN + "/miracast-profile"   # read at M3: cbp, chp or both, the H.264 profiles offered (testing; the default is cbp)
+AUDIO_DELAY_FLAG = RUN + "/miracast-audio-delay"   # read at drawer start: milliseconds to hold the sound back
+DUMP_FLAG = RUN + "/miracast-dump"     # present at session start: a copy of the stream is kept
+DUMP_FILE = RUN + "/miracast-dump.ts"
+DUMP_MAX = 40 << 20                    # bytes; /run is tmpfs
+DRAW_LOG = RUN + "/miracast-draw.log"   # the drawer's GStreamer warnings and errors
+LOG_MAX = 4 << 20
+CARD = "/dev/dri/card0"
+NAME = os.environ.get("MIRACAST_NAME") or "Media Stick"
+AS_MEDIA = ["setpriv", "--reuid=media", "--regid=media", "--init-groups", "env", "HOME=/home/media"]
+
+MICE_PORT = 7250
+RTP_PORT = 19000
+WLAN = "wlan0"
+P2P_DEV = "p2p-dev-wlan0"
+WPA_CLI = ["wpa_cli", "-p", "/run/wpa_supplicant", "-i", P2P_DEV]
+WPA_BUS = "fi.w1.wpa_supplicant1"
+LISTEN_SECS = 60       # one p2p_listen; renewed after LISTEN_RENEW
+LISTEN_RENEW = 30
+ADV_EVERY = 10         # seconds between looks at what wpa_supplicant still has
+SETUP_LIMIT = 30       # seconds from a connection to PLAY
+STUCK_LIMIT = 8.0      # seconds from a drawer's start without a picture before it counts as stuck
+STUCK_RESTARTS = 1     # stuck drawers started again in one session; the next one ends it
+TERM_WAIT = 2.0        # seconds a drawer gets after SIGTERM before SIGKILL
+KILL_WAIT = 2.0        # seconds to wait for it after SIGKILL
+RELAY_JOIN = 2.0       # seconds to wait for the relay thread at the end
+SEND_WAIT = 2.0        # seconds a TEARDOWN may take to send at the end
+SYSTEMCTL_WAIT = 30    # seconds for one systemctl call
+# The video reaches the screen later than the sound by an amount that is not measured yet:
+# the sound is held back this many milliseconds (0 = not at all). A file AUDIO_DELAY_FLAG
+# holding a whole number 0 to AUDIO_DELAY_MAX overrides it, so it can be tried on the device.
+AUDIO_DELAY_MS = 0
+AUDIO_DELAY_MAX = 1000
+# Nothing ties the sound to the PC's clock (sync=false), and the two clocks drift: a PC that
+# sends sound a little faster than the card plays it would pile the surplus up and the sound
+# would fall behind the picture for good. So the sound waiting to be played is bounded: its
+# queue holds at most AUDIO_QUEUE_MS beyond the deliberate delay and then drops the oldest
+# (a tiny skip).
+AUDIO_QUEUE_MS = 100
+AUDIO_BUFFER_US = 40000   # the sound card's buffer: less is closer to the picture, too little crackles
+# The stream from the PC carries occasional broken frames (a few P frames with syntax errors,
+# mostly right after a big one). Measured over seven sessions of a text-heavy page scrolled
+# fullscreen, reversing every 0.7 s: 1 to 7 bad frames a run (0.1 to 0.5 %), in 1 to 3 short bursts
+# and not at every reversal, whatever the bitrate cap or frame rate. Windows sends an infinite
+# GOP, one keyframe and then P frames for good, so a burst of errors lasts on the screen until
+# the PC happens to send a keyframe. So once a picture is shown, a keyframe is asked for every
+# IDR_REFRESH_SECS seconds (0 = never), which bounds how long visible damage lasts to that one
+# second; a file IDR_REFRESH_FLAG holding a whole number 0 to IDR_REFRESH_MAX overrides it, at a
+# session's start.
+IDR_REFRESH_SECS = 1
+IDR_REFRESH_MAX = 60
+IDR_REFRESH_FLAG = RUN + "/miracast-idr-every"
+# For trying other bitrates: the file BITRATE_FLAG, read when M3 is answered, holds the
+# microsoft_max_bitrate to answer (bits per second, BITRATE_MIN to BITRATE_MAX); MAX_BITRATE
+# is used without it or when it holds anything else.
+BITRATE_FLAG = RUN + "/miracast-max-bitrate"
+BITRATE_MIN = 1000000
+BITRATE_MAX = 50000000
+
+
+def say(*a):
+    line = "[miracast] " + " ".join(map(str, a))
+    print(line, flush=True)
+    try:
+        if os.path.exists(LOG) and os.path.getsize(LOG) > LOG_MAX:
+            open(LOG, "w").close()
+        with open(LOG, "a") as out:
+            out.write("%s %s\n" % (time.strftime("%H:%M:%S"), line))
+    except OSError:
+        pass
+
+
+def run_cmd(cmd):
+    """(return code, standard output) of a command; a missing program or a hang is 127."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return p.returncode, p.stdout
+    except (OSError, subprocess.SubprocessError):
+        return 127, ""
+
+
+def systemctl(*args):
+    """systemctl's result; a call that hangs or cannot run is code 124 with no output."""
+    try:
+        return subprocess.run(["systemctl", *args], capture_output=True, text=True, timeout=SYSTEMCTL_WAIT)
+    except (OSError, subprocess.SubprocessError):
+        return subprocess.CompletedProcess(["systemctl", *args], 124, "", "")
+
+
+def file_int(path, lo, hi, default):
+    """The whole number in the file path when it is lo to hi, otherwise (no file, anything
+    else in it) default."""
+    try:
+        with open(path) as f:
+            value = int(f.read(32).strip())
+    except (OSError, ValueError):
+        return default
+    return value if lo <= value <= hi else default
+
+
+def audio_delay_ms(path=None, default=None):
+    """The sound's delay in ms: the number in the file AUDIO_DELAY_FLAG, or AUDIO_DELAY_MS."""
+    return file_int(AUDIO_DELAY_FLAG if path is None else path, 0, AUDIO_DELAY_MAX,
+                    AUDIO_DELAY_MS if default is None else default)
+
+
+def idr_refresh_secs(path=None):
+    """Seconds between keyframe refreshes: the number in the file IDR_REFRESH_FLAG, or IDR_REFRESH_SECS."""
+    return file_int(IDR_REFRESH_FLAG if path is None else path, 0, IDR_REFRESH_MAX, IDR_REFRESH_SECS)
+
+
+def max_bitrate(path=None):
+    """The microsoft_max_bitrate to answer: the number in the file BITRATE_FLAG, or MAX_BITRATE."""
+    return file_int(BITRATE_FLAG if path is None else path, BITRATE_MIN, BITRATE_MAX, MAX_BITRATE)
+
+
+# --- MS-MICE: the messages on TCP 7250 ---
+MICE_SOURCE_READY, MICE_STOP_PROJECTION = 1, 2
+MICE_FRIENDLY_NAME, MICE_RTSP_PORT, MICE_SOURCE_ID = 0, 2, 3
+
+
+def parse_tlvs(data):
+    """[(type, value)] from type(1) length(2, big endian) value; stops at a cut-off one."""
+    out, i = [], 0
+    while i + 3 <= len(data):
+        n = int.from_bytes(data[i + 1:i + 3], "big")
+        if i + 3 + n > len(data):
+            break
+        out.append((data[i], bytes(data[i + 3:i + 3 + n])))
+        i += 3 + n
+    return out
+
+
+class MiceStream:
+    """Messages are size(2, with this header) version(1) command(1) and TLVs. feed() takes
+    what a recv gave (a message may be split, several may come together) and returns the
+    whole ones as (command, tlvs)."""
+
+    def __init__(self):
+        self.buf = bytearray()
+
+    def feed(self, data):
+        self.buf += data
+        out = []
+        while len(self.buf) >= 4:
+            size = int.from_bytes(self.buf[:2], "big")
+            if size < 4:
+                raise ValueError("MICE message of %d bytes" % size)
+            if len(self.buf) < size:
+                break
+            msg = bytes(self.buf[:size])
+            del self.buf[:size]
+            out.append((msg[3], parse_tlvs(msg[4:])))
+        return out
+
+
+def source_ready(tlvs):
+    """(friendly name, RTSP port) of a SOURCE_READY; the port is 7236 when it gave none."""
+    name, port = "", 7236
+    for t, v in tlvs:
+        if t == MICE_FRIENDLY_NAME:
+            # Windows 11 sends UTF-16LE (measured; the MS-MICE text says nothing useful), maybe with a BOM
+            name = v.decode("utf-16-le", "replace").lstrip("﻿").rstrip("\x00")
+        elif t == MICE_RTSP_PORT and len(v) == 2:
+            port = int.from_bytes(v, "big")
+    return name, port
+
+
+# --- advertising through wpa_supplicant ---
+def vendor_extension(hostname, ip):
+    """The WSC vendor extension of Microsoft (vendor id 00 01 37) that says "MICE sink":
+    type(2) length(2) value for the capability (0x2001, 05), the host name (0x2002) and the
+    IPv4 address as text (0x2005)."""
+    def tlv(t, v):
+        return t.to_bytes(2, "big") + len(v).to_bytes(2, "big") + v
+    host = hostname.encode("ascii", "ignore") or b"mediastick"
+    return (b"\x00\x01\x37" + tlv(0x2001, b"\x05") + tlv(0x2002, host)
+            + tlv(0x2005, ip.encode("ascii")))
+
+
+def vendor_args(data):
+    """busctl arguments for P2PDeviceConfig {VendorExtension: [data]} ([] when data is None)."""
+    if not data:
+        return ["a{sv}", "1", "VendorExtension", "aay", "0"]
+    return ["a{sv}", "1", "VendorExtension", "aay", "1", str(len(data))] + [str(b) for b in data]
+
+
+def parse_ipv4(text):
+    m = re.search(r"\binet (\d+\.\d+\.\d+\.\d+)/", text)
+    return m.group(1) if m else None
+
+
+class Advertiser:
+    """Keeps the P2P listen, the Wi-Fi Display information element and the vendor extension
+    in wpa_supplicant. tick() looks at what is there and puts back what is missing; the
+    object path, the IP and the host name changing count as missing."""
+
+    def __init__(self, run, name, hostname):
+        self.run, self.name, self.hostname = run, name, hostname
+        self.applied = None
+        self.listen_at = 0.0
+        self.paused = False
+
+    def wpa(self, *args):
+        return self.run(WPA_CLI + list(args))
+
+    def object_path(self):
+        rc, out = self.run(["busctl", "call", WPA_BUS, "/fi/w1/wpa_supplicant1", WPA_BUS,
+                            "GetInterface", "s", WLAN])
+        m = re.search(r'"(/[^"]+)"', out) if rc == 0 else None
+        return m.group(1) if m else None
+
+    def set_extension(self, path, data):
+        return self.run(["busctl", "set-property", WPA_BUS, path, WPA_BUS + ".Interface.P2PDevice",
+                         "P2PDeviceConfig"] + vendor_args(data))[0] == 0
+
+    def apply(self, path, ip):
+        steps = [self.wpa("set", "device_name", self.name),
+                 self.wpa("set", "device_type", "7-0050F204-1"),
+                 # source/primary-sink byte pair 0011 (primary sink, session available),
+                 # control port 7236, 50 Mbit/s: the information element Windows lists a sink by
+                 self.wpa("wfd_subelem_set", "0", "000600111c440032"),
+                 self.wpa("set", "wifi_display", "1")]
+        ok = all(rc == 0 for rc, _ in steps)
+        return self.set_extension(path, vendor_extension(self.hostname, ip)) and ok
+
+    def tick(self, now):
+        if self.paused:
+            return
+        ip = parse_ipv4(self.run(["ip", "-4", "-o", "addr", "show", "dev", WLAN])[1])
+        path = self.object_path() if ip else None
+        if not path:
+            self.applied = None   # no network or no wpa_supplicant: nothing to hold on to
+            return
+        state = (path, ip, self.hostname)
+        if state != self.applied or self.wpa("get", "wifi_display")[1].strip() != "1":
+            if self.apply(path, ip):
+                say("advertising %s as %s at %s" % (self.name, self.hostname, ip))
+                self.applied = state
+                self.listen_at = 0.0
+            else:
+                say("could not set the Wi-Fi Display advertisement")
+                self.applied = None
+                return
+        if now >= self.listen_at:
+            self.wpa("p2p_listen", str(LISTEN_SECS))
+            self.listen_at = now + LISTEN_RENEW
+
+    def pause(self):
+        """Stop listening for the length of a session: the listen's off-channel trips make
+        the Wi-Fi link lose packets."""
+        self.paused = True
+        self.wpa("p2p_stop_find")
+        say("listening paused")
+
+    def resume(self):
+        self.paused = False
+        self.listen_at = 0.0
+        say("listening resumed")
+
+    def shutdown(self):
+        path = self.object_path()
+        if path:
+            self.set_extension(path, None)
+        self.wpa("set", "wifi_display", "0")
+        self.wpa("p2p_stop_find")
+        self.applied = None
+
+
+# --- RTSP, the Wi-Fi Display sink's side ---
+HEAD_END = re.compile(rb"\r?\n\r?\n")
+
+
+class Message:
+    def __init__(self, start, headers, body):
+        self.start, self.headers, self.body = start, headers, body
+        parts = start.split(None, 2)
+        self.response = start.startswith("RTSP/")
+        self.status = int(parts[1]) if self.response and len(parts) > 1 and parts[1].isdigit() else 0
+        self.method = parts[0] if not self.response and parts else ""
+        self.uri = parts[1] if not self.response and len(parts) > 1 else ""
+
+    @property
+    def cseq(self):
+        return self.headers.get("cseq", "0")
+
+
+def take_messages(buf):
+    """Whole RTSP messages off the front of the bytearray buf (CRLF or bare LF, a body as
+    long as Content-Length says); what is cut off stays for the next call."""
+    out = []
+    while True:
+        m = HEAD_END.search(buf)
+        if not m:
+            break
+        head = bytes(buf[:m.start()]).decode("utf-8", "replace")
+        lines = head.splitlines()
+        headers = {}
+        for line in lines[1:]:
+            k, _, v = line.partition(":")
+            headers[k.strip().lower()] = v.strip()
+        try:
+            n = int(headers.get("content-length", "0"))
+        except ValueError:
+            n = 0
+        if len(buf) < m.end() + n:
+            break
+        body = bytes(buf[m.end():m.end() + n]).decode("utf-8", "replace")
+        del buf[:m.end() + n]
+        if lines:
+            out.append(Message(lines[0], headers, body))
+    return out
+
+
+def rtsp_bytes(start, headers, body=""):
+    lines = [start] + ["%s: %s" % kv for kv in headers]
+    if body:
+        lines += ["Content-Type: text/parameters", "Content-Length: %d" % len(body.encode())]
+    return ("\r\n".join(lines) + "\r\n\r\n" + body).encode()
+
+
+# The answers of M3. Bit tables are from memory of the Wi-Fi Display specification: CEA bit
+# 0 640x480p60, 1 720x480p60, 3 720x576p50, 5 1280x720p30, 6 1280x720p60, 7 1920x1080p30,
+# 8 1920x1080p60 (the others of 1080 are interlaced or 24/25/50 Hz and left out). Only CEA is
+# offered: given VESA, Windows picked 1024x768p60 (measured). Fields, in the order of the
+# specification: native mode (bits 2:0 the table, 0 = CEA, bits 7:3 the index: 7 << 3 = 0x38 is
+# 1080p30), preferred display mode, profiles CBP|CHP, levels (4.2: a guess), CEA, VESA, handheld,
+# latency (units of 5 ms: 30 ms is a guess for the Pi's decoder), minimum slice size, slice
+# encoding, frame rate control, maximum width and height.
+CEA_MODES = {0: "640x480p60", 1: "720x480p60", 2: "720x480i60", 3: "720x576p50",
+             4: "720x576i50", 5: "1280x720p30", 6: "1280x720p60", 7: "1920x1080p30",
+             8: "1920x1080p60", 9: "1920x1080i60", 10: "1280x720p25", 11: "1280x720p50",
+             12: "1920x1080p25", 13: "1920x1080p50", 14: "1920x1080i50", 15: "1280x720p24",
+             16: "1920x1080p24"}
+# VESA: each size at 30 Hz then 60 Hz, bit 0 up; only used to say in words what the PC chose
+VESA_MODES = dict(enumerate("%sp%d" % (m, r) for m in (
+    "800x600", "1024x768", "1152x864", "1280x768", "1280x800", "1360x768", "1366x768", "1280x1024",
+    "1440x1050", "1440x900", "1600x900", "1600x1200", "1680x1024", "1680x1050", "1920x1200")
+    for r in (30, 60)))
+# By default up to 1080p60 is offered (CEA 000001eb: bits 0, 1, 3, 5, 6, 7 and 8). The Pi decodes
+# a 1080p60 Constrained Baseline stream with no drops (pipe 0, backlog 0), and Windows picks
+# 1080p60 when it is offered and the user has set 60 Hz for that display. Measured with seven
+# sessions, 30 against 60 fps made no difference in broken frames, and neither did the bitrate
+# cap (microsoft_max_bitrate at 20 or 50 Mbit/s: Windows sends about 13 Mbit/s either way). The
+# 30 fps set (000000ab: bits 0, 1, 3, 5, 7) is answered when the file FPS30_FLAG exists as M3
+# is answered; it is there for testing.
+# The profile field is a bit set: 01 Constrained Baseline, 02 Constrained High. Only Constrained
+# Baseline is offered: given both, Windows picks it anyway, and given Constrained High alone it
+# picked 1080p60 CHP, which v4l2h264dec does not negotiate (not-negotiated), the drawer died
+# again and again and the session ended. So a source that picked CHP from "both" would lose the
+# session. The file PROFILE_FLAG holds cbp, chp or both for testing; no file or any other value
+# is cbp.
+PROFILES = {"cbp": "01", "chp": "02", "both": "03"}
+VIDEO_FORMAT = "%s 00 %s 10 %s 00000000 00000000 06 0000 0000 00 none none"   # native, profile, CEA modes
+# The native mode is what makes the PC prefer 60 Hz: with 0x38 (1080p30) still native, Windows
+# chose 1080p30 from the 60 Hz set too, so there it is 0x40 (index 8, 1080p60).
+VIDEO_FORMATS = VIDEO_FORMAT % ("40", PROFILES["cbp"], "000001eb")
+VIDEO_FORMATS_30 = VIDEO_FORMAT % ("38", PROFILES["cbp"], "000000ab")
+# AAC, 2 channels at 48 kHz 16 bit (bit 0), no latency. LPCM is left out: that tsdemux gives
+# a pad that the pipeline can decode is not known.
+AUDIO_CODECS = "AAC 00000001 00"
+MAX_BITRATE = 20000000   # bits per second, for microsoft_max_bitrate
+ANSWERS = {
+    "wfd_audio_codecs": AUDIO_CODECS,
+    "wfd_content_protection": "none",
+    "wfd_coupled_sink": "none",
+    "wfd_uibc_capability": "none",
+    "wfd_standby_resume_capability": "none",
+    "wfd_connector_type": "05",   # HDMI
+    # without this Windows ignores wfd_idr_request, and its only keyframe is the first picture
+    "wfd_idr_request_capability": "1",
+    # MS-WFDPE: the picture's size may change inside a session, and the sink takes part in
+    # latency management; whether Windows then asks for more of the sink is for the device
+    "microsoft_latency_management_capability": "supported",
+    "microsoft_format_change_capability": "supported",
+    # MS-WFDPE 2.10.1.1: a ceiling in bits per second that the source must encode under. "none"
+    # is not in its syntax and left Windows at about 5 Mbit/s, a smeared picture. 20 Mbit/s is
+    # well within the home Wi-Fi link (433 Mbit/s PHY) and within what the Pi's H.264 decoder
+    # handles at 1080p.
+    "microsoft_max_bitrate": str(MAX_BITRATE),
+    # 12 hex digits in MS-WFDPE: 000000000000 is no resolutions beyond wfd_video_formats
+    "microsoft_video_formats": "0" * 12,
+}
+
+
+# --- the display's EDID, for wfd_display_edid ---
+# Windows builds the modes of its "wireless display" from the sink's EDID and, given none,
+# falls back to a 1024x768 desktop (measured), a 4:3 picture on the TV. So an EDID is always
+# answered: a built-in one that says 1920x1080 at 60 Hz. The TV's own is not used. The receiver
+# can never show more than 1080p, and the TV lists 3840x2160 as its preferred mode, which would
+# let Windows build a 4K desktop and scale it down into the 1080p stream.
+EDID_HEADER = bytes([0, 255, 255, 255, 255, 255, 255, 0])
+
+
+def edid_dtd(clock, h, hblank, v, vblank, hoff, hwidth, voff, vwidth, mm_w, mm_h):
+    """An 18-byte EDID detailed timing descriptor (pixel clock in 10 kHz units)."""
+    return bytes([
+        clock & 255, clock >> 8, h & 255, hblank & 255, (h >> 8) << 4 | hblank >> 8,
+        v & 255, vblank & 255, (v >> 8) << 4 | vblank >> 8,
+        hoff & 255, hwidth & 255, (voff & 15) << 4 | vwidth & 15,
+        (hoff >> 8) << 6 | (hwidth >> 8) << 4 | (voff >> 4) << 2 | vwidth >> 4,
+        mm_w & 255, mm_h & 255, (mm_w >> 8) << 4 | mm_h >> 8,
+        0, 0, 0x1e])    # no border; digital, separate sync, both positive
+
+
+def edid_text(tag, text):
+    return bytes([0, 0, 0, tag, 0]) + (text + "\n").encode("ascii")[:13].ljust(13, b" ")
+
+
+def build_edid():
+    """A 128-byte EDID 1.3 block: a TV called "Media Stick" with 1920x1080 at 60 Hz (CEA-861
+    timing: 148.5 MHz, 2200x1125) as its preferred and only mode."""
+    b = bytearray(128)
+    b[0:8] = EDID_HEADER
+    b[8:10] = ((ord("M") - 64) << 10 | (ord("S") - 64) << 5 | ord("K") - 64).to_bytes(2, "big")
+    b[10:12] = (1).to_bytes(2, "little")      # product code
+    b[12:16] = (1).to_bytes(4, "little")      # serial number
+    b[16], b[17] = 1, 34                      # week 1 of 2024
+    b[18], b[19] = 1, 3                       # EDID 1.3
+    b[20:25] = bytes([0x80, 52, 29, 0x78, 0x06])   # digital, 52x29 cm, gamma 2.2, sRGB, preferred timing
+    b[25:35] = bytes.fromhex("ee91a3544c99260f5054")   # sRGB's chromaticity
+    b[38:54] = b"\x01\x01" * 8                # no standard timings
+    b[54:72] = edid_dtd(14850, 1920, 280, 1080, 45, 88, 44, 4, 5, 509, 286)
+    b[72:90] = edid_text(0xFC, "Media Stick")
+    b[90:108] = (bytes([0, 0, 0, 0xFD, 0, 50, 75, 30, 85, 15, 0, 0x0A]) + b" " * 6)   # 50-75 Hz, 30-85 kHz, 150 MHz
+    b[108:113] = bytes([0, 0, 0, 0x10, 0])    # dummy descriptor
+    b[127] = -sum(b[:127]) & 255
+    return bytes(b)
+
+
+def edid_value(edid):
+    """"<block count, 4 hex digits> <the blocks as hex, no spaces>", the form of
+    wfd_display_edid in the Wi-Fi Display specification (as far as known: the block count is
+    of 128-byte blocks)."""
+    return "%04x %s" % (len(edid) // 128, edid.hex())
+
+
+def display_edid_value():
+    return edid_value(build_edid())
+
+
+def video_profile(path=None):
+    """The profile field to answer: what the file PROFILE_FLAG names, or cbp when there is no
+    file or it names anything else."""
+    try:
+        with open(PROFILE_FLAG if path is None else path) as f:
+            name = f.read(32).strip().lower()
+    except OSError:
+        name = ""
+    return PROFILES.get(name, PROFILES["cbp"])
+
+
+def video_formats_value():
+    native, cea = ("38", "000000ab") if os.path.exists(FPS30_FLAG) else ("40", "000001eb")
+    return VIDEO_FORMAT % (native, video_profile(), cea)
+
+
+def m3_body(asked, rtp_port, edid=display_edid_value):
+    """The M3 answer: each parameter the source asked for, and only those; any the stick does
+    not know (wfd_3d_video_formats, wfd_I2C, the other microsoft_* and the intel_*) is none.
+    edid() gives the value of wfd_display_edid, when it is asked."""
+    lines = []
+    for name in asked:
+        if name == "wfd_client_rtp_ports":
+            value = "RTP/AVP/UDP;unicast %d 0 mode=play" % rtp_port
+        elif name == "wfd_display_edid":
+            value = edid()
+        elif name == "wfd_video_formats":
+            value = video_formats_value()
+        elif name == "microsoft_max_bitrate":
+            value = str(max_bitrate())
+        else:
+            value = ANSWERS.get(name, "none")
+        lines.append("%s: %s\r\n" % (name, value))
+    return "".join(lines)
+
+
+def describe_video(value):
+    """"1920x1080p30 CBP" for an M4 wfd_video_formats: the modes chosen (CEA, then VESA) and
+    the profile; the text itself when it does not parse."""
+    parts = value.split()
+    try:
+        profile, cea, vesa = int(parts[2], 16), int(parts[4], 16), int(parts[5], 16)
+    except (IndexError, ValueError):
+        return value
+    modes = ([CEA_MODES.get(i, "cea%d" % i) for i in range(32) if cea >> i & 1]
+             + [VESA_MODES.get(i, "vesa%d" % i) for i in range(32) if vesa >> i & 1])
+    profiles = [n for bit, n in ((1, "CBP"), (2, "CHP")) if profile & bit]
+    return " ".join(["+".join(modes) or value] + ["+".join(profiles)] * bool(profiles))
+
+
+class RtspSink:
+    """The sink end of one Wi-Fi Display RTSP connection, as a state machine: feed() takes
+    what came in and calls send() with what to answer. before_play() runs when SETUP is
+    answered and PLAY is next (take the screen, start listening on the RTP port); playing()
+    after PLAY is answered. .ended is a reason once the connection is over."""
+
+    SOURCE_METHODS = "org.wfa.wfd1.0, GET_PARAMETER, SET_PARAMETER"
+
+    def __init__(self, send, rtp_port, before_play=None, playing=None, log=say, edid=display_edid_value):
+        self.send, self.rtp_port, self.log, self.edid = send, rtp_port, log, edid
+        self.idr_count = 0
+        self.before_play, self.on_playing = before_play, playing
+        self.buf = bytearray()
+        self.cseq = 0
+        self.pending = {}
+        self.url = "rtsp://localhost/wfd1.0"
+        self.video = self.audio = ""
+        self.session = ""
+        self.timeout = 60
+        self.playing = False
+        self.ended = None
+        self.sent_m2 = False
+
+    def end(self, reason):
+        if self.ended is None:
+            self.ended = reason
+            self.log("RTSP over:", reason)
+
+    def feed(self, data):
+        self.buf += data
+        for msg in take_messages(self.buf):
+            if self.ended:
+                break
+            self.handle(msg)
+
+    def reply(self, msg, status="200 OK", headers=(), body=""):
+        self.send(rtsp_bytes("RTSP/1.0 " + status, [("CSeq", msg.cseq)] + list(headers), body))
+
+    def ask(self, method, uri, headers=(), body=""):
+        self.cseq += 1
+        self.pending[str(self.cseq)] = method
+        self.send(rtsp_bytes("%s %s RTSP/1.0" % (method, uri), [("CSeq", self.cseq)] + list(headers), body))
+
+    def handle(self, msg):
+        if msg.response:
+            return self.on_response(msg)
+        m = msg.method
+        if m == "OPTIONS":
+            self.reply(msg, headers=[("Public", self.SOURCE_METHODS)])
+            if not self.sent_m2:
+                self.sent_m2 = True
+                self.ask("OPTIONS", "*", [("Require", "org.wfa.wfd1.0")])
+        elif m == "GET_PARAMETER":
+            asked = [l.partition(":")[0].strip() for l in msg.body.splitlines() if l.strip()]
+            body = m3_body(asked, self.rtp_port, self.edid)   # no body is the keep-alive: empty answer
+            self.reply(msg, body=body)
+            if asked:
+                self.log("M3 answered:", ", ".join(asked))
+        elif m == "SET_PARAMETER":
+            self.reply(msg)
+            self.on_set(msg.body)
+        elif m == "TEARDOWN":
+            self.reply(msg)
+            self.end("the source tore down")
+        else:
+            self.reply(msg, "501 Not Implemented")
+
+    def on_set(self, body):
+        params = {}
+        for line in body.splitlines():
+            k, _, v = line.partition(":")
+            if k.strip():
+                params[k.strip().lower()] = v.strip()
+        if "wfd_presentation_url" in params:   # M4: "rtsp://<source>/wfd1.0/streamid=0 none"
+            self.url = params["wfd_presentation_url"].split()[0]
+        if "wfd_video_formats" in params:
+            self.video = params["wfd_video_formats"]
+        if "wfd_audio_codecs" in params:
+            self.audio = params["wfd_audio_codecs"]
+        if "wfd_video_formats" in params:
+            self.log("M4: video %s, audio %s, url %s" % (describe_video(self.video), self.audio, self.url))
+        trigger = params.get("wfd_trigger_method", "").upper()
+        if trigger == "SETUP":
+            self.ask("SETUP", self.url, [("Transport", "RTP/AVP/UDP;unicast;client_port=%d" % self.rtp_port)])
+        elif trigger == "PLAY":
+            self.ask("PLAY", self.url, [("Session", self.session)])
+        elif trigger == "PAUSE":
+            self.ask("PAUSE", self.url, [("Session", self.session)])
+        elif trigger == "TEARDOWN":
+            self.teardown()
+            self.end("the source asked for a teardown")
+
+    def on_response(self, msg):
+        method = self.pending.pop(msg.cseq, "")
+        if method == "SETUP" and msg.status == 200:
+            m = re.match(r"\s*([^;\s]+)(?:\s*;\s*timeout\s*=\s*(\d+))?", msg.headers.get("session", ""))
+            self.session = m.group(1) if m else ""
+            self.timeout = int(m.group(2)) if m and m.group(2) else 60
+            self.log("M6 answered: session %s, timeout %d, %s" % (self.session or "-", self.timeout,
+                                                                 msg.headers.get("transport", "")))
+            try:
+                if self.before_play:
+                    self.before_play()
+            except Exception as e:   # the screen could not be taken: no point in PLAY
+                return self.end("could not start the picture: %s" % e)
+            self.ask("PLAY", self.url, [("Session", self.session)])
+        elif method == "PLAY" and msg.status == 200:
+            self.playing = True
+            self.log("M7 answered: playing")
+            if self.on_playing:
+                self.on_playing()
+        elif method in ("SETUP", "PLAY") and msg.status != 200:
+            self.end("%s answered %d" % (method, msg.status))
+        elif method == "OPTIONS":
+            self.log("M2 answered:", msg.status)
+
+    def request_idr(self, why=""):
+        """Ask for a whole picture (the decoder starts on one): a sink to source SET_PARAMETER
+        with the body wfd_idr_request, which the source may answer 200 whenever it likes."""
+        self.idr_count += 1
+        self.log("IDR requested" + (": " + why if why else ""))
+        self.ask("SET_PARAMETER", "rtsp://localhost/wfd1.0", body="wfd_idr_request\r\n")
+
+    def teardown(self):
+        if self.session:
+            self.ask("TEARDOWN", self.url, [("Session", self.session)])
+
+
+# --- libdrm, just enough to light the TV at 1080p with the boot picture (airplay has the same) ---
+c_u16, c_u32, c_u64, c_int = ctypes.c_uint16, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_int
+
+
+class ModeInfo(ctypes.Structure):
+    _fields_ = [("clock", c_u32), ("hdisplay", c_u16), ("hsync_start", c_u16),
+                ("hsync_end", c_u16), ("htotal", c_u16), ("hskew", c_u16),
+                ("vdisplay", c_u16), ("vsync_start", c_u16), ("vsync_end", c_u16),
+                ("vtotal", c_u16), ("vscan", c_u16), ("vrefresh", c_u32),
+                ("flags", c_u32), ("type", c_u32), ("name", ctypes.c_char * 32)]
+
+
+class Resources(ctypes.Structure):
+    _fields_ = [("count_fbs", c_int), ("fbs", ctypes.POINTER(c_u32)),
+                ("count_crtcs", c_int), ("crtcs", ctypes.POINTER(c_u32)),
+                ("count_connectors", c_int), ("connectors", ctypes.POINTER(c_u32)),
+                ("count_encoders", c_int), ("encoders", ctypes.POINTER(c_u32)),
+                ("min_width", c_u32), ("max_width", c_u32),
+                ("min_height", c_u32), ("max_height", c_u32)]
+
+
+class Connector(ctypes.Structure):
+    _fields_ = [("connector_id", c_u32), ("encoder_id", c_u32), ("connector_type", c_u32),
+                ("connector_type_id", c_u32), ("connection", c_int), ("mmWidth", c_u32),
+                ("mmHeight", c_u32), ("subpixel", c_int), ("count_modes", c_int),
+                ("modes", ctypes.POINTER(ModeInfo)), ("count_props", c_int),
+                ("props", ctypes.POINTER(c_u32)), ("prop_values", ctypes.POINTER(c_u64)),
+                ("count_encoders", c_int), ("encoders", ctypes.POINTER(c_u32))]
+
+
+class Encoder(ctypes.Structure):
+    _fields_ = [("encoder_id", c_u32), ("encoder_type", c_u32), ("crtc_id", c_u32),
+                ("possible_crtcs", c_u32), ("possible_clones", c_u32)]
+
+
+class CreateDumb(ctypes.Structure):
+    _fields_ = [("height", c_u32), ("width", c_u32), ("bpp", c_u32), ("flags", c_u32),
+                ("handle", c_u32), ("pitch", c_u32), ("size", c_u64)]
+
+
+class MapDumb(ctypes.Structure):
+    _fields_ = [("handle", c_u32), ("pad", c_u32), ("offset", c_u64)]
+
+
+DRM_IOCTL_MODE_CREATE_DUMB = 0xC02064B2   # _IOWR('d', 0xB2, struct drm_mode_create_dumb)
+DRM_IOCTL_MODE_MAP_DUMB = 0xC01064B3      # _IOWR('d', 0xB3, struct drm_mode_map_dumb)
+DRM_MODE_CONNECTED = 1
+DRM_MODE_FLAG_INTERLACE = 1 << 4
+DRM_MODE_TYPE_PREFERRED = 1 << 3
+
+# splash_pixels, put_rows and paint_splash mirror airplay's (same cache file, same ffmpeg
+# picture): the boot picture (Plymouth's, Kodi's splash, console-splash's) shown while the
+# screen changes hands, so going to and from a PC shows it instead of black.
+SPLASH = "/home/media/.kodi/media/splash.png"
+SPLASH_CACHE = "/var/cache/media-stick"
+
+
+def splash_pixels(w, h, splash=SPLASH, cache=SPLASH_CACHE):
+    """The boot picture at w x h in XRGB8888 (bytes b, g, r, x), or None without it. ffmpeg
+    makes it once (about a second on the Pi 3) and the result is kept for the next time."""
+    raw = os.path.join(cache, "splash-%dx%d.xrgb" % (w, h))
+    try:
+        if os.path.getmtime(raw) >= os.path.getmtime(splash):
+            with open(raw, "rb") as f:
+                data = f.read()
+            if len(data) == w * h * 4:
+                return data
+    except OSError:
+        pass
+    try:
+        data = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-i", splash,
+                               "-vf", "scale=%d:%d" % (w, h), "-f", "rawvideo", "-pix_fmt", "bgr0", "-"],
+                              capture_output=True, check=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError) as e:
+        say("no boot picture for the switch:", e)
+        return None
+    if len(data) != w * h * 4:
+        return None
+    try:
+        os.makedirs(cache, exist_ok=True)
+        tmp = "%s.%d.tmp" % (raw, threading.get_ident())   # made at start and on a take
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, raw)
+    except OSError:
+        pass
+    return data
+
+
+def put_rows(mem, data, w, h, pitch):
+    """Copy w x h XRGB pixels into a buffer whose rows are pitch bytes apart."""
+    row = w * 4
+    if pitch == row:
+        mem[:row * h] = data
+        return
+    for y in range(h):
+        mem[y * pitch:y * pitch + row] = data[y * row:(y + 1) * row]
+
+
+def paint_splash(fd, dumb, w, h):
+    """Put the boot picture into the dumb buffer (zero filled, black, otherwise)."""
+    data = splash_pixels(w, h)
+    if data is None:
+        return
+    m = MapDumb(handle=dumb.handle)
+    fcntl.ioctl(fd, DRM_IOCTL_MODE_MAP_DUMB, m)
+    with mmap.mmap(fd, dumb.size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE,
+                   offset=m.offset) as mem:
+        put_rows(mem, data, w, h, dumb.pitch)
+
+
+def paint_or_black(fd, dumb, w, h, paint=paint_splash):
+    """The boot picture into the buffer; any failure leaves it as it is, black."""
+    try:
+        paint(fd, dumb, w, h)
+    except Exception as e:   # a picture is nice to have: the take goes on without it
+        say("boot picture not drawn, black instead:", e)
+
+
+def light_screen():
+    """Set the connected TV to 1920x1080 (or its preferred mode) showing the boot picture
+    (black without it), then give up DRM master so the drawer, opening the screen next, gets
+    it. Returns the open card (the picture lasts while it is open) and the mode's size."""
+    drm = ctypes.CDLL("libdrm.so.2", use_errno=True)
+    drm.drmModeGetResources.restype = ctypes.POINTER(Resources)
+    drm.drmModeGetConnector.restype = ctypes.POINTER(Connector)
+    drm.drmModeGetEncoder.restype = ctypes.POINTER(Encoder)
+    fd = os.open(CARD, os.O_RDWR | os.O_CLOEXEC)
+    try:
+        # right after Kodi stops the screen can still be held for a moment: become master once nobody is
+        for _ in range(25):
+            if drm.drmSetMaster(fd) == 0:
+                break
+            time.sleep(0.2)
+        else:
+            raise OSError(ctypes.get_errno(), "the screen stays held by another program")
+        res = drm.drmModeGetResources(fd)
+        if not res:
+            raise OSError(ctypes.get_errno(), "no DRM resources")
+        r = res.contents
+        for i in range(r.count_connectors):
+            conn = drm.drmModeGetConnector(fd, r.connectors[i])
+            if conn and conn.contents.connection == DRM_MODE_CONNECTED and conn.contents.count_modes:
+                break
+            if conn:
+                drm.drmModeFreeConnector(conn)
+        else:
+            raise OSError("no screen connected")
+        c = conn.contents
+        modes = [c.modes[i] for i in range(c.count_modes)]
+        best = max(modes, key=lambda m: (m.hdisplay == 1920 and m.vdisplay == 1080,
+                                         not m.flags & DRM_MODE_FLAG_INTERLACE,
+                                         m.vrefresh == 60, bool(m.type & DRM_MODE_TYPE_PREFERRED)))
+        mode = ModeInfo.from_buffer_copy(best)
+        crtc = 0
+        if c.encoder_id:
+            enc = drm.drmModeGetEncoder(fd, c.encoder_id)
+            if enc:
+                crtc = enc.contents.crtc_id
+                drm.drmModeFreeEncoder(enc)
+        crtc = crtc or r.crtcs[0]
+        dumb = CreateDumb(height=mode.vdisplay, width=mode.hdisplay, bpp=32)
+        fcntl.ioctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, dumb)   # zero filled: black
+        paint_or_black(fd, dumb, mode.hdisplay, mode.vdisplay)
+        fb = c_u32()
+        if drm.drmModeAddFB(fd, mode.hdisplay, mode.vdisplay, 24, 32, dumb.pitch, dumb.handle,
+                            ctypes.byref(fb)):
+            raise OSError(ctypes.get_errno(), "drmModeAddFB")
+        conn_id = c_u32(c.connector_id)
+        if drm.drmModeSetCrtc(fd, crtc, fb.value, 0, 0, ctypes.byref(conn_id), 1, ctypes.byref(mode)):
+            raise OSError(ctypes.get_errno(), "drmModeSetCrtc")
+        drm.drmDropMaster(fd)
+        drm.drmModeFreeConnector(conn)
+        drm.drmModeFreeResources(res)
+        return fd, mode.hdisplay, mode.vdisplay
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+# --- RTP in: the PC's MPEG-TS, checked and put in order, on its way to the drawer ---
+RTP_PAYLOAD_TYPES = [33] + list(range(96, 128))   # MP2T, or the dynamic ones
+REORDER = 3          # packets that may come late before the one missing is given up
+LOSS_IDR_EVERY = 1.0
+# The drawer (gst-launch) needs a few seconds to start reading its input. What arrives
+# meanwhile is held, up to BACKLOG_MAX bytes, and sent in order as soon as the pipe has room:
+# held data drains faster than real time, so the start-up delay is gone from the picture
+# within a second or two, while dropping it costs a keyframe round trip and a late first picture.
+BACKLOG_MAX = 8 << 20   # bytes
+
+
+class PipeFull(Exception):
+    """The drawer's pipe has no room: the payload is dropped (whole) and not waited for."""
+
+RTP_SUMMARY_EVERY = 5.0
+
+
+def parse_rtp(data):
+    """(sequence number, payload) of an RTP packet, or None when it is not one (version 2, a
+    payload type of a stream): the 12-byte header, the CSRC list, an extension and padding are
+    taken off."""
+    if len(data) < 12 or data[0] >> 6 != 2 or data[1] & 127 not in RTP_PAYLOAD_TYPES:
+        return None
+    start = 12 + 4 * (data[0] & 15)
+    end = len(data)
+    if data[0] & 0x10:      # header extension: id(2) length in words(2) and the words
+        if len(data) < start + 4:
+            return None
+        start += 4 + 4 * int.from_bytes(data[start + 2:start + 4], "big")
+    if data[0] & 0x20 and len(data) > 12:    # padding: the last byte counts it
+        end -= data[-1]
+    if start > end:
+        return None
+    return int.from_bytes(data[2:4], "big"), data[start:end]
+
+
+class RtpOrder:
+    """Sequence numbers (16 bits, wrapping) to payloads in order. A packet that is ahead of the
+    next expected waits for the missing ones, up to REORDER others coming after; then the
+    missing are given up and counted lost. Duplicates and packets from the past are dropped.
+    push() returns (payloads to pass on in order, packets lost)."""
+
+    def __init__(self):
+        self.expected = None
+        self.waiting = {}
+
+    def push(self, seq, payload):
+        if self.expected is None:
+            self.expected = seq
+        ahead = (seq - self.expected) & 0xFFFF
+        if ahead >= 0x8000:
+            return [], 0                    # a duplicate or too late: its place has passed
+        if ahead > 1000:                    # the stream restarted somewhere else
+            lost, self.expected, self.waiting = ahead, seq, {}
+            return self.drain([payload]), lost
+        if ahead == 0:
+            return self.drain([payload]), 0
+        self.waiting[seq] = payload
+        out, lost = [], 0
+        while len(self.waiting) > REORDER:
+            nearest = min(self.waiting, key=lambda s: (s - self.expected) & 0xFFFF)
+            lost += (nearest - self.expected) & 0xFFFF
+            self.expected = nearest
+            out = self.drain(out + [self.waiting.pop(nearest)])
+        return out, lost
+
+    def drain(self, out):
+        self.expected = (self.expected + 1) & 0xFFFF
+        while self.expected in self.waiting:
+            out.append(self.waiting.pop(self.expected))
+            self.expected = (self.expected + 1) & 0xFFFF
+        return out
+
+
+class PayloadDump:
+    """A copy of what the relay passes to the drawer, in the same order, in a file: for
+    decoding the stream offline. It stops at limit bytes (the last payload is cut to fit), and
+    a write error turns it off; the stream is never disturbed by either."""
+
+    def __init__(self, path, limit=DUMP_MAX, log=say):
+        self.limit, self.log, self.size = limit, log, 0
+        self.f = None
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            os.fchmod(fd, 0o644)
+            self.f = os.fdopen(fd, "wb")
+        except OSError as e:
+            self.log("stream dump not started:", e)
+            return
+        self.log("stream dump to %s started (up to %d bytes)" % (path, limit))
+
+    def write(self, data):
+        if self.f is None:
+            return
+        data = data[:self.limit - self.size]
+        try:
+            self.f.write(data)
+            self.size += len(data)
+        except (OSError, ValueError) as e:
+            self.close("write failed: %s" % e)
+            return
+        if self.size >= self.limit:
+            self.close("limit reached")
+
+    def close(self, why="session over"):
+        if self.f is None:
+            return
+        f, self.f = self.f, None
+        try:
+            f.close()
+        except OSError:
+            pass
+        self.log("stream dump stopped after %d bytes: %s" % (self.size, why))
+
+
+class RtpRelay:
+    """UDP port in, the drawer (write) out. handle() is one datagram; start() binds the port
+    (4 MB of socket buffer, for a 1080p picture arriving in a burst) and does that in a
+    thread. Only the session's source is listened to. Every loss is remembered and
+    idr_due() says, at most once a second, that a new keyframe is wanted. write() must not
+    block: it raises PipeFull when the drawer is not taking more, and that payload is kept
+    whole in a queue (a part of one would shift the 188-byte packets), which is sent first,
+    in order, whenever the pipe has room. Only when the queue is over BACKLOG_MAX is a new
+    payload dropped, whole, and counted like a loss."""
+
+    def __init__(self, port, source_ip, write, clock=time.monotonic, backlog=lambda: 0, dump=None):
+        self.port, self.source_ip, self.write, self.clock = port, source_ip, write, clock
+        self.backlog = backlog       # bytes waiting in the pipe to the drawer
+        self.dump = dump             # a PayloadDump, or None
+        self.order = RtpOrder()
+        self.packets = self.lost = self.dropped = self.foreign = self.bad = 0
+        self.bytes = 0               # payload received since the last summary
+        self.queue = collections.deque()   # payloads the pipe had no room for, oldest first
+        self.queued = 0              # their size in bytes
+        self.lock = threading.Lock()
+        self.lost_flag = False
+        self.last_idr = None
+        self.summary_at = clock()
+        self.sock = None
+        self.stopping = threading.Event()
+        self.thread = None
+
+    def handle(self, data, src_ip):
+        if src_ip != self.source_ip:
+            self.foreign += 1
+            return
+        parsed = parse_rtp(data)
+        if parsed is None:
+            self.bad += 1
+            return
+        out, lost = self.order.push(*parsed)
+        self.packets += 1
+        self.bytes += len(parsed[1])
+        if lost:
+            self.lost += lost
+            self.lost_flag = True
+        for payload in out:
+            self.send(payload)
+            if self.dump is not None:   # every payload received, the dropped ones too
+                self.dump.write(payload)
+
+    def send(self, payload):
+        """The payload to the drawer after everything queued before it, or into the queue."""
+        with self.lock:
+            self.drain()
+            if not self.queue:
+                try:
+                    self.write(payload)
+                    return
+                except PipeFull:
+                    pass
+            if self.queued > BACKLOG_MAX:
+                self.dropped += 1
+                self.lost_flag = True
+            else:
+                self.queue.append(payload)
+                self.queued += len(payload)
+
+    def drain(self):
+        """Queued payloads into the pipe, oldest first, until it is full. A write that says
+        there is no drawer (False) ends the queue: it belonged to a drawer that is gone."""
+        while self.queue:
+            try:
+                taken = self.write(self.queue[0])
+            except PipeFull:
+                return
+            if taken is False:
+                self.queue.clear()
+                self.queued = 0
+            else:
+                self.queued -= len(self.queue.popleft())
+
+    def discard(self):
+        """Forget the queue: the drawer it was held for is replaced and starts on a keyframe."""
+        with self.lock:
+            self.queue.clear()
+            self.queued = 0
+
+    def idr_due(self):
+        now = self.clock()
+        if self.lost_flag and (self.last_idr is None or now - self.last_idr >= LOSS_IDR_EVERY):
+            self.lost_flag, self.last_idr = False, now
+            return True
+        return False
+
+    def summary(self, idrs, refreshes=0):
+        """One line every few seconds while there is something to say."""
+        now = self.clock()
+        if now - self.summary_at < RTP_SUMMARY_EVERY:
+            return None
+        mbit = self.bytes * 8 / 1e6 / (now - self.summary_at)
+        self.summary_at, self.bytes = now, 0
+        return "RTP: %d packets, %d lost, %d dropped, %d ignored, %d IDR requests so far (%d refresh), %.1f Mbit/s, pipe %d KB, backlog %d KB" % (
+            self.packets, self.lost, self.dropped, self.foreign + self.bad, idrs, refreshes, mbit,
+            self.backlog() // 1024, self.queued // 1024)
+
+    def start(self):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)
+        self.sock.bind(("", self.port))
+        self.sock.settimeout(0.5)
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def run(self):
+        while not self.stopping.is_set():
+            try:
+                data, addr = self.sock.recvfrom(65536)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            self.handle(data, addr[0])
+
+    def stop(self):
+        self.stopping.set()
+        if self.dump is not None:
+            self.dump.close()
+        if self.thread is not None:
+            self.thread.join(RELAY_JOIN)
+            if self.thread.is_alive():
+                say("the RTP thread did not stop within %d s" % RELAY_JOIN)
+        if self.sock is not None:
+            self.sock.close()
+
+
+def drawer(audio_delay=0):
+    """MPEG-TS on its standard input (RtpRelay writes it), out on the TV. The video branch is
+    airplay's: hardware decode (bt709, or the colours come out wrong) straight into kmssink,
+    only a queue between them that drops an older picture instead of showing it late. The
+    audio is AAC in ADTS, decoded by software (the Pi has no AAC hardware); its queue leaks
+    too, so that a stuck sound device drops sound and never stops the demuxer (and with it the
+    picture). Both branches are linked to tsdemux by caps, not by pad name (video_0041,
+    audio_0042 are the PIDs the PC chose), and a stream without audio just never makes the
+    second pad. The sinks do not wait to preroll (async=false: a pipeline of a plain file
+    descriptor is not live, and without audio the sound sink would never get its first buffer)
+    and do not wait for the clock (sync=false: tsdemux's PCR timing is not used for pacing).
+    audio_delay (ms) holds the sound back in that same leaky queue: min-threshold-time keeps
+    it from passing anything until that much sound is queued, which then stays queued as a
+    steady delay. The queue is bounded by time alone (max-size-time is AUDIO_QUEUE_MS above
+    the delay, the buffer and byte limits are off), so sound the card does not take in time is
+    dropped, oldest first, instead of adding up as lag. Delaying in the queue needs no
+    element of its own, and the queue still leaks, so a stuck sound device still never stalls
+    the demuxer. The video branch is the same whatever the delay is."""
+    hold = []
+    if audio_delay > 0:
+        hold = ["min-threshold-time=%d" % (audio_delay * 1000000)]
+    hold += ["max-size-buffers=0", "max-size-bytes=0",
+             "max-size-time=%d" % ((audio_delay + AUDIO_QUEUE_MS) * 1000000)]
+    return AS_MEDIA + ["GST_DEBUG=2,bufferpool:1"] + [
+        "gst-launch-1.0", "-v",
+        "fdsrc", "fd=0", "!", "video/mpegts,systemstream=true", "!", "tsdemux", "name=d",
+        "d.", "!", "video/x-h264", "!", "queue", "!", "h264parse",
+        "!", "capssetter", "caps=video/x-h264,colorimetry=bt709",
+        "!", "v4l2h264dec", "!", "queue", "max-size-buffers=1", "leaky=downstream",
+        "!", "kmssink", "sync=false", "async=false",
+        "d.", "!", "audio/mpeg,mpegversion=4,stream-format=adts", "!", "queue", "leaky=downstream"] + hold + [
+        "!", "aacparse", "!", "avdec_aac",
+        "!", "audioconvert", "!", "audioresample", "!", "alsasink",
+        "buffer-time=%d" % AUDIO_BUFFER_US, "latency-time=10000", "sync=false", "async=false"]
+
+
+F_SETPIPE_SZ = 1031
+
+
+def roomy(fd):
+    """A 1 MB pipe instead of 64 KB: a few pictures of slack while the drawer is busy."""
+    try:
+        fcntl.fcntl(fd, F_SETPIPE_SZ, 1 << 20)
+    except OSError:
+        pass
+
+
+def pipe_pending(fd):
+    """The bytes in the pipe at fd, not yet read by the other end (FIONREAD counts them from
+    either end on Linux); 0 when it cannot be asked."""
+    buf = bytearray(4)
+    try:
+        fcntl.ioctl(fd, termios.FIONREAD, buf)
+    except (OSError, ValueError):
+        return 0
+    return int.from_bytes(buf, sys.byteorder)
+
+
+def draw_log(line):
+    """One line into the drawer's log, which starts over when it is past LOG_MAX."""
+    try:
+        big = os.path.exists(DRAW_LOG) and os.path.getsize(DRAW_LOG) > LOG_MAX
+        with open(DRAW_LOG, "w" if big else "a") as out:
+            out.write(line + "\n")
+    except OSError:
+        pass
+
+
+# what the drawer's -v and GST_DEBUG=2 say
+BROKEN_NAL = re.compile(r"broken/invalid nal", re.I)
+FIRST_PICTURE = "v4l2h264dec0.GstPad:src: caps"   # the decoder has settled on a picture size
+DECODER_ERROR = re.compile(r"ERROR.*v4l2|v4l2.*ERROR")
+IDR_UNTIL_PICTURE = 1.0   # seconds between IDR requests until the first picture
+IDR_AFTER_LOSS = 2.0      # at least this between requests when the stream is damaged
+SUMMARY_EVERY = 5.0
+
+
+class DrawWatch:
+    """What the drawer's output says about the stream, for the keyframe request. Windows sends
+    its one whole picture (SPS, PPS, IDR) at the very start, before tsdemux knows the streams,
+    and then only P slices; so until the decoder has shown a picture an IDR is asked for every
+    second, and afterwards whenever the parser reports broken NAL units or the decoder an error
+    (lost packets). The broken-NAL lines come by the hundred: they are counted and summed up
+    in one line every few seconds instead of going into the log.
+    feed() takes a line (from the drawer's reader thread), tick() is called from the session's
+    loop and calls request(why); clock is time.monotonic, a test passes its own. While the
+    relay still holds data for the drawer (held=True) no keyframe is asked for before the first
+    picture: the picture is in that data, and the second to wait starts when it has drained."""
+
+    def __init__(self, clock, request, write=draw_log):
+        self.clock, self.request, self.write = clock, request, write
+        self.lock = threading.Lock()
+        self.active = False
+        self.begin()
+        self.active = False
+
+    def begin(self):
+        """A new stream: PLAY was answered or the drawer was restarted."""
+        with self.lock:
+            self.active, self.picture, self.want = True, False, False
+            self.last_idr, self.broken, self.summary_at = None, 0, self.clock()
+            self.began = self.window = self.summary_at   # window: where the wait for a picture started
+            self.refresh_at = None
+
+    def stop(self):
+        with self.lock:
+            self.active = False
+
+    def silent_for(self):
+        """Seconds since this stream began with no picture shown; 0 once there is one, or
+        while nothing is watched."""
+        with self.lock:
+            if not self.active or self.picture:
+                return 0.0
+            return self.clock() - self.began
+
+    def refresh_due(self, every):
+        """True once every `every` seconds (never when 0) from the first picture on."""
+        with self.lock:
+            if not every or not self.active or not self.picture or self.refresh_at is None:
+                return False
+            now = self.clock()
+            if now - self.refresh_at < every:
+                return False
+            self.refresh_at = now
+            return True
+
+    def feed(self, line):
+        with self.lock:
+            if BROKEN_NAL.search(line):
+                self.broken += 1
+                self.want = self.want or self.picture
+                return
+            if FIRST_PICTURE in line and not self.picture:
+                self.picture = True
+                self.refresh_at = self.clock()
+            elif self.picture and DECODER_ERROR.search(line):
+                self.want = True
+        self.write(line)
+
+    def tick(self, held=False):
+        now = self.clock()
+        why, summary = None, 0
+        with self.lock:
+            if not self.active:
+                return
+            held = held and not self.picture
+            if held:
+                self.window = now
+            gap = IDR_AFTER_LOSS if self.picture else IDR_UNTIL_PICTURE
+            since = self.last_idr
+            if not self.picture:
+                since = self.window if since is None else max(since, self.window)
+            if not held and (not self.picture or self.want) and (since is None or now - since >= gap):
+                why = "no picture yet" if not self.picture else "the stream is damaged"
+                self.last_idr, self.want = now, False
+            if self.broken and now - self.summary_at >= SUMMARY_EVERY:
+                summary, self.broken, self.summary_at = self.broken, 0, now
+        if summary:
+            self.write("[miracast] %d broken NAL units dropped by h264parse" % summary)
+        if why:
+            self.request(why)
+
+
+class Screen:
+    """The screen while a PC has it: the flag file, Kodi stopped, the TV lit, the drawer.
+    systemctl, light and popen are passed in so that a test can run it with nothing real.
+    The drawer's output goes line by line to on_line (the log file unless a session watches)."""
+
+    def __init__(self, systemctl=systemctl, light=light_screen, popen=subprocess.Popen, pending=pipe_pending):
+        self.systemctl, self.light, self.popen, self.pending = systemctl, light, popen, pending
+        self.drawer = None
+        self.tail = b""      # what is left of a payload the pipe took only a part of
+        self.card = None
+        self.on_line = draw_log
+        self.lock = threading.Lock()
+
+    @property
+    def taken(self):
+        return os.path.exists(FLAG)
+
+    def take(self):
+        open(FLAG, "w").close()
+        apps = self.systemctl("list-units", "--state=active", "--plain", "--no-legend",
+                              "web-app@*").stdout.split()
+        for unit in [u for u in apps if u.startswith("web-app@")]:
+            self.systemctl("stop", unit)    # its own stop starts Kodi again, stopped next line
+        self.systemctl("stop", "kodi.service")
+        size = (1920, 1080)
+        try:
+            self.card, w, h = self.light()
+            size = (w, h)
+        except (OSError, AttributeError) as e:
+            say("could not set the TV mode:", e)
+        say("screen taken from Kodi at %dx%d" % size)
+
+    def start_drawer(self):
+        self.stop_drawer()
+        draw_log("--- %s" % time.strftime("%H:%M:%S"))
+        delay = audio_delay_ms()
+        if delay:
+            say("sound held back %d ms" % delay)
+        proc = self.popen(drawer(delay), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if getattr(proc, "stdin", None) is not None:
+            roomy(proc.stdin.fileno())
+            try:
+                os.set_blocking(proc.stdin.fileno(), False)   # our end only: the drawer reads as before
+            except OSError:
+                pass
+        with self.lock:
+            self.drawer = proc
+        if getattr(proc, "stdout", None) is not None:
+            threading.Thread(target=self.pump, args=(proc,), daemon=True).start()
+
+    def pump(self, proc):
+        for line in proc.stdout:
+            self.on_line((line.decode("utf-8", "replace") if isinstance(line, bytes) else line).rstrip("\r\n"))
+
+    def write(self, data):
+        """TS bytes into the drawer's standard input, never waiting. False when there is no
+        drawer (it is being restarted: the next keyframe starts the picture again) or it has
+        gone; PipeFull when the pipe has no room, and then the whole payload is dropped. If the
+        pipe takes only a part of one, the rest is kept in self.tail and goes in first next
+        time (everything after it is dropped until it has), so the packets stay aligned."""
+        with self.lock:
+            d = self.drawer
+            if d is None or getattr(d, "stdin", None) is None:
+                return False
+            try:
+                fd = d.stdin.fileno()
+                if self.tail:
+                    self.tail = self.tail[os.write(fd, self.tail):]
+                    if self.tail:
+                        raise PipeFull()
+                taken = os.write(fd, data)
+                if taken < len(data):
+                    self.tail = bytes(memoryview(data)[taken:])
+            except BlockingIOError:
+                raise PipeFull() from None
+            except (OSError, ValueError):
+                return False
+        return True
+
+    def backlog(self):
+        """Bytes waiting in the pipe to the drawer; 0 when there is none."""
+        with self.lock:
+            d = self.drawer
+            if d is None or getattr(d, "stdin", None) is None:
+                return 0
+            try:
+                return self.pending(d.stdin.fileno())
+            except (OSError, ValueError):
+                return 0
+
+    def drawer_dead(self):
+        return self.drawer is not None and self.drawer.poll() is not None
+
+    def stop_drawer(self):
+        """SIGTERM, TERM_WAIT, SIGKILL, KILL_WAIT: it takes at most their sum, whatever the
+        drawer is doing (a deadlocked gst-launch ignores SIGTERM)."""
+        with self.lock:
+            d, self.drawer, self.tail = self.drawer, None, b""
+        if d is None:
+            return
+        d.terminate()
+        try:
+            d.wait(TERM_WAIT)
+        except subprocess.TimeoutExpired:
+            say("the drawer ignored SIGTERM for %g s, killing it" % TERM_WAIT)
+            d.kill()
+            try:
+                d.wait(KILL_WAIT)
+            except subprocess.TimeoutExpired:
+                say("the drawer is still there %g s after SIGKILL, leaving it" % KILL_WAIT)
+        if getattr(d, "stdin", None) is not None:
+            try:
+                d.stdin.close()
+            except OSError:
+                pass
+
+    def give_back(self):
+        try:
+            self.stop_drawer()
+        finally:
+            if self.card is not None:
+                os.close(self.card)
+                self.card = None
+            try:
+                os.remove(FLAG)
+            except FileNotFoundError:
+                pass
+            self.systemctl("start", "--no-block", "kodi.service")
+            say("screen given back to Kodi")
+
+
+# --- one session ---
+def keepalive(sock):
+    """A source that vanishes without a close is noticed in about 25 s."""
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    for opt, val in (("TCP_KEEPIDLE", 10), ("TCP_KEEPINTVL", 5), ("TCP_KEEPCNT", 3)):
+        if hasattr(socket, opt):
+            sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, opt), val)
+
+
+def refusal(busy, airplay_flag=None):
+    """Why a new source is turned away, or None."""
+    if busy:
+        return "a session is running"
+    if os.path.exists(AIRPLAY_FLAG if airplay_flag is None else airplay_flag):
+        return "AirPlay has the screen"
+    return None
+
+
+def connect_rtsp(ip, port):
+    sock = socket.create_connection((ip, port), timeout=10)
+    sock.settimeout(10)   # recv is only called once select says there is something; a send that stalls ends the session
+    keepalive(sock)
+    return sock
+
+
+class Session:
+    """One PC, from its MICE connection to the end. Runs in a thread; stop() ends it."""
+
+    MAX_DRAWER_RESTARTS = 3
+
+    def __init__(self, conn, peer_ip, screen, connect=connect_rtsp, rtp_port=RTP_PORT, relay=RtpRelay,
+                 clock=time.monotonic):
+        self.conn, self.peer_ip, self.screen = conn, peer_ip, screen
+        self.connect, self.rtp_port, self.make_relay, self.clock = connect, rtp_port, relay, clock
+        self.stopping = threading.Event()
+        self.reason = None
+        self.sink = self.rtsp = self.relay = None
+        self.restarts = self.stuck_restarts = self.refreshes = 0
+        self.idr_refresh = idr_refresh_secs()
+        self.watch = DrawWatch(clock, lambda why: self.sink.request_idr(why))
+        screen.on_line = self.watch.feed
+
+    def stop(self):
+        self.stopping.set()
+
+    def end(self, reason):
+        if self.reason is None:
+            self.reason = reason
+
+    def start_video(self):
+        self.screen.take()
+        self.screen.start_drawer()
+        dump = PayloadDump(DUMP_FILE) if os.path.exists(DUMP_FLAG) else None
+        self.relay = self.make_relay(self.rtp_port, self.peer_ip, self.screen.write,
+                                     backlog=self.screen.backlog, dump=dump)
+        self.relay.start()
+
+    def open_rtsp(self, name, port):
+        say("%r is ready: opening RTSP to %s:%d" % (name, self.peer_ip, port))
+        self.rtsp = self.connect(self.peer_ip, port)
+        self.sink = RtspSink(self.rtsp.sendall, self.rtp_port, before_play=self.start_video,
+                             playing=self.begin_watch)
+
+    def begin_watch(self):
+        self.watch.begin()
+
+    def on_mice(self, command, tlvs):
+        if command == MICE_SOURCE_READY and self.sink is None:
+            self.open_rtsp(*source_ready(tlvs))
+        elif command == MICE_STOP_PROJECTION:
+            self.end("the PC stopped projecting")
+        else:
+            say("MICE command %d ignored" % command)
+
+    def check_drawer(self):
+        """While playing: restart a dead drawer, and ask for keyframes (the watchdog over the
+        drawer's output, and RtpRelay's after a gap in the sequence numbers)."""
+        if not (self.sink and self.sink.playing):
+            return
+        if self.screen.drawer_dead():
+            code = self.screen.drawer.returncode
+            self.restarts += 1
+            if self.restarts > self.MAX_DRAWER_RESTARTS:
+                return self.end("the drawer keeps dying")
+            say("drawer exited with %s, starting another" % code)
+            self.new_drawer()
+            return self.begin_watch()
+        if self.watch.silent_for() >= STUCK_LIMIT:
+            return self.drawer_stuck()
+        self.watch.tick(held=self.relay is not None and self.relay.queued > 0)
+        if self.watch.refresh_due(self.idr_refresh):
+            self.refreshes += 1
+            self.sink.request_idr("refresh")
+        if self.relay is not None:
+            if self.relay.idr_due():
+                self.sink.request_idr("RTP packets were lost")
+            line = self.relay.summary(self.sink.idr_count - self.refreshes, self.refreshes)
+            if line:
+                say(line)
+
+    def new_drawer(self):
+        """A fresh drawer; what the relay held for the old one is not for it."""
+        self.screen.start_drawer()
+        if self.relay is not None:
+            self.relay.discard()
+
+    def drawer_stuck(self):
+        """No picture STUCK_LIMIT seconds after the drawer's start: a fresh drawer (and a
+        keyframe for it) once, and if that shows nothing either, the session ends (finish()
+        sends the TEARDOWN, closes MICE and gives the screen back)."""
+        if self.stuck_restarts >= STUCK_RESTARTS:
+            say("the drawer showed no picture within %d s, again after a restart: ending the session" % STUCK_LIMIT)
+            return self.end("the drawer showed no picture")
+        self.stuck_restarts += 1
+        say("the drawer showed no picture within %d s: starting another" % STUCK_LIMIT)
+        self.new_drawer()
+        self.begin_watch()
+
+    def run(self):
+        mice, begun = MiceStream(), self.clock()
+        try:
+            while self.reason is None and not self.stopping.is_set():
+                socks = [self.conn] + ([self.rtsp] if self.rtsp else [])
+                for s in select.select(socks, [], [], 1)[0]:
+                    try:
+                        data = s.recv(65536)
+                    except OSError:
+                        data = b""
+                    if not data:
+                        self.end("the connection to the PC closed")
+                    elif s is self.conn:
+                        for command, tlvs in mice.feed(data):
+                            self.on_mice(command, tlvs)
+                    else:
+                        self.sink.feed(data)
+                        if self.sink.ended:
+                            self.end(self.sink.ended)
+                self.check_drawer()
+                if not (self.sink and self.sink.playing) and self.clock() - begun > SETUP_LIMIT:
+                    self.end("no picture within %d s" % SETUP_LIMIT)
+        except Exception as e:   # a bad message or a refused RTSP connection ends this session only
+            self.end("%s: %s" % (type(e).__name__, e))
+        finally:
+            self.finish()
+
+    def finish(self):
+        """The end of a session. Every step is bounded and none can stop the next one: the
+        source learns of it, the sockets close, the relay stops, the drawer goes and the
+        screen is given back."""
+        self.watch.stop()
+        say("session over:", self.reason or "stopped")
+        steps = (("teardown", self.send_teardown), ("closing the sockets", self.close_sockets),
+                 ("stopping the relay", lambda: self.relay and self.relay.stop()),
+                 ("giving the screen back", lambda: self.screen.taken and self.screen.give_back()))
+        for what, step in steps:
+            try:
+                step()
+            except Exception as e:
+                say("session end, %s failed: %s: %s" % (what, type(e).__name__, e))
+
+    def send_teardown(self):
+        if self.sink and self.sink.playing and not self.sink.ended:
+            self.rtsp.settimeout(SEND_WAIT)
+            self.sink.teardown()
+
+    def close_sockets(self):
+        for s in (self.rtsp, self.conn):
+            if s is not None:
+                try:
+                    s.close()
+                except OSError:
+                    pass
+
+
+def main():
+    os.makedirs(RUN, exist_ok=True)
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *a: stop.set())
+    screen = Screen()
+    threading.Thread(target=splash_pixels, args=(1920, 1080), daemon=True).start()   # cached for the first take
+    if screen.taken:            # left over from a crash
+        screen.give_back()
+    adv = Advertiser(run_cmd, NAME, re.sub(r"[^A-Za-z0-9-]", "", socket.gethostname()))
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("", MICE_PORT))
+    srv.listen(4)
+    session = thread = None
+    next_adv = 0.0
+    try:
+        while not stop.is_set():
+            if select.select([srv], [], [], 1)[0]:
+                conn, addr = srv.accept()
+                why = refusal(thread is not None and thread.is_alive())
+                if why:
+                    say("%s refused: %s" % (addr[0], why))
+                    conn.close()
+                else:
+                    keepalive(conn)
+                    adv.pause()
+                    say("%s connected" % addr[0])
+                    session = Session(conn, addr[0], screen)
+                    thread = threading.Thread(target=session.run, daemon=True)
+                    thread.start()
+            if thread is not None and not thread.is_alive():
+                thread = session = None
+                adv.resume()
+                next_adv = 0.0
+            if thread is None and time.monotonic() >= next_adv:
+                adv.tick(time.monotonic())
+                next_adv = time.monotonic() + ADV_EVERY
+    finally:
+        if session is not None:
+            session.stop()
+            thread.join(15)
+        if screen.taken:
+            screen.give_back()
+        adv.shutdown()
+        srv.close()
+
+
+if __name__ == "__main__":
+    main()

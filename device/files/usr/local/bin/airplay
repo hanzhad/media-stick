@@ -23,7 +23,8 @@ the mode it finds, and the picture until the phone's first), and the screen is l
 the drawer. Going back, the console framebuffer shows the same picture (console-splash). When the phone lets go, the drawer
 stops and Kodi comes back. Run by airplay.service as root; UxPlay and the drawer run as
 media. While the screen is taken, /run/media-stick/airplay exists: bootstrap leaves Kodi
-alone then.
+alone then. While a Windows PC casting through miracast has the screen
+(/run/media-stick/miracast exists) a phone is ignored.
 """
 import ctypes
 import fcntl
@@ -37,6 +38,7 @@ import time
 
 RUN = "/run/media-stick"
 FLAG = RUN + "/airplay"
+MIRACAST_FLAG = RUN + "/miracast"   # miracast has the screen
 STALE = (RUN + "/airplay-video.sock", RUN + "/airplay.shm")   # what earlier versions left
 LOG = RUN + "/airplay.log"   # UxPlay's own debug output, for looking into problems
 LOG_MAX = 4 << 20
@@ -81,6 +83,11 @@ def say(*a):
             out.write("[airplay %s] %s\n" % (time.strftime("%H:%M:%S"), " ".join(map(str, a))))
     except OSError:
         pass
+
+
+def may_take():
+    """The screen is free for a phone unless a PC is casting to it through miracast."""
+    return not os.path.exists(MIRACAST_FLAG)
 
 
 def systemctl(*args):
@@ -462,7 +469,10 @@ def main():
                 if m:
                     open_now = int(m.group(1))
                 if START.search(line) and not screen.taken:
-                    screen.take()
+                    if may_take():
+                        screen.take()
+                    else:
+                        say("a PC is casting through miracast: the phone is ignored")
             if screen.taken:
                 screen.draw()
                 if open_now:
