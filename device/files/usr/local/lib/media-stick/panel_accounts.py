@@ -280,6 +280,6 @@ def post(path, body, rpc):
 # ---- the page --------------------------------------------------------------------------------
 
 def inject(page):
-    """The panel's page with the Accounts tab, section and sheets (sign-in code, YouTube keys) put at its three markers."""
-    return (page.replace("@@ACC_NAV@@", ui.NAV).replace("@@ACC_SECTION@@", ui.SECTION)
+    """The panel's page with the Accounts card (in the settings) and the sheets (sign-in code, YouTube keys) put at its two markers."""
+    return (page.replace("@@ACC_SECTION@@", ui.SECTION)
             .replace("@@ACC_TAIL@@", ui.tail(LINK_HOSTS) + panel_ytkeys_ui.tail(panel_ytkeys.WIZARD)))

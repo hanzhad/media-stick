@@ -36,6 +36,10 @@ try:
     import mediastick_onboarding   # what the TV asks of this phone; the panel works without it
 except ImportError:
     mediastick_onboarding = None
+try:
+    import mediastick_screen   # who has the TV (a cast, AirPlay, a web app); the panel works without it
+except ImportError:
+    mediastick_screen = None
 
 PORT = int(os.environ.get("PANEL_PORT", "80"))
 REPO = "/opt/media-stick"
@@ -465,6 +469,15 @@ def onboarding_docs():
     except Exception:
         return []
 
+def screen_owner():
+    """Who has the TV besides Kodi: "miracast", "airplay", "web-app", or "" (Kodi's, nobody's, or no library)."""
+    if mediastick_screen is None:
+        return ""
+    try:
+        return mediastick_screen.owner()
+    except Exception:
+        return ""
+
 status_cache = {"t": 0.0, "s": None}
 status_lock = threading.Lock()
 
@@ -518,6 +531,7 @@ def _status():
         s["dead"] = ["fastforward", "osd", "playpause", "rewind", "stop"]
     else:
         s["dead"] = []
+    s["screen"] = screen_owner()
     s["onboarding"] = onboarding_docs()
     return s
 
@@ -528,7 +542,7 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="theme-color" content="#121620">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Media Stick"><title>Media Stick</title>
 <style>
-:root{--bg:#121620;--card:#1F2633;--card2:#2a3344;--line:rgba(255,255,255,.08);--dim:rgba(255,255,255,.7);--faint:rgba(255,255,255,.45);--bad:#ff6b6b;--ok:#4cc38a;color-scheme:dark}
+:root{--bg:#121620;--card:#1F2633;--card2:#2a3344;--line:rgba(255,255,255,.08);--dim:rgba(255,255,255,.7);--faint:rgba(255,255,255,.45);--bad:#ff6b6b;--ok:#4cc38a;--warn:#f0b429;color-scheme:dark}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 /* a remote, not a document: no double-tap zoom, no rubber-band bounce */
 html{touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-adjust:100%}
@@ -598,7 +612,7 @@ body.fs{overflow:hidden}
 .kb input{min-height:58px;font-size:18px;-webkit-appearance:none;appearance:none}
 .kbh{display:flex;align-items:center;gap:8px;font-size:17px;font-weight:600}
 .kbh span{flex:1;min-width:0;overflow-wrap:anywhere}
-.rc.kbon .mode,.rc.kbon #air,.rc.kbon #air-no,.rc.kbon .dpad{visibility:hidden}
+.rc.kbon #air,.rc.kbon #air-no,.rc.kbon .dpad{visibility:hidden}
 .kb .row .btn{flex:1}
 .fbar{position:fixed;z-index:51;left:50%;bottom:calc(12px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:4px;padding:4px;border-radius:22px;background:rgba(18,22,32,.85)}
 .fbar .btn{min-height:48px;width:60px;padding:0;background:transparent}
@@ -618,10 +632,11 @@ dd{margin:0;text-align:right;word-break:break-word}
 dt:nth-last-child(2),dd:last-child{border-bottom:0}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--ok)}
 .dot.bad{background:var(--bad)}
+.dot.warn{background:var(--warn)}
 /* page */
 #app{max-width:440px;margin:0 auto;padding:12px 16px calc(84px + env(safe-area-inset-bottom))}
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px}
-.top b{font-size:20px;font-weight:600}
+.top b{font-size:20px;font-weight:600;flex:none}
 .pill{display:inline-flex;align-items:center;min-width:0;padding:8px 14px;border-radius:999px;background:rgba(255,255,255,.08);color:var(--dim);font-size:14px;white-space:nowrap}
 .pill span{overflow:hidden;text-overflow:ellipsis}
 .tabs{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:4px;background:var(--bg);border-top:1px solid var(--line);padding:8px 8px calc(8px + env(safe-area-inset-bottom))}
@@ -644,24 +659,21 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 .sub span{min-width:0;overflow-wrap:anywhere}
 .sub .btn{font-size:14px;font-weight:400;white-space:nowrap;flex:0 0 auto}
 .expl{margin:0 0 10px;color:var(--dim);font-size:15px}
-/* remote card: reaches down to the tab bar like the air card (144px = header and tab bar); the
+/* remote card: reaches down to the tab bar (208px = header, mode switch and tab bar); the
    key rows keep their size and the D-pad takes whatever height is left, as large as the card is
    wide at most, so it grows on tall phones and shrinks on short ones and nothing scrolls. */
-.rc{position:relative;padding:14px;display:flex;flex-direction:column;height:calc(100vh - 144px);min-height:400px}
-@supports (height:1svh){.rc{height:calc(100svh - 144px - env(safe-area-inset-bottom))}}
+.rc{position:relative;padding:14px;display:flex;flex-direction:column;height:calc(100vh - 208px);min-height:400px}
+@supports (height:1svh){.rc{height:calc(100svh - 208px - env(safe-area-inset-bottom))}}
 .dwrap{position:relative;flex:1 1 0;min-height:120px}
 .dwrap .dpad{position:absolute;inset:0;width:100%;height:100%}
 .rc .row input,.rc .row .btn{min-height:48px!important}
 .rc .row.gap{margin-top:8px}
-/* the round button in the card's corner swaps the D-pad for the air pad in the same place, so
-   the key rows below do not move; the sensitivity row sits beside the button */
-.mode{position:absolute;top:10px;right:10px;z-index:1;width:44px;height:44px;min-height:0;padding:0;border-radius:50%}
-.mode.on{background:#fff;color:var(--bg)}
+/* the air pad takes the D-pad's place in the same card, so the key rows below do not move */
 .dwrap.air .dpad{display:none}
 #air,#air-no{position:absolute;inset:0}
 #air{display:flex;flex-direction:column;gap:8px}
-#air-no{overflow:auto;padding:4px 52px 4px 4px}
-.airk{display:flex;align-items:center;gap:12px;min-height:34px;padding-right:46px}
+#air-no{overflow:auto;padding:4px}
+.airk{display:flex;align-items:center;gap:12px;min-height:34px}
 .airk label{margin:0;white-space:nowrap;font-size:14px}
 .airk input{min-height:36px}
 #air .cap{margin:0}
@@ -670,17 +682,28 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 #air .pad{container-type:size;overflow:hidden}
 @container (max-height:110px){.pad .i,.pad small{display:none}}
 #air-no .row{flex-direction:column}
-/* wide screen: preview left, remote right, info and actions below */
+/* the mode switch of the remote; the picture mode swaps the whole remote card for the screen card */
+.modes{display:flex;gap:4px;padding:4px;margin-bottom:12px;border-radius:16px;background:var(--card)}
+.modes button{flex:1;min-height:44px;padding:0;border:0;border-radius:12px;background:transparent;color:var(--dim);touch-action:manipulation}
+.modes button.on{background:var(--card2);color:#fff;font-weight:600}
+#t-remote[data-mode=screen] .rc{display:none}
+#t-remote:not([data-mode=screen]) #t-screen{display:none}
+[data-tab=settings]~[data-tab=settings]{margin-top:12px}
+/* wide screen, no tab bar, everything at once: Смотреть across the top, the picture beside the remote
+   (the mode switch is no use here), then the settings cards */
 @media (min-width:900px){
-  #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "screen remote" "info settings" "https https";gap:20px;padding:28px}
+  #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act";gap:20px;padding:28px}
   .top{grid-area:top;margin-bottom:0}
-  .tabs{display:none}
-  [data-tab]{display:block!important;margin:0}
+  .tabs,.modes{display:none}
+  [data-tab]{display:block!important;margin:0!important}
   [data-tab]>.card{height:100%}
-  #t-screen{grid-area:screen}#t-remote{grid-area:remote}#t-info{grid-area:info}#t-settings{grid-area:settings}#t-https{grid-area:https}
+  #t-remote{display:contents!important}
+  #t-remote .rc{display:flex!important;grid-area:remote}
+  #t-screen{display:block!important;grid-area:screen}
+  #t-screen>.card{height:100%}
+  #t-wifi{grid-area:wifi}#t-https{grid-area:https}#t-info{grid-area:info}#t-act{grid-area:act}
   .rc{height:auto;min-height:0}
   .dwrap{flex:1 0 250px}
-  .mode{display:none}   /* computers have no motion sensor */
   .dwrap.air .dpad{display:block}
   .dwrap #air,.dwrap #air-no{display:none!important}
 }
@@ -706,7 +729,6 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M19 7h1M4 17h1M11 17h9"/><circle cx="16" cy="7" r="2.5"/><circle cx="8" cy="17" r="2.5"/></symbol>
 <symbol id="i-send" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
 <symbol id="i-remote" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></symbol>
-<symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
 <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
 <symbol id="i-rot" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></symbol>
 <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
@@ -729,9 +751,13 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 <div id="app" class="hide">
   <div class="top"><b>Media Stick</b><div class="pill" id="hdr"><i class="dot" id="hdr-dot"></i><span id="hdr-t"></span></div></div>
 
-  <section id="t-remote" data-tab="remote">
-    <div class="card rc">
-      <button id="mode" class="btn mode" aria-label="Аэромышь" aria-pressed="false"><svg class="i"><use href="#i-air"/></svg></button>
+  @@WATCH_SECTION@@<section id="t-remote" data-tab="remote" class="hide">
+    <div class="modes" role="tablist" aria-label="Режим пульта">
+      <button data-m="keys" role="tab" class="on" aria-selected="true">Кнопки</button>
+      <button data-m="air" role="tab" aria-selected="false">Указка</button>
+      <button data-m="screen" role="tab" aria-selected="false">Экран</button>
+    </div>
+    <div class="card rc">@@WATCH_NPBOX@@
       <div class="dwrap" id="stage"><svg class="dpad" viewBox="0 0 240 240" role="group" aria-label="Навигация">
         <g class="seg" data-a="up" role="button" aria-label="Вверх"><path d="M38 38A116 116 0 0 1 202 38L154 86A48 48 0 0 0 86 86Z"/><use href="#i-up" x="108" y="50" width="24" height="24"/></g>
         <g class="seg" data-a="right" role="button" aria-label="Вправо"><path d="M202 38A116 116 0 0 1 202 202L154 154A48 48 0 0 0 154 86Z"/><use href="#i-right" x="166" y="108" width="24" height="24"/></g>
@@ -783,17 +809,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         <button class="btn fit" style="min-height:52px" onclick="sendText()" aria-label="Отправить"><svg class="i"><use href="#i-send"/></svg></button>
       </div>
     </div>
-  </section>
-
-  <div id="fbar" class="fbar hide">
-    <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
-    <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
-    <button class="btn" id="f-flip" onclick="rotFlip()" aria-label="Перевернуть картинку"><svg class="i"><use href="#i-rot"/></svg></button>
-    <button class="btn" onclick="fullOn(false)" aria-label="Выйти из полного экрана"><svg class="i"><use href="#i-shrink"/></svg></button>
-  </div>
-  <div id="fhint" class="fhint hide">Поверните телефон — картинка станет больше</div>
-
-  <section id="t-screen" data-tab="screen" class="hide">
+    <div id="t-screen">
     <div class="card">
       <div class="head">
         <h2>Экран</h2>
@@ -812,18 +828,21 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <div id="shot-ms" class="cap"></div>
       <div id="shot-h" class="cap" title="Удерживайте — контекстное меню; проведите пальцем вверх или вниз — прокрутка, влево или вправо — по карточкам">Нажмите на картинку, чтобы кликнуть на телевизоре</div>
     </div>
+    </div>
   </section>
 
-  <section id="t-info" data-tab="info" class="hide">
-    <div class="card"><h2>Устройство</h2><dl id="info"></dl></div>
-  </section>
+  <div id="fbar" class="fbar hide">
+    <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
+    <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
+    <button class="btn" id="f-flip" onclick="rotFlip()" aria-label="Перевернуть картинку"><svg class="i"><use href="#i-rot"/></svg></button>
+    <button class="btn" onclick="fullOn(false)" aria-label="Выйти из полного экрана"><svg class="i"><use href="#i-shrink"/></svg></button>
+  </div>
+  <div id="fhint" class="fhint hide">Поверните телефон — картинка станет больше</div>
 
-  <section id="t-settings" data-tab="settings" class="hide">
-    <div class="card"><h2>Действия</h2>
-      <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
-      <button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз'))act('reboot')">Перезагрузить</button></div>
-      <div id="a-msg" class="msg hide"></div>
-      <h2 style="margin-top:22px">Wi-Fi</h2>
+  @@ACC_SECTION@@
+
+  <section id="t-wifi" data-tab="settings" class="hide">
+    <div class="card"><h2>Wi-Fi</h2>
       <div id="w-msg" class="msg hide"></div>
       <select id="w-ssid"></select>
       <div class="row gap"><input id="w-psk" type="password" placeholder="Пароль" autocomplete="off">
@@ -834,7 +853,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 
   <section id="t-https" data-tab="settings" class="hide">
     <div id="h-card" class="card" tabindex="-1" style="outline:none">
-      <h2>Защищённое подключение (HTTPS)</h2>
+      <h2>Пульт как приложение (HTTPS)</h2>
       <p class="expl">Нужно для аэромыши (указка по наклону телефона) и чтобы установить пульт как приложение. Бесплатный сертификат Let's Encrypt; в интернет ничего не открывается.</p>
       <div id="h-setup">
         <ol class="steps">
@@ -859,14 +878,21 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
     </div>
   </section>
 
-  @@ACC_SECTION@@
+  <section id="t-info" data-tab="settings" class="hide">
+    <div class="card"><h2>О приставке</h2><dl id="info"></dl></div>
+  </section>
+
+  <section id="t-act" data-tab="settings" class="hide">
+    <div class="card"><h2>Обслуживание</h2>
+      <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
+      <button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз'))act('reboot')">Перезагрузить</button></div>
+      <div id="a-msg" class="msg hide"></div>
+    </div>
+  </section>
 
   <nav class="tabs">
-    <button data-go="remote" class="on"><span class="pb"><svg class="i"><use href="#i-remote"/></svg></span>Пульт</button>
-    <button data-go="screen"><span class="pb"><svg class="i"><use href="#i-screen"/></svg></span>Экран</button>
-    <button data-go="info"><span class="pb"><svg class="i"><use href="#i-info"/></svg></span>Инфо</button>
+    @@WATCH_NAV@@<button data-go="remote"><span class="pb"><svg class="i"><use href="#i-remote"/></svg></span>Пульт</button>
     <button data-go="settings"><span class="pb"><svg class="i"><use href="#i-sliders"/></svg></span>Настройки</button>
-    @@ACC_NAV@@
   </nav>
 </div>
 
@@ -919,8 +945,8 @@ function kbUi(k){
   if(kbHid)return;
   $('kb-t').textContent=k.title||'Ввод на телевизоре';
   inp.inputMode=k.num?'numeric':'text';
-  // the TV says "type on your phone": the box is on the remote tab, so go there from any other tab
-  if(!kbOpen&&tab!=='remote'&&!wide()){const g=document.querySelector('[data-go=remote]');if(g)g.click()}
+  // the TV says "type on your phone": the box is on the remote card (Кнопки), so go there from any other tab or mode
+  if(!kbOpen&&!wide()&&(tab!=='remote'||mode==='screen')){setMode('keys');const g=document.querySelector('[data-go=remote]');if(g)g.click()}
   if(!kbOpen){kbOpen=true;inp.value=kbSent=k.text||'';box.classList.remove('hide');box.closest('.rc').classList.add('kbon');kbPolling(true)}
   else if((k.text||'')!==inp.value&&!kbT&&performance.now()-kbTyped>1200)inp.value=kbSent=k.text||''
 }
@@ -940,16 +966,38 @@ function keysUi(dead){
   document.querySelectorAll('button[data-a]').forEach(b=>{b.disabled=d.has(b.dataset.a)})
 }
 document.addEventListener('touchstart',()=>{},{passive:true});  // iOS: enables :active
-let tab='remote', httpsUrl='';
+const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const TABS=['watch','remote','settings'], MODES=['keys','air','screen'];
+let tab='watch', mode='keys', httpsUrl='';
+const screenOn=()=>tab==='remote'&&mode==='screen';
+// the picture runs only while it is on a phone's screen; a computer shows one still frame
+function screenSync(){if(!wide())setLive(screenOn())}
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{
-  tab=b.dataset.go;
+  tab=TABS.includes(b.dataset.go)?b.dataset.go:'watch';
   document.querySelectorAll('[data-go]').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('[data-tab]').forEach(s=>s.classList.toggle('hide',s.dataset.tab!==tab));
   if(tab!=='remote')airStop(true);
-  try{localStorage.setItem('tab',tab)}catch(e){}
+  lsSet('tab',tab);
   if(tab==='settings'){loadNets('w-ssid');httpsLoad()}
-  setLive(tab==='screen');  // phone: the screen tab is the request to watch
+  screenSync()
 }));
+// The remote has three modes: the buttons, the air pointer (the pad in the D-pad's place) and the screen.
+function setMode(m){
+  if(!MODES.includes(m))m='keys';
+  mode=m;lsSet('mode',m);
+  $('t-remote').dataset.mode=m;
+  document.querySelectorAll('.modes [data-m]').forEach(b=>{const on=b.dataset.m===m;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
+  if(m!=='air')airStop(true);
+  // while something plays, the Смотреть module puts its player over the remote card unless the card is asked for (wtdp)
+  $('stage').closest('.rc').classList.toggle('wtdp',m==='air');
+  airUi();screenSync()
+}
+document.querySelectorAll('.modes [data-m]').forEach(b=>b.addEventListener('click',()=>{buzz();setMode(b.dataset.m)}));
+function openAccounts(){
+  document.querySelector('[data-go=settings]').click();
+  setTimeout(()=>$('t-acc').scrollIntoView({behavior:'smooth',block:'start'}),150)
+}
 function sendText(){const t=$('txt');if(!t.value)return;api('/api/text',{text:t.value}).then(()=>t.value='');}
 $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')sendText()});
 // keyboard on a computer drives Kodi like a remote
@@ -1010,7 +1058,19 @@ const fmt=s=>[
  ['Обновление',esc(s.next_update||'—')],
 ].map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
 
-function header(ok,text){$('hdr-dot').className='dot'+(ok?'':' bad');$('hdr-t').textContent=text}
+// The header says what the TV is doing, not the Wi-Fi (that is under «О приставке»): the dot is green when
+// Kodi answers, amber when a cast or a web app has the TV, red when it does not answer or the box is out of reach.
+// `now` is what Смотреть knows of the player (speed 0 = paused); the status alone knows only the title.
+const TV_BUSY={miracast:'ТВ занят трансляцией с компьютера',airplay:'ТВ занят трансляцией AirPlay','web-app':'На ТВ открыто приложение'};
+function tvState(s,now){
+  if(!s)return {dot:'bad',text:'нет связи с приставкой'};
+  if(TV_BUSY[s.screen])return {dot:'warn',text:TV_BUSY[s.screen]};
+  if(s.kodi!=='up')return {dot:'bad',text:'ТВ не отвечает'};
+  if(s.playing)return {dot:'ok',text:'ТВ: '+s.playing+' · '+(now&&now.playing&&now.speed===0?'пауза':'играет')};
+  return {dot:'ok',text:'ТВ свободен'}
+}
+let lastStatus=null;
+function hdrDraw(){const v=tvState(lastStatus,window.wtLast);$('hdr-dot').className='dot'+(v.dot==='ok'?'':' '+v.dot);$('hdr-t').textContent=v.text}
 // A phone keeps a page (above all a home-screen app) in memory for days, so after an update
 // it would go on running the old code. The status carries the hash of the page the panel
 // serves now; when it differs, reload, but not while a finger is on the air pad or the
@@ -1026,12 +1086,12 @@ async function tick(){
   try{const s=await api('/api/status');
     if(s.wifi.ap){ if($('setup').classList.contains('hide')){$('app').classList.add('hide');$('setup').classList.remove('hide');loadNets('s-ssid')} }
     else{$('setup').classList.add('hide');$('app').classList.remove('hide')}
-    header(s.wifi.online,(s.wifi.ssid||'кабель')+' · '+s.temp+' · '+s.time); $('info').innerHTML=fmt(s);
+    lastStatus=s;hdrDraw(); $('info').innerHTML=fmt(s);
     httpsUrl=s.https_url||''; httpsCheck(); airUi(); keysUi(s.dead);kbUi(s.kb);
     pageCheck(s.page);
     if(window.accNote)accNote(s.signin);
     if(window.obNote)obNote(s.onboarding);
-  }catch(e){header(false,'нет связи')}
+  }catch(e){lastStatus=null;hdrDraw()}
 }
 tick(); setInterval(tick,5000);
 
@@ -1155,7 +1215,7 @@ let kpend=0, kbusy=false;   // >0: right presses owed, <0: left
 function flushKeys(){
   if(kbusy||!kpend)return;
   const right=kpend>0; kpend+=right?-1:1; kbusy=true;
-  api('/api/key',{action:right?'right':'left'}).then(r=>{fcNote(r);if(tab==='screen'||full)setTimeout(frame,REFRESH_MS)}).catch(ptrErr)
+  api('/api/key',{action:right?'right':'left'}).then(r=>{fcNote(r);if(screenOn()||full)setTimeout(frame,REFRESH_MS)}).catch(ptrErr)
     .finally(()=>{kbusy=false;flushKeys()})
 }
 function cardPx(){   // half a home-screen card (a card is about 252 of 1920 px) in picture pixels
@@ -1294,11 +1354,14 @@ function httpsOff(){
     hWait=true;hFails=0;hWaitMsg='Панель перезапускается…';hTimer=setTimeout(httpsLoad,5000)
   }).catch(e=>show('h-msg',e.message))
 }
-// Deep link from the TV: /#https opens the card, /#https?sub=<name> also fills the name.
+// Deep links: /#air and /#screen open the remote in that mode, /#accounts the Accounts card, /#https the HTTPS card
+// (/#https?sub=<name> from the TV also fills the name).
 function hashGo(){
-  if(location.hash==='#air'){document.querySelector('[data-go=remote]').click();airSet(true);return}
-  if(location.hash.slice(0,6)!=='#https')return;
-  const m=location.hash.match(/[?&]sub=([a-z0-9-]+)/i);
+  const h=location.hash;
+  if(h==='#air'||h==='#screen'){document.querySelector('[data-go=remote]').click();setMode(h.slice(1));return}
+  if(h==='#accounts'){openAccounts();return}
+  if(h.slice(0,6)!=='#https')return;
+  const m=h.match(/[?&]sub=([a-z0-9-]+)/i);
   hDeep=m?m[1].toLowerCase():'';
   if(hDeep&&!$('h-dom').value)$('h-dom').value=hDeep;
   document.querySelector('[data-go=settings]').click();
@@ -1309,7 +1372,6 @@ function hashGo(){
 addEventListener('hashchange',hashGo);
 hCheck();
 if(wide())httpsLoad();
-hashGo();
 
 // ---- Air mouse: hold the pad and aim the phone at the TV like a remote. ----
 // Phone in portrait, top edge towards the TV, screen towards you, tilted up to about 45
@@ -1342,7 +1404,7 @@ function httpsCheck(){
   httpsFor=httpsUrl;httpsOk=null;
   const base=httpsBase(), ctl=new AbortController(), t=setTimeout(()=>ctl.abort(),5000);
   fetch(base+'api/https',{mode:'no-cors',cache:'no-store',signal:ctl.signal})
-    .then(()=>{httpsOk=true;if(first&&!standalone){location.replace(base+(location.hash||(airMode?'#air':'')));return}airUi()},
+    .then(()=>{httpsOk=true;if(first&&!standalone){location.replace(base+(location.hash||(mode==='air'?'#air':'')));return}airUi()},
           ()=>{httpsOk=false;airUi()})
     .finally(()=>clearTimeout(t))
 }
@@ -1354,22 +1416,11 @@ function airCopy(){
   try{if(document.execCommand('copy'))done()}catch(e){}
   t.remove()
 }
-// The round button on the remote swaps the D-pad for the air pad (remembered).
-let airMode=false;
-try{airMode=localStorage.getItem('airmode')==='1'||localStorage.getItem('tab')==='air'}catch(e){}
-function airSet(on){
-  airMode=on;if(!on)airStop(true);
-  try{localStorage.setItem('airmode',on?'1':'0');if(localStorage.getItem('tab')==='air')localStorage.setItem('tab','remote')}catch(e){}
-  airUi()
-}
-$('mode').addEventListener('click',()=>{buzz();airSet(!airMode)});
 function airUi(){
-  const m=$('mode');
-  $('stage').classList.toggle('air',airMode);
-  m.classList.toggle('on',airMode);m.setAttribute('aria-pressed',String(airMode));
-  m.setAttribute('aria-label',airMode?'Кнопки':'Аэромышь');
-  $('air').classList.toggle('hide',!airMode||!airOk);
-  $('air-no').classList.toggle('hide',!airMode||airOk);
+  const air=mode==='air';
+  $('stage').classList.toggle('air',air);
+  $('air').classList.toggle('hide',!air||!airOk);
+  $('air-no').classList.toggle('hide',!air||airOk);
   if(!$('air-h').textContent)airNote('');
   if(airOk)return;
   const nt=$('air-nt'), a=$('air-a'), cp=$('air-copy'), st=$('air-steps');
@@ -1539,7 +1590,12 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)airStop(tru
 airUi();
 document.addEventListener('gesturestart',e=>e.preventDefault());
 document.addEventListener('dblclick',e=>e.preventDefault());
-</script>@@ACC_TAIL@@</body></html>"""
+// Boot, last, when everything above exists. A phone opens on the tab and the remote mode it used last
+// (the Смотреть tab when it has none); a link from the TV overrides both.
+setMode(lsGet('mode'));
+if(!wide()){const t=lsGet('tab');if(TABS.includes(t)&&t!=='watch')document.querySelector('[data-go='+t+']').click()}
+hashGo();
+</script>@@ACC_TAIL@@@@WATCH_TAIL@@</body></html>"""
 PAGE = panel_accounts.inject(PAGE)
 PAGE = panel_watch.inject(PAGE)
 PAGE = panel_onboarding_ui.inject(PAGE)

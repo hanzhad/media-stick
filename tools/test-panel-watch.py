@@ -385,8 +385,8 @@ class Page(unittest.TestCase):
         self.assertEqual(p.count("</body>"), 1)
 
     def test_wide_grid(self):
-        self.assertIn('"screen remote" "watch watch" "info settings" "acc acc" "https https"', self.page)
-        self.assertNotIn('"screen remote" "info settings"', self.page)
+        self.assertIn('"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act"', self.page)
+        self.assertIn("#t-watch{grid-area:watch}", self.page)
 
     def test_rules_of_the_page(self):
         import panel_watch_ui as ui
@@ -394,8 +394,21 @@ class Page(unittest.TestCase):
         self.assertIn("'/api/watch/'", ui.JS)
         self.assertEqual(len(re.findall(r"@@\w+@@", self.page.replace("@@PAGE_VER@@", ""))), 0)
 
-    def test_idempotent_markers_missing(self):
-        self.assertEqual(pw.inject("<html></html>"), "<html></html>")
+    def test_a_missing_marker_raises(self):
+        # the page must not come out without the tab, or with half of it
+        for marker in ("@@WATCH_NAV@@", "@@WATCH_SECTION@@", "@@WATCH_NPBOX@@", "@@WATCH_TAIL@@"):
+            self.assertIn(marker, self.base)
+            with self.assertRaises(ValueError) as e:
+                pw.inject(self.base.replace(marker, ""))
+            self.assertIn(marker, str(e.exception))
+        with self.assertRaises(ValueError):
+            pw.inject("<html></html>")
+
+    def test_it_takes_the_pages_palette(self):
+        import panel_watch_ui as ui
+        for gone in ("--wb", "--wc", "--wl", "wt-on", "#0f1115", "#1b1d28"):
+            self.assertNotIn(gone, ui.CSS + ui.JS)
+        self.assertIn("var(--card2)", ui.CSS)
 
 
 if __name__ == "__main__":

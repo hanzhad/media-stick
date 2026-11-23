@@ -10,12 +10,12 @@ import json
 
 TAIL = r"""
 <style>
-.acc-ykb{max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:#0f1115}
+.acc-ykb{max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--bg)}
 .acc-yk-p{margin:8px 0;color:var(--dim);font-size:15px}
 .acc-yk-big{font-size:20px;font-weight:600;padding:14px 0 6px}
 .acc-yk-row{display:flex;gap:8px}
 .acc-yk-row .btn{flex:1 1 0;min-width:0;padding:0 8px}
-.acc-yk-st{margin:10px 0 0;border:1px solid transparent;border-radius:18px;background:#1b1d28}
+.acc-yk-st{margin:10px 0 0;border:1px solid transparent;border-radius:18px;background:var(--card)}
 .acc-yk-st.cur{background:#1f2433;border-color:#3a4258}
 .acc-yk-st.pend{opacity:.55}
 .acc-yk-sh{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:6px 14px;background:none;border:0;color:inherit;font-size:17px;font-weight:600;text-align:left;touch-action:manipulation}
@@ -25,7 +25,7 @@ TAIL = r"""
 .acc-yk-a{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .acc-yk-a .btn{flex:1 1 140px;margin-top:0;padding:0 8px}
 .acc-yk-st .btn{border-radius:999px;min-height:48px}
-.acc-yk-st .btn.acc{background:#f2f3f5;color:#0f1115}
+.acc-yk-st .btn.acc{background:#f2f3f5;color:var(--bg)}
 .acc-yk-h{margin-top:8px;color:var(--faint);font-size:13px}
 .acc-yk-cv{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:10px}
 .acc-yk-cv .acc-yk-h{flex:1 1 100%;margin:0}
@@ -37,7 +37,7 @@ TAIL = r"""
 .acc-yk-warn{margin:10px 0 0;padding:10px 12px;border-radius:12px;background:rgba(240,198,116,.12);color:#f0c674;font-size:14px}
 .acc-yk-tk{display:flex;align-items:center;gap:12px;min-height:44px;margin:0;color:inherit;font-size:15px}
 .acc-yk-tk input{width:28px;min-height:28px;flex:0 0 auto;accent-color:#2f6b4c}
-.acc-yk-slot{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;padding:10px 12px;min-height:44px;border-radius:12px;background:#0f1115;font-size:14px;color:var(--dim)}
+.acc-yk-slot{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;padding:10px 12px;min-height:44px;border-radius:12px;background:var(--bg);font-size:14px;color:var(--dim)}
 .acc-yk-slot b{flex:1 1 100%;font-size:13px;font-weight:600;color:var(--faint)}
 .acc-yk-slot span{flex:1 1 0;min-width:0;overflow-wrap:anywhere}
 .acc-yk-slot.ok span{color:#7bd3a4}

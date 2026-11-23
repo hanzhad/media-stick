@@ -206,7 +206,7 @@ class Reading(unittest.TestCase):
         self.assertEqual(pa.view()["accounts"][1]["profiles"], [])
 
     def test_the_page_explains_a_missing_channel(self):
-        page = pa.inject("<nav>@@ACC_NAV@@</nav>@@ACC_SECTION@@<body>@@ACC_TAIL@@</body>")
+        page = pa.inject("@@ACC_SECTION@@<body>@@ACC_TAIL@@</body>")
         self.assertIn("нет канала YouTube", page)
         self.assertIn("«Создать канал»", page)
         self.assertIn("«Войти другим аккаунтом»", page)
@@ -401,11 +401,11 @@ class Actions(unittest.TestCase):
 
 
 class Page(unittest.TestCase):
-    def test_inject_fills_the_three_markers_and_the_whitelist(self):
-        page = pa.inject("<nav>@@ACC_NAV@@</nav>@@ACC_SECTION@@<body>@@ACC_TAIL@@</body>")
+    def test_inject_fills_the_two_markers_and_the_whitelist(self):
+        page = pa.inject("@@ACC_SECTION@@<body>@@ACC_TAIL@@</body>")
         self.assertNotIn("@@", page)
-        self.assertIn('data-go="accounts"', page)
-        self.assertIn('id="t-acc"', page)
+        self.assertNotIn('data-go="accounts"', page)                    # no tab of its own: a card in the Настройки tab
+        self.assertIn('<section id="t-acc" data-tab="settings"', page)
         for host in pa.LINK_HOSTS:
             self.assertIn('"%s"' % host, page)
         self.assertIn("Точно выйти?", page)
@@ -414,7 +414,7 @@ class Page(unittest.TestCase):
         self.assertIn("Готово — вы вошли", page)
 
     def test_the_page_has_the_partner_action_and_its_hint_and_no_qr_link_for_it(self):
-        page = pa.inject("@@ACC_NAV@@@@ACC_SECTION@@@@ACC_TAIL@@")
+        page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")
         self.assertIn("Через Friendly Share", page)
         self.assertIn("accStart(svc,'partner')", page)
         self.assertIn("{service:svc,mode}", page)
@@ -436,7 +436,7 @@ class Page(unittest.TestCase):
         self.assertIn("bkeys.onclick=()=>ykOpen()", page)               # the card's button still opens the wizard
 
     def test_no_browser_dialogs(self):
-        page = pa.inject("@@ACC_NAV@@@@ACC_SECTION@@@@ACC_TAIL@@")
+        page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")
         for word in ("confirm(", "alert(", "prompt("):
             self.assertNotIn(word, page)
 
@@ -494,7 +494,8 @@ class Served(unittest.TestCase):
         status, raw = self.req("GET", "/")
         self.assertEqual(status, 200)
         self.assertNotIn("@@ACC_", raw)
-        self.assertEqual(raw.count('data-go="accounts"'), 1)
+        self.assertEqual(raw.count('data-go="accounts"'), 0)
+        self.assertEqual(raw.count('data-go="settings"'), 1)
         self.assertEqual(raw.count('id="t-acc"'), 1)
         self.assertEqual(raw.count('id="acc-sheet"'), 1)
         self.assertIn('if(window.accNote)accNote(s.signin)', raw)

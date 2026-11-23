@@ -4,9 +4,7 @@ so it cannot collide with the page's own ids, classes and functions. The YouTube
 sheet is panel_ytkeys_ui.py; the card's "Ключи" button here opens it."""
 import json
 
-NAV = """<button data-go="accounts"><span class="pb"><svg class="i"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></span>Аккаунты</button>"""
-
-SECTION = """<section id="t-acc" data-tab="accounts" class="hide">
+SECTION = """<section id="t-acc" data-tab="settings" class="hide">
     <div class="card"><h2>Аккаунты</h2>
       <button id="acc-yk-cont" class="btn sm acc wide hide"></button>
       <div id="acc-list" class="acc-list"><div class="cap">Загружаю…</div></div>
@@ -56,7 +54,6 @@ TAIL = r"""
 .acc-sheet.acc-min .acc-back,.acc-sheet.acc-min .acc-box{display:none}
 .acc-sheet.acc-min .acc-mini{display:flex;pointer-events:auto}
 @media (min-width:900px){
-  #app{grid-template-areas:"top top" "screen remote" "info settings" "acc acc" "https https"}
   #t-acc{grid-area:acc}
   .acc-list{display:grid;grid-template-columns:1fr 1fr;gap:20px}
   .acc-svc,.acc-svc:first-child,.acc-svc:last-child{padding:0;border-top:0}
@@ -100,7 +97,7 @@ async function accCall(what,body){
 let accData=null, accTimer=null, accBusy=false, accKey='', accSheet=null, accCloseT=null, accAsked={}, accSig={};
 // a profile's progress: how many of YouTube's four sign-ins it has; SWEET.TV is 0 or 1
 const accScore=a=>!a?0:a.service==='youtube'?a.profiles.reduce((n,p)=>n+p.tokens,0):(a.signed_in?1:0);
-const accLive=()=>!document.hidden&&(accSheet||(tab==='accounts'&&!wide()));
+const accLive=()=>!document.hidden&&(accSheet||(tab==='settings'&&!wide()));
 function accLoop(){
   clearTimeout(accTimer);accTimer=null;
   if(accLive())accTimer=setTimeout(accPoll,1500)
@@ -261,10 +258,9 @@ $('acc-cancel').onclick=async()=>{
   try{await accCall('cancel',{service:accSheet.svc});accPoll()}
   catch(e){b.disabled=false;b.textContent='Отмена';$('acc-hint').textContent=e.message}
 };
-document.querySelector('[data-go=accounts]').addEventListener('click',accPoll);
+document.querySelector('[data-go=settings]').addEventListener('click',accPoll);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&(accLive()||wide()))accPoll()});
-if(wide()||location.hash==='#accounts')accPoll();
-if(location.hash==='#accounts')document.querySelector('[data-go=accounts]').click();
+if(wide()||tab==='settings')accPoll();   // the panel's boot has already opened the tab a link or the last visit asked for
 </script>
 """
 

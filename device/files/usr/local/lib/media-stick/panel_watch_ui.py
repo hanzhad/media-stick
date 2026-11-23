@@ -1,6 +1,7 @@
 """The Смотреть part of the page: markup, style and script, as strings. No logic worth testing here;
-inject() puts them into the panel's page by the places it already has (the first tab, the remote card, the
-tab bar, the grid), so the panel itself needs no markers for it. Everything is prefixed `wt` / `wt-` so it
+inject() puts them into the panel's page at its four @@WATCH_...@@ markers (the first tab, the section before the
+remote's, the remote card's top box, the page's tail) and raises when one is missing: a page that silently lost
+the whole tab is worse than one that does not start. Everything is prefixed `wt` / `wt-` so it
 cannot collide with the page's own ids, classes and functions (the page already uses w-ssid, w-btn...).
 Pure DOM and fetch; text goes in with textContent, pictures only as https addresses."""
 
@@ -22,59 +23,58 @@ SECTION = """<section id="t-watch" data-tab="watch">
   </section>
   """
 
-REMOTE_BOX = """<div class="card rc"><div id="wt-npbox" class="wt-npbox hide"></div>"""
+NPBOX = """<div id="wt-npbox" class="wt-npbox hide"></div>"""
 
 CSS = r"""
 <style>
-.wt{--wb:#0f1115;--wc:#1b1d28;--wc2:#272a39;--wl:rgba(255,255,255,.09);font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-body.wt-on{background:#0f1115}
+.wt{font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 .wt button{font:inherit;color:inherit}
-.wt-card{background:var(--wc);border:1px solid var(--wl);border-radius:22px;padding:16px;margin-bottom:12px;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.wt-card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:16px;margin-bottom:12px;box-shadow:0 8px 24px rgba(0,0,0,.3)}
 .wt-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
 .wt-head h2{flex:1;margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:18px;font-weight:600;letter-spacing:0;text-transform:none;color:#fff}
-.wt-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;min-width:44px;padding:0 18px;border:0;border-radius:999px;background:var(--wc2);color:#fff;font-weight:500;touch-action:manipulation;user-select:none;-webkit-user-select:none}
-.wt-btn:active{background:#fff;color:var(--wb)}
-.wt-btn.pri{background:#fff;color:var(--wb);font-weight:600}
+.wt-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;min-width:44px;padding:0 18px;border:0;border-radius:999px;background:var(--card2);color:#fff;font-weight:500;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.wt-btn:active{background:#fff;color:var(--bg)}
+.wt-btn.pri{background:#fff;color:var(--bg);font-weight:600}
 .wt-btn.pri:active{background:#cfd2dc}
 .wt-btn.wide{width:100%}
 .wt-btn:disabled{opacity:.4}
 .wt-btn.ico{padding:0}
 .wt-tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.wt-tile{display:flex;flex-direction:column;align-items:flex-start;gap:12px;min-height:112px;padding:16px;border:1px solid var(--wl);border-radius:22px;background:var(--wc);text-align:left;touch-action:manipulation}
-.wt-tile:active{background:var(--wc2)}
+.wt-tile{display:flex;flex-direction:column;align-items:flex-start;gap:12px;min-height:112px;padding:16px;border:1px solid var(--line);border-radius:22px;background:var(--card);text-align:left;touch-action:manipulation}
+.wt-tile:active{background:var(--card2)}
 .wt-logo{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;font-weight:700;font-size:20px;color:#fff;flex:none}
 .wt-tile b{font-weight:600;font-size:16px}
 .wt-tile small,.wt-sub{color:var(--dim);font-size:13px}
 .wt-chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 12px;scrollbar-width:none}
 .wt-chips::-webkit-scrollbar{display:none}
-.wt-chip{flex:none;min-height:44px;padding:0 16px;border-radius:999px;border:1px solid var(--wl);background:var(--wc);color:#fff;touch-action:manipulation}
-.wt-chip.on{background:#fff;color:var(--wb);font-weight:600}
+.wt-chip{flex:none;min-height:44px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:#fff;touch-action:manipulation}
+.wt-chip.on{background:#fff;color:var(--bg);font-weight:600}
 .wt-search{display:flex;gap:8px;margin-bottom:12px}
-.wt-search input{flex:1;min-width:0;min-height:48px;border-radius:999px;background:var(--wc);border:1px solid var(--wl);padding:0 18px;color:#fff}
+.wt-search input{flex:1;min-width:0;min-height:48px;border-radius:999px;background:var(--card);border:1px solid var(--line);padding:0 18px;color:#fff}
 .wt-list{display:flex;flex-direction:column;gap:10px}
-.wt-item{display:flex;gap:12px;align-items:center;width:100%;padding:8px;border:1px solid var(--wl);border-radius:18px;background:var(--wc);text-align:left;min-height:64px;touch-action:manipulation}
-.wt-item:active{background:var(--wc2)}
-.wt-thumb{position:relative;flex:none;width:128px;aspect-ratio:16/9;border-radius:12px;background:var(--wc2) center/cover no-repeat;overflow:hidden}
+.wt-item{display:flex;gap:12px;align-items:center;width:100%;padding:8px;border:1px solid var(--line);border-radius:18px;background:var(--card);text-align:left;min-height:64px;touch-action:manipulation}
+.wt-item:active{background:var(--card2)}
+.wt-thumb{position:relative;flex:none;width:128px;aspect-ratio:16/9;border-radius:12px;background:var(--card2) center/cover no-repeat;overflow:hidden}
 .wt-thumb i{position:absolute;right:4px;bottom:4px;padding:1px 6px;border-radius:6px;background:rgba(0,0,0,.75);font-size:12px;font-weight:600;line-height:1.5;font-style:normal}
 .wt-thumb u{position:absolute;left:0;bottom:0;height:3px;background:#ff5a5a;text-decoration:none}
-.wt-ch{flex:none;width:56px;height:56px;border-radius:14px;background:var(--wc2) center/contain no-repeat}
+.wt-ch{flex:none;width:56px;height:56px;border-radius:14px;background:var(--card2) center/contain no-repeat}
 .wt-txt{flex:1;min-width:0}
 .wt-txt b{display:block;font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .wt-txt .wt-sub{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wt-bar{height:4px;border-radius:2px;background:var(--wl);margin:6px 0 4px;overflow:hidden}
+.wt-bar{height:4px;border-radius:2px;background:var(--line);margin:6px 0 4px;overflow:hidden}
 .wt-bar i{display:block;height:100%;background:#fff}
-.wt-go{flex:none;width:48px;height:48px;border-radius:50%;border:0;background:#fff;color:var(--wb);display:flex;align-items:center;justify-content:center}
+.wt-go{flex:none;width:48px;height:48px;border-radius:50%;border:0;background:#fff;color:var(--bg);display:flex;align-items:center;justify-content:center}
 .wt-go .i{fill:currentColor;stroke:none}
 .wt-msg{padding:28px 12px;text-align:center;color:var(--dim)}
 .wt-msg b{display:block;color:#fff;font-size:17px;margin-bottom:6px}
 .wt-msg .wt-btn{margin-top:14px}
 .wt-sheet{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center}
 .wt-back{position:absolute;inset:0;background:rgba(0,0,0,.6)}
-.wt-box{position:relative;width:100%;max-width:440px;background:var(--wc);border-radius:24px 24px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
+.wt-box{position:relative;width:100%;max-width:440px;background:var(--card);border-radius:24px 24px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
 .wt-box .wt-thumb{width:100%}
 .wt-box h3{margin:4px 0 0;font-size:17px}
 .wt-now{display:flex;gap:12px;align-items:center;width:100%;text-align:left;margin-bottom:12px}
-.wt-art{flex:none;width:96px;aspect-ratio:16/9;border-radius:12px;background:var(--wc2) center/cover no-repeat}
+.wt-art{flex:none;width:96px;aspect-ratio:16/9;border-radius:12px;background:var(--card2) center/cover no-repeat}
 .wt-p .wt-art{width:100%;max-width:360px;margin:0 auto;border-radius:18px}
 .wt-p{display:flex;flex-direction:column;gap:14px;color:#fff}
 .wt-pt{font-size:20px;font-weight:600;line-height:1.25;text-align:center;overflow-wrap:anywhere}
@@ -88,7 +88,7 @@ body.wt-on{background:#0f1115}
 .wt-opts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 .wt-vol{display:flex;align-items:center;gap:6px}
 .wt-two{display:flex;gap:10px}.wt-two>*{flex:1}
-.wt-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom));z-index:70;padding:12px 20px;border-radius:999px;background:#fff;color:#0f1115;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+.wt-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom));z-index:70;padding:12px 20px;border-radius:999px;background:#fff;color:var(--bg);font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.4)}
 .wt-npbox{margin-bottom:6px}
 .rc.wtnp:not(.wtdp)>:not(.wt-npbox){display:none}
 .rc.wtdp .wt-pfull{display:none}
@@ -186,12 +186,12 @@ const cur=()=>W.stack[W.stack.length-1];
 function go(d){W.stack.push(d);render()}
 function back(){if(W.stack.length>1){W.stack.pop();render()}}
 function msgCard(state,retry,name){
-  const T={needkey:['Сначала настройте ключ','Для '+name+' нужен личный ключ Google. Он настраивается во вкладке «Аккаунты».'],
-    signin:['Сначала войдите','Войдите в '+name+' во вкладке «Аккаунты».'],
+  const T={needkey:['Сначала настройте ключ','Для '+name+' нужен личный ключ Google. Он настраивается в «Настройки» → «Аккаунты».'],
+    signin:['Сначала войдите','Войдите в '+name+' в «Настройки» → «Аккаунты».'],
     error:['Не получилось загрузить','Проверьте сеть и попробуйте ещё раз.'],
     empty:['Здесь пока пусто',''],prompt:['Поиск на YouTube','Введите, что хотите посмотреть.']}[state]||['Не получилось',''];
   const c=h('div',{class:'wt-card wt-msg'},h('b',{text:T[0]}),T[1]);
-  if(state==='needkey'||state==='signin')c.append(h('div',{},h('button',{class:'wt-btn pri',text:'Открыть «Аккаунты»',onclick:()=>document.querySelector('[data-go=accounts]').click()})));
+  if(state==='needkey'||state==='signin')c.append(h('div',{},h('button',{class:'wt-btn pri',text:'Открыть «Аккаунты»',onclick:openAccounts})));
   else if(state==='error')c.append(h('div',{},h('button',{class:'wt-btn pri',text:'Повторить',onclick:retry})));
   return c}
 function lazy(list,items,make){
@@ -307,7 +307,7 @@ function nowCard(st){
     h('div',{class:'wt-txt'},h('span',{class:'wt-sub',text:'Сейчас на ТВ'}),h('b',{text:st.title||'Без названия'}),
       pct?h('div',{class:'wt-bar'},h('i',{style:'width:'+pct+'%'})):'')))}
 function applyNow(st){
-  W.last=st;const on=!!(st&&st.playing);
+  W.last=st;window.wtLast=st;if(window.hdrDraw)hdrDraw();const on=!!(st&&st.playing);
   const rc=document.querySelector('#t-remote .rc'),nb=$('wt-npbox');
   if(rc&&nb){nb.classList.toggle('hide',!on);rc.classList.toggle('wtnp',on);if(!on)rc.classList.remove('wtdp');if(on)W.rp.update(st)}
   const d=cur();
@@ -320,34 +320,29 @@ function tick(){
   W.busy=true;g('now').then(applyNow).catch(()=>{}).finally(()=>{W.busy=false})}
 
 // ---- wiring ----
-const toDpad=()=>{const rc=document.querySelector('#t-remote .rc');rc.classList.add('wtdp');
-  if(!wide())document.querySelector('[data-go=remote]').click()};
-W.wp=mkPlayer({dpad:()=>{document.querySelector('[data-go=remote]').click();document.querySelector('#t-remote .rc').classList.add('wtdp')}});
+const toDpad=()=>{setMode('keys');
+  if(!wide())document.querySelector('[data-go=remote]').click();
+  document.querySelector('#t-remote .rc').classList.add('wtdp')};
+W.wp=mkPlayer({dpad:toDpad});
 W.rp=mkPlayer({dpad:toDpad});
 $('wt-npbox').append(h('div',{class:'wt-pfull'},W.rp.root),
   h('button',{class:'wt-btn wide wt-pback',text:'Плеер',onclick:()=>document.querySelector('#t-remote .rc').classList.remove('wtdp')}));
-document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{
-  document.body.classList.toggle('wt-on',b.dataset.go==='watch');setTimeout(tick,0)}));
+document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>setTimeout(tick,0)));
 document.body.append($('wt-toast'));
-document.body.classList.toggle('wt-on',tab==='watch');
 setInterval(tick,1500);
 render();tick();
 })();
 </script>"""
 
-GRID_OLD = ('"top top" "screen remote" "info settings" "https https"',
-            '"top top" "screen remote" "info settings" "acc acc" "https https"')
-
+MARKERS = {"@@WATCH_NAV@@": NAV, "@@WATCH_SECTION@@": SECTION, "@@WATCH_NPBOX@@": NPBOX,
+           "@@WATCH_TAIL@@": CSS + JS}
 
 def inject(page):
-    """The page with the Смотреть tab: its section before the remote's, its button first in the tab bar and
-    on, the remote card's top box, the style and the script. Each place is found by text the page already
-    has; one that is not found is skipped, so a page without it just has no such part."""
-    page = page.replace('<section id="t-remote" data-tab="remote">',
-                        SECTION + '<section id="t-remote" data-tab="remote" class="hide">', 1)
-    page = page.replace('<button data-go="remote" class="on">', NAV + '<button data-go="remote">', 1)
-    page = page.replace("let tab='remote'", "let tab='watch'", 1)
-    page = page.replace('<div class="card rc">', REMOTE_BOX, 1)
-    for old in GRID_OLD:    # wide screen: the tab is one row across, under the screen and remote
-        page = page.replace(old, old.replace('"screen remote"', '"screen remote" "watch watch"'), 1)
-    return page.replace("</body>", CSS + JS + "</body>", 1)
+    """The page with the Смотреть tab put at its four markers. A marker the page does not have raises ValueError:
+    the page must not come out without the tab, or with half of it."""
+    for marker in MARKERS:
+        if marker not in page:
+            raise ValueError("the page has no %s: the Смотреть tab cannot be put in" % marker)
+    for marker, text in MARKERS.items():
+        page = page.replace(marker, text, 1)
+    return page

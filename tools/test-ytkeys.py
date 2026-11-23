@@ -1487,7 +1487,7 @@ class Onboarding(Base):
 # ---- the page ----------------------------------------------------------------------------------
 
 class Page(unittest.TestCase):
-    PAGE = pa.inject("@@ACC_NAV@@@@ACC_SECTION@@@@ACC_TAIL@@")
+    PAGE = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")
 
     def test_the_wizard_is_part_of_the_accounts_page(self):
         page = self.PAGE
@@ -1510,8 +1510,12 @@ class Page(unittest.TestCase):
         return json.loads(self.PAGE.split("const YK=", 1)[1].split(";\nlet ykStep", 1)[0])
 
     def test_the_colours_and_touch_targets_of_the_mockup(self):
-        for colour in ("#0f1115", "#1b1d28", "#1f2433", "#3a4258", "#2f6b4c", "#f2f3f5", "#f0c674"):
+        for colour in ("#1f2433", "#3a4258", "#2f6b4c", "#f2f3f5", "#f0c674"):
             self.assertIn(colour, self.PAGE)
+        for token in ("background:var(--bg)", "background:var(--card)"):   # one palette: the page's own tokens, not #0f1115 / #1b1d28
+            self.assertIn(token, self.PAGE)
+        for gone in ("#0f1115", "#1b1d28"):
+            self.assertNotIn(gone, self.PAGE)
         self.assertIn("min-height:52px", self.PAGE)                  # a step's header is a big button
         self.assertIn("min-height:44px", self.PAGE)
 
