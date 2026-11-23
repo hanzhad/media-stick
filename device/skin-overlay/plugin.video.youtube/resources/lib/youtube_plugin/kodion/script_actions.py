@@ -357,6 +357,9 @@ def _maintenance_actions(context, action, params):
 
 
 def _user_actions(context, action, params):
+    # media-stick begin: parse_params drops parameters the add-on does not know, ours included
+    ms = {key: (params or {}).get(key) for key in ('ms_name', 'ms_switch', 'ms_user')}
+    # media-stick end
     if params:
         context.parse_params(params)
 
@@ -385,7 +388,7 @@ def _user_actions(context, action, params):
 
     def add_user():
         # media-stick begin: a name from the TV or the phone page skips the keyboard
-        ms_name = context.get_param('ms_name')
+        ms_name = ms['ms_name']
         if ms_name:
             results = (True, ms_name)
         else:
@@ -405,7 +408,7 @@ def _user_actions(context, action, params):
                              localize('user.switch'))
 
     # media-stick begin: users/switch?ms_user=<id> picks the profile without the dialog
-    ms_user = context.get_param('ms_user') if action == 'switch' else None
+    ms_user = ms['ms_user'] if action == 'switch' else None
     if ms_user not in (None, ''):
         user = next((key for key in access_manager.get_users() if str(key) == str(ms_user)), None)
         if user is None:
@@ -432,7 +435,7 @@ def _user_actions(context, action, params):
         user, details = add_user()
         if user is not None:
             # media-stick begin: users/add?ms_switch=1 switches without asking
-            result = True if context.get_param('ms_switch') else ui.on_yes_no_input(
+            result = True if ms['ms_switch'] else ui.on_yes_no_input(
                 localize('user.switch'),
                 localize('user.switch_to.x', details.get('name'))
             )

@@ -125,10 +125,16 @@ OVERLAYS = [
          "    return False"),
     ]),
     ("plugin.video.youtube", "resources/lib/youtube_plugin/kodion/script_actions.py", [
+        ("def _user_actions(context, action, params):\n    if params:\n",
+         "def _user_actions(context, action, params):\n"
+         "    # media-stick begin: parse_params drops parameters the add-on does not know, ours included\n"
+         "    ms = {key: (params or {}).get(key) for key in ('ms_name', 'ms_switch', 'ms_user')}\n"
+         "    # media-stick end\n"
+         "    if params:\n"),
         ("    def add_user():\n        results = ui.on_keyboard_input(localize('user.enter_name'))\n",
          "    def add_user():\n"
          "        # media-stick begin: a name from the TV or the phone page skips the keyboard\n"
-         "        ms_name = context.get_param('ms_name')\n"
+         "        ms_name = ms['ms_name']\n"
          "        if ms_name:\n"
          "            results = (True, ms_name)\n"
          "        else:\n"
@@ -136,7 +142,7 @@ OVERLAYS = [
          "        # media-stick end\n"),
         ("    if action == 'switch':\n        result, user_index_map = select_user(localize('user.switch'),",
          "    # media-stick begin: users/switch?ms_user=<id> picks the profile without the dialog\n"
-         "    ms_user = context.get_param('ms_user') if action == 'switch' else None\n"
+         "    ms_user = ms['ms_user'] if action == 'switch' else None\n"
          "    if ms_user not in (None, ''):\n"
          "        user = next((key for key in access_manager.get_users() if str(key) == str(ms_user)), None)\n"
          "        if user is None:\n"
@@ -148,7 +154,7 @@ OVERLAYS = [
          "    elif action == 'switch':\n        result, user_index_map = select_user(localize('user.switch'),"),
         ("            result = ui.on_yes_no_input(\n                localize('user.switch'),\n                localize('user.switch_to.x', details.get('name'))\n            )",
          "            # media-stick begin: users/add?ms_switch=1 switches without asking\n"
-         "            result = True if context.get_param('ms_switch') else ui.on_yes_no_input(\n"
+         "            result = True if ms['ms_switch'] else ui.on_yes_no_input(\n"
          "                localize('user.switch'),\n"
          "                localize('user.switch_to.x', details.get('name'))\n"
          "            )\n"
