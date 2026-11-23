@@ -142,7 +142,7 @@ class Page(unittest.TestCase):
         js = self.page
         self.assertIn("if(h==='#air'||h==='#screen'){document.querySelector('[data-go=remote]').click();setMode(h.slice(1));return}", js)
         # every settings page has its hash; a hash opens the tab and the page; no hash on the tab is the list
-        self.assertIn("const SP_HASH={acc:'accounts',wifi:'wifi',https:'https',info:'device',act:'maintenance'}", js)
+        self.assertIn("const SP_HASH={acc:'accounts',lang:'language',wifi:'wifi',https:'https',info:'device',act:'maintenance'}", js)
         self.assertIn("const p=SP_OF[h.replace(/[?].*$/,'').slice(1)];", js)
         self.assertIn("if(!p){if(tab==='settings'&&spage)setPage('');return}", js)
         self.assertIn("function openAccounts(){goPage('acc')}", js)
@@ -195,7 +195,7 @@ class Page(unittest.TestCase):
 
     def test_wide_screen_shows_everything_without_the_bar(self):
         wide = self.page.split("@media (min-width:900px){\n  #app{max-width:1360px", 1)[1].split("\n}\n", 1)[0]
-        self.assertIn('"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act"', wide)
+        self.assertIn('"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act" "lang lang"', wide)
         self.assertIn(".tabs,.modes,.sp-head,#t-setlist{display:none!important}", wide)
         self.assertIn("#t-remote{display:contents!important}", wide)
         self.assertIn("#t-screen{display:block!important", wide)
@@ -262,10 +262,10 @@ class Page(unittest.TestCase):
 
     def test_settings_is_a_list_of_rows_and_each_opens_a_page(self):
         lst = self.page.split('id="t-setlist"', 1)[1].split("</section>", 1)[0]
-        self.assertEqual(re.findall(r'data-sp="(\w+)"', lst), ["acc", "wifi", "https", "info", "act"])
+        self.assertEqual(re.findall(r'data-sp="(\w+)"', lst), ["acc", "wifi", "https", "lang", "info", "act"])
         self.assertEqual(re.findall(r'class="sname">([^<]+)<', lst),
-                         ["Аккаунты", "Wi-Fi", "Пульт как приложение", "О приставке", "Обслуживание"])
-        self.assertEqual(lst.count('class="chev" aria-hidden="true">›<'), 5)
+                         ["Аккаунты", "Wi-Fi", "Пульт как приложение", "Язык", "О приставке", "Обслуживание"])
+        self.assertEqual(lst.count('class="chev" aria-hidden="true">›<'), 6)
         for i in ("sv-acc", "sv-wifi", "sv-https", "sv-info"):
             self.assertIn('id="%s"' % i, lst)
         for page, sec in (("acc", "t-acc"), ("wifi", "t-wifi"), ("https", "t-https"), ("info", "t-info"), ("act", "t-act")):
@@ -366,20 +366,21 @@ class Settings(unittest.TestCase):
 
     def test_the_list_has_these_rows_and_every_row_has_its_page(self):
         rows = re.findall(r'<button class="srow" data-sp="(\w+)">.*?<span class="sname">([^<]+)</span>', self.page)
-        self.assertEqual(sorted(r[0] for r in rows), ["acc", "act", "https", "info", "wifi"])
+        self.assertEqual(sorted(r[0] for r in rows), ["acc", "act", "https", "info", "lang", "wifi"])
         names = dict(rows)
         self.assertEqual(names["info"], "О приставке")
         self.assertEqual(names["act"], "Обслуживание")
         for key, _ in rows:
             self.assertRegex(self.page, r'data-spage="%s"' % key)
         pages = re.findall(r'<section id="(t-\w+)"[^>]*data-spage="(\w+)"', self.page)
-        self.assertTrue({"acc", "wifi", "https", "info", "act"} <= {p[1] for p in pages}, pages)
+        self.assertTrue({"acc", "lang", "wifi", "https", "info", "act"} <= {p[1] for p in pages}, pages)
 
     def test_each_hash_maps_to_its_page_and_its_section_id(self):
         m = re.search(r"const SP_HASH=\{([^}]*)\}, SP_OF=\{\}, SP_ID=\{([^}]*)\}", self.page)
         hashes = dict(re.findall(r"(\w+):'(\w+)'", m.group(1)))
         ids = dict(re.findall(r"(\w+):'([\w-]+)'", m.group(2)))
-        self.assertEqual(hashes, {"acc": "accounts", "wifi": "wifi", "https": "https", "info": "device", "act": "maintenance"})
+        self.assertEqual(hashes, {"acc": "accounts", "lang": "language", "wifi": "wifi", "https": "https", "info": "device",
+                                  "act": "maintenance"})
         self.assertEqual(set(ids), set(hashes))
         for page, sid in ids.items():
             self.assertRegex(self.page, r'<section id="%s"[^>]*data-spage="%s"' % (sid, page))

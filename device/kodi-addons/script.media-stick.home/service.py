@@ -21,8 +21,18 @@ def drop(launcher):
             pass
 
 
+def apply_language():
+    """The device's language file may have been written while Kodi was down: apply it once, now."""
+    try:
+        from resources.lib import lang
+        lang.reconcile()
+    except Exception as e:
+        xbmc.log(f"{LOG} language not applied: {type(e).__name__}", xbmc.LOGERROR)
+
+
 def main():
     xbmc.log(f"{LOG} service started", xbmc.LOGINFO)
+    apply_language()
     monitor = xbmc.Monitor()
     launcher = None
     last_status = time.monotonic()

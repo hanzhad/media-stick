@@ -31,6 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, "/usr/local/lib/media-stick")
 import panel_accounts   # the Accounts tab and its API
 import panel_watch      # the Смотреть tab and its API
+import panel_lang       # the device's language: its settings page and API
 import panel_onboarding_ui   # the sheet of the shared TV <-> phone onboarding
 try:
     import mediastick_onboarding   # what the TV asks of this phone; the panel works without it
@@ -515,6 +516,7 @@ def _status():
     s["ip"] = run(["hostname", "-I"])[1].split()
     s["https_url"] = read(PANEL_URL)
     s["page"] = PAGE_VER
+    s["lang"] = panel_lang.current()
     s["commit"] = run(["git", "-C", REPO, "log", "-1", "--format=%h %s"])[1]
     s["commit_date"] = run(["git", "-C", REPO, "log", "-1", "--format=%cs"])[1]
     s["bad_commit"] = read("/var/lib/media-stick/bad-commit")[:7]
@@ -733,7 +735,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 /* wide screen, no tab bar, everything at once: Смотреть across the top, the picture beside the remote
    (the mode switch is no use here), then the settings cards */
 @media (min-width:900px){
-  #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act";gap:20px;padding:28px}
+  #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act" "lang lang";gap:20px;padding:28px}
   .top{grid-area:top;margin-bottom:0}
   .tabs,.modes,.sp-head,#t-setlist{display:none!important}
   .toast{bottom:28px}
@@ -876,12 +878,14 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <button class="srow" data-sp="acc"><svg class="i"><use href="#i-user"/></svg><span class="sname">Аккаунты</span><span class="sval" id="sv-acc"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="wifi"><svg class="i"><use href="#i-wifi"/></svg><span class="sname">Wi-Fi</span><span class="sval" id="sv-wifi"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="https"><svg class="i"><use href="#i-lock"/></svg><span class="sname">Пульт как приложение</span><span class="sval" id="sv-https"></span><span class="chev" aria-hidden="true">›</span></button>
-      <button class="srow" data-sp="info"><svg class="i"><use href="#i-info"/></svg><span class="sname">О приставке</span><span class="sval" id="sv-info"></span><span class="chev" aria-hidden="true">›</span></button>
+      @@LANG_ROW@@<button class="srow" data-sp="info"><svg class="i"><use href="#i-info"/></svg><span class="sname">О приставке</span><span class="sval" id="sv-info"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="act"><svg class="i"><use href="#i-rot"/></svg><span class="sname">Обслуживание</span><span class="sval" id="sv-act"></span><span class="chev" aria-hidden="true">›</span></button>
     </div>
   </section>
 
   @@ACC_SECTION@@
+
+  @@LANG_SECTION@@
 
   <section id="t-wifi" data-tab="settings" data-spage="wifi" class="hide">
     <div class="card"><h2>Wi-Fi</h2>
@@ -1057,7 +1061,7 @@ function setMode(m){
 }
 document.querySelectorAll('.modes [data-m]').forEach(b=>b.addEventListener('click',()=>{buzz();setMode(b.dataset.m)}));
 // Settings on a phone: the list, or one page of it (spage; '' = the list). A page has a hash, so the back button works.
-const SP_HASH={acc:'accounts',wifi:'wifi',https:'https',info:'device',act:'maintenance'}, SP_OF={}, SP_ID={acc:'t-acc',wifi:'t-wifi',https:'t-https',info:'t-info',act:'t-act'};
+const SP_HASH={acc:'accounts',lang:'language',wifi:'wifi',https:'https',info:'device',act:'maintenance'}, SP_OF={}, SP_ID={acc:'t-acc',lang:'t-lang',wifi:'t-wifi',https:'t-https',info:'t-info',act:'t-act'};
 Object.keys(SP_HASH).forEach(k=>{SP_OF[SP_HASH[k]]=k});
 let spage='', spPushed=false;
 function setPage(p){
@@ -1197,6 +1201,7 @@ function setRows(s){
   const v=(id,text)=>{$(id).textContent=text};
   v('sv-acc',window.accRowText?accRowText():'');
   v('sv-wifi',s.wifi.ssid||'кабель');
+  v('sv-lang',window.langRowText?langRowText(s):'');
   v('sv-https',HTTPS_RE.test(httpsUrl)?'включено':'выключено');
   v('sv-act',s.last_check_min==null?'—':'проверено '+ruAgo(s.last_check_min));
   v('act-last','Автообновление: '+(s.last_check_min==null?'ещё не проверяло с включения':'проверено '+ruAgo(s.last_check_min))+'. '+(s.next_update_min==null?'':ruNextCheck(s.next_update,s.next_update_min)==='сейчас'?'Следующая проверка сейчас.':'Следующая проверка '+ruNextCheck(s.next_update,s.next_update_min)+'.'));
@@ -1745,9 +1750,10 @@ setMode(lsGet('mode'));
 setPage('');
 if(!wide()){const t=lsGet('tab');if(TABS.includes(t)&&t!=='watch')document.querySelector('[data-go='+t+']').click()}
 hashGo();
-</script>@@ACC_TAIL@@@@WATCH_TAIL@@</body></html>"""
+</script>@@ACC_TAIL@@@@WATCH_TAIL@@@@LANG_TAIL@@</body></html>"""
 PAGE = panel_accounts.inject(PAGE)
 PAGE = panel_watch.inject(PAGE)
+PAGE = panel_lang.inject(PAGE)
 PAGE = panel_onboarding_ui.inject(PAGE)
 PAGE_VER = hashlib.sha256(PAGE.encode()).hexdigest()[:12]
 PAGE = PAGE.replace("@@PAGE_VER@@", PAGE_VER)
@@ -1910,6 +1916,9 @@ class H(BaseHTTPRequestHandler):
             return self.send(body, code=code)
         if p.startswith(panel_watch.PREFIX):
             body, code = panel_watch.post(p, b, kodi)
+            return self.send(body, code=code)
+        if p == panel_lang.PATH:
+            body, code = panel_lang.post(p, b, kodi)
             return self.send(body, code=code)
         try:
             if p == "/api/key":

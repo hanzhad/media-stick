@@ -10,6 +10,8 @@
 # RunScript(script.media-stick.home,onboarding,show,<service>) the screen of a flow the phone is working through (the Google
 # key wizard; resources/lib/onboarding_app.py), following /run/media-stick/onboarding/<service>.json; `onboarding,demo,signin`
 # and `onboarding,demo,keys` are the sign-in and the key wizard screens on invented documents, for looking at them.
+# RunScript(script.media-stick.home,lang) applies the device's language (/var/lib/media-stick/prefs/language, written by
+# the phone page) to the YouTube and SWEET.TV add-ons and the Home property media-stick.lang (resources/lib/lang.py).
 # Without arguments: go to the (skin) Home window, where the service shows the launcher.
 import sys
 
@@ -32,6 +34,12 @@ elif args and args[0] == "ytkeys":
         ytkeys.main(args[1:])
     except Exception as e:      # named by its type only: what failed may have been holding a key
         xbmc.log(f"[script.media-stick.home] ytkeys failed: {type(e).__name__}", xbmc.LOGERROR)
+elif args and args[0] == "lang":
+    try:
+        from resources.lib import lang
+        lang.main(args[1:])
+    except Exception as e:      # the add-ons keep the language they had
+        xbmc.log(f"[script.media-stick.home] lang failed: {type(e).__name__}", xbmc.LOGERROR)
 elif args and args[0] == "sweettv":
     try:
         from resources.lib import sweettv_app

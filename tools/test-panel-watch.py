@@ -24,6 +24,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, LIB)
 
 import panel_accounts  # noqa: E402
+import panel_lang  # noqa: E402
 import panel_watch as pw  # noqa: E402
 
 NOW = 1_800_000_000
@@ -371,7 +372,7 @@ class Page(unittest.TestCase):
         with open(PANEL, encoding="utf-8") as f:
             text = f.read()
         start = text.index('PAGE = r"""') + len('PAGE = r"""')
-        cls.base = panel_accounts.inject(text[start:text.index('"""\nPAGE = panel_accounts.inject')])
+        cls.base = panel_lang.inject(panel_accounts.inject(text[start:text.index('"""\nPAGE = panel_accounts.inject')]))
         cls.page = pw.inject(cls.base)
 
     def test_tab_first_and_default(self):
