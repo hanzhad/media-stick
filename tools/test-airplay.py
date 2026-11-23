@@ -141,5 +141,37 @@ class RelayDrawerDies(unittest.TestCase):
             self.assertEqual(drain(p2.r), SPS_IPHONE + IDR + P)
 
 
+class SplashOnTheSwitch(unittest.TestCase):
+    """The screen shows the boot picture, not black, while it changes hands."""
+
+    def test_rows_land_pitch_apart(self):
+        data = bytes(range(2 * 4)) * 2           # 2 x 2 pixels
+        mem = bytearray(2 * 12)                  # rows 12 bytes apart, 4 bytes of padding
+        airplay.put_rows(mem, data, 2, 2, 12)
+        self.assertEqual(bytes(mem), data[:8] + b"\0" * 4 + data[8:] + b"\0" * 4)
+
+    def test_unpadded_rows_are_copied_whole(self):
+        data = b"\x01\x02\x03\x00" * 6
+        mem = bytearray(len(data))
+        airplay.put_rows(mem, data, 3, 2, 12)
+        self.assertEqual(bytes(mem), data)
+
+    def test_kept_picture_is_used_while_newer_than_the_png(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            png = os.path.join(d, "splash.png")
+            open(png, "wb").close()
+            os.utime(png, (1000, 1000))
+            raw = os.path.join(d, "splash-2x1.xrgb")
+            with open(raw, "wb") as f:
+                f.write(b"\x10\x12\x18\x00" * 2)
+            self.assertEqual(airplay.splash_pixels(2, 1, png, d), b"\x10\x12\x18\x00" * 2)
+
+    def test_no_picture_gives_none_so_the_screen_stays_black(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(airplay.splash_pixels(2, 1, os.path.join(d, "none.png"), d))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
