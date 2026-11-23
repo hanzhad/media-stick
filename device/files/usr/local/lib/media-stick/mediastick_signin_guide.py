@@ -41,6 +41,13 @@ RESULTS = {      # state -> (TV title, phone title) of a sign-in that is over
 }
 
 
+NO_CHANNEL_HINT = {      # after a YouTube sign-in whose Google account has no channel (mediastick_ytchannel says "no")
+    "tv": "This Google account has no YouTube channel, so Subscriptions, Watch later and Playlists will be empty.",
+    "phone": "У этого аккаунта Google нет канала YouTube, поэтому подписки, «Смотреть позже» и плейлисты будут пустыми. "
+             "Создайте канал в приложении YouTube.",
+}
+
+
 def _carries(code, link) -> bool:
     """Whether the link opens the page with the code already in it."""
     return bool(link) and (code in link or quote(code, safe="-") in link)
@@ -50,10 +57,11 @@ def known(service) -> bool:
     return service in GUIDES
 
 
-def document(service, state, code="", link="", step=1, steps=1):
+def document(service, state, code="", link="", step=1, steps=1, channel=""):
     """The onboarding document of a sign-in of `service` that is `state` ("active" or how it ended), or None for a
     service this module has no words for. `code` and `link` are the active one's; `step`/`steps` count the codes
-    the add-on asks for in a row (YouTube asks up to four), which the small line above the title says."""
+    the add-on asks for in a row (YouTube asks up to four). `channel` is "no" when the signed-in account is known to
+    have no YouTube channel: the finished document then carries a hint that says what will be empty."""
     guide = GUIDES.get(service)
     if guide is None:
         return None
@@ -73,4 +81,6 @@ def document(service, state, code="", link="", step=1, steps=1):
         doc["title"] = {"tv": tv, "phone": phone}
         doc["step"] = len(parts) if state == "done" else 1
         del doc["hint"]
+        if state == "done" and channel == "no" and service == "youtube":
+            doc["hint"] = dict(NO_CHANNEL_HINT)
     return doc

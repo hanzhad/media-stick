@@ -86,6 +86,7 @@ def scenario(d):
 def load_lib(d):
     os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(d, "signin")
     os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(d, "onboarding")
+    os.environ["MEDIASTICK_YTCHANNEL_OFF"] = "1"       # never ask Google from a test
     os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(d, "addon_data")
     sys.path.insert(0, LIB)
     import mediastick_signin as ms

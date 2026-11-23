@@ -59,6 +59,20 @@ def signed_in():
         return None
 
 
+def channel_state():
+    """"yes", "no" or "unknown": whether the current profile's Google account has a YouTube channel (store.channel_state:
+    never waits, so a worker or the UI may ask). "unknown" when nobody is signed in or it cannot be told."""
+    try:
+        current = _current_profile()
+        if not current or not current["signed_in"]:
+            return "unknown"
+        from resources.lib import store
+        return store.channel_state(current["id"])
+    except Exception as e:
+        ui.log(f"cannot tell whether the account has a channel: {e!r}")
+        return "unknown"
+
+
 def profile_name():
     """The name of the add-on's current profile, "" when there is none or it cannot be told (the avatar shows it)."""
     try:

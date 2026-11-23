@@ -11,6 +11,7 @@ LIST = 600
 REFRESH = 2.0            # s between looks at who is signed in (the phone page may change it too)
 MOVE_ACTIONS = (3, 4)    # up, down: moving away cancels a half-done sign-out
 CODES = 4                # YouTube asks for up to this many codes per profile
+NO_CHANNEL = "No YouTube channel on this account"     # the dim line under a signed-in profile whose account has none
 
 
 class Row(NamedTuple):
@@ -21,7 +22,16 @@ class Row(NamedTuple):
     confirm: bool = False
 
 
-def _youtube_rows(entry, pending):
+def _channel_of(accts) -> str:
+    """"yes", "no" or "unknown" for the current YouTube profile (store.channel_state: the remembered answer at once)."""
+    entry = next((e for e in accts if e["service"] == "youtube"), None)
+    current = next((p for p in entry["profiles"] if p["current"]), None) if entry else None
+    if not current or not current["signed_in"]:
+        return "unknown"
+    return store.channel_state(current["id"])
+
+
+def _youtube_rows(entry, pending, channel="unknown"):
     profile_list = entry["profiles"]
     current = next((p for p in profile_list if p["current"]), None)
     who = current["name"] if current else "Default"
@@ -35,8 +45,10 @@ def _youtube_rows(entry, pending):
         out.append(Row("youtube", "signin", label, detail))
     if tokens:
         confirm = pending == ("youtube", "signout")
-        out.append(Row("youtube", "signout", "Press OK again to sign out" if confirm else "Sign out of YouTube",
-                       f"{who}: signed in" if tokens >= CODES else f"{who}: {tokens} of {CODES} codes entered", confirm))
+        detail = f"{who}: signed in" if tokens >= CODES else f"{who}: {tokens} of {CODES} codes entered"
+        if channel == "no":                      # only when it is known; with a channel there is nothing to add
+            detail += " · " + NO_CHANNEL
+        out.append(Row("youtube", "signout", "Press OK again to sign out" if confirm else "Sign out of YouTube", detail, confirm))
     names = ", ".join(p["name"] for p in profile_list)
     out.append(Row("youtube", "switch", "Switch profile or add one",
                    f"{len(profile_list)} profile{'s' if len(profile_list) != 1 else ''}: {names}" if names else "Default"))
@@ -51,13 +63,14 @@ def _sweettv_rows(entry):
     return [Row("sweettv", "signin", "Sign in to SWEET.TV", "Not signed in")]
 
 
-def rows(accts, pending=None):
+def rows(accts, pending=None, channel="unknown"):
     """The list shown: per service its sign-in state and the actions that make sense. `pending` is the
-    (service, action) that has had its first press; YouTube's sign-out needs a second one."""
+    (service, action) that has had its first press; YouTube's sign-out needs a second one. `channel` is whether the
+    current YouTube profile's Google account has a channel (_channel_of)."""
     out = []
     for entry in accts:
         if entry["service"] == "youtube":
-            out += _youtube_rows(entry, pending)
+            out += _youtube_rows(entry, pending, channel)
         elif entry["service"] == "sweettv":
             out += _sweettv_rows(entry)
     return out
@@ -91,7 +104,8 @@ class AccountsDialog(xbmcgui.WindowXMLDialog):
 
     def _refresh(self):
         with self._lock:
-            new = rows(store.lib.accounts(), self.pending)
+            accts = store.lib.accounts()
+            new = rows(accts, self.pending, self._channel(accts))
             if new == self.rows:
                 return
             control = self.getControl(LIST)
@@ -106,6 +120,14 @@ class AccountsDialog(xbmcgui.WindowXMLDialog):
             if items:
                 control.selectItem(min(position, len(items) - 1))
             self.rows = new
+
+    @staticmethod
+    def _channel(accts):
+        try:
+            return _channel_of(accts)
+        except Exception as e:                   # the note is a courtesy: the list must show without it
+            ui.log(f"channel state unknown: {e!r}")
+            return "unknown"
 
     def onClick(self, controlId):
         if controlId != LIST:

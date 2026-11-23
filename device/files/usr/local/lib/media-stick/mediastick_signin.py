@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
@@ -34,6 +35,10 @@ try:        # the shared picture of a flow for the TV and the phone; a device wi
     import mediastick_signin_guide as guide
 except ImportError:
     onboarding = guide = None
+try:        # whether a Google account has a YouTube channel (the "done" document says so when it has none)
+    import mediastick_ytchannel as ytchannel
+except ImportError:
+    ytchannel = None
 
 DIR = os.environ.get("MEDIASTICK_SIGNIN_DIR", "/run/media-stick/signin")
 USERDATA = os.environ.get("MEDIASTICK_ADDON_DATA", "/home/media/.kodi/userdata/addon_data")
@@ -47,6 +52,7 @@ NORMAL, PARTNER = "normal", "partner"
 MODES = (NORMAL, PARTNER)
 TTL = {NORMAL: 10 * 60, PARTNER: 6 * 60 * 60}    # how long the code is waited for, by mode
 MODE_KEEP = 120     # a mode the phone asked for is forgotten after this many seconds if no sign-in took it
+CHANNEL_WAIT = 6    # s the end of a YouTube sign-in waits for the answer to "has the account a channel?" (it asks Google)
 ONBOARD_ALIVE = HEARTBEAT + 30    # the onboarding picture of a waiting sign-in dies this long after the last heartbeat
 
 SERVICES = {
@@ -158,7 +164,39 @@ def publish(service, state, code="", url="", step=1, steps=1, ttl=None, mode=NOR
         data.update(code=code, url=url, link=link_for(service, code, url, link) if code else url)
     stored = _store(service, data)
     _onboard(service, data)
+    if service == "youtube" and state == DONE:
+        _channel_note(data)
     return stored
+
+
+def _channel_note(data):
+    """A YouTube sign-in has just succeeded: if the account turns out to have no channel, add that to the finished
+    onboarding document (the sections of the account will be empty, which the screens would otherwise leave unexplained).
+    The question goes to Google, so it runs in a thread that is waited for at most CHANNEL_WAIT seconds; the "done"
+    above is already published, and this is only an addition to it. Whatever goes wrong, nothing changes."""
+    if ytchannel is None or onboarding is None or guide is None:
+        return
+    worker = threading.Thread(target=_channel_hint, args=(data,), daemon=True)
+    worker.start()
+    worker.join(CHANNEL_WAIT)
+
+
+def _channel_hint(data):
+    try:
+        current = next((p for p in youtube_accounts() if p["current"]), None)
+        if current is None:
+            return
+        answer = ytchannel.peek(current["id"])
+        if answer.get("state") == "unknown":         # nothing remembered for this sign-in yet: ask Google now
+            answer = ytchannel.check(current["id"])
+        if answer.get("state") != "no":
+            return
+        shown = onboarding.read("youtube")
+        if not shown or shown.get("state") != DONE or shown.get("updated") != data["updated"]:
+            return                                   # another sign-in has begun since: that document is not ours
+        onboarding.write("youtube", guide.document("youtube", DONE, channel="no"))
+    except Exception:
+        pass
 
 
 def _onboard(service, data):

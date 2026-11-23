@@ -16,4 +16,22 @@ try:        # what a flow tells the phone and the TV; a device without it keeps 
 except ImportError:
     onboarding = None
 
+try:        # whether a YouTube profile's Google account has a channel; a device without it claims nothing
+    import mediastick_ytchannel as ytchannel  # noqa: E402
+except ImportError:
+    ytchannel = None
+
 SERVICES = lib.SERVICES
+
+
+def channel_state(profile_id) -> str:
+    """"yes", "no" or "unknown" for the YouTube profile `profile_id`: the remembered answer, at once (the library looks
+    again in the background when it is old). "unknown" when the library is missing or fails: nothing is then claimed."""
+    if ytchannel is None:
+        return "unknown"
+    try:
+        state = ytchannel.peek(profile_id).get("state")
+    except Exception:
+        return "unknown"
+    return state if state in ("yes", "no") else "unknown"
+

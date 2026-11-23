@@ -32,6 +32,7 @@ XML = os.path.join(SKIN, "script-media-stick-youtube.xml")
 TMP = tempfile.mkdtemp()
 os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
 os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(TMP, "onboarding")
+os.environ["MEDIASTICK_YTCHANNEL_OFF"] = "1"       # never ask Google from a test
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
 os.environ["TZ"] = "UTC"
 time.tzset()
@@ -2212,6 +2213,95 @@ class EntryPoints(unittest.TestCase):
         apps.launch("webapp:netflix")
         self.assertEqual(Fake.builtins, ["RunAddon(plugin.video.other)", "RunScript(script.media-stick.webapp,netflix)"])
         self.assertEqual(apps.OWN_SCREENS["plugin.video.sweettv"], "RunScript(script.media-stick.home,sweettv,open)")
+
+
+class NoChannel(WindowCase):
+    """A Google account with no YouTube channel: the add-on answers "Channel not found" to every "mine" request, so the
+    sections of the account are empty. The card says why when mediastick_ytchannel knows ("no"), never otherwise."""
+    ACCOUNT = ("subs", "later", "lists")
+    CARD = ("No YouTube channel", "This Google account has no YouTube channel, so this is empty. Create one in the YouTube "
+            "app on your phone (avatar → Create channel), or add another Google account on the phone remote.")
+
+    def setUp(self):
+        super().setUp()
+        self.state = ["no"]
+        patch = mock.patch.object(files, "channel_state", side_effect=lambda: self.state[0])
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def card(self, window):
+        return window.getProperty("msg_title"), window.getProperty("msg_text")
+
+    def test_the_sections_of_the_account_say_there_is_no_channel(self):
+        window = self.open()
+        for key in self.ACCOUNT:
+            self.go(window, key)
+            self.assertTrue(wait_for(lambda: window.view.key == key and window.mode == D.EMPTY), key)
+            self.assertEqual(self.card(window), self.CARD, key)
+            self.assertEqual(window.getProperty("action"), "Try again")
+
+    def test_recommendations_history_trending_and_search_stay_as_they_are(self):
+        window = self.open()
+        for key in ("history", "trend"):
+            self.go(window, key)
+            self.assertTrue(wait_for(lambda: window.view.key == key and window.mode == D.EMPTY), key)
+            self.assertNotEqual(self.card(window)[0], "No YouTube channel", key)
+            self.assertEqual(self.card(window)[1], D.EMPTY_TEXT[key])
+        self.rec(vid(1, "One"))
+        self.go(window, "rec")
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        self.assertEqual(self.shown(window), ["One"])
+
+    def test_a_channel_or_an_unknown_answer_changes_nothing(self):
+        for state in ("yes", "unknown", ""):
+            self.state[0] = state
+            window = self.open()
+            self.go(window, "subs")
+            self.assertTrue(wait_for(lambda: window.view.key == "subs" and window.mode == D.EMPTY), state)
+            self.assertEqual(self.card(window), ("Nothing here", D.EMPTY_TEXT["subs"]), state)
+
+    def test_a_section_that_has_videos_shows_them_whatever_the_state(self):
+        self.site.routes[D.SECTIONS[1].route] = answer(vid(5, "Mine"))
+        window = self.open()
+        self.go(window, "subs")
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        self.assertEqual(self.shown(window), ["Mine"])
+
+    def test_signed_out_and_no_key_cards_come_first(self):
+        Fake.signed = False
+        window = self.open()
+        self.assertEqual((window.mode, window.getProperty("msg_title")), (D.SIGNIN, "Sign in to see your videos"))
+        Fake.signed, Fake.keys = True, False
+        window = self.open()
+        self.assertEqual(window.mode, D.NEEDKEY)
+
+    def test_the_demo_never_says_it(self):
+        window = self.open(demo=True)
+        self.assertEqual(window.channel, "unknown")
+
+    def test_an_answer_that_comes_later_changes_the_card_and_a_wrong_section_is_left_alone(self):
+        self.state[0] = "unknown"
+        with mock.patch.object(youtube_app, "CHANNEL_RECHECK", 0.02):
+            window = self.open()
+            self.go(window, "later")
+            self.assertTrue(wait_for(lambda: window.view.key == "later" and window.mode == D.EMPTY))
+            self.assertEqual(self.card(window), ("Nothing here", D.EMPTY_TEXT["later"]))
+            self.state[0] = "no"
+            self.assertTrue(wait_for(lambda: self.card(window) == self.CARD), "the card was not updated")
+            self.go(window, "history")
+            self.assertTrue(wait_for(lambda: window.view.key == "history" and window.mode == D.EMPTY))
+            self.assertEqual(self.card(window)[1], D.EMPTY_TEXT["history"])
+
+    def test_an_answer_that_is_still_unknown_is_asked_a_few_times_and_then_left(self):
+        self.state[0] = "unknown"
+        asked = []
+        with mock.patch.object(youtube_app, "CHANNEL_RECHECK", 0.01),                 mock.patch.object(files, "channel_state", side_effect=lambda: asked.append(1) or "unknown"):
+            window = self.open()
+            self.go(window, "subs")
+            self.assertTrue(wait_for(lambda: len(asked) >= youtube_app.CHANNEL_TRIES + 2))
+            time.sleep(0.1)
+        self.assertEqual(len(asked), youtube_app.CHANNEL_TRIES + 2)      # the two loads (Recommendations, Subscriptions), then each try
+        self.assertEqual(self.card(window)[0], "Nothing here")
 
 
 if __name__ == "__main__":

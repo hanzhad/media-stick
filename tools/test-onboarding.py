@@ -16,6 +16,7 @@ LIB = os.path.join(ROOT, "device", "files", "usr", "local", "lib", "media-stick"
 TMP = tempfile.mkdtemp()
 os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
 os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(TMP, "onboarding")
+os.environ["MEDIASTICK_YTCHANNEL_OFF"] = "1"       # never ask Google from a test
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
 sys.path.insert(0, LIB)
 

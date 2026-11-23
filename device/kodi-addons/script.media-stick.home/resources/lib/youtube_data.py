@@ -433,9 +433,26 @@ EMPTY_TEXT = {"rec": "Nothing is recommended yet. Watch something and it shows u
               FOLDER_KEY: "This list is empty."}
 
 
-def message(mode, view=None, keys=None, detail="") -> Message:
-    """(title, text, button) of the card for a mode that is not DATA."""
+NEEDS_CHANNEL = ("subs", "later", "lists")       # the sections of "mine": a Google account with no YouTube channel has none of them
+NO_CHANNEL_CARD = Message("No YouTube channel",
+                     "This Google account has no YouTube channel, so this is empty. Create one in the YouTube app on your "
+                     "phone (avatar → Create channel), or add another Google account on the phone remote.", "Try again")
+
+
+def no_channel(view, mode, channel) -> bool:
+    """Whether the card for `mode` in `view` is to say the account has no channel. Only when it is known ("no": what
+    mediastick_ytchannel answers; "yes" and "unknown" claim nothing), only in the sections of the account, and only
+    for a card that is an empty or failed answer (the add-on answers "Channel not found" for each of them), never for
+    the sign-in or the key card, which come first."""
+    return channel == "no" and bool(view) and view.key in NEEDS_CHANNEL and mode in (EMPTY, ERROR, UNAVAILABLE)
+
+
+def message(mode, view=None, keys=None, detail="", channel="") -> Message:
+    """(title, text, button) of the card for a mode that is not DATA. `channel` is "yes", "no" or "unknown"/"" (the
+    account's YouTube channel, when it is known)."""
     key = view.key if view else ""
+    if no_channel(view, mode, channel):
+        return NO_CHANNEL_CARD
     if mode == SIGNIN:
         return Message("Sign in to see your videos", "Sign in once: a code appears here, you type it on your phone.",
                        "Sign in to YouTube")

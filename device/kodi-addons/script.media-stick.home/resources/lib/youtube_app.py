@@ -30,6 +30,8 @@ COLUMNS = 4                      # the grid's columns (the panel in the skin)
 AHEAD = 2 * COLUMNS              # the next page is asked for when the cursor is this close to the last card
 MORE_RETRY = 8                   # s after a next page that failed before it is asked for again
 LOADING_MORE = "Loading…"
+CHANNEL_RECHECK = 5.0            # s until a card in a section of the account looks again at whether the account has a channel,
+CHANNEL_TRIES = 3                # and how many times it does
 KEYS_POLL = 2.0                  # s between looks at the key wizard's progress while its card is shown
 DEMO_NAME, SIGNED_OUT_COLOR = "Demo", "FF5F5F5F"      # the avatar of the demo; of nobody
 RAIL_DELAY = 0.3                 # s the rail rests on a section before the grid follows
@@ -78,6 +80,8 @@ class YouTube(xbmcgui.WindowXML):
         self.play_at = 0.0
         self.loading_more = 0                    # the token of the view whose next page is being asked for, 0 for none
         self.more_retry = 0.0                    # no next page is asked for before this time (a failed one waits)
+        self.channel = "unknown"                 # whether the account has a YouTube channel (yes | no | unknown)
+        self._card = None                        # (mode, keys, detail) of the card shown, to say it again
         self._watching = False                   # a worker is looking at the key wizard's progress
         self._guide_up = False                   # the onboarding window was opened for the keys document now there
 
@@ -135,6 +139,7 @@ class YouTube(xbmcgui.WindowXML):
         listing = data.NO_LISTING
         try:
             signed, keys, name = self._situation()
+            self.channel = "unknown" if self.demo or not signed else files.channel_state()
             gated = data.gate(signed, view.needs_login, keys)
             if gated is None:
                 listing = data.parse_reply(self._reply(self._resolve(view)))
@@ -184,6 +189,7 @@ class YouTube(xbmcgui.WindowXML):
                 self._install(view, listing, prepared, select)
             else:
                 self._show_card(mode, keys, listing.error)
+                self._watch_channel(view, token, mode)
         if focus:
             self._focus_content(FOCUS_WAIT)
         if prepared is not None:
@@ -295,13 +301,32 @@ class YouTube(xbmcgui.WindowXML):
 
     def _show_card(self, mode, keys=None, detail=""):
         """Everything that is not a list: the grid is emptied and the card says why."""
-        message = data.message(mode, self.view, keys, detail)
+        message = data.message(mode, self.view, keys, detail, self.channel)
+        self._card = (mode, keys, detail)
         self.entries, self.listing = [], data.NO_LISTING
         self.getControl(GRID).reset()
         self._prop("msg_title", message.title)
         self._prop("msg_text", message.text)
         self._prop("action", message.action)
         self._set_mode(mode)
+
+    def _watch_channel(self, view, token, mode, tries=CHANNEL_TRIES):
+        """A card for an empty section of the account, shown before it was known whether the account has a channel: look
+        again a few times, so the card says it when the answer comes (the library asks Google in the background)."""
+        if (tries and not self.demo and self.channel == "unknown" and view.key in data.NEEDS_CHANNEL
+                and mode in (data.EMPTY, data.ERROR, data.UNAVAILABLE)):
+            self._later("channel", CHANNEL_RECHECK, lambda: self._recheck_channel(view, token, tries - 1))
+
+    def _recheck_channel(self, view, token, tries):
+        channel = files.channel_state()
+        with self._lock:
+            if self._stop.is_set() or token != self.token or self._card is None:
+                return
+            self.channel = channel
+            if data.no_channel(view, self._card[0], channel):
+                self._show_card(*self._card)
+            else:
+                self._watch_channel(view, token, self._card[0], tries)
 
     def _prepare(self, listing):
         """(entries, ListItems) for a listing: one card for each entry."""
