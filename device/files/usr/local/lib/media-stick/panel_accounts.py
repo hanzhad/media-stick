@@ -19,8 +19,9 @@ import panel_ytkeys_ui
 LAUNCHER = "script.media-stick.home"
 PREFIX = "/api/accounts/"
 NAME_MAX = 32
-# the only places a link may lead to (sign-in pages, and the pages of the YouTube keys wizard); the page checks its own copy of this list
-LINK_HOSTS = ("www.youtube.com", "youtube.com", "accounts.google.com", "sweet.tv", "www.sweet.tv",
+# the only places a link may lead to (sign-in pages, and the pages of the YouTube keys wizard); the page checks its own copy of this list.
+# www.google.com: Google sends a TV client made with the owner's own keys to www.google.com/device to type the code.
+LINK_HOSTS = ("www.youtube.com", "youtube.com", "accounts.google.com", "www.google.com", "sweet.tv", "www.sweet.tv",
               "console.cloud.google.com", "developers.google.com")
 CODE_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 ID_RE = re.compile(r"^[0-9]{1,6}$")

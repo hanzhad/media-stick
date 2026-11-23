@@ -76,10 +76,12 @@ class Validation(unittest.TestCase):
     def test_link_whitelist(self):
         good = ["https://www.youtube.com/activate?user_code=ABC-DEF-GHI", "https://youtube.com/activate",
                 "https://accounts.google.com/o/oauth2/device/usercode", "https://sweet.tv/addDevice?connectCode=123",
-                "https://www.sweet.tv/x", "https://www.youtube.com:443/activate"]
+                "https://www.sweet.tv/x", "https://www.youtube.com:443/activate", "https://www.google.com/device",
+                "https://www.google.com/device?user_code=ABC-DEF-GHI"]
         bad = ["http://www.youtube.com/activate", "https://evil.example/activate", "https://youtube.com.evil.example/x",
                "https://www.youtube.com@evil.example/x", "https://evil.example@www.youtube.com/x",
-               "https://www.youtube.com:8443/x", "javascript:alert(1)", "data:text/html,x", "//www.youtube.com/x",
+               "https://www.youtube.com:8443/x", "https://google.com/device", "https://www.google.com.evil.example/device",
+               "javascript:alert(1)", "data:text/html,x", "//www.youtube.com/x",
                "https://www.youtube.com/a b", "https://www.youtube.com/а", "https://www.youtube.com/x\n",
                "", None, 5, "https://" + "a" * 600 + ".youtube.com/"]
         for u in good:
