@@ -7,6 +7,7 @@ mediastick_sweetlive, the same function that the seek of the TV remote goes thro
 """
 import os
 import time
+from urllib.parse import parse_qs
 
 import panel_watch as pw
 
@@ -55,22 +56,26 @@ def channels():
     return _slim_cache["value"] or {}
 
 
+def _rows(value):
+    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
 def _channel(raw, cid):
-    for c in raw.get("list", ()) if isinstance(raw, dict) else ():
+    for c in _rows(raw.get("list") if isinstance(raw, dict) else None):
         if str(c.get("id")) == str(cid):
             return c
     return None
 
 
 def _programme(channel, epg):
-    for p in channel.get("epg", ()) if channel else ():
+    for p in _rows(channel.get("epg") if channel else None):
         if str(p.get("id")) == str(epg):
             return p
     return None
 
 
 def _on_now(channel, now):
-    for p in channel.get("epg", ()) if channel else ():
+    for p in _rows(channel.get("epg") if channel else None):
         start, stop = ml._seconds(p.get("time_start")), ml._seconds(p.get("time_stop"))
         if start is not None and stop is not None and start <= now < stop:
             return p
@@ -87,6 +92,45 @@ def archive_ok(channel, p, now):
     if isinstance(days, int) and not isinstance(days, bool) and days > 0 and now - start > days * 86400:
         return False
     return p.get("available") is not False
+
+
+def _entry(channel, p, now, archive=True):
+    return {"id": str(p.get("id")), "title": str(p.get("text") or "")[:200], "start": ml._seconds(p.get("time_start")),
+            "stop": ml._seconds(p.get("time_stop")), **({"archive": archive_ok(channel, p, now)} if archive else {})}
+
+
+def guide_view(raw, cid, now):
+    """GET guide?cid=: the programmes of one channel as the channel list holds them. past: the ones that are over, the
+    newest first, each with archive (can it be played from the archive); current: the one on now (archive: can it be
+    played from its start); next: the ones to come, soonest first, for information (they cannot be played)."""
+    if ml is None:
+        raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
+    if not isinstance(cid, str) or not ml.url(cid):
+        raise pw.Refused(_t("Wrong channel."))
+    channel = _channel(raw, cid)
+    if channel is None:
+        raise pw.Refused(_t("This channel is not in the list."), 404)
+    past, current, upcoming = [], None, []
+    for p in _rows(channel.get("epg")):
+        start, stop = ml._seconds(p.get("time_start")), ml._seconds(p.get("time_stop"))
+        if start is None or stop is None or stop <= start or p.get("id") is None:
+            continue
+        if stop <= now:
+            past.append(p)
+        elif start <= now:
+            current = current or p
+        else:
+            upcoming.append(p)
+    past.sort(key=lambda p: -ml._seconds(p["time_start"]))
+    upcoming.sort(key=lambda p: ml._seconds(p["time_start"]))
+    return {"ok": True, "cid": str(cid), "name": str(channel.get("name") or "")[:120],
+            "archive": bool(channel.get("catchup")) and channel.get("available") is not False,
+            "archive_days": channel.get("catchup_duration") if isinstance(channel.get("catchup_duration"), int) else 0,
+            "now": int(now),
+            "past": [_entry(channel, p, now) for p in past],
+            "current": _entry(channel, current, now) if current else None,
+            "next": [_entry(channel, p, now, archive=False) for p in upcoming],
+            "counts": {"past": len(past), "next": len(upcoming)}}
 
 
 def decorate(view, raw, now):
@@ -185,6 +229,13 @@ def golive(rpc):
 
 def get(path, rpc):
     """GET /api/sweettv/...: (body, status)."""
+    route, _, query = path.partition("?")
+    try:
+        if route == PREFIX + "guide":
+            cid = (parse_qs(query).get("cid") or [""])[0]
+            return guide_view(channels(), cid, time.time()), 200
+    except pw.Refused as e:
+        return {"error": e.message}, e.code
     return {"error": "not found"}, 404
 
 

@@ -104,6 +104,15 @@ POST /api/watch/ctl {"op": "seek", "by": -10}
      live with an archive   {"ok": true, "switched": "archive", "epg", "offset"}   the archive plays, no seek was made
      live without one       {"ok": true, "switched": "", "note": "<text>"}          a seek inside the window was made; show the note
      anything else          {"ok": true}                                             as before
+GET  /api/sweettv/guide?cid=<id>
+     {"ok": true, "cid", "name", "archive", "archive_days", "now",
+      "past":    [{"id", "title", "start", "stop", "archive"}],   over, newest first; archive: can be played from the archive
+      "current": {"id", "title", "start", "stop", "archive"} | null,   on now; archive: can be played from its start
+      "next":    [{"id", "title", "start", "stop"}],              to come, soonest first; information only, not playable
+      "counts": {"past", "next"}}
+     400 wrong id, 404 the channel is not in the list. Play an entry with POST play below.
+     The list holds what the add-on asked SWEET.TV for (epg_limit_prev 10, epg_limit_next 100): about ten past programmes,
+     the one on now and up to a hundred to come (a channel with no guide at all has none); more past needs another request.
 POST /api/sweettv/play {"cid", "epg"?, "at"?}
      no epg                 the live channel
      epg + at "start"       the archive from the beginning (default)

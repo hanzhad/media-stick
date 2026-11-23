@@ -505,5 +505,87 @@ class Routes(unittest.TestCase):
                          ("Первый канал", True, "Холостяк", True, False))
 
 
+def programme(i, start, minutes=30, **kw):
+    return dict({"id": 1000 + i, "text": "П%d" % i, "time_start": start, "time_stop": start + minutes * 60, "available": True}, **kw)
+
+
+class GuideView(unittest.TestCase):
+    """GET /api/sweettv/guide?cid=: the programmes of one channel, past newest first, the one on now, the ones to come."""
+
+    def setUp(self):
+        use_list(self)
+
+    def test_past_current_next(self):
+        view = ps.guide_view(LIST, "5", NOW)
+        self.assertEqual((view["ok"], view["cid"], view["name"], view["archive"], view["archive_days"], view["now"]),
+                         (True, "5", "Первый канал", True, 7, NOW))
+        self.assertEqual(view["past"], [{"id": "50", "title": "Утро", "start": NOW - 7200, "stop": NOW - 3600, "archive": True}])
+        self.assertEqual(view["current"], {"id": "51", "title": "Холостяк", "start": NOW - 3600, "stop": NOW + 3600, "archive": True})
+        self.assertEqual(view["next"], [{"id": "52", "title": "Вечер", "start": NOW + 3600, "stop": NOW + 7200}])   # information only
+        self.assertEqual(view["counts"], {"past": 1, "next": 1})
+
+    def test_the_real_shape_ten_past_one_on_now_many_to_come(self):
+        epg = [programme(i, NOW - 600 - 1800 * (10 - i)) for i in range(10)] + [programme(10, NOW - 600, 30)]
+        epg += [programme(11 + i, NOW + 1200 + 1800 * i) for i in range(100)]
+        epg.reverse()                                             # the order of the file is not trusted
+        raw = {"list": [{"id": 9, "name": "Канал", "catchup": True, "catchup_duration": 7, "epg": epg}]}
+        view = ps.guide_view(raw, "9", NOW)
+        self.assertEqual(view["counts"], {"past": 10, "next": 100})
+        self.assertEqual([p["id"] for p in view["past"]][:2], ["1009", "1008"])          # the newest past first
+        self.assertEqual(view["past"][-1]["id"], "1000")
+        self.assertEqual(view["current"]["id"], "1010")
+        self.assertEqual([p["id"] for p in view["next"]][:2], ["1011", "1012"])          # the soonest next first
+        self.assertTrue(all(p["archive"] for p in view["past"]))
+        self.assertTrue(all("archive" not in p for p in view["next"]))
+
+    def test_a_channel_without_an_archive_marks_nothing_playable(self):
+        view = ps.guide_view(LIST, "6", NOW)
+        self.assertFalse(view["archive"])
+        self.assertEqual(view["current"]["archive"], False)
+        raw = {"list": [{"id": 9, "name": "K", "catchup": True, "available": False, "epg": [programme(1, NOW - 3600)]}]}
+        self.assertFalse(ps.guide_view(raw, "9", NOW)["past"][0]["archive"])
+
+    def test_a_programme_the_archive_does_not_have_is_marked(self):
+        raw = {"list": [{"id": 9, "name": "K", "catchup": True, "catchup_duration": 1, "epg": [
+            programme(1, NOW - 3600), programme(2, NOW - 7200, available=False), programme(3, NOW - 2 * 86400)]}]}
+        flags = {p["id"]: p["archive"] for p in ps.guide_view(raw, "9", NOW)["past"]}
+        self.assertEqual(flags, {"1001": True, "1002": False, "1003": False})            # off, not available, older than a day
+
+    def test_broken_rows_are_left_out(self):
+        epg = [None, "x", {}, {"id": 1}, programme(1, NOW - 3600, 0), dict(programme(2, NOW - 3600), id=None),
+               dict(programme(3, NOW - 3600), time_start="soon"), programme(4, NOW - 7200),
+               dict(programme(5, 0), time_start=(NOW + 3600) * 1000, time_stop=(NOW + 5400) * 1000)]
+        view = ps.guide_view({"list": [{"id": 9, "name": "K", "catchup": True, "epg": epg}]}, "9", NOW)
+        self.assertEqual([p["id"] for p in view["past"]], ["1004"])
+        self.assertIsNone(view["current"])
+        self.assertEqual(view["counts"], {"past": 1, "next": 1})                         # a time in milliseconds is understood
+
+    def test_no_programmes_at_all(self):
+        view = ps.guide_view(LIST, "7", NOW)
+        self.assertEqual((view["past"], view["current"], view["next"], view["counts"]), ([], None, [], {"past": 0, "next": 0}))
+
+    def test_what_cannot_be_shown_is_refused(self):
+        for cid, code in (("99", 404), ("x", 400), ("", 400), ("5|50", 400), (None, 400), (5, 400)):
+            with self.assertRaises(pw.Refused, msg=cid) as caught:
+                ps.guide_view(LIST, cid, NOW)
+            self.assertEqual(caught.exception.code, code, cid)
+        with self.assertRaises(pw.Refused):
+            ps.guide_view({}, "5", NOW)                                                  # no list yet
+
+    def test_the_route(self):
+        with mock.patch.object(time, "time", lambda: NOW):
+            body, code = ps.get("/api/sweettv/guide?cid=5", None)
+            self.assertEqual((code, body["current"]["id"], body["counts"]), (200, "51", {"past": 1, "next": 1}))
+            for path, expected in (("/api/sweettv/guide", 400), ("/api/sweettv/guide?cid=", 400), ("/api/sweettv/guide?cid=99", 404),
+                                   ("/api/sweettv/guide?cid=a&cid=5", 400), ("/api/sweettv/nothing?cid=5", 404)):
+                body, code = ps.get(path, None)
+                self.assertEqual(code, expected, path)
+                self.assertIn("error", body)
+
+    def test_the_answer_is_json_and_small(self):
+        view = ps.guide_view(ps.channels(), "5", NOW)
+        self.assertLess(len(json.dumps(view)), 2000)
+
+
 if __name__ == "__main__":
     unittest.main()
