@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, "/usr/local/lib/media-stick")
 import panel_accounts   # the Accounts tab and its API
+import panel_watch      # the Смотреть tab and its API
 
 PORT = int(os.environ.get("PANEL_PORT", "80"))
 REPO = "/opt/media-stick"
@@ -1518,6 +1519,7 @@ document.addEventListener('gesturestart',e=>e.preventDefault());
 document.addEventListener('dblclick',e=>e.preventDefault());
 </script>@@ACC_TAIL@@</body></html>"""
 PAGE = panel_accounts.inject(PAGE)
+PAGE = panel_watch.inject(PAGE)
 PAGE_VER = hashlib.sha256(PAGE.encode()).hexdigest()[:12]
 PAGE = PAGE.replace("@@PAGE_VER@@", PAGE_VER)
 
@@ -1647,6 +1649,9 @@ class H(BaseHTTPRequestHandler):
             return self.send(panel_accounts.with_signin(status()))
         if p == "/api/accounts":
             return self.send(panel_accounts.view())
+        if p.startswith(panel_watch.PREFIX):
+            body, code = panel_watch.get(self.path, kodi)
+            return self.send(body, code=code)
         if p == "/api/https":
             return self.send(https_status())
         if p == "/api/focus":   # polled by the air pad while it is held
@@ -1673,6 +1678,9 @@ class H(BaseHTTPRequestHandler):
             return self.pointer_post(b)
         if p.startswith(panel_accounts.PREFIX):
             body, code = panel_accounts.post(p, b, kodi)
+            return self.send(body, code=code)
+        if p.startswith(panel_watch.PREFIX):
+            body, code = panel_watch.post(p, b, kodi)
             return self.send(body, code=code)
         try:
             if p == "/api/key":

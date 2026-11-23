@@ -1,0 +1,353 @@
+"""The Смотреть part of the page: markup, style and script, as strings. No logic worth testing here;
+inject() puts them into the panel's page by the places it already has (the first tab, the remote card, the
+tab bar, the grid), so the panel itself needs no markers for it. Everything is prefixed `wt` / `wt-` so it
+cannot collide with the page's own ids, classes and functions (the page already uses w-ssid, w-btn...).
+Pure DOM and fetch; text goes in with textContent, pictures only as https addresses."""
+
+NAV = """<button data-go="watch" class="on"><span class="pb"><svg class="i"><use href="#wt-i-tv"/></svg></span>Смотреть</button>
+    """
+
+SECTION = """<section id="t-watch" data-tab="watch">
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+      <symbol id="wt-i-tv" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M9 21h6M7 3l5 2 5-2"/></symbol>
+      <symbol id="wt-i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+      <symbol id="wt-i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+    </defs></svg>
+    <div class="wt">
+      <div id="wt-head" class="wt-head hide"></div>
+      <div id="wt-nowslot"></div>
+      <div id="wt-body"></div>
+    </div>
+    <div id="wt-toast" class="wt-toast hide" role="status" aria-live="polite"></div>
+  </section>
+  """
+
+REMOTE_BOX = """<div class="card rc"><div id="wt-npbox" class="wt-npbox hide"></div>"""
+
+CSS = r"""
+<style>
+.wt{--wb:#0f1115;--wc:#1b1d28;--wc2:#272a39;--wl:rgba(255,255,255,.09);font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body.wt-on{background:#0f1115}
+.wt button{font:inherit;color:inherit}
+.wt-card{background:var(--wc);border:1px solid var(--wl);border-radius:22px;padding:16px;margin-bottom:12px;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.wt-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.wt-head h2{flex:1;margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:18px;font-weight:600;letter-spacing:0;text-transform:none;color:#fff}
+.wt-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;min-width:44px;padding:0 18px;border:0;border-radius:999px;background:var(--wc2);color:#fff;font-weight:500;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.wt-btn:active{background:#fff;color:var(--wb)}
+.wt-btn.pri{background:#fff;color:var(--wb);font-weight:600}
+.wt-btn.pri:active{background:#cfd2dc}
+.wt-btn.wide{width:100%}
+.wt-btn:disabled{opacity:.4}
+.wt-btn.ico{padding:0}
+.wt-tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.wt-tile{display:flex;flex-direction:column;align-items:flex-start;gap:12px;min-height:112px;padding:16px;border:1px solid var(--wl);border-radius:22px;background:var(--wc);text-align:left;touch-action:manipulation}
+.wt-tile:active{background:var(--wc2)}
+.wt-logo{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;font-weight:700;font-size:20px;color:#fff;flex:none}
+.wt-tile b{font-weight:600;font-size:16px}
+.wt-tile small,.wt-sub{color:var(--dim);font-size:13px}
+.wt-chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 12px;scrollbar-width:none}
+.wt-chips::-webkit-scrollbar{display:none}
+.wt-chip{flex:none;min-height:44px;padding:0 16px;border-radius:999px;border:1px solid var(--wl);background:var(--wc);color:#fff;touch-action:manipulation}
+.wt-chip.on{background:#fff;color:var(--wb);font-weight:600}
+.wt-search{display:flex;gap:8px;margin-bottom:12px}
+.wt-search input{flex:1;min-width:0;min-height:48px;border-radius:999px;background:var(--wc);border:1px solid var(--wl);padding:0 18px;color:#fff}
+.wt-list{display:flex;flex-direction:column;gap:10px}
+.wt-item{display:flex;gap:12px;align-items:center;width:100%;padding:8px;border:1px solid var(--wl);border-radius:18px;background:var(--wc);text-align:left;min-height:64px;touch-action:manipulation}
+.wt-item:active{background:var(--wc2)}
+.wt-thumb{position:relative;flex:none;width:128px;aspect-ratio:16/9;border-radius:12px;background:var(--wc2) center/cover no-repeat;overflow:hidden}
+.wt-thumb i{position:absolute;right:4px;bottom:4px;padding:1px 6px;border-radius:6px;background:rgba(0,0,0,.75);font-size:12px;font-weight:600;line-height:1.5;font-style:normal}
+.wt-thumb u{position:absolute;left:0;bottom:0;height:3px;background:#ff5a5a;text-decoration:none}
+.wt-ch{flex:none;width:56px;height:56px;border-radius:14px;background:var(--wc2) center/contain no-repeat}
+.wt-txt{flex:1;min-width:0}
+.wt-txt b{display:block;font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.wt-txt .wt-sub{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wt-bar{height:4px;border-radius:2px;background:var(--wl);margin:6px 0 4px;overflow:hidden}
+.wt-bar i{display:block;height:100%;background:#fff}
+.wt-go{flex:none;width:48px;height:48px;border-radius:50%;border:0;background:#fff;color:var(--wb);display:flex;align-items:center;justify-content:center}
+.wt-go .i{fill:currentColor;stroke:none}
+.wt-msg{padding:28px 12px;text-align:center;color:var(--dim)}
+.wt-msg b{display:block;color:#fff;font-size:17px;margin-bottom:6px}
+.wt-msg .wt-btn{margin-top:14px}
+.wt-sheet{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center}
+.wt-back{position:absolute;inset:0;background:rgba(0,0,0,.6)}
+.wt-box{position:relative;width:100%;max-width:440px;background:var(--wc);border-radius:24px 24px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
+.wt-box .wt-thumb{width:100%}
+.wt-box h3{margin:4px 0 0;font-size:17px}
+.wt-now{display:flex;gap:12px;align-items:center;width:100%;text-align:left;margin-bottom:12px}
+.wt-art{flex:none;width:96px;aspect-ratio:16/9;border-radius:12px;background:var(--wc2) center/cover no-repeat}
+.wt-p .wt-art{width:100%;max-width:360px;margin:0 auto;border-radius:18px}
+.wt-p{display:flex;flex-direction:column;gap:14px;color:#fff}
+.wt-pt{font-size:20px;font-weight:600;line-height:1.25;text-align:center;overflow-wrap:anywhere}
+.wt-ps{text-align:center;color:var(--dim);font-size:14px;margin-top:-8px}
+.wt-seek{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+.wt-seek input,.wt-vol input{flex:1;min-width:0;padding:0;min-height:44px;border:0;background:transparent;accent-color:#fff}
+.wt-tr{display:flex;justify-content:center;align-items:center;gap:14px}
+.wt-tr .wt-btn{min-width:64px;min-height:56px}
+.wt-tr .wt-btn.pri{width:72px;height:72px;border-radius:50%;padding:0}
+.wt-tr .wt-btn.pri .i{fill:currentColor;width:30px;height:30px}
+.wt-opts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.wt-vol{display:flex;align-items:center;gap:6px}
+.wt-two{display:flex;gap:10px}.wt-two>*{flex:1}
+.wt-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom));z-index:70;padding:12px 20px;border-radius:999px;background:#fff;color:#0f1115;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+.wt-npbox{margin-bottom:6px}
+.rc.wtnp:not(.wtdp)>:not(.wt-npbox){display:none}
+.rc.wtdp .wt-pfull{display:none}
+.rc:not(.wtdp) .wt-pback{display:none}
+@media (min-width:900px){
+  #t-watch{grid-area:watch}
+  .wt-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+  .wt-tiles{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+  .wt-toast{bottom:28px}
+}
+</style>"""
+
+JS = r"""
+<script>
+(function(){
+const NS='http://www.w3.org/2000/svg';
+const W={stack:[{t:'apps'}],apps:null,last:null,wait:0,busy:false,chunk:30};
+const h=(tag,a,...kids)=>{const e=document.createElement(tag);
+  for(const k in (a||{})){const v=a[k];if(v==null||v===false)continue;
+    if(k==='class')e.className=v;else if(k==='text')e.textContent=v;
+    else if(k.slice(0,2)==='on')e.addEventListener(k.slice(2),v);else e.setAttribute(k,v===true?'':v)}
+  for(const c of kids.flat()){if(c==null||c===false)continue;e.append(c.nodeType?c:document.createTextNode(c))}
+  return e};
+const ico=id=>{const s=document.createElementNS(NS,'svg');s.setAttribute('class','i');s.setAttribute('aria-hidden','true');
+  const u=document.createElementNS(NS,'use');u.setAttribute('href','#'+id);s.appendChild(u);return s};
+const tm=s=>{s=Math.max(0,Math.floor(s||0));const H=Math.floor(s/3600),M=Math.floor(s/60)%60,S=s%60;
+  return H?H+':'+String(M).padStart(2,'0')+':'+String(S).padStart(2,'0'):M+':'+String(S).padStart(2,'0')};
+const picture=u=>/^https:\/\//.test(u||'')?'url("'+u.replace(/["\\()\s]/g,encodeURIComponent)+'")':'';
+const errText=e=>{try{return JSON.parse(e.message).error||e.message}catch(_){return e.message}};
+const g=p=>api('/api/watch/'+p), pst=(p,b)=>api('/api/watch/'+p,b);
+let toastT=null;
+function toast(t){const e=$('wt-toast');e.textContent=t;e.classList.remove('hide');clearTimeout(toastT);toastT=setTimeout(()=>e.classList.add('hide'),2200)}
+function views(n){if(!n)return'';if(n>=1e6)return (n/1e6).toFixed(1).replace('.',',')+' млн просмотров';
+  return n>=1e3?Math.round(n/1e3)+' тыс. просмотров':n+' просмотров'}
+function sub(it){return [it.channel,views(it.views),it.published?new Date(it.published*1000).toLocaleDateString('ru'):''].filter(Boolean).join(' · ')}
+const COLORS=['#e5484d','#3e63dd','#30a46c','#f76b15','#8e4ec6','#12a594','#d6409f'];
+const colorOf=s=>{let n=0;for(const c of s)n=(n*31+c.charCodeAt(0))>>>0;return COLORS[n%COLORS.length]};
+
+// ---- the player: one builder, two places (the «Смотреть» tab and the top of «Пульт») ----
+function mkPlayer(o){
+  const P={hold:0,drag:false,open:null,st:null};
+  const art=h('div',{class:'wt-art'}),title=h('div',{class:'wt-pt'}),subl=h('div',{class:'wt-ps'});
+  const t1=h('span',{text:'0:00'}),t2=h('span',{text:'0:00'});
+  const seek=h('input',{type:'range',min:0,max:1,step:1,value:0,'aria-label':'Перемотка'});
+  const seekRow=h('div',{class:'wt-seek'},t1,seek,t2);
+  seek.addEventListener('input',()=>{P.drag=true;t1.textContent=tm(+seek.value)});
+  seek.addEventListener('change',()=>{P.drag=false;P.hold=Date.now()+1500;ctl({op:'seek',to:+seek.value})});
+  const pp=h('button',{class:'wt-btn pri','aria-label':'Пауза или воспроизведение',onclick:()=>{buzz();ctl({op:'playpause'})}});
+  const rw=h('button',{class:'wt-btn','aria-label':'Назад на 10 секунд',text:'−10',onclick:()=>{buzz();ctl({op:'seek',by:-10})}});
+  const ff=h('button',{class:'wt-btn','aria-label':'Вперёд на 10 секунд',text:'+10',onclick:()=>{buzz();ctl({op:'seek',by:10})}});
+  const bSub=h('button',{class:'wt-chip',text:'Субтитры',onclick:()=>pick('sub')});
+  const bAud=h('button',{class:'wt-chip',text:'Аудио',onclick:()=>pick('aud')});
+  const optBox=h('div',{class:'wt-opts hide'});
+  const vol=h('input',{type:'range',min:0,max:100,step:1,value:0,'aria-label':'Громкость'});
+  vol.addEventListener('input',()=>{P.vdrag=true});
+  vol.addEventListener('change',()=>{P.vdrag=false;P.vhold=Date.now()+1500;ctl({op:'volume',level:+vol.value})});
+  const vm=h('button',{class:'wt-btn ico','aria-label':'Тише',onclick:()=>ctl({op:'volume',by:-5})},ico('i-vdn'));
+  const vp=h('button',{class:'wt-btn ico','aria-label':'Громче',onclick:()=>ctl({op:'volume',by:5})},ico('i-vup'));
+  const stop=h('button',{class:'wt-btn',text:'Остановить',onclick:()=>{buzz();ctl({op:'stop'});toast('Останавливаю…')}});
+  const dpad=h('button',{class:'wt-btn',text:'Крестовина',onclick:o.dpad});
+  const root=h('div',{class:'wt-p'},art,title,subl,seekRow,
+    h('div',{class:'wt-tr'},rw,pp,ff),h('div',{class:'wt-opts'},bSub,bAud),optBox,
+    h('div',{class:'wt-vol'},vm,vol,vp),h('div',{class:'wt-two'},dpad,stop));
+  function pick(kind){
+    P.open=P.open===kind?null:kind;draw()}
+  function draw(){
+    const st=P.st;optBox.replaceChildren();
+    bSub.classList.toggle('on',P.open==='sub');bAud.classList.toggle('on',P.open==='aud');
+    if(!st||!P.open){optBox.classList.add('hide');return}
+    optBox.classList.remove('hide');
+    if(P.open==='sub'){
+      optBox.append(h('button',{class:'wt-chip'+(!st.subtitles_on?' on':''),text:'Выкл',onclick:()=>ctl({op:'subtitle',off:true})}));
+      st.subtitles.forEach(s=>optBox.append(h('button',{class:'wt-chip'+(st.subtitles_on&&st.subtitle===s.index?' on':''),text:s.name,onclick:()=>ctl({op:'subtitle',index:s.index})})))
+    }else st.audio.forEach(s=>optBox.append(h('button',{class:'wt-chip'+(st.audio_index===s.index?' on':''),text:s.name,onclick:()=>ctl({op:'audio',index:s.index})})))
+  }
+  P.root=root;
+  P.update=function(st){
+    P.st=st;
+    title.textContent=st.title||'Без названия';
+    subl.textContent=[st.channel,({youtube:'YouTube',sweettv:'SWEET.TV'})[st.app]].filter(Boolean).join(' · ');
+    art.style.backgroundImage=picture(st.thumb);
+    pp.replaceChildren(ico(st.speed===0?'i-play':'wt-i-pause'));
+    const total=st.total>0;seekRow.classList.toggle('hide',!total);
+    if(total&&!P.drag&&Date.now()>P.hold){seek.max=Math.floor(st.total);seek.value=Math.floor(st.time);t1.textContent=tm(st.time)}
+    t2.textContent=total?tm(st.total):'';
+    bSub.classList.toggle('hide',!st.subtitles.length);bAud.classList.toggle('hide',st.audio.length<2);
+    if(typeof st.volume==='number'&&!P.vdrag&&Date.now()>(P.vhold||0))vol.value=st.volume;
+    draw()};
+  return P}
+function ctl(b){return pst('ctl',b).then(()=>setTimeout(tick,250)).catch(e=>toast(errText(e)))}
+
+// ---- navigation ----
+const body=()=>$('wt-body');
+const cur=()=>W.stack[W.stack.length-1];
+function go(d){W.stack.push(d);render()}
+function back(){if(W.stack.length>1){W.stack.pop();render()}}
+function msgCard(state,retry,name){
+  const T={needkey:['Сначала настройте ключ','Для '+name+' нужен личный ключ Google. Он настраивается во вкладке «Аккаунты».'],
+    signin:['Сначала войдите','Войдите в '+name+' во вкладке «Аккаунты».'],
+    error:['Не получилось загрузить','Проверьте сеть и попробуйте ещё раз.'],
+    empty:['Здесь пока пусто',''],prompt:['Поиск на YouTube','Введите, что хотите посмотреть.']}[state]||['Не получилось',''];
+  const c=h('div',{class:'wt-card wt-msg'},h('b',{text:T[0]}),T[1]);
+  if(state==='needkey'||state==='signin')c.append(h('div',{},h('button',{class:'wt-btn pri',text:'Открыть «Аккаунты»',onclick:()=>document.querySelector('[data-go=accounts]').click()})));
+  else if(state==='error')c.append(h('div',{},h('button',{class:'wt-btn pri',text:'Повторить',onclick:retry})));
+  return c}
+function lazy(list,items,make){
+  let n=0;const sentinel=h('div',{style:'height:1px'});list.append(sentinel);
+  const more=()=>{const end=Math.min(items.length,n+W.chunk);const frag=document.createDocumentFragment();
+    for(;n<end;n++)frag.append(make(items[n]));list.insertBefore(frag,sentinel);if(n>=items.length)io&&io.disconnect()};
+  const io=window.IntersectionObserver?new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))more()},{rootMargin:'400px'}):null;
+  more();if(io&&n<items.length)io.observe(sentinel);else while(n<items.length)more()}
+function header(title,extra){
+  const hd=$('wt-head');hd.classList.toggle('hide',W.stack.length<2);hd.replaceChildren();
+  if(W.stack.length<2)return;
+  hd.append(h('button',{class:'wt-btn ico','aria-label':'Назад',onclick:back},ico('i-left')),h('h2',{text:title}),extra||'')}
+
+function render(){
+  const d=cur(),b=body();b.replaceChildren();
+  $('wt-nowslot').classList.toggle('hide',d.t!=='apps');
+  if(d.t==='apps')return renderApps(b);
+  if(d.t==='yt')return renderYt(b,d);
+  if(d.t==='sweet')return renderSweet(b,d);
+  if(d.t==='player'){header('Сейчас на ТВ');b.append(W.wp.root);W.wp.open=null;if(W.last&&W.last.playing)W.wp.update(W.last);else b.prepend(h('div',{class:'wt-msg',text:'Открываю на ТВ…'}))}
+}
+function openOnTv(id){return pst('launch',{app:id}).then(()=>toast('Открываю на ТВ…')).catch(e=>toast(errText(e)))}
+async function renderApps(b){
+  header('');
+  if(!W.apps){b.append(h('div',{class:'wt-msg',text:'Загружаю…'}));
+    try{W.apps=(await g('apps')).apps}catch(e){b.replaceChildren(msgCard('error',render,''));return}
+    if(cur().t!=='apps')return;b.replaceChildren()}
+  const tiles=h('div',{class:'wt-tiles'});
+  W.apps.forEach(a=>{const t=h('button',{class:'wt-tile','aria-label':a.name,onclick:()=>{
+      if(a.id==='plugin.video.youtube')go({t:'yt',section:'home',q:'',path:'',title:'YouTube',app:a});
+      else if(a.id==='plugin.video.sweettv')go({t:'sweet',cat:'all',title:'SWEET.TV',app:a});
+      else openOnTv(a.id)}},
+    h('span',{class:'wt-logo',style:'background:'+colorOf(a.id),text:(a.name||'?').charAt(0).toUpperCase()}),
+    h('b',{text:a.name}),h('small',{text:a.kind==='catalog'?'Выбрать на телефоне':'Откроется на ТВ'}));tiles.append(t)});
+  b.append(tiles)}
+
+// ---- YouTube ----
+const SECS=[['home','Главная'],['subscriptions','Подписки'],['history','История'],['playlists','Плейлисты']];
+function sheet(it){
+  const close=()=>s.remove();
+  const play=r=>{close();buzz();pst('play',{file:it.file,resume:r}).catch(e=>toast(errText(e)));toast('Открываю на ТВ…');W.wait=Date.now()+25000;W.last=null;go({t:'player'})};
+  const s=h('div',{class:'wt-sheet',role:'dialog','aria-label':it.title},h('div',{class:'wt-back',onclick:close}),
+    h('div',{class:'wt-box'},h('div',{class:'wt-thumb',style:'background-image:'+picture(it.thumb)}),
+      h('h3',{text:it.title}),h('div',{class:'wt-sub',text:sub(it)}),
+      it.resume>=5?h('button',{class:'wt-btn pri wide',text:'Смотреть на ТВ с '+tm(it.resume),onclick:()=>play(it.resume)}):'',
+      h('button',{class:it.resume>=5?'wt-btn wide':'wt-btn pri wide',text:it.resume>=5?'С начала':'Смотреть на ТВ',onclick:()=>play(0)}),
+      h('button',{class:'wt-btn wide',text:'Закрыть',onclick:close})));
+  $('t-watch').append(s);s.querySelector('button').focus()}
+function ytCard(it,d){
+  const open=()=>it.folder?go({t:'yt',section:d.section,q:'',path:it.file,title:it.title,app:d.app}):sheet(it);
+  return h('button',{class:'wt-item',onclick:open},
+    h('div',{class:'wt-thumb',style:'background-image:'+picture(it.thumb)},
+      it.duration?h('i',{text:tm(it.duration)}):(it.live?h('i',{text:'LIVE'}):''),
+      it.progress>0?h('u',{style:'width:'+Math.round(it.progress*100)+'%'}):''),
+    h('div',{class:'wt-txt'},h('b',{text:it.title}),h('span',{class:'wt-sub',text:it.folder&&it.count?it.count+' видео':sub(it)})))}
+async function renderYt(b,d){
+  header(d.title,h('button',{class:'wt-btn',text:'Открыть на ТВ',onclick:()=>openOnTv('plugin.video.youtube')}));
+  if(!d.path){
+    const inp=h('input',{type:'search',placeholder:'Поиск на YouTube','aria-label':'Поиск на YouTube',enterkeyhint:'search',value:d.q||''});
+    const submit=()=>{const v=inp.value.trim();if(v){d.section='search';d.q=v;render()}};
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();submit()}});
+    b.append(h('div',{class:'wt-search'},inp,h('button',{class:'wt-btn pri ico','aria-label':'Искать',onclick:submit},ico('wt-i-search'))),
+      h('div',{class:'wt-chips',role:'tablist'},SECS.map(([k,n])=>h('button',{class:'wt-chip'+(d.section===k?' on':''),role:'tab','aria-selected':d.section===k,text:n,
+        onclick:()=>{d.section=k;d.q='';render()}}))))}
+  const out=h('div');b.append(out);
+  out.append(h('div',{class:'wt-msg',text:'Загружаю…'}));
+  const params=new URLSearchParams({section:d.section});if(d.q)params.set('q',d.q);if(d.path)params.set('path',d.path);
+  let r;try{r=await g('youtube?'+params)}catch(e){if(cur()===d)out.replaceChildren(msgCard('error',render,'YouTube'));return}
+  if(cur()!==d)return;out.replaceChildren();
+  if(r.state!=='data'){out.append(msgCard(r.state,render,'YouTube'));return}
+  const list=h('div',{class:'wt-list'});out.append(list);
+  let items=r.items.slice(),more=r.more,moreBtn=null;
+  lazy(list,items,it=>ytCard(it,d));
+  if(more){moreBtn=h('button',{class:'wt-btn wide',style:'margin-top:12px',text:'Ещё',onclick:async()=>{
+    moreBtn.disabled=true;try{const p=await g('youtube?'+new URLSearchParams({section:d.section,path:more}));
+      if(cur()!==d)return;p.items.forEach(it=>list.append(ytCard(it,d)));more=p.more;if(!more)moreBtn.remove()}
+    catch(e){toast(errText(e))}moreBtn.disabled=false}});out.append(moreBtn)}
+}
+
+// ---- SWEET.TV ----
+async function renderSweet(b,d){
+  header(d.title,h('button',{class:'wt-btn',text:'Открыть на ТВ',onclick:()=>openOnTv('plugin.video.sweettv')}));
+  const out=h('div');b.append(out);out.append(h('div',{class:'wt-msg',text:'Загружаю…'}));
+  let r;try{r=await g('sweettv')}catch(e){if(cur()===d)out.replaceChildren(msgCard('error',render,'SWEET.TV'));return}
+  if(cur()!==d)return;out.replaceChildren();
+  if(r.state==='signin'){out.append(msgCard('signin',render,'SWEET.TV'));return}
+  if(r.state!=='data'){out.append(msgCard(r.state==='empty'?'empty':'error',render,'SWEET.TV'));return}
+  const chips=h('div',{class:'wt-chips',role:'tablist'}),list=h('div',{class:'wt-list'});out.append(chips,list);
+  const cats=[{key:'all',name:'Все'}].concat(r.categories);
+  const fill=()=>{
+    chips.replaceChildren(...cats.map(c=>h('button',{class:'wt-chip'+(d.cat===c.key?' on':''),role:'tab','aria-selected':d.cat===c.key,text:c.name,onclick:()=>{d.cat=c.key;fill()}})));
+    list.replaceChildren();
+    lazy(list,r.channels.filter(c=>d.cat==='all'||c.cats.includes(d.cat)),chRow)};
+  const play=c=>{buzz();pst('play',{file:c.play}).catch(e=>toast(errText(e)));toast('Открываю на ТВ…');W.wait=Date.now()+25000;W.last=null;go({t:'player'})};
+  function chRow(c){
+    const n=c.now;
+    return h('div',{class:'wt-item'},
+      h('div',{class:'wt-ch',style:'background-image:'+picture(c.icon)}),
+      h('div',{class:'wt-txt'},h('b',{text:c.name}),
+        n?h('span',{class:'wt-sub',text:n.title}):h('span',{class:'wt-sub',text:'Нет программы'}),
+        n?h('div',{class:'wt-bar'},h('i',{style:'width:'+n.percent+'%'})):'',
+        c.next?h('span',{class:'wt-sub',text:'Далее '+c.next.time+' · '+c.next.title}):''),
+      h('button',{class:'wt-go','aria-label':'Смотреть '+c.name+' на ТВ',onclick:()=>play(c)},ico('i-play')))}
+  fill()}
+
+// ---- now playing ----
+function nowCard(st){
+  const slot=$('wt-nowslot');slot.replaceChildren();
+  if(!st||!st.playing)return;
+  const pct=st.total>0?Math.min(100,100*st.time/st.total):0;
+  slot.append(h('button',{class:'wt-card wt-now','aria-label':'Сейчас на ТВ: '+st.title+'. Открыть плеер',onclick:()=>go({t:'player'})},
+    h('div',{class:'wt-art',style:'background-image:'+picture(st.thumb)}),
+    h('div',{class:'wt-txt'},h('span',{class:'wt-sub',text:'Сейчас на ТВ'}),h('b',{text:st.title||'Без названия'}),
+      pct?h('div',{class:'wt-bar'},h('i',{style:'width:'+pct+'%'})):'')))}
+function applyNow(st){
+  W.last=st;const on=!!(st&&st.playing);
+  const rc=document.querySelector('#t-remote .rc'),nb=$('wt-npbox');
+  if(rc&&nb){nb.classList.toggle('hide',!on);rc.classList.toggle('wtnp',on);if(!on)rc.classList.remove('wtdp');if(on)W.rp.update(st)}
+  const d=cur();
+  if(d.t==='apps')nowCard(st);
+  if(d.t==='player'){
+    if(on){W.wait=0;if(!W.wp.root.isConnected)render();const m=body().querySelector('.wt-msg');if(m)m.remove();W.wp.update(st)}
+    else if(Date.now()>W.wait){W.stack=W.stack.filter(x=>x.t!=='player');if(!W.stack.length)W.stack=[{t:'apps'}];render()}}}
+function tick(){
+  if(document.hidden||W.busy||!(wide()||tab==='watch'||tab==='remote'))return;
+  W.busy=true;g('now').then(applyNow).catch(()=>{}).finally(()=>{W.busy=false})}
+
+// ---- wiring ----
+const toDpad=()=>{const rc=document.querySelector('#t-remote .rc');rc.classList.add('wtdp');
+  if(!wide())document.querySelector('[data-go=remote]').click()};
+W.wp=mkPlayer({dpad:()=>{document.querySelector('[data-go=remote]').click();document.querySelector('#t-remote .rc').classList.add('wtdp')}});
+W.rp=mkPlayer({dpad:toDpad});
+$('wt-npbox').append(h('div',{class:'wt-pfull'},W.rp.root),
+  h('button',{class:'wt-btn wide wt-pback',text:'Плеер',onclick:()=>document.querySelector('#t-remote .rc').classList.remove('wtdp')}));
+document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{
+  document.body.classList.toggle('wt-on',b.dataset.go==='watch');setTimeout(tick,0)}));
+document.body.append($('wt-toast'));
+document.body.classList.toggle('wt-on',tab==='watch');
+setInterval(tick,1500);
+render();tick();
+})();
+</script>"""
+
+GRID_OLD = ('"top top" "screen remote" "info settings" "https https"',
+            '"top top" "screen remote" "info settings" "acc acc" "https https"')
+
+
+def inject(page):
+    """The page with the Смотреть tab: its section before the remote's, its button first in the tab bar and
+    on, the remote card's top box, the style and the script. Each place is found by text the page already
+    has; one that is not found is skipped, so a page without it just has no such part."""
+    page = page.replace('<section id="t-remote" data-tab="remote">',
+                        SECTION + '<section id="t-remote" data-tab="remote" class="hide">', 1)
+    page = page.replace('<button data-go="remote" class="on">', NAV + '<button data-go="remote">', 1)
+    page = page.replace("let tab='remote'", "let tab='watch'", 1)
+    page = page.replace('<div class="card rc">', REMOTE_BOX, 1)
+    for old in GRID_OLD:    # wide screen: the tab is one row across, under the screen and remote
+        page = page.replace(old, old.replace('"screen remote"', '"screen remote" "watch watch"'), 1)
+    return page.replace("</body>", CSS + JS + "</body>", 1)
