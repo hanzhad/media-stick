@@ -1504,14 +1504,54 @@ class Channels(WindowCase):
     def test_a_second_launch_while_open_does_nothing(self):
         write_list(self.raw())
         shown = []
+        si = sweettv_app.single_instance
         with mock.patch.object(sweettv_app.ui, "load", side_effect=lambda cls, xml: self.make()), \
                 mock.patch.object(WindowXML, "doModal", lambda self: shown.append(1)):
-            Fake.home[sweettv_app.RUNNING] = "1"
+            Fake.home[sweettv_app.RUNNING] = si.encode(si.Flag("t", 14001, time.time() - 3600))   # Kodi says it is active
             self.assertFalse(sweettv_app.main(["open"]))
             Fake.home.clear()
             self.assertTrue(sweettv_app.main(["open"]))
             self.assertEqual(Fake.home[sweettv_app.RUNNING], "")
         self.assertEqual(shown, [1])
+
+    def test_a_video_that_plays_keeps_the_app_open_behind_it(self):
+        si = sweettv_app.single_instance
+        Fake.home[sweettv_app.RUNNING] = si.encode(si.Flag("t", 14001, time.time() - 3600))
+        with mock.patch.object(si, "window_active", return_value=False), \
+                mock.patch.object(si, "video_playing", return_value=True), \
+                mock.patch.object(sweettv_app.ui, "load") as load:
+            self.assertFalse(sweettv_app.main(["open"]))
+        load.assert_not_called()
+
+    def test_a_flag_of_a_window_that_is_gone_does_not_block_the_launch(self):
+        si = sweettv_app.single_instance
+        Fake.home[sweettv_app.RUNNING] = si.encode(si.Flag("t", 14001, time.time() - 3600))
+        shown = []
+        with mock.patch.object(si, "window_active", return_value=False), \
+                mock.patch.object(si, "video_playing", return_value=False), \
+                mock.patch.object(sweettv_app.ui, "load", side_effect=lambda cls, xml: self.make()), \
+                mock.patch.object(WindowXML, "doModal", lambda self: shown.append(si.decode(Fake.home[sweettv_app.RUNNING]))):
+            self.assertTrue(sweettv_app.main(["open"]))
+        self.assertEqual(len(shown), 1)
+        self.assertNotEqual(shown[0].token, "t")
+        self.assertEqual(Fake.home.get(sweettv_app.RUNNING), "")
+
+    def test_an_old_flag_that_is_not_in_the_new_format_is_stale(self):
+        Fake.home[sweettv_app.RUNNING] = "1"        # what the app set before the flag knew its window
+        si = sweettv_app.single_instance
+        with mock.patch.object(si, "window_active", return_value=False), \
+                mock.patch.object(si, "video_playing", return_value=False), \
+                mock.patch.object(sweettv_app.ui, "load", side_effect=lambda cls, xml: self.make()), \
+                mock.patch.object(WindowXML, "doModal", lambda self: None):
+            self.assertTrue(sweettv_app.main(["open"]))
+
+    def test_the_window_tells_the_flag_its_id_when_it_opens(self):
+        si = sweettv_app.single_instance
+        window = self.make(demo=True)
+        window.instance = si.claim(xbmcgui.Window(sweettv_app.ui.HOME), sweettv_app.RUNNING)
+        with mock.patch.object(xbmcgui, "getCurrentWindowId", create=True, return_value=14002):
+            window.onInit()
+        self.assertEqual(si.decode(Fake.home[sweettv_app.RUNNING]).window_id, 14002)
 
 
 class Archive(WindowCase):

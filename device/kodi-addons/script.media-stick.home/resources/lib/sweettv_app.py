@@ -27,8 +27,8 @@ import time
 import xbmc
 import xbmcgui
 
-from resources.lib import sweettv_data as data, sweettv_demo, sweettv_files as files, sweettv_items as items, \
-    sweettv_play as play, sweettv_state as saved, sweettv_text as words, sweettv_view as view, ui
+from resources.lib import single_instance, sweettv_data as data, sweettv_demo, sweettv_files as files, \
+    sweettv_items as items, sweettv_play as play, sweettv_state as saved, sweettv_text as words, sweettv_view as view, ui
 from resources.lib.sweettv_guide import GUIDE, GUIDE_BUTTON, Guide
 from resources.lib.sweettv_jump import DigitJump
 from resources.lib.sweettv_writer import StateWriter
@@ -39,7 +39,7 @@ SIGNIN_BUTTON, RETRY = 300, 301
 ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_CONTEXT_MENU = 2, 3, 4, 117
 MENU_DELAY = 0.12                # s the menu rests on a category before the row follows (key repeat does not thrash it)
 RETURN_GRACE = 2                 # s: the window coming back sooner than this after Play is not a return from the player
-RUNNING = "media-stick.sweettv"  # Home window property while the app is open: a second launch does nothing
+RUNNING = "media-stick.sweettv"  # Home window property while the app is open (single_instance): a live one blocks a second launch
 DEMO_LOGOS = os.path.join(ui.ADDON_PATH, "resources", "media", "demo")
 STALE_NOTICE = "The channel list is out of date. Refreshing…"
 
@@ -68,6 +68,7 @@ def playing():
 class SweetTV(Guide, DigitJump, xbmcgui.WindowXML):
     """Set up with setup() after construction: the Kodi window constructors take no extra arguments."""
     GRID_ID = ROW                # the row of cards, for the number keys
+    instance = None              # the launch's single_instance flag; main() sets it
 
     def setup(self, demo=False):
         self.demo = demo
@@ -101,6 +102,8 @@ class SweetTV(Guide, DigitJump, xbmcgui.WindowXML):
         self.previewing = ""                     # PREVIEW_VIDEO: the channel in the preview window
 
     def onInit(self):
+        if self.instance is not None:
+            self.instance.bind(xbmcgui.getCurrentWindowId())
         self._prop("demo", "1" if self.demo else "")
         self._prop("preview_video", "1" if PREVIEW_VIDEO else "")
         if not self.started:
@@ -517,16 +520,16 @@ class SweetTV(Guide, DigitJump, xbmcgui.WindowXML):
 
 def main(args):
     """Entry for `RunScript(script.media-stick.home,sweettv,open|demo)`. True when the window was shown."""
-    home = xbmcgui.Window(ui.HOME)
-    if home.getProperty(RUNNING):
+    instance = single_instance.claim(xbmcgui.Window(ui.HOME), RUNNING)
+    if instance is None:
         return False                             # already open (a double press on the card)
-    home.setProperty(RUNNING, "1")
     try:
         window = ui.load(SweetTV, XML)
+        window.instance = instance
         window.setup(demo=bool(args) and args[0] == "demo")
         window.doModal()
         window.stop()
         del window
     finally:
-        home.setProperty(RUNNING, "")
+        instance.release()
     return True
