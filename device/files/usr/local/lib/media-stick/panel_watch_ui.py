@@ -114,8 +114,12 @@ const h=(tag,a,...kids)=>{const e=document.createElement(tag);
     else if(k.slice(0,2)==='on')e.addEventListener(k.slice(2),v);else e.setAttribute(k,v===true?'':v)}
   for(const c of kids.flat()){if(c==null||c===false)continue;e.append(c.nodeType?c:document.createTextNode(c))}
   return e};
+// The icon's shapes are copied in, not referenced with <use>: on the iPhone a <use> built in script inside a list row
+// drew nothing, and the channel rows' «Смотреть на ТВ» showed as a blank white circle.
 const ico=id=>{const s=document.createElementNS(NS,'svg');s.setAttribute('class','i');s.setAttribute('aria-hidden','true');
-  const u=document.createElementNS(NS,'use');u.setAttribute('href','#'+id);s.appendChild(u);return s};
+  const sym=document.getElementById(id);
+  if(sym){s.setAttribute('viewBox',sym.getAttribute('viewBox')||'0 0 24 24');for(const k of sym.children)s.appendChild(k.cloneNode(true))}
+  return s};
 const tm=s=>{s=Math.max(0,Math.floor(s||0));const H=Math.floor(s/3600),M=Math.floor(s/60)%60,S=s%60;
   return H?H+':'+String(M).padStart(2,'0')+':'+String(S).padStart(2,'0'):M+':'+String(S).padStart(2,'0')};
 const picture=u=>/^https:\/\//.test(u||'')?'url("'+u.replace(/["\\()\s]/g,encodeURIComponent)+'")':'';
