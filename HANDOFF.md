@@ -56,6 +56,15 @@ The current page works but was a first pass; the owner wants the UI redone.
 - Fan: two wires on pins 4 (5 V) and 6 (GND), always on, not switchable without a transistor. Measure temperature during a film with no page open; if under ~65 °C the owner may remove the fan, otherwise a MOSFET module on GPIO14 plus `dtoverlay=gpio-fan`.
 - Claude Code reads `CLAUDE.md`, not `AGENTS.md`; the owner chose `AGENTS.md`. If agent notes are not being picked up, ask before adding anything.
 
+### F. Idea, not started: the box as an MCP server for chat assistants
+
+The owner's idea (2026-11-24, parked): say to Claude or ChatGPT «включи на ТВ <фильм>» and the assistant finds it and starts it on the TV.
+- Tools it would offer: search across SWEET.TV (channels, archive, films, shows; needs the SWEET.TV session's `/api/sweettv/*`) and YouTube; play an item on the TV; what is playing; pause, volume, stop. Built on the panel's existing APIs.
+- Reachability decides the shape: `mediastick-ivlsy.duckdns.org` resolves to the LAN address (it exists for the TLS certificate), so nothing outside the home reaches the box.
+  - From the computer: a local MCP server (stdio) for Claude Desktop / Claude Code on the home PC, talking to the box over the LAN. Nothing exposed; small.
+  - From the phone (Claude or ChatGPT apps call MCP servers from their cloud): needs an outbound tunnel from the box (Cloudflare Tunnel or Tailscale Funnel, no router port forward) exposing only the MCP endpoint, with real authentication (OAuth), since whoever has the URL controls the TV.
+- Not HDRezka (see B).
+
 ## Things learned the hard way
 
 - A `bytes` literal with Cyrillic in it is a SyntaxError — keep page HTML as `str` and `.encode()`.
