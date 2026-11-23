@@ -19,7 +19,7 @@ import zlib
 import xbmc
 import xbmcgui
 
-from resources.lib import (onboarding_view, profiles, sweettv_text, ui, youtube_cards as cards, youtube_data as data,
+from resources.lib import (onboarding_view, profiles, single_instance, sweettv_text, ui, youtube_cards as cards, youtube_data as data,
                            youtube_demo, youtube_files as files, youtube_state as saved)
 
 XML = "script-media-stick-youtube.xml"
@@ -37,7 +37,7 @@ PROFILE_POLL = 2.0               # s between looks at whether the add-on's curre
 DEMO_NAME, SIGNED_OUT_COLOR = "Demo", "FF5F5F5F"      # the avatar of the demo; of nobody
 RAIL_DELAY = 0.3                 # s the rail rests on a section before the grid follows
 RETURN_GRACE = 2                 # s: the window coming back sooner than this after Play is not a return from the player
-RUNNING = "media-stick.youtube"  # Home window property while the app is open: a second launch does nothing
+RUNNING = "media-stick.youtube"  # Home window property while the app is open (single_instance): a live one blocks a second launch
 FOCUS_POLL = 0.05                # s between looks at whether Kodi shows a control yet
 FOCUS_WAIT = 2.0                 # s a worker waits for the control to be shown before it gives up
 NO_THUMB = os.path.join(ui.MEDIA, data.NO_THUMB)
@@ -58,6 +58,8 @@ def playing():
 
 class YouTube(xbmcgui.WindowXML):
     """Set up with setup() after construction: the Kodi window constructors take no extra arguments."""
+
+    instance = None                              # the launch's single_instance flag; main() sets it
 
     def setup(self, demo=False, scenario=""):
         self.demo = demo
@@ -89,6 +91,8 @@ class YouTube(xbmcgui.WindowXML):
         self._guide_up = False                   # the onboarding window was opened for the keys document now there
 
     def onInit(self):
+        if self.instance is not None:
+            self.instance.bind(xbmcgui.getCurrentWindowId())
         self._prop("demo", "1" if self.demo else "")
         if self.started:
             self._after_player()
@@ -647,17 +651,17 @@ class YouTube(xbmcgui.WindowXML):
 
 def main(args):
     """Entry for `RunScript(script.media-stick.home,youtube,open|demo[,scenario])`. True when the window was shown."""
-    home = xbmcgui.Window(ui.HOME)
-    if home.getProperty(RUNNING):
+    instance = single_instance.claim(xbmcgui.Window(ui.HOME), RUNNING)
+    if instance is None:
         return False                             # already open (a double press on the card)
-    home.setProperty(RUNNING, "1")
     try:
         demo = bool(args) and args[0] == "demo"
         window = ui.load(YouTube, XML)
+        window.instance = instance
         window.setup(demo=demo, scenario=args[1] if demo and len(args) > 1 else "")
         window.doModal()
         window.stop()
         del window
     finally:
-        home.setProperty(RUNNING, "")
+        instance.release()
     return True

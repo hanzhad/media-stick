@@ -15,7 +15,7 @@ import time
 
 import xbmcgui
 
-from resources.lib import onboarding_demo, onboarding_files, onboarding_view as view, store, ui
+from resources.lib import onboarding_demo, onboarding_files, onboarding_view as view, single_instance, store, ui
 
 XML = "script-media-stick-onboarding.xml"
 STEPS, BADGES, WARN = 20, 30, 50          # the lists, and the warning (which goes under the last row of chips)
@@ -25,7 +25,7 @@ POLL = 1.0                                # s between looks at the document
 LINGER = {"done": 2.5, "failed": 4.0, "cancelled": 1.5}     # s a flow's end stays up
 GONE_GRACE = 4.0                          # s a document that is not there is waited for before the window gives up
 ADDRESS_RETRY = 5                         # s between looks for the phone page's address while there is none
-RUNNING = "media-stick.onboarding"        # Home window property while the window is open: a second launch does nothing
+RUNNING = "media-stick.onboarding"        # Home window property while the window is open (single_instance): a live one blocks a second launch
 
 
 def clock():
@@ -42,6 +42,8 @@ class LiveSource:
 class OnboardingDialog(xbmcgui.WindowXMLDialog):
     """Set up with setup() after construction: the Kodi window constructors take no extra arguments."""
 
+    instance = None                       # the launch's single_instance flag; show() sets it
+
     def setup(self, service, source, name=""):
         self.service, self.source, self.name = service, source, name
         self._lock = threading.Lock()
@@ -55,6 +57,8 @@ class OnboardingDialog(xbmcgui.WindowXMLDialog):
         self._address, self._address_at = "", 0.0
 
     def onInit(self):
+        if self.instance is not None:
+            self.instance.bind(xbmcgui.getCurrentWindowDialogId())
         self._look()
         self._thread = threading.Thread(target=self._watch, daemon=True)
         self._thread.start()
@@ -140,9 +144,10 @@ class OnboardingDialog(xbmcgui.WindowXMLDialog):
             super().onAction(action)
 
 
-def show(service, source, name=""):
+def show(service, source, name="", instance=None):
     """The window over whatever is on screen, until the flow ends, the document is gone or Back is pressed."""
     window = ui.load(OnboardingDialog, XML)
+    window.instance = instance
     window.setup(service, source, name)
     window.doModal()
     window.stop()
@@ -153,22 +158,21 @@ def main(args):
     """Entry for `RunScript(script.media-stick.home,onboarding,show,<service>)` and `...,demo,signin|keys)`. True when a
     window was shown."""
     mode, what = (list(args) + ["", ""])[:2]
-    home = xbmcgui.Window(ui.HOME)
-    if home.getProperty(RUNNING):
+    instance = single_instance.claim(xbmcgui.Window(ui.HOME), RUNNING)
+    if instance is None:
         return False                         # already open (the wizard's card asks again at its next look)
-    home.setProperty(RUNNING, "1")
     try:
         if mode == "demo" and what == "signin":
             from resources.lib import signin
             signin.run("youtube", attach=True, allow_skip=True,
                        source=onboarding_demo.SigninSource(onboarding_files.phone_qr()))
         elif mode == "demo" and what == "keys":
-            show("youtube", onboarding_demo.KeysSource(), "YouTube")
+            show("youtube", onboarding_demo.KeysSource(), "YouTube", instance)
         elif mode == "show" and store.onboarding is not None and what:
-            show(what, LiveSource(), store.SERVICES.get(what, {}).get("name", what))
+            show(what, LiveSource(), store.SERVICES.get(what, {}).get("name", what), instance)
         else:
             ui.log(f"onboarding: nothing to show for {list(args)!r}")
             return False
     finally:
-        home.setProperty(RUNNING, "")
+        instance.release()
     return True

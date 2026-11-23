@@ -1746,10 +1746,32 @@ class DemoWindow(WindowCase):
         self.assertEqual(Fake.home.get(youtube_app.RUNNING), "")
 
     def test_a_second_launch_while_open_does_nothing(self):
-        Fake.home[youtube_app.RUNNING] = "1"
+        si = youtube_app.single_instance
+        Fake.home[youtube_app.RUNNING] = si.encode(si.Flag("t", 14001, time.time() - 3600))      # Kodi says it is active
         with mock.patch.object(youtube_app.ui, "load") as load:
             self.assertFalse(youtube_app.main(["open"]))
         load.assert_not_called()
+
+    def test_a_flag_of_a_window_that_is_gone_does_not_block_the_launch(self):
+        si = youtube_app.single_instance
+        Fake.home[youtube_app.RUNNING] = si.encode(si.Flag("t", 14001, time.time() - 3600))
+        shown = []
+        with mock.patch.object(si, "window_active", return_value=False), \
+                mock.patch.object(si, "video_playing", return_value=False), \
+                mock.patch.object(youtube_app.ui, "load", side_effect=lambda cls, xml: cls()), \
+                mock.patch.object(WindowXML, "doModal", lambda self: shown.append(si.decode(Fake.home[youtube_app.RUNNING]))):
+            self.assertTrue(youtube_app.main(["open"]))
+        self.assertEqual(len(shown), 1)
+        self.assertNotEqual(shown[0].token, "t")
+        self.assertEqual(Fake.home.get(youtube_app.RUNNING), "")
+
+    def test_the_window_tells_the_flag_its_id_when_it_opens(self):
+        si = youtube_app.single_instance
+        window = self.make(demo=True)
+        window.instance = si.claim(xbmcgui.Window(youtube_app.ui.HOME), youtube_app.RUNNING)
+        with mock.patch.object(xbmcgui, "getCurrentWindowId", create=True, return_value=14002):
+            window.onInit()
+        self.assertEqual(si.decode(Fake.home[youtube_app.RUNNING]).window_id, 14002)
 
 
 class ProfileChange(WindowCase):

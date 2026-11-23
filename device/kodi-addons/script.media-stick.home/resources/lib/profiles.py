@@ -51,7 +51,8 @@ class ProfilesDialog(xbmcgui.WindowXMLDialog):
         control.reset()
         control.addItems(items)
         control.selectItem(first_index(self.cards))
-        self.setFocusId(LIST)
+        # No setFocusId here: the list is not shown yet (Kodi shows it when onInit returns), so asking only logs
+        # "asked to focus, but it can't". The skin's <defaultcontrol always="true"> puts the focus on it.
 
     def onClick(self, controlId):
         if controlId == LIST:

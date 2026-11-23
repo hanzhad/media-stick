@@ -310,10 +310,16 @@ class Window(unittest.TestCase):
         self.assertFalse(onboarding_app.main([]))
         self.assertFalse(onboarding_app.main(["demo", "bogus"]))
         self.assertFalse(onboarding_app.main(["show"]))
-        Fake.home[onboarding_app.RUNNING] = "1"
+        si = onboarding_app.single_instance
+        Fake.home[onboarding_app.RUNNING] = si.encode(si.Flag("t", 13001, time.time() - 3600))     # Kodi says it is active
         with mock.patch.object(onboarding_app, "show") as show:
             self.assertFalse(onboarding_app.main(["demo", "keys"]))
         show.assert_not_called()
+        with mock.patch.object(si, "window_active", return_value=False), \
+                mock.patch.object(si, "video_playing", return_value=False), \
+                mock.patch.object(onboarding_app, "show") as show:
+            self.assertTrue(onboarding_app.main(["demo", "keys"]))      # the window is gone: the flag is stale
+        self.assertEqual(len(show.call_args_list), 1)
         Fake.home.clear()
         with mock.patch.object(onboarding_app, "show") as show:
             self.assertTrue(onboarding_app.main(["demo", "keys"]))
