@@ -194,9 +194,11 @@ kodi_wanted=("${on_settings[@]/%/=true}" services.airplay=false services.webserv
   # 1080p60 explicitly; left alone Kodi picks the 1024x768 "DESKTOP" mode on the TV
   videoscreen.screenmode=0192001080060.00000pstd
   # sound to the TV over HDMI, by name; "Default" became the 3.5 mm jack (card 0), which
-  # nobody listens to, and Kodi does not list /etc/asound.conf's default (it has no hint)
-  "audiooutput.audiodevice=ALSA:hdmi:CARD=vc4hdmi,DEV=0|vc4-hdmi"
-  "audiooutput.passthroughdevice=ALSA:hdmi:CARD=vc4hdmi,DEV=0|vc4-hdmi"
+  # nobody listens to, and Kodi does not list /etc/asound.conf's default (it has no hint).
+  # Spelled as Kodi saves it, " (vc4hdmi)" included: anything else differs at every run and
+  # Kodi was restarted by every update for it.
+  "audiooutput.audiodevice=ALSA:hdmi:CARD=vc4hdmi,DEV=0|vc4-hdmi (vc4hdmi)"
+  "audiooutput.passthroughdevice=ALSA:hdmi:CARD=vc4hdmi,DEV=0|vc4-hdmi (vc4hdmi)"
   debug.screenshotpath=/run/media-stick/shots/)
 as_media() { setpriv --reuid=media --regid=media --init-groups "$@"; }
 # Files kept in device/skin-overlay/<addon>/ are copied over the installed add-on of that
