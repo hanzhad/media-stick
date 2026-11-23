@@ -2,15 +2,20 @@
 """AirPlay receiver: screen mirroring and audio from an iPhone, iPad or Mac, by UxPlay.
 
 The screen belongs to whoever holds DRM master, and the first program to open it while
-nobody does gets it: so UxPlay never touches it. It hands each decoded picture to a local
-socket (unixfdsink) as the hardware decoder's own buffer, passed by file descriptor, never
-copied, and only once a phone has connected and Kodi (or a web app) is stopped does a small
-drawer (unixfdsrc ! kmssink) open the screen and show those buffers as they are. Not
-shared memory: logind removes a user's shared memory when that user's last login ends, and
-UxPlay runs as media. Not raw pictures over TCP either (what this did first): a 1080p Mac
-screen is 3 MB a picture, and copying that out of the decoder, through the socket and into
-the screen kept a Pi 3 at about 16 pictures a second against the Mac's 30, so the backlog
-grew to seconds; a phone upright (498x1080) is small enough that it did not show.
+nobody does gets it: so UxPlay never touches it, and does not even decode. It writes the
+phone's compressed H.264 to a pipe (-vd below; UxPlay's own decoder, converter and sink are
+left a dummy test picture), this script passes it on, and only once a phone has connected
+and Kodi (or a web app) is stopped does a small drawer (fdsrc ! v4l2h264dec ! kmssink) open
+the screen, decode and show. There the decoder's buffer goes onto the screen as it is: the
+Pi 3's decoder does 1080p at 60 pictures a second on 2% of the processor. Anything else
+between the two, raw pictures over TCP and then the decoded buffer over a socket
+(unixfdsink), made the decoder copy each 3 MB picture out of uncached memory, a whole core
+for 27 pictures a second at most, fewer when the picture moves: a Mac's 30 fell behind by
+half a second and more. A phone upright (498x1080) is small enough that it did not show.
+
+The phone sends a whole picture (IDR, after the SPS) only when the stream starts or turns,
+and a decoder cannot start without one: so the pipe's bytes are kept from the last SPS on
+(Relay) and a drawer that starts later, after Kodi has stopped, gets them first.
 
 Without Kodi the TV falls back to the console's mode, 1024x768 when the TV was off at boot,
 so before the drawer starts the TV is set to 1080p with a black picture (kmssink keeps the
@@ -30,23 +35,33 @@ import time
 
 RUN = "/run/media-stick"
 FLAG = RUN + "/airplay"
-SOCK = RUN + "/airplay-video.sock"   # the pictures; UxPlay makes it and fails if it is left over
+STALE = (RUN + "/airplay-video.sock", RUN + "/airplay.shm")   # what earlier versions left
 LOG = RUN + "/airplay.log"   # UxPlay's own debug output, for looking into problems
 LOG_MAX = 4 << 20
 DRAW_LOG = RUN + "/airplay-draw.log"   # the drawer's GStreamer warnings and errors
 CARD = "/dev/dri/card0"
 NAME = os.environ.get("AIRPLAY_NAME") or "Media Stick"
 AS_MEDIA = ["setpriv", "--reuid=media", "--regid=media", "--init-groups", "env", "HOME=/home/media"]
-UXPLAY = AS_MEDIA + [
-    "stdbuf", "-oL", "-eL", "uxplay", "-n", NAME, "-nh",
-    "-bt709",   # hardware decoding (v4l2) shows wrong colours without it
-    # UxPlay appends " name=... sync=..." to this; with nobody reading, pictures are dropped
-    "-vs", "unixfdsink socket-path=" + SOCK,
-    "-as", "alsasink",
-    "-vsync", "no",   # no waiting to line the picture up with the sound: much less delay
-    # no -hls: UxPlay 1.71's YouTube mode takes the video but never starts playing it (the
-    # app shows "Something went wrong"); without it the YouTube app mirrors instead
-    "-d"]       # the connection lines below are debug-level
+
+
+def uxplay(fd):
+    """UxPlay's video pipeline is fixed: appsrc ! queue ! h264parse ! <-vd> ! <-vc> !
+    videoscale ! <-vs>. The -vd here ends it at fdsink, writing whole pictures (alignment=au)
+    in byte-stream form to the pipe fd, and starts a second branch, a single test picture,
+    for the rest to have something to scale and throw away."""
+    return AS_MEDIA + [
+        "stdbuf", "-oL", "-eL", "uxplay", "-n", NAME, "-nh",
+        "-vd", "capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au"
+               " ! fdsink fd=%d sync=false async=false  videotestsrc num-buffers=1" % fd,
+        "-vc", "videoconvert",
+        "-vs", "fakesink",   # UxPlay appends " name=... sync=..."
+        "-as", "alsasink",
+        "-vsync", "no",   # no waiting to line the picture up with the sound: much less delay
+        # no -hls: UxPlay 1.71's YouTube mode takes the video but never starts playing it (the
+        # app shows "Something went wrong"); without it the YouTube app mirrors instead
+        "-d"]       # the connection lines below are debug-level
+
+
 # a phone really connecting (not just listing receivers): its pairing request
 START = re.compile(r"connection request from|Begin streaming|changed audio connection")
 # UxPlay's own count of open connections, logged on every accept and close
@@ -68,14 +83,76 @@ def systemctl(*args):
 
 
 def drawer():
-    """unixfdsrc ! kmssink: kmssink puts the decoder's buffer on a plane as it is (no copy)
-    and the display hardware scales it to the TV's current mode, centred with its shape kept
-    (a phone held upright gets black bars at the sides). One picture waits at most: an older
-    one is dropped rather than shown late. -v logs each picture size (caps) it gets."""
+    """H.264 on its standard input, decoded by the hardware (v4l2h264dec; bt709, or the
+    colours come out wrong) straight into kmssink, which puts the decoder's buffer on a plane
+    as it is and lets the display hardware scale it to the TV's current mode, centred with its
+    shape kept (a phone held upright gets black bars at the sides). Only a queue between
+    them: anything else there makes the decoder copy every picture. One picture waits at
+    most: an older one is dropped rather than shown late. -v logs each picture size."""
     return AS_MEDIA + [
-        "GST_DEBUG=2,bufferpool:1", "gst-launch-1.0", "-v", "unixfdsrc", "socket-path=" + SOCK,
-        "!", "queue", "max-size-buffers=1", "leaky=downstream",
+        "GST_DEBUG=2,bufferpool:1", "gst-launch-1.0", "-v", "fdsrc", "fd=0",
+        "!", "h264parse", "!", "capssetter", "caps=video/x-h264,colorimetry=bt709",
+        "!", "v4l2h264dec", "!", "queue", "max-size-buffers=1", "leaky=downstream",
         "!", "kmssink", "sync=false"]
+
+
+# a NAL unit's start code and an SPS header byte (type 7; any nal_ref_idc: a Mac sends 0x27)
+SPS = re.compile(rb"\x00\x00\x01[\x07\x27\x47\x67]")
+KEEP_MAX = 8 << 20   # about 10 s of a Mac's 1080p; past that a late drawer waits for a turn
+
+
+def write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view):]
+
+
+class Relay:
+    """The compressed pictures from UxPlay's pipe to the drawer. Keeps the bytes from the last
+    SPS on (None: not since the last reset, or more than KEEP_MAX), so that a drawer attached
+    later starts on a whole picture."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.kept = None
+        self.tail = b""   # the last bytes, for a start code split between two reads
+        self.out = None   # the drawer's standard input
+
+    def feed(self, data):
+        with self.lock:
+            look = self.tail + data
+            last = None
+            for last in SPS.finditer(look):
+                pass
+            if last is not None:
+                start = last.start()
+                if start and look[start - 1] == 0:   # the 4-byte start code
+                    start -= 1
+                self.kept = bytearray(look[start:])
+            elif self.kept is not None:
+                self.kept += data
+                if len(self.kept) > KEEP_MAX:
+                    self.kept = None
+            self.tail = look[-3:]
+            if self.out is not None:
+                try:
+                    write_all(self.out, data)
+                except OSError:   # the drawer died; draw() starts another
+                    self.out = None
+
+    def attach(self, fd):
+        with self.lock:
+            self.out = fd
+            if self.kept:
+                try:
+                    write_all(fd, self.kept)
+                except OSError:
+                    self.out = None
+
+    def reset(self):
+        """The phone let go: what comes next is a new stream."""
+        with self.lock:
+            self.out, self.kept, self.tail = None, None, b""
 
 
 # --- libdrm, just enough to light the TV at 1080p with a black picture ---
@@ -186,7 +263,8 @@ def light_screen():
 
 
 class Screen:
-    def __init__(self):
+    def __init__(self, relay):
+        self.relay = relay
         self.drawer = None
         self.card = None
         self.size = (1920, 1080)
@@ -210,23 +288,30 @@ class Screen:
         say("screen taken from Kodi at %dx%d" % self.size)
 
     def draw(self):
-        """(Re)start the drawer; it may die if it came up before the first frame."""
+        """(Re)start the drawer if it is not running, and feed it."""
         if self.drawer is None or self.drawer.poll() is not None:
             if self.drawer is not None:
                 say("drawer exited with", self.drawer.returncode)
+                self.drawer.stdin.close()
             big = os.path.exists(DRAW_LOG) and os.path.getsize(DRAW_LOG) > LOG_MAX
             with open(DRAW_LOG, "w" if big else "a") as out:
                 out.write("--- %s\n" % time.strftime("%H:%M:%S"))
                 out.flush()
-                self.drawer = subprocess.Popen(drawer(), stdout=out, stderr=subprocess.STDOUT)
+                self.drawer = subprocess.Popen(drawer(), stdin=subprocess.PIPE, stdout=out,
+                                               stderr=subprocess.STDOUT, bufsize=0)
+            roomy(self.drawer.stdin.fileno())
+            self.relay.attach(self.drawer.stdin.fileno())
 
     def give_back(self):
         if self.drawer is not None:
-            self.drawer.terminate()
+            self.drawer.terminate()   # first: a write to it may be holding the relay's lock
             try:
                 self.drawer.wait(5)
             except subprocess.TimeoutExpired:
                 self.drawer.kill()
+                self.drawer.wait()
+            self.relay.reset()
+            self.drawer.stdin.close()
             self.drawer = None
         if self.card is not None:
             os.close(self.card)
@@ -239,18 +324,42 @@ class Screen:
         say("screen given back to Kodi")
 
 
+def roomy(fd):
+    """A 1 MB pipe instead of 64 KB: a few pictures of slack while the other side is busy."""
+    try:
+        fcntl.fcntl(fd, F_SETPIPE_SZ, 1 << 20)
+    except OSError:
+        pass
+
+
+F_SETPIPE_SZ = 1031
+
+
+def pump(fd, relay):
+    while True:
+        data = os.read(fd, 1 << 16)
+        if not data:
+            return
+        relay.feed(data)
+
+
 def main():
     os.makedirs(RUN, exist_ok=True)
-    screen = Screen()
+    relay = Relay()
+    screen = Screen(relay)
     if screen.taken:            # left over from a crash
         screen.give_back()
-    for stale in (SOCK, RUN + "/airplay.shm"):   # .shm: what an earlier version used
+    for stale in STALE:
         try:
             os.remove(stale)
         except FileNotFoundError:
             pass
-    proc = subprocess.Popen(UXPLAY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, errors="replace", bufsize=1)
+    video_r, video_w = os.pipe()
+    roomy(video_w)
+    proc = subprocess.Popen(uxplay(video_w), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, errors="replace", bufsize=1, pass_fds=(video_w,))
+    os.close(video_w)   # UxPlay has it; the read below ends when UxPlay does
+    threading.Thread(target=pump, args=(video_r, relay), daemon=True).start()
     lines = queue.Queue()
 
     def reader():
