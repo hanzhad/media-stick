@@ -18,7 +18,25 @@ DIR = os.environ.get("MEDIASTICK_PREFS_DIR", "/var/lib/media-stick/prefs")
 FILE = "language"
 DEFAULT = "ru"
 
-Lang = namedtuple("Lang", "code name yt sweet kodi")
+Lang = namedtuple("Lang", "code name yt sweet kodi ru en")     # ru, en: its name in Russian and in English, for the search
+
+# (Russian name, English name) of every language: what the phone page shows under the native name and searches in
+NAMES = {
+    "ru": ("русский", "Russian"), "uk": ("украинский", "Ukrainian"), "en": ("английский (Великобритания)", "English (UK)"),
+    "en_US": ("английский (США)", "English (US)"), "be": ("белорусский", "Belarusian"), "pl": ("польский", "Polish"),
+    "hu": ("венгерский", "Hungarian"), "de": ("немецкий", "German"), "fr": ("французский", "French"),
+    "it": ("итальянский", "Italian"), "es": ("испанский", "Spanish"), "pt": ("португальский", "Portuguese"),
+    "nl": ("нидерландский", "Dutch"), "cs": ("чешский", "Czech"), "sk": ("словацкий", "Slovak"),
+    "sl": ("словенский", "Slovenian"), "hr": ("хорватский", "Croatian"), "bs": ("боснийский", "Bosnian"),
+    "sr": ("сербский", "Serbian"), "sr_Latn": ("сербский (латиница)", "Serbian (Latin)"), "bg": ("болгарский", "Bulgarian"),
+    "mk": ("македонский", "Macedonian"), "ro": ("румынский", "Romanian"), "el": ("греческий", "Greek"),
+    "sq": ("албанский", "Albanian"), "lt": ("литовский", "Lithuanian"), "lv": ("латышский", "Latvian"),
+    "et": ("эстонский", "Estonian"), "fi": ("финский", "Finnish"), "sv": ("шведский", "Swedish"),
+    "da": ("датский", "Danish"), "nb": ("норвежский", "Norwegian"), "is": ("исландский", "Icelandic"),
+    "ga": ("ирландский", "Irish"), "cy": ("валлийский", "Welsh"), "mt": ("мальтийский", "Maltese"),
+    "ca": ("каталанский", "Catalan"), "eu": ("баскский", "Basque"), "gl": ("галисийский", "Galician"),
+    "tr": ("турецкий", "Turkish"),
+}
 
 SWEET_OWN = ("ru", "uk", "en", "pl", "hu")      # the languages SWEET.TV's API localizes; be reads as ru, the rest as en
 
@@ -29,7 +47,7 @@ def _sweet(code):
 
 
 def _lang(code, name, yt, kodi):
-    return Lang(code, name, yt, _sweet(code), "resource.language." + kodi)
+    return Lang(code, name, yt, _sweet(code), "resource.language." + kodi, *NAMES[code])
 
 
 # ru, uk, en first (the phone shows them first), then the other languages of Europe. yt: a code YouTube knows;
@@ -134,5 +152,5 @@ def wanted(lang):
 
 
 def public():
-    """The table as the phone page needs it: [{code, name}] in the order shown."""
-    return [{"code": l.code, "name": l.name} for l in LANGS]
+    """The table as the phone page needs it: [{code, name, ru, en}] in the order shown."""
+    return [{"code": l.code, "name": l.name, "ru": l.ru, "en": l.en} for l in LANGS]

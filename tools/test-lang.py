@@ -134,6 +134,14 @@ class Table(unittest.TestCase):
             self.assertIn(l.sweet, ("ru", "uk", "en", "pl", "hu"), l.code)
             self.assertRegex(l.kodi, r"^resource\.language\.[a-z]{2}_[a-z]{2}(@latin)?$", l.code)
 
+    def test_every_row_has_a_russian_and_an_english_name(self):
+        self.assertEqual(set(ml.NAMES), {l.code for l in ml.LANGS})
+        for l in ml.LANGS:
+            self.assertRegex(l.ru, r"^[а-я][а-я ()А-Я]+$", l.code)       # Russian, lower case (the capitals are in UK / US)
+            self.assertRegex(l.en, r"^[A-Z][A-Za-z ()]+$", l.code)
+        by = {l.code: l for l in ml.LANGS}
+        self.assertEqual((by["de"].ru, by["de"].en), ("немецкий", "German"))
+
     def test_native_names(self):
         names = {l.code: l.name for l in ml.LANGS}
         self.assertEqual((names["ru"], names["uk"], names["en"], names["en_US"]),
@@ -160,7 +168,7 @@ class Table(unittest.TestCase):
         wish = ml.wanted(ml.resolve("de"))
         self.assertEqual(wish, {(YT, "youtube.language"): "de", (SWEET, "countryCode"): "en"})
         self.assertFalse([k for k in wish if "region" in k[1]])
-        self.assertEqual(ml.public()[0], {"code": "ru", "name": "Русский"})
+        self.assertEqual(ml.public()[0], {"code": "ru", "name": "Русский", "ru": "русский", "en": "Russian"})
 
 
 class File(unittest.TestCase):
@@ -339,6 +347,59 @@ class PageAndWiring(unittest.TestCase):
         self.assertIn("toast('Язык: '+l.name)", self.page)
         self.assertIn("api('/api/lang',{code:l.code})", self.page)
         self.assertEqual(re.findall(r"@@\w+@@", self.page.replace("@@PAGE_VER@@", "")), [])
+
+    def test_the_search_field(self):
+        p = self.page
+        sec = p.split('<section id="t-lang"', 1)[1].split("</section>", 1)[0]
+        field = re.search(r'<input id="lg-q"[^>]*>', sec).group(0)
+        for want in ('type="search"', 'placeholder="Найти язык"', 'autocomplete="off"', 'autocorrect="off"',
+                     'autocapitalize="off"', 'spellcheck="false"'):
+            self.assertIn(want, field)
+        self.assertIn("#lg-q{", p)
+        self.assertIn("font-size:16px", p.split("#lg-q{", 1)[1].split("}", 1)[0])       # iOS does not zoom
+        self.assertLess(sec.index('id="lg-q"'), sec.index('id="lg-list"'))
+        self.assertIn("'Ничего не нашлось'", p)
+        self.assertIn("e.key==='Enter'", p)
+        self.assertIn("lgPick(m[0])", p)                                                  # Enter takes the first match
+        self.assertIn("e.key==='Escape'", p)
+        self.assertIn('id="lg-x"', sec)
+
+    def test_the_matching_rule_as_the_script_states_it(self):
+        p = self.page
+        self.assertIn(".normalize('NFD').replace(/\\p{M}/gu,'').toLowerCase()", p)
+        self.assertIn("t.every(w=>l.k.some(k=>k.startsWith(w)))", p)
+        self.assertIn("[l.name,l.ru,l.en,l.code.replace('_',' ')]", p)
+        # the same rule in Python, on the real table: the owner's four examples and a code
+        import unicodedata
+
+        def norm(s):
+            return "".join(c for c in unicodedata.normalize("NFD", s) if not unicodedata.combining(c)).lower()
+
+        def words(l):
+            text = norm(" ".join([l.name, l.ru, l.en, l.code.replace("_", " ")]))
+            return [w for w in re.split(r"[\s()._-]+", text) if w] + [norm(l.code)]
+
+        def found(query):
+            toks = norm(query).split()
+            return [l.code for l in ml.LANGS if toks and all(any(k.startswith(t) for k in words(l)) for t in toks)]
+        self.assertIn("cs", found("cest"))
+        self.assertIn("de", found("нем"))
+        self.assertIn("de", found("ger"))
+        self.assertIn("pt", found("pt"))
+        self.assertEqual(found("zzzz"), [])
+        self.assertIn("en_US", found("english us"))
+        self.assertNotIn("de", found("rman"))                                              # the start of a word, not any substring
+
+    def test_the_short_list_and_the_whole_list(self):
+        p = self.page
+        self.assertIn("const LG_POP=['ru','uk','en','en_US']", p)
+        self.assertIn("'Часто выбирают'", p)
+        self.assertIn("'Все языки · '+LG.length+(open?' ‹':' ›')", p)
+        self.assertIn("LG_POP.filter(c=>c!==lgCur)", p)                                    # the current one is not repeated
+        self.assertIn("if(l.ru&&lgNorm(l.ru)!==lgNorm(l.name))", p)                        # no second line that only repeats
+        self.assertIn("function lgReset(){$('lg-q').value='';lgAll=false;lgDraw()}", p)    # after a tap: clear and collapse
+        self.assertIn("lgCur=l.code;lgReset();", p)
+        self.assertIn("#t-lang{grid-area:lang;max-width:480px}", p)                        # not stretched on a wide screen
 
     def test_inject_raises_for_a_missing_marker(self):
         base = ("<x>@@LANG_ROW@@@@LANG_SECTION@@@@LANG_TAIL@@</x>")
