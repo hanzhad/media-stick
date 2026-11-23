@@ -3,36 +3,42 @@
      plain white dot. bootstrap.sh copies this over the installed skin; see device/skin-overlay.
      Skin coordinates are 3840x2160, so 96 here is 48 px on the 1080p TV. The dot is centred
      on the pointer position. Kodi shows the child whose id is the pointer state (1 pointer,
-     2 focus, 3 drag, 4 click), the same ids as the skin's own; all are the same picture. -->
+     2 focus, 3 drag, 4 click), the same ids as the skin's own; all are the same picture.
+     Not while Kodi starts (Startup, then Home under the launcher): Kodi shows the pointer
+     there at 0,0 for a moment, a corner of the dot over the boot picture. Nothing is pointed
+     at in those two windows; the launcher and everything after it have the dot. -->
 <window>
 	<controls>
-		<control type="image" id="1">
-			<left>-48</left>
-			<top>-48</top>
-			<width>96</width>
-			<height>96</height>
-			<texture>ms-pointer.png</texture>
-		</control>
-		<control type="image" id="2">
-			<left>-48</left>
-			<top>-48</top>
-			<width>96</width>
-			<height>96</height>
-			<texture>ms-pointer.png</texture>
-		</control>
-		<control type="image" id="3">
-			<left>-48</left>
-			<top>-48</top>
-			<width>96</width>
-			<height>96</height>
-			<texture>ms-pointer.png</texture>
-		</control>
-		<control type="image" id="4">
-			<left>-48</left>
-			<top>-48</top>
-			<width>96</width>
-			<height>96</height>
-			<texture>ms-pointer.png</texture>
+		<control type="group">
+			<visible>!Window.IsActive(startup) + !Window.IsActive(home)</visible>
+			<control type="image" id="1">
+				<left>-48</left>
+				<top>-48</top>
+				<width>96</width>
+				<height>96</height>
+				<texture>ms-pointer.png</texture>
+			</control>
+			<control type="image" id="2">
+				<left>-48</left>
+				<top>-48</top>
+				<width>96</width>
+				<height>96</height>
+				<texture>ms-pointer.png</texture>
+			</control>
+			<control type="image" id="3">
+				<left>-48</left>
+				<top>-48</top>
+				<width>96</width>
+				<height>96</height>
+				<texture>ms-pointer.png</texture>
+			</control>
+			<control type="image" id="4">
+				<left>-48</left>
+				<top>-48</top>
+				<width>96</width>
+				<height>96</height>
+				<texture>ms-pointer.png</texture>
+			</control>
 		</control>
 	</controls>
 </window>
