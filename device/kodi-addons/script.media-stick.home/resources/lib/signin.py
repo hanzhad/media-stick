@@ -3,8 +3,8 @@
 Follow is the pure part (what to show for each state the add-on publishes, and when to close);
 SigninDialog and run() are the thin Kodi wrapper around it.
 
-Partner mode (the state says mode "partner"): a partner's specialist types the code from this
-screen into their own form, within a working day. So the screen stays for hours, counts down the
+Partner mode (the state says mode "partner", SWEET.TV through the Friendly Share page): the person types the code from this
+screen into the "Connection code" field of that page, and the subscription is connected within a working day. So the screen stays for hours, counts down the
 time left, draws no QR, keeps the screensaver off (ScreensaverHold), and never cancels on a stray
 key: the first button, the one focused, is "keep waiting", and cancelling asks first.
 
@@ -51,13 +51,14 @@ WAITING = "waiting"
 PARTNER = "partner"
 BUTTONS = ("Cancel", "Continue without account")                  # the two buttons, by mode
 PARTNER_BUTTONS = ("Ждать / Wait", "Отмена / Cancel")
-PARTNER_STATUS = ("Ждём подключения специалистом партнёра. Не выключайте ТВ.",
-                  "Waiting for the partner's specialist to connect. Keep the TV on.")
+PARTNER_STATUS = ("Введите этот код в поле Connection code на странице Friendly Share / "
+                  "Enter this code in the Connection code field on the Friendly Share page",
+                  "Не выключайте ТВ на этой странице / Keep the TV on this page")    # the two lines under the code
 CONFIRM = ("Отменить вход? / Cancel sign-in?",
-           "Специалист партнёра не сможет подключить подписку, а код пропадёт.[CR]"
-           "The partner's specialist will not be able to connect, and the code will be lost.")
+           "Код пропадёт, и подписку не получится подключить.[CR]"
+           "The code will be lost and the subscription cannot be connected.")
 CONFIRM_AUTOCLOSE = 30000  # ms: a question nobody answers closes itself, and the sign-in goes on
-INHIBIT_EVERY = 60         # s: how often the screensaver is told to stay off while a partner is awaited
+INHIBIT_EVERY = 60         # s: how often the screensaver is told to stay off while a code is awaited for hours
 
 
 class Frame(NamedTuple):
@@ -73,7 +74,7 @@ def time_left(seconds):
     """(line, English line) for the time left. Under an hour it is minutes and seconds, "59:59" or "0:05", as a clock
     counts down (nothing to translate: the English line is empty). From an hour on the hours are said, in whole minutes
     rounded down so it only ever goes down: 21599 -> "5 ч 59 мин" and "5 h 59 min", 3600 -> "1 ч 00 мин". The line is
-    Russian (it is big: the screen is read by a partner's specialist) and the English one goes under it, small:
+    Russian (it is big: the screen is read from the sofa) and the English one goes under it, small:
     both do not fit side by side in the label. 0 and anything that is not a time -> "0:00"."""
     total = max(0, int(seconds or 0))
     if total < 3600:
@@ -155,7 +156,7 @@ class Follow:
 
     def __init__(self, name, started, attach=False, partner=False):
         self.name, self.started, self.attach = name, started, attach
-        self.partner = partner       # a partner's specialist will type the code in (the state says so too)
+        self.partner = partner       # the code is typed into the Friendly Share page by hand (the state says so too)
         self.seen = False            # a state of this sign-in has been read
         self.cancel_at = None
         self.skipped = False         # the person chose to go on without an account
@@ -327,7 +328,7 @@ class SigninDialog(xbmcgui.WindowXMLDialog):
                 ui.log(f"sign-in screen tick failed: {e!r}")
 
     def _hold_screensaver(self):
-        """Keep the screensaver off while a partner is awaited (this screen is the only thing they see)."""
+        """Keep the screensaver off while a code is awaited for hours (this screen is the only thing there is to see)."""
         command = self.hold.step(self.follow.partner and self.follow.result is None, time.time())
         if command:
             xbmc.executebuiltin(command)
@@ -406,7 +407,7 @@ class SigninDialog(xbmcgui.WindowXMLDialog):
             return ""
 
     def _sure(self):
-        """The question before a partner sign-in is given up: the answer is no unless it is a clear yes
+        """The question before a Friendly Share sign-in is given up: the answer is no unless it is a clear yes
         (the first button, which has the focus, is "Wait"); the focus goes back to Wait afterwards."""
         heading, line = CONFIRM
         try:

@@ -415,10 +415,14 @@ class Page(unittest.TestCase):
 
     def test_the_page_has_the_partner_action_and_its_hint_and_no_qr_link_for_it(self):
         page = pa.inject("@@ACC_NAV@@@@ACC_SECTION@@@@ACC_TAIL@@")
-        self.assertIn("Через партнёра", page)
+        self.assertIn("Через Friendly Share", page)
         self.assertIn("accStart(svc,'partner')", page)
         self.assertIn("{service:svc,mode}", page)
-        self.assertIn("Код передан партнёру. Держите ТВ включённым. Поддержка партнёра работает 14:00–00:00", page)
+        self.assertIn("Скопируйте код и вставьте его в поле «Connection code» на странице Friendly Share, нажмите Save. "
+                      "Не выключайте ТВ на этой странице. Подключают с 14:00 до 00:00.'+left", page)    # then the time left, with hours
+        self.assertIn("ждём подключения", page)                         # the chip and the sheet's title line
+        for gone in ("партнёр", "Партнёр", "специалист", "Код передан", "Поддержка"):
+            self.assertNotIn(gone, page)                                # nobody is handed the code: the person types it
         self.assertIn("partner=s.mode==='partner', link=partner?'':accSafe(s.link)", page)   # the sheet never opens addDevice
         self.assertIn("acc-partner", page)
         self.assertIn("armed('acc-cancel'", page)                      # cancelling a partner's wait asks for a second tap

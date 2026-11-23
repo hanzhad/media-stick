@@ -125,7 +125,7 @@ function accCard(svc){
   const chips=accEl('div','acc-chips');
   const btns=accEl('div','acc-btns');
   const bin=accEl('button','btn','Войти'),bother=accEl('button','btn','Войти другим аккаунтом'),bout=accEl('button','btn','Выйти');
-  const bpar=accEl('button','btn','Через партнёра');   // SWEET.TV only: a partner's specialist types the code in
+  const bpar=accEl('button','btn','Через Friendly Share');   // SWEET.TV only: the code is typed into the Friendly Share page by hand
   const bkeys=accEl('button','acc-lnk','Ключи Google ›');   // YouTube only: the Google keys wizard (panel_ytkeys_ui.py), needed once
   bin.dataset.k='in';bother.dataset.k='another';bout.dataset.k='out';bpar.dataset.k='partner';bkeys.dataset.k='keys';bout.id='acc-out-'+svc;
   bin.onclick=()=>accStart(svc);bpar.onclick=()=>accStart(svc,'partner');bkeys.onclick=()=>ykOpen();bother.onclick=()=>accAnother(svc);
@@ -147,7 +147,7 @@ function accRender(list){
     c.querySelector('.acc-hd b').textContent=a.name;
     // YouTube: the profile on the TV is who is signed in; any of the add-on's tokens is enough to watch
     const on=yt?!!(cur&&cur.signed_in):a.signed_in;
-    c.querySelector('.acc-st').textContent=byPartner?'ждёт партнёра':waiting?'ждёт ввода кода':on?'вы вошли':'вход не выполнен';
+    c.querySelector('.acc-st').textContent=byPartner?'ждём подключения':waiting?'ждёт ввода кода':on?'вы вошли':'вход не выполнен';
     const who=c.querySelector('.acc-who');
     who.querySelector('b').textContent=yt&&on?accLabel(cur):'';
     who.querySelector('small').textContent=yt&&on?(cur.channel==='yes'?'Канал YouTube':cur.channel==='no'?'Аккаунт Google без канала':'Аккаунт Google')
@@ -206,7 +206,7 @@ function accOpen(s){
   $('acc-cancel').disabled=false;$('acc-cancel').textContent='Отмена';
   accShow(s);buzz();accLoop()
 }
-// a partner's wait lasts hours: "5 ч 58 мин"; a normal one minutes: "7 мин."
+// a Friendly Share wait (the partner mode) lasts hours: "5 ч 58 мин"; a normal one minutes: "7 мин."
 const accLeft=sec=>{const m=Math.ceil(sec/60);return sec<=0?'':m>=60?' Осталось '+Math.floor(m/60)+' ч '+m%60+' мин.':' Осталось '+m+' мин.'};
 function accShow(s){
   const was=accSheet.code, partner=s.mode==='partner', link=partner?'':accSafe(s.link), url=partner?'':accSafe(s.url);
@@ -216,9 +216,9 @@ function accShow(s){
   $('acc-code').textContent=s.code;
   const o=$('acc-open');o.classList.toggle('hide',!link);if(link)o.href=link;
   const left=accLeft(s.left);
-  $('acc-hint').textContent=partner?'Код передан партнёру. Держите ТВ включённым. Поддержка партнёра работает 14:00–00:00.'+left
+  $('acc-hint').textContent=partner?'Скопируйте код и вставьте его в поле «Connection code» на странице Friendly Share, нажмите Save. Не выключайте ТВ на этой странице. Подключают с 14:00 до 00:00.'+left
     :(link?'Страница откроется с уже введённым кодом.':url?'Откройте '+url.replace(/^https:\/\//,'')+' и введите код.':'Введите код на странице входа.')+left;
-  $('acc-mt').textContent=s.name+(partner?' · ждёт партнёра':s.steps>1?' · код '+s.step+' из '+s.steps:' · ждёт код');
+  $('acc-mt').textContent=s.name+(partner?' · ждём подключения':s.steps>1?' · код '+s.step+' из '+s.steps:' · ждёт код');
   if(was&&(was!==s.code||accSheet.step!==s.step)){   // YouTube moved on to its next code
     $('acc-sheet').classList.remove('acc-min');buzz();
     $('acc-hint').textContent='Новый код: нажмите «Открыть страницу входа» ещё раз.'
@@ -255,7 +255,7 @@ $('acc-copy').onclick=()=>{
 };
 $('acc-cancel').onclick=async()=>{
   if(!accSheet)return;const b=$('acc-cancel');
-  // a partner may be about to type the code in: the first tap only asks
+  // the code may be about to be typed into the Friendly Share page: the first tap only asks
   if(accSheet.mode==='partner'&&!armed('acc-cancel','Нажмите ещё раз, чтобы отменить'))return;
   b.disabled=true;b.textContent='Отменяю…';
   try{await accCall('cancel',{service:accSheet.svc});accPoll()}

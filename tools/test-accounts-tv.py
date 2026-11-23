@@ -693,8 +693,9 @@ class PartnerFollow(unittest.TestCase):
         frame = self.follow().feed(partner_state(), 1001)
         p = frame.props
         self.assertEqual((p["partner"], p["left"], p["left2"], p["headline"]), ("1", "5 ч 59 мин", "5 h 59 min", ""))
-        self.assertEqual(p["status"], "Ждём подключения специалистом партнёра. Не выключайте ТВ.")
-        self.assertEqual(p["status2"], "Waiting for the partner's specialist to connect. Keep the TV on.")
+        self.assertEqual(p["status"], "Введите этот код в поле Connection code на странице Friendly Share / "
+                                      "Enter this code in the Connection code field on the Friendly Share page")
+        self.assertEqual(p["status2"], "Не выключайте ТВ на этой странице / Keep the TV on this page")
         self.assertEqual(p["code"], "1 2 3 4 5")
         self.assertEqual((frame.link, p["site"], p["step"]), ("", "", ""))             # no QR, no "scan" hint
         self.assertEqual(self.follow().feed(partner_state(left=3 * 3600 + 1), 1001).props["left"], "3 ч 00 мин")
@@ -702,6 +703,21 @@ class PartnerFollow(unittest.TestCase):
         self.assertEqual((short["left"], short["left2"]), ("59:59", ""))
         gone = self.follow().feed(partner_state(left=0), 1001).props
         self.assertEqual((gone["left"], gone["left2"]), ("0:00", ""))
+
+    def test_nothing_the_tv_says_names_a_partner_or_a_specialist_and_the_lines_fit_the_box(self):
+        from resources.lib import textfit
+        root = ET.parse(os.path.join(SKIN, "script-media-stick-signin.xml")).getroot()
+        box = next(c for c in root.iter("control") if c.get("type") == "textbox"
+                   and c.findtext("label") == "$INFO[Window.Property(status)][CR][CR]$INFO[Window.Property(status2)]")
+        width, height = int(box.findtext("width")), int(box.findtext("height"))
+        texts = list(signin.PARTNER_STATUS) + list(signin.CONFIRM) + list(signin.PARTNER_BUTTONS)
+        for text in texts:
+            for word in ("артнёр", "artner", "пециалист", "pecialist", "14:00"):
+                self.assertNotIn(word, text)
+        rows = sum(len([ln for ln in textfit.wrap_name(t, width, 25, 4) if ln]) for t in signin.PARTNER_STATUS) + 1   # + the blank line
+        for text in signin.PARTNER_STATUS:
+            self.assertNotIn("…", "".join(textfit.wrap_name(text, width, 25, 4)))      # nothing is cut off
+        self.assertLessEqual(rows * 32, height)                                      # the lines, wrapped, fit the box
 
     def test_the_buttons_name_wait_and_cancel_in_partner_mode_and_cancel_and_continue_otherwise(self):
         normal = self.follow().feed(waiting(updated=1001), 1001).props
@@ -818,8 +834,8 @@ class PartnerScreen(unittest.TestCase):
         first = next(p for p in self.shown if p.get("code"))
         self.assertEqual((first["partner"], first["code"], first["btn1"]), ("1", "1 2 3 4 5", "Ждать / Wait"))
         self.assertEqual((first["left"], first["left2"]), ("5 ч 59 мин", "5 h 59 min"))
-        self.assertIn("Ждём подключения специалистом партнёра. Не выключайте ТВ.", first["status"])
-        self.assertIn("Keep the TV on.", first["status2"])
+        self.assertIn("поле Connection code на странице Friendly Share", first["status"])
+        self.assertIn("Keep the TV on this page", first["status2"])
         self.assertEqual(first["skip"], "1")                                            # the second button (Cancel) is shown
         self.assertFalse(any(p.get("qr") for p in self.shown))
         self.assertEqual(self.dialog.focus, signin.CONTROL_CANCEL)                      # the first button, which says Wait
@@ -843,7 +859,11 @@ class PartnerScreen(unittest.TestCase):
         heading, message, no, yes = Fake.asked[0]
         self.assertIn("Отменить вход?", heading)
         self.assertIn("Cancel sign-in?", heading)
-        self.assertIn("The partner's specialist", message)
+        self.assertIn("The code will be lost", message)
+        self.assertIn("Код пропадёт", message)
+        for text in (heading, message, no, yes):
+            self.assertNotIn("артнёр", text)
+            self.assertNotIn("specialist", text)
         self.assertEqual((no, yes), ("Ждать / Wait", "Отмена / Cancel"))
         self.assertFalse(lib.cancel_requested("sweettv"))
         self.assertEqual(self.dialog.focus, signin.CONTROL_CANCEL)                      # back on Wait

@@ -25,7 +25,7 @@ if [ "${1:-}" != --force ] && [ $lease_rc -eq 3 ]; then
   echo "$lease; update to ${new:0:7} postponed"; exit 0
 fi
 # A sign-in waiting for its code (rc 3) pauses the update too: bootstrap restarts Kodi and the next code is a
-# different one, which hurts most when a partner's specialist types it in by hand for hours. It expires on its own
+# different one, which hurts most when it is typed into the Friendly Share page by hand for hours. It expires on its own
 # (or when the add-on stops touching it). No helper yet (an older device): go on.
 signin=$(python3 /usr/local/lib/media-stick/mediastick_signin.py waiting 2>/dev/null); signin_rc=$?
 if [ "${1:-}" != --force ] && [ $signin_rc -eq 3 ]; then

@@ -2,9 +2,9 @@
 <!-- Sign-in screen (resources/lib/signin.py). Window properties: title, step, code, codelong, site,
      headline, status, status2, left, partner, btn1, btn2, qr, skip. While `headline` is set (starting,
      cancelling, a result) it takes the place of the code and the QR. Buttons, labels from btn1/btn2:
-     10 Cancel (focused first), 11 Continue without account. In partner mode (`partner` set: a partner's
-     specialist types the code in by hand, for hours) there is no QR, the time left takes its place
-     (`left`: m:ss under an hour, else "5 ч 59 мин"; `left2`, small under it: the same in English, "5 h 59 min"), `status`/`status2` are the Russian and English lines, 10 says Wait (so a stray OK does
+     10 Cancel (focused first), 11 Continue without account. In partner mode (`partner` set: the code is typed into the Friendly Share page
+     by hand, for hours) there is no QR, the time left takes its place
+     (`left`: m:ss under an hour, else "5 ч 59 мин"; `left2`, small under it: the same in English, "5 h 59 min"), `status`/`status2` are the two bilingual lines (what to do, keep the TV on), 10 says Wait (so a stray OK does
      nothing) and 11 says Cancel (the code asks first).
      The onboarding layout (properties ob, ob_badge, ob_badge_colour, ob_kicker, ob_title, ob_hint, ob_site, ob_code,
      ob_codelong, ob_caption, ob_footer, ob_qr; list 20 of the steps with the items t1, t2, state, num, fg, ring; see

@@ -6,8 +6,8 @@ as a link that opens on the phone with the code already typed in, instead of an 
 type. Either of them can ask the add-on to stop (request_cancel).
 
 A sign-in has a mode. `normal` is a person at the TV with a phone: ten minutes. `partner` is
-SWEET.TV connected by a partner's specialist who types the code from the TV screen into their
-own form by hand, within a working day: six hours, polled gently, retried when the network
+SWEET.TV connected through the Friendly Share page: the person types the code from the TV screen into its
+"Connection code" field by hand, and the subscription is connected within a working day: six hours, polled gently, retried when the network
 drops (PartnerPoll). The phone asks for it (request_mode) and the add-on takes the request
 when it starts; the mode then travels in the published state. waiting_any() tells the update
 script that somebody is still entering a code.
@@ -205,7 +205,7 @@ def _onboard(service, data):
         return
     try:
         if data["state"] == WAITING and data["mode"] == PARTNER:
-            onboarding.clear(service)        # a partner's specialist types the code from the TV: nobody is on the phone
+            onboarding.clear(service)        # the code is typed into the Friendly Share page by hand: nobody follows it on the phone
             return
         state = onboarding.ACTIVE if data["state"] == WAITING else data["state"]
         doc = guide.document(service, state, data.get("code", ""), data.get("link", ""), data["step"], data["steps"])

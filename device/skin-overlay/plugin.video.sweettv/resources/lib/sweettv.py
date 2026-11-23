@@ -430,7 +430,7 @@ def show_popup(auth_code, qrcode_path=None):
 
 @plugin.route('/login')
 def login(ms_mode=None):
-    # media-stick begin: `partner` (a partner's specialist types the code in by hand, for hours) comes as the argument or as the phone's request
+    # media-stick begin: `partner` (the code is typed into the Friendly Share page by hand, for hours) comes as the argument or as the phone's request
     if _ms:
         _ms.begin('sweettv')
         ms_mode = _ms.clean_mode(ms_mode or _ms.take_mode('sweettv'))
@@ -454,7 +454,7 @@ def login(ms_mode=None):
     # media-stick begin: the code and the link the QR holds, for the TV screen and the phone page
     ms_poll = None
     if _ms:
-        _ms.publish('sweettv', 'waiting', code=auth_code, url='https://sweet.tv/addDevice', mode=ms_mode)   # ten minutes, a partner's six hours
+        _ms.publish('sweettv', 'waiting', code=auth_code, url='https://sweet.tv/addDevice', mode=ms_mode)   # ten minutes, six hours in that mode
         ms_deadline = time.time() + _ms.ttl_for(ms_mode)  # no popup to close: the code runs out on its own
         if ms_mode == _ms.PARTNER:
             ms_poll = _ms.PartnerPoll(time.time())

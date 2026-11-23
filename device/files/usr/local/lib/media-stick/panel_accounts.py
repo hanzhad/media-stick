@@ -95,13 +95,13 @@ def clean_mode(value, service):
     if value != signin.PARTNER:
         raise Refused("Неизвестный способ входа.")
     if service != "sweettv":
-        raise Refused("Вход через партнёра есть только у SWEET.TV.")
+        raise Refused("Вход через Friendly Share есть только у SWEET.TV.")
     return signin.PARTNER
 
 
 def public_signin(state):
-    """A sign-in state as the page may see it: known fields only, the link checked. A partner's
-    specialist types the code in by hand, so the page gets no link to open (the QR's address) there."""
+    """A sign-in state as the page may see it: known fields only, the link checked. The code
+    is typed into the Friendly Share page by hand, so the page gets no link to open (the QR's address) there."""
     if not isinstance(state, dict):
         return None
     code = state.get("code") if CODE_RE.match(str(state.get("code", ""))) else ""
