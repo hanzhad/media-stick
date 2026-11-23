@@ -70,6 +70,8 @@ while IFS= read -r -d '' src; do
     install -D -m "$mode" "$src" "$dst"; log "  updated /$rel"
     [[ $rel == etc/systemd/system/* ]] && changed_units+=("$(basename "$rel")")
     [[ $rel == home/media/.kodi/* ]] && changed_units+=(kodi.service)   # keymaps load at start
+    # the sound device: Kodi picks its output at start, UxPlay at its first stream
+    [[ $rel == etc/asound.conf ]] && changed_units+=(kodi.service airplay.service)
     # a library the panel imports at start: restart the panel (Kodi loads it afresh at each sign-in)
     [[ $rel == usr/local/lib/media-stick/* ]] && changed_units+=("panel.service")
     # a program with a service of the same name: restart that service too
@@ -165,6 +167,10 @@ kodi_wanted=("${on_settings[@]/%/=true}" services.airplay=false services.webserv
   lookandfeel.startupwindow=10000 input.enablemouse=true
   # 1080p60 explicitly; left alone Kodi picks the 1024x768 "DESKTOP" mode on the TV
   videoscreen.screenmode=0192001080060.00000pstd
+  # sound to the TV over HDMI, by name; "Default" became the 3.5 mm jack (card 0), which
+  # nobody listens to, and Kodi does not list /etc/asound.conf's default (it has no hint)
+  "audiooutput.audiodevice=ALSA:hdmi:CARD=vc4hdmi,DEV=0|vc4-hdmi"
+  "audiooutput.passthroughdevice=ALSA:hdmi:CARD=vc4hdmi,DEV=0|vc4-hdmi"
   debug.screenshotpath=/run/media-stick/shots/)
 as_media() { setpriv --reuid=media --regid=media --init-groups "$@"; }
 # Files kept in device/skin-overlay/<addon>/ are copied over the installed add-on of that
