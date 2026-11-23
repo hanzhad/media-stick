@@ -1,64 +1,89 @@
-"""The "Google keys for YouTube" wizard's sheet: style, markup and script, as strings. It is part of the
+"""The "Google key for YouTube" wizard's sheet: style, markup and script, as strings. It is part of the
 Accounts page (it uses accEl, accCall, accSafe, accStart from panel_accounts_ui.py and the page's own $, buzz,
 armed, copyText); panel_accounts.inject() appends it after the Accounts script. Everything is prefixed `acc-` / `yk`.
-The steps' text and links (also the Android intent and the Safari form of each) come from panel_ytkeys.WIZARD, one
-description for the page and the tests. The wizard remembers only its step number and an "unfinished" flag in
-localStorage and tells the panel (and through it the TV) its step; no value from a field goes to either."""
+The steps' text and links (also the Android intent and the Safari form of each), the checklist and what a key, a
+client ID and a secret look like come from panel_ytkeys.WIZARD, one description for the page and the tests.
+The step the owner is on lives on the panel (the TV reads it from there); the phone keeps only an "unfinished" flag
+in localStorage. The three values live in script variables until they are saved or the page goes: they are sent to
+the panel in a POST body (to be checked, then saved) and nowhere else."""
 import json
 
 TAIL = r"""
 <style>
-.acc-ykb{max-height:92vh;overflow-y:auto;overscroll-behavior:contain}
-.acc-yk-t{font-size:18px;font-weight:600;margin:6px 0 4px}
+.acc-ykb{max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:#0f1115}
 .acc-yk-p{margin:8px 0;color:var(--dim);font-size:15px}
-.acc-yk-ok{display:flex;align-items:center;gap:12px;margin:14px 0 0;min-height:52px;font-size:17px;color:inherit}
-.acc-yk-ok input{width:28px;min-height:28px;flex:0 0 auto;accent-color:#fff}
 .acc-yk-big{font-size:20px;font-weight:600;padding:14px 0 6px}
 .acc-yk-row{display:flex;gap:8px}
 .acc-yk-row .btn{flex:1 1 0;min-width:0;padding:0 8px}
+.acc-yk-st{margin:10px 0 0;border:1px solid transparent;border-radius:18px;background:#1b1d28}
+.acc-yk-st.cur{background:#1f2433;border-color:#3a4258}
+.acc-yk-st.pend{opacity:.55}
+.acc-yk-sh{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:6px 14px;background:none;border:0;color:inherit;font-size:17px;font-weight:600;text-align:left;touch-action:manipulation}
+.acc-yk-n{flex:0 0 28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#2a3040;font-size:14px}
+.acc-yk-st.done .acc-yk-n{background:#2f6b4c}
+.acc-yk-sb{padding:0 14px 14px}
 .acc-yk-a{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .acc-yk-a .btn{flex:1 1 140px;margin-top:0;padding:0 8px}
+.acc-yk-st .btn{border-radius:999px;min-height:48px}
+.acc-yk-st .btn.acc{background:#f2f3f5;color:#0f1115}
 .acc-yk-h{margin-top:8px;color:var(--faint);font-size:13px}
 .acc-yk-url{flex:1 1 100%;padding:10px 12px;background:var(--bg);border-radius:12px;color:var(--dim);font-size:13px;user-select:all;-webkit-user-select:all;overflow-wrap:anywhere}
 .acc-yk-m{margin-top:10px;color:var(--dim);font-size:14px;min-height:1.4em}
 .acc-yk-m.bad{color:var(--bad)}
+.acc-yk-warn{margin:10px 0 0;padding:10px 12px;border-radius:12px;background:rgba(240,198,116,.12);color:#f0c674;font-size:14px}
+.acc-yk-tk{display:flex;align-items:center;gap:12px;min-height:44px;margin:0;color:inherit;font-size:15px}
+.acc-yk-tk input{width:28px;min-height:28px;flex:0 0 auto;accent-color:#2f6b4c}
+.acc-yk-slot{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;padding:10px 12px;min-height:44px;border-radius:12px;background:#0f1115;font-size:14px;color:var(--dim)}
+.acc-yk-slot b{flex:1 1 100%;font-size:13px;font-weight:600;color:var(--faint)}
+.acc-yk-slot span{flex:1 1 0;min-width:0;overflow-wrap:anywhere}
+.acc-yk-slot.ok span{color:#7bd3a4}
+.acc-yk-slot.bad span{color:var(--bad)}
+.acc-yk-slot .btn{flex:0 0 auto;min-height:44px;padding:0 14px}
+.acc-yk-up{margin-top:12px;color:var(--dim);font-size:14px}
+.acc-yk-up input{min-height:44px;padding-top:10px}
+.acc-yk-ln{display:flex;gap:8px;margin-top:8px}
+.acc-yk-ln input{flex:1;min-width:0}
+.acc-yk-ln .btn{flex:0 0 auto}
 .acc-yk-note{margin-top:14px;color:var(--faint);font-size:13px}
 .acc-yk-note a{color:inherit}
 #acc-yk-cont{margin:0 0 14px}
 </style>
-<div id="acc-yk" class="acc-sheet hide" role="dialog" aria-label="Ключи Google для YouTube">
+<div id="acc-yk" class="acc-sheet hide" role="dialog" aria-label="Ключ Google для YouTube">
   <div class="acc-back" id="acc-yk-back"></div>
   <div class="acc-box acc-ykb">
-    <div class="acc-hd"><b>Ключи Google для YouTube</b><button id="acc-yk-x" class="acc-x">Закрыть</button></div>
+    <div class="acc-hd"><b>Ключ Google для YouTube</b><button id="acc-yk-x" class="acc-x" aria-label="Закрыть мастер ключей">Закрыть</button></div>
     <div id="acc-yk-body"></div>
   </div>
 </div>
 <script>
-// ---- the YouTube keys wizard: steps with links, then three fields; the values live in these inputs only ----
+// ---- the YouTube key wizard: four steps; the three values live in these variables only ----
 const YK=@@WIZARD@@;
-let ykStep=1, ykView='', ykMsg='', ykBad=false, ykSt=null, ykBusy=false, ykSkip=false, ykLast4='', ykNote='', ykHidden=false;
+let ykStep=1, ykView='', ykMsg='', ykBad=false, ykSt=null, ykBusy=false, ykHidden=false, ykTicks=[], ykFallback=false;
 // which phone this is, to open the links the way that gets out of the panel; the tests cannot run this, a person must
 const ykUA=navigator.userAgent||'';
 const ykIOS=/iPhone|iPad|iPod/.test(ykUA)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const ykAndroid=/Android/i.test(ykUA);
 const ykStandalone=navigator.standalone===true||!!(window.matchMedia&&matchMedia('(display-mode: standalone)').matches);
-const ykIn={};
-YK.fields.forEach(f=>{
-  const i=accEl('input');i.type=f.secret?'password':'text';i.autocomplete='off';i.spellcheck=false;
-  i.setAttribute('autocapitalize','off');i.setAttribute('autocorrect','off');i.setAttribute('enterkeyhint','done');
-  i.placeholder=f.label;ykIn[f.name]=i
-});
-// what is kept on the phone: the step number and "not finished" (1); nothing the owner typed
-const ykSaved=()=>{try{return Math.max(1,Math.min(YK.steps.length+1,parseInt(localStorage.getItem('acc-yk-step'),10)||1))}catch(e){return 1}};
+// what was found in the pasted text and what the panel (and Google) said of it: {s:'busy'|'ok'|'bad'|'net', msg, quota}
+const ykVal={api_key:'',client_id:'',client_secret:''}, ykInfo={api_key:null,client_id:null,client_secret:null};
+const ykRx={};Object.keys(YK.patterns).forEach(k=>{ykRx[k]=new RegExp(YK.patterns[k])});
+const ykIdle={api_key:'ждём · начинается с AIza',client_id:'ждём · заканчивается на .apps.googleusercontent.com',client_secret:'ждём · начинается с GOCSPX-'};
+const ykPaste=accEl('input');   // the spare place to paste into when the clipboard cannot be read
+ykPaste.type='text';ykPaste.autocomplete='off';ykPaste.spellcheck=false;ykPaste.placeholder='Вставьте сюда';
+ykPaste.setAttribute('autocapitalize','off');ykPaste.setAttribute('autocorrect','off');ykPaste.setAttribute('enterkeyhint','done');
+ykPaste.setAttribute('aria-label','Поле для вставки ключа, ID или secret');
+// what is kept on the phone: "not finished" (1); the step itself is the panel's, nothing the owner typed
 const ykPending=()=>{try{return localStorage.getItem('acc-yk-open')==='1'}catch(e){return false}};
-function ykKeep(n){try{localStorage.setItem('acc-yk-step',String(n));localStorage.setItem('acc-yk-open','1')}catch(e){}}
-function ykDrop(forgetStep){try{localStorage.removeItem('acc-yk-open');if(forgetStep)localStorage.removeItem('acc-yk-step')}catch(e){}}
-// the TV shows the step: 1..N, or 0 when the wizard is closed or finished; a failure here matters to nobody
+function ykKeep(){try{localStorage.setItem('acc-yk-open','1')}catch(e){}}
+function ykDrop(){try{localStorage.removeItem('acc-yk-open')}catch(e){}}
+const ykHas=()=>Object.keys(ykVal).some(k=>ykVal[k]);
+function ykWipe(){Object.keys(ykVal).forEach(k=>{ykVal[k]='';ykInfo[k]=null});ykPaste.value=''}
+// the TV shows the step: 1..N, or 0 when the wizard is closed; a failure here matters to nobody
 function ykTell(n){accCall('ytkeys',{action:'step',step:n}).catch(()=>{})}
-function ykGo(n){ykStep=n;ykKeep(n);ykTell(n);ykShow('step')}
+function ykGo(n){ykStep=n;ykKeep();ykTell(n);ykShow('step')}
 function ykShow(v){ykView=v;ykDraw()}
 function ykSay(t,bad){ykMsg=t||'';ykBad=!!bad;const m=$('acc-yk-body').querySelector('.acc-yk-m');if(m){m.textContent=ykMsg;m.classList.toggle('bad',ykBad)}}
-function ykBtn(text,cls,fn,id){const b=accEl('button','btn '+cls,text);if(id)b.id=id;b.onclick=()=>{buzz();fn()};return b}
+function ykBtn(text,cls,fn,id){const b=accEl('button','btn '+cls,text);b.type='button';if(id)b.id=id;b.onclick=()=>{buzz();fn()};return b}
 // Android: an intent link hands the page to the browser; anywhere else the link's own target=_blank opens a new tab
 function ykOut(e,intent){
   if(!ykAndroid||!intent)return;
@@ -89,14 +114,14 @@ function ykCopy(s){
 // a step's link: the button, "copy link" (and "open in Safari" on an iPhone), and what to expect
 function ykLinks(s){
   const a=ykLink(s,s.button,'btn acc wide');if(!a)return [];
+  a.setAttribute('aria-label',s.button+': '+s.title);
   const row=accEl('div','acc-yk-a'),c=ykCopy(s),sf=ykIOS?ykSafari(s):null;
   if(c)row.append(c);if(sf)row.append(sf);
   const out=[a,row,accEl('div','acc-yk-h',ykIOS&&ykStandalone?YK.texts.back:YK.texts.open)];
   if(ykStandalone&&!ykIOS)out.push(accEl('div','acc-yk-h',YK.texts.standalone));
   return out
 }
-function ykField(name){const f=YK.fields.find(x=>x.name===name);const l=accEl('label','',f.label);return [l,ykIn[name]]}
-function ykMsgEl(){const m=accEl('div','acc-yk-m'+(ykBad?' bad':''),ykMsg);return m}
+function ykMsgEl(){const m=accEl('div','acc-yk-m'+(ykBad?' bad':''),ykMsg);m.setAttribute('aria-live','polite');return m}
 function ykFoot(b){
   const n=accEl('div','acc-yk-note',YK.note+' ');const d=ykLink(YK.doc,YK.doc.button,'');
   if(d)n.append(d);
@@ -106,32 +131,111 @@ function ykDraw(){
   const b=$('acc-yk-body');b.textContent='';
   if(ykView==='load')b.append(accEl('div','acc-yk-p','Смотрю, что уже сохранено…'));
   else if(ykView==='set')ykSet(b);
-  else if(ykView==='done')ykDone(b);
-  else ykStepView(b);
+  else ykSteps(b);
   if(ykView!=='load')ykFoot(b)
 }
-function ykStepView(b){
-  const n=ykStep, total=YK.steps.length+1;
-  b.append(accEl('div','acc-stp','Шаг '+n+' из '+total));
-  if(n<=YK.steps.length){
-    const s=YK.steps[n-1];
-    if(ykIOS&&ykStandalone)b.append(accEl('p','acc-yk-p',YK.texts.ios_standalone));
-    b.append(accEl('div','acc-yk-t',s.title));
-    s.lines.forEach(t=>b.append(accEl('p','acc-yk-p',t)));
-    b.append(...ykLinks(s));
-    (s.fields||[]).forEach(f=>b.append(...ykField(f)));
-    const ck=accEl('label','acc-yk-ok'),box=accEl('input');box.type='checkbox';
-    box.onchange=()=>{buzz();ykGo(n+1)};
-    ck.append(box,accEl('span','','Готово'));b.append(ck,ykMsgEl())
-  }else{
-    b.append(accEl('div','acc-yk-t',YK.form.title));
-    b.append(accEl('p','acc-yk-p','Три значения: ключ API, Client ID и Client secret. Проверьте, что они на месте.'));
-    YK.fields.forEach(f=>b.append(...ykField(f.name)));
-    b.append(ykMsgEl());
-    b.append(ykBtn('Проверить и сохранить','acc wide',()=>ykSave(false)));
-    if(ykSkip)b.append(ykBtn('Сохранить без проверки','wide',()=>ykSave(true)))
+// ---- the four steps: finished ones fold to a check row, the next ones wait dimmed, any can be opened again ----
+function ykSteps(b){
+  b.append(accEl('p','acc-yk-p',YK.texts.intro.replace('%s',location.host)));
+  YK.steps.forEach((s,i)=>{
+    const n=i+1, cls=n<ykStep?'done':n===ykStep?'cur':'pend';
+    const box=accEl('div','acc-yk-st '+cls), h=accEl('button','acc-yk-sh');
+    h.type='button';h.setAttribute('aria-expanded',n===ykStep?'true':'false');
+    h.setAttribute('aria-label','Шаг '+n+' из '+YK.steps.length+': '+s.title+(cls==='done'?', сделан':cls==='cur'?', текущий':', ещё нет'));
+    h.append(accEl('span','acc-yk-n',cls==='done'?'✓':String(n)),accEl('span','',s.title));
+    if(n!==ykStep)h.onclick=()=>{buzz();ykGo(n)};
+    box.append(h);
+    if(n===ykStep){const body=accEl('div','acc-yk-sb');ykStepBody(body,s,n);box.append(body)}
+    b.append(box)
+  })
+}
+function ykStepBody(b,s,n){
+  if(ykIOS&&ykStandalone)b.append(accEl('p','acc-yk-p',YK.texts.ios_standalone));
+  s.lines.forEach(t=>b.append(accEl('p','acc-yk-p',t)));
+  if(s.ticks)ykChecklist(b,s);
+  b.append(...ykLinks(s));
+  if(s.paste)ykPasteBox(b,n);
+  if(n<YK.steps.length)b.append(ykBtn('Сделано, дальше','wide',()=>ykGo(n+1),'acc-yk-next'));
+  b.append(ykMsgEl())
+}
+function ykChecklist(b,s){
+  YK.ticks.forEach(t=>{
+    const l=accEl('label','acc-yk-tk'),c=accEl('input');c.type='checkbox';c.checked=ykTicks.indexOf(t.id)>=0;
+    c.onchange=()=>{
+      buzz();const on=c.checked;ykTicks=ykTicks.filter(x=>x!==t.id);if(on)ykTicks.push(t.id);
+      accCall('ytkeys',{action:'tick',id:t.id,on}).catch(()=>{})
+    };
+    l.append(c,accEl('span','',t.label));b.append(l)
+  });
+  if(s.warn)b.append(accEl('div','acc-yk-warn',s.warn))
+}
+// ---- the paste box: one button, the page works out whether it was a key, a client ID or a secret ----
+const ykDetect=t=>{
+  t=typeof t==='string'?t:'';if(t.length>YK.paste_max*2)return null;t=t.trim();if(!t||t.length>YK.paste_max)return null;
+  const k=Object.keys(ykRx).find(x=>ykRx[x].test(t));return k?[k,t]:null
+};
+function ykShown(k){
+  const i=ykInfo[k], v=ykVal[k];
+  if(!i)return ['',ykIdle[k]];
+  if(i.s==='busy')return ['','проверяю…'];
+  if(i.s!=='ok')return ['bad',i.msg];
+  if(k==='api_key')return ['ok','AIza…'+v.slice(-4)+' · '+(i.quota?'лимит на сегодня исчерпан, ключ верный':'работает')];
+  if(k==='client_id')return ['ok',v.slice(0,4)+'…apps.googleusercontent.com · клиент для ТВ'];
+  return ['ok','GOCSPX-… · принят']
+}
+function ykSlot(f){
+  const [cls,text]=ykShown(f.name), i=ykInfo[f.name];
+  const d=accEl('div','acc-yk-slot '+cls);d.append(accEl('b','',f.label),accEl('span','',text));
+  d.setAttribute('aria-label',f.label+': '+text);
+  if(i&&i.s==='net'&&ykVal[f.name])d.append(ykBtn('Проверить снова','sm',()=>ykTake(ykVal[f.name])));
+  return d
+}
+function ykPasteBox(b,n){
+  YK.fields.forEach(f=>b.append(ykSlot(f)));
+  b.append(ykBtn('Вставить из буфера','acc wide',ykFromClipboard,'acc-yk-paste'));
+  if(ykFallback||!(navigator.clipboard&&navigator.clipboard.readText)){
+    const ln=accEl('div','acc-yk-ln');
+    ln.append(ykPaste,ykBtn('Добавить','',()=>{const t=ykPaste.value;ykPaste.value='';ykTake(t)}));
+    b.append(ln)
   }
-  if(n>1)b.append(ykBtn('Назад','sm',()=>ykGo(n-1)))
+  if(n===YK.steps.length){
+    const up=accEl('label','acc-yk-up','Или загрузить скачанный JSON клиента'),f=accEl('input');
+    f.type='file';f.accept='application/json,.json';f.setAttribute('aria-label','Файл JSON клиента');
+    f.onchange=()=>{const x=f.files&&f.files[0];f.value='';if(x)ykFromJson(x)};
+    up.append(f);b.append(up);
+    const all=Object.keys(ykInfo).every(k=>ykInfo[k]&&ykInfo[k].s==='ok');
+    const any=Object.keys(ykInfo).some(k=>ykInfo[k]&&ykInfo[k].s==='net');
+    const go=ykBtn('Сохранить и войти','acc wide',()=>ykSave(false),'acc-yk-save');go.disabled=!all;b.append(go);
+    if(any&&Object.keys(ykVal).every(k=>ykVal[k]&&ykInfo[k]&&ykInfo[k].s!=='bad'&&ykInfo[k].s!=='busy'))
+      b.append(ykBtn('Сохранить без проверки','wide',()=>ykSave(true)))
+  }
+}
+async function ykFromClipboard(){
+  if(!(navigator.clipboard&&navigator.clipboard.readText)){ykFallback=true;ykDraw();return}
+  try{await ykTake(await navigator.clipboard.readText())}
+  catch(e){ykFallback=true;ykDraw();ykSay('Браузер не дал прочитать буфер. Вставьте в поле и нажмите «Добавить».',true)}
+}
+// one pasted text: what it is, then the panel's check (a key and a client ID are asked of Google there)
+async function ykTake(text){
+  const d=ykDetect(text);
+  if(!d){ykSay(YK.texts.unknown,true);return false}
+  const k=d[0], v=d[1];
+  ykVal[k]=v;ykInfo[k]={s:'busy'};ykSay('');ykDraw();
+  try{
+    const j=await accCall('ytkeys',{action:'verify',value:v});
+    ykInfo[k]=j.works?{s:'ok',quota:j.check==='quota'}:j.check==='net'?{s:'net',msg:j.message}:{s:'bad',msg:j.message};
+    if(ykInfo[k].s==='bad')ykVal[k]=''
+  }catch(e){ykInfo[k]={s:'net',msg:e.message}}
+  ykDraw();return true
+}
+// the client JSON Google lets one download: {"installed":{client_id,client_secret}} or {"web":{...}}; it is read here, never uploaded
+async function ykFromJson(file){
+  if(file.size>YK.json_max){ykSay('Файл слишком большой для JSON клиента.',true);ykDraw();return}
+  let o=null;
+  try{const j=JSON.parse(await file.text());o=j&&(j.installed||j.web)}catch(e){}
+  if(!o||typeof o.client_id!=='string'||typeof o.client_secret!=='string'){ykSay('Не похоже на JSON клиента Google.',true);ykDraw();return}
+  const a=await ykTake(o.client_id), b=await ykTake(o.client_secret);
+  if(a&&b)ykSay('')
 }
 function ykSet(b){
   const full=ykSt&&ykSt.set;
@@ -144,17 +248,9 @@ function ykSet(b){
   b.append(row,ykMsgEl());
   if(full)b.append(ykBtn('Войти в YouTube заново','acc wide',ykSignin))
 }
-function ykDone(b){
-  b.append(accEl('div','acc-yk-big','Готово: ключи сохранены (…'+ykLast4+')'));
-  if(ykNote)b.append(accEl('p','acc-yk-p',ykNote));
-  b.append(accEl('p','acc-yk-p','Со своим ключом вход в YouTube нужно повторить. Старый вход сам не удаляется.'));
-  b.append(accEl('p','acc-yk-p','Google может написать, что приложение не проверено: это ваше приложение, продолжайте.'));
-  b.append(ykBtn('Войти в YouTube заново','acc wide',ykSignin));
-  b.append(ykBtn('Закрыть','wide',ykClose))
-}
 function ykSignin(){ykClose();accStart('youtube')}
-// "Закрыть" ends the wizard (the step is kept for the next «Ключи»); a tap beside the sheet only puts it aside
-function ykClose(){ykHidden=false;ykDrop(false);ykTell(0);ykHide()}
+// "Закрыть" ends the wizard (the panel keeps the step for the next «Ключи»); a tap beside the sheet only puts it aside
+function ykClose(){ykHidden=false;ykDrop();ykTell(0);ykHide()}
 function ykAside(){ykHidden=true;ykHide()}
 function ykHide(){$('acc-yk').classList.add('hide');ykBanner()}
 // on the Accounts tab: an unfinished wizard that is not on screen can be taken up again
@@ -162,23 +258,23 @@ function ykBanner(){
   const b=$('acc-yk-cont');if(!b)return;
   const show=ykPending()&&$('acc-yk').classList.contains('hide');
   b.classList.toggle('hide',!show);
-  if(show)b.textContent=YK.texts.resume.replace('%d',ykSaved()).replace('%d',YK.steps.length+1)
+  if(show)b.textContent=YK.texts.resume.replace('%d',ykStep).replace('%d',YK.steps.length)
 }
 async function ykCall(body,doing){
   if(ykBusy)return null;ykBusy=true;ykSay(doing);
   try{return await accCall('ytkeys',body)}
-  catch(e){ykSkip=!!(e.data&&e.data.check==='net');ykSay(e.message,true);if(ykView==='step')ykDraw();return null}
+  catch(e){ykSay(e.message,true);return null}
   finally{ykBusy=false}
 }
+// «Сохранить и войти»: the panel checks the key again, hands the three values to Kodi, and sign-in starts as from the card
 async function ykSave(skip){
-  const body={action:'save'};YK.fields.forEach(f=>{body[f.name]=ykIn[f.name].value.trim()});
+  const body={action:'save'};Object.keys(ykVal).forEach(k=>{body[k]=ykVal[k]});
   if(skip)body.skip_check=true;
-  const j=await ykCall(body,'Проверяю ключ и записываю… это может занять до 20 секунд.');
+  const j=await ykCall(body,'Проверяю и записываю… это может занять до 20 секунд.');
   if(!j)return;
-  Object.values(ykIn).forEach(i=>{i.value=''});
-  ykSkip=false;ykLast4=j.last4||'';ykNote=j.check==='quota'?j.message:'';ykSt={set:true,last4:ykLast4};
-  ykDrop(true);   // finished: nothing to come back to (the panel has already cleared the TV's step)
-  ykSay('');ykShow('done');ykBanner();buzz()
+  ykWipe();ykSt={set:true,last4:j.last4||''};
+  ykDrop();   // finished: nothing to come back to (the panel has already cleared the TV's step)
+  ykSay('');ykHide();buzz();accStart('youtube')
 }
 async function ykCheck(){
   const j=await ykCall({action:'check'},'Проверяю ключ…');
@@ -187,19 +283,21 @@ async function ykCheck(){
 async function ykClear(){
   const j=await ykCall({action:'clear'},'Удаляю…');
   if(!j)return;
-  ykSt={set:false,last4:''};ykSkip=false;ykGo(1);ykSay('Ключи удалены.')
+  ykSt={set:false,last4:''};ykGo(1);ykSay('Ключи удалены.')
 }
 // `resume`: the wizard comes back by itself (the page was reloaded, or the phone returned from the browser) or
-// from the banner, so it goes to its step even when some of the keys are already there
+// from the banner, so it goes to the panel's step even when some of the keys are already there
 async function ykOpen(resume){
   if(!resume)buzz();
   ykHidden=false;$('acc-yk').classList.remove('hide');ykBanner();ykSay('');ykShow('load');
   try{
     const j=await accCall('ytkeys',{action:'status'});ykSt=j;
-    if(resume&&j.set){ykDrop(true);ykTell(0);ykHide()}   // saved in the meantime (from another phone)
-    else if(!resume&&(j.set||j.partial))ykShow('set');
-    else ykGo(ykSaved())
-  }catch(e){ykSay(e.message,true);ykGo(ykSaved())}
+    if(resume&&j.set){ykDrop();ykTell(0);ykHide();return}   // saved in the meantime (from another phone)
+    const r=await accCall('ytkeys',{action:'resume',fresh:!ykHas()});
+    ykTicks=Array.isArray(r.ticks)?r.ticks:[];ykStep=Math.max(1,Math.min(YK.steps.length,r.step|0||1));
+    if(!resume&&(j.set||j.partial))ykShow('set');
+    else ykGo(ykStep)
+  }catch(e){ykSay(e.message,true);ykGo(ykStep)}
 }
 // the page loaded, or came back to the front (visibilitychange, pageshow): the unfinished wizard is on its step again
 function ykResume(){

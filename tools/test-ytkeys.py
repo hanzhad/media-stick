@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Offline test of the "Google keys for YouTube" wizard (no Kodi, no network, no device): python3 tools/test-ytkeys.py
+"""Offline test of the "Google key for YouTube" wizard (no Kodi, no network, no device): python3 tools/test-ytkeys.py
 
-The values (validation), the hand-over files (mode 0600, deleted after reading), Google's verdict on a key (the
-network call is replaced), the actions of the panel with the add-on's own script run for real against a stub of
-Kodi's settings, the step file the TV reads (mode 0644, stale after 30 minutes, no value in it), the links that open in
-the phone's browser (Android intent, Safari form), the page, and the real `panel` served on a local port. Every value used here carries the word
-MARKER: it must not appear in any log, reply, result file or page."""
+The values (validation, what a pasted text is), the hand-over files (mode 0600, deleted after reading), Google's verdict
+on a key and on a client ID (the network call is replaced), the actions of the panel with the add-on's own script run
+for real against a stub of Kodi's settings, the step file and the onboarding document the TV reads (no value in them),
+the links that open in the phone's browser (Android intent, Safari form), the page, and the real `panel` served on a
+local port. Every value used here carries the word MARKER (the client ID, which must be lower case, the tag CIDTAG):
+none of them may appear in any log, reply, result file, step file, onboarding document or page."""
 import contextlib
 import http.client
 import importlib.machinery
@@ -36,11 +37,18 @@ os.environ["MEDIASTICK_YTKEYS_DIR"] = os.path.join(TMP, "run")
 os.environ["PANEL_STATE_DIR"] = os.path.join(TMP, "state")
 sys.dont_write_bytecode = True
 
-KEY = "AIzaSy-MARKER-KEY-0123456789abcdefWXYZ"
-CID = "123456789012-MARKERclientid0123456789abcdef.apps.googleusercontent.com"
+CIDTAG = "abcdef0123456789cid"                  # a client ID is lower case, so its marker is this
+KEY = "AIzaMARKER-0123456789abcdefghijklmnWXYZ"                    # AIza + 35
+CID = "123456789012-%s.apps.googleusercontent.com" % CIDTAG
 SECRET = "GOCSPX-MARKER-SECRET-0123456789"
 GOOD = {"api_key": KEY, "client_id": CID, "client_secret": SECRET}
+LEAKS = ("MARKER", CIDTAG)
 YT = "plugin.video.youtube"
+
+
+def no_leak(test, text, where=""):
+    for word in LEAKS + (KEY, CID, SECRET):
+        test.assertNotIn(word, text, where)
 
 
 class Fake:
@@ -106,6 +114,7 @@ import mediastick_ytkeys as ky  # noqa: E402
 import panel_accounts as pa  # noqa: E402
 import panel_accounts_ui  # noqa: E402,F401
 import panel_ytkeys as pk  # noqa: E402
+import panel_ytkeys_steps as steps  # noqa: E402
 from resources.lib import apps, ytkeys  # noqa: E402
 
 
@@ -128,6 +137,7 @@ def reset():
     Fake.logs.clear()
     Fake.settings = {}
     Fake.missing = Fake.refuse = Fake.explode = False
+    pk.PROGRESS.reset()
     for path in (request_path(), result_path(), settings_path()):
         try:
             os.unlink(path)
@@ -184,12 +194,25 @@ def google_error(code, reason, where="errors", message="GOOGLE-MESSAGE-TEXT"):
     return code, json.dumps({"error": err}).encode()
 
 
+def oauth_error(code, error, description="x"):
+    """The device-code endpoint's error body."""
+    return code, json.dumps({"error": error, "error_description": description}).encode()
+
+
+DEVICE_OK = (200, json.dumps({"device_code": "DEVICE-CODE-TO-DROP", "user_code": "ABCD-EFGH",
+                              "verification_url": "https://www.google.com/device", "expires_in": 1800,
+                              "interval": 5}).encode())
+
+
 class Net:
     """urlopen in place: answers with (code, body) or raises what it is given; remembers what was asked."""
     def __init__(self):
-        self.urls, self.timeouts, self.answer = [], [], (200, b"{}")
+        self.urls, self.timeouts, self.answer, self.posts = [], [], (200, b"{}"), []
 
     def urlopen(self, url, timeout=None):
+        if hasattr(url, "full_url"):                       # a Request: the POST to the device-code endpoint
+            self.posts.append((url.full_url, url.data, url.get_method(), dict(url.header_items())))
+            url = url.full_url
         self.urls.append(url)
         self.timeouts.append(timeout)
         if isinstance(self.answer, BaseException):
@@ -203,10 +226,62 @@ class Net:
         return pk.Io(self.urlopen, lambda s: None, clock or (lambda: 0.0))
 
 
+class FakeOnboarding:
+    """The TV side's library, in place: keeps what it was given."""
+    def __init__(self):
+        self.written, self.cleared = [], []
+
+    def write(self, service, doc):
+        self.written.append((service, json.loads(json.dumps(doc))))
+
+    def clear(self, service):
+        self.cleared.append(service)
+
+    @property
+    def last(self):
+        return self.written[-1][1] if self.written else None
+
+
+def check_doc(test, doc):
+    """The shape of onboarding schema v1, and no value in it."""
+    test.assertEqual((doc["v"], doc["service"], doc["flow"], doc["state"]), (1, "youtube", "keys", "active"))
+    test.assertEqual(set(doc["title"]), {"tv", "phone"})
+    test.assertTrue(all(isinstance(t, str) and 0 < len(t) <= 80 for t in doc["title"].values()))
+    test.assertIn(doc["step"], range(1, 5))
+    test.assertEqual(len(doc["steps"]), 4)
+    test.assertLessEqual(len(doc["steps"]), 8)
+    for s in doc["steps"]:
+        test.assertEqual(set(s), {"id", "tv", "phone"})
+        test.assertTrue(0 < len(s["tv"]) <= 120 and 0 < len(s["phone"]) <= 120)
+    test.assertEqual(set(doc["hint"]), {"tv", "phone"})
+    test.assertTrue(all(0 < len(t) <= 160 for t in doc["hint"].values()))
+    test.assertLessEqual(len(doc["items"]), 6)
+    test.assertEqual([i["id"] for i in doc["items"]], ["api_key", "client_id", "secret"])
+    test.assertEqual([i["label"] for i in doc["items"]], ["API key", "Client ID", "Secret"])
+    test.assertTrue(all(i["s"] in ("ok", "wait") for i in doc["items"]))
+    test.assertEqual(doc["expires"] - doc["updated"], 1800)
+    if doc["step"] == 2:
+        test.assertEqual(doc["warn"], {"tv": "Publish it, or the TV gets signed out after 7 days.",
+                                       "phone": "Без публикации вход на ТВ слетает через 7 дней."})
+        test.assertEqual(len(doc["chips"]), 2)
+        for row in doc["chips"]:
+            test.assertLessEqual(len(row), 12)
+            test.assertTrue(all(set(c) == {"t", "s"} and c["s"] in ("done", "now", "todo") for c in row))
+    else:
+        test.assertNotIn("warn", doc)
+        test.assertNotIn("chips", doc)
+    no_leak(test, json.dumps(doc), "onboarding document")
+
+
 class Base(unittest.TestCase):
     """Fresh state for each test, and every byte printed during it kept to see that no value was."""
     def setUp(self):
         reset()
+        self.ob = FakeOnboarding()
+        for name, fn in (("ob_write", self.ob.write), ("ob_clear", self.ob.clear)):
+            patch = mock.patch.object(pk, name, fn)
+            patch.start()
+            self.addCleanup(patch.stop)
         self.out = io.StringIO()
         for ctx in (contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(self.out)):
             ctx.__enter__()
@@ -214,11 +289,12 @@ class Base(unittest.TestCase):
         self.addCleanup(self.no_marker_anywhere)
 
     def no_marker_anywhere(self):
-        self.assertNotIn("MARKER", self.out.getvalue())
-        self.assertNotIn("MARKER", "\n".join(Fake.logs))
+        no_leak(self, self.out.getvalue(), "output")
+        no_leak(self, "\n".join(Fake.logs), "log")
+        no_leak(self, json.dumps(self.ob.written), "onboarding")
         for name in os.listdir(ky.DIR):      # nothing left behind by a finished test but an answer
             with open(os.path.join(ky.DIR, name), encoding="utf-8") as f:
-                self.assertNotIn("MARKER", f.read(), name)
+                no_leak(self, f.read(), name)
 
 
 # ---- the values -------------------------------------------------------------------------------
@@ -232,7 +308,7 @@ class Values(unittest.TestCase):
         body = dict(GOOD, **change)
         with self.assertRaises(ky.Invalid) as c:
             ky.clean_values(body)
-        self.assertNotIn("MARKER", str(c.exception))        # a message never repeats a value
+        no_leak(self, str(c.exception))        # a message never repeats a value
         return str(c.exception)
 
     def test_each_value_is_needed(self):
@@ -253,7 +329,7 @@ class Values(unittest.TestCase):
 
     def test_no_spaces_line_breaks_or_non_ascii_inside(self):
         for name in GOOD:
-            for bad in ("ab cd", "ab\ncd", "ab\r\ncd", "ab\tcd", "ab\x00cd", "abв" + "x" * 30, "ab cd"):
+            for bad in ("ab cd", "ab\ncd", "ab\r\ncd", "ab\tcd", "ab\x00cd", "abв" + "x" * 30, "ab cd"):
                 value = GOOD[name][:12] + bad + GOOD[name][12:]
                 self.assertIn("не должно быть", self.refused(**{name: value}), repr(bad))
 
@@ -272,6 +348,49 @@ class Values(unittest.TestCase):
         self.assertEqual(ky.describe({"api_key": KEY, "client_id": "", "client_secret": ""}),
                          {"set": False, "partial": True, "last4": ""})
         self.assertEqual(ky.describe({"api_key": "", "client_id": "", "client_secret": ""})["partial"], False)
+
+
+class Detect(unittest.TestCase):
+    """What a pasted text is: strict, whole, trimmed, capped."""
+    def test_the_three_kinds(self):
+        self.assertEqual(steps.detect(KEY), ("api_key", KEY))
+        self.assertEqual(steps.detect(CID), ("client_id", CID))
+        self.assertEqual(steps.detect(SECRET), ("client_secret", SECRET))
+        self.assertEqual(steps.detect("  \n" + KEY + "\t\n"), ("api_key", KEY))             # trimmed
+
+    def test_the_patterns_are_the_ones_agreed(self):
+        self.assertEqual(dict(steps.PATTERNS), {
+            "api_key": r"^AIza[0-9A-Za-z_-]{35}$",
+            "client_id": r"^[0-9]+-[0-9a-z]+\.apps\.googleusercontent\.com$",
+            "client_secret": r"^GOCSPX-[0-9A-Za-z_-]{20,40}$"})
+        self.assertEqual(pk.WIZARD["patterns"], dict(steps.PATTERNS))     # the page gets the same sources
+
+    def test_lengths_at_the_edges(self):
+        self.assertIsNotNone(steps.detect("AIza" + "a" * 35))
+        for n in (34, 36):
+            self.assertIsNone(steps.detect("AIza" + "a" * n), n)
+        self.assertIsNotNone(steps.detect("GOCSPX-" + "a" * 20))
+        self.assertIsNotNone(steps.detect("GOCSPX-" + "a" * 40))
+        for n in (19, 41):
+            self.assertIsNone(steps.detect("GOCSPX-" + "a" * n), n)
+
+    def test_unknown_or_sloppy_text_is_nothing(self):
+        for text in ("", "   ", "hello", "AIza", KEY + KEY, KEY + " x", KEY[:10] + " " + KEY[10:], KEY + "\n" + KEY,
+                     CID.upper(), "x" + CID, CID + "x", "123456789012-abc.apps.googleusercontent.com.evil.com",
+                     "-abc.apps.googleusercontent.com", SECRET + "!", "gocspx-" + "a" * 25, "AIza" + "é" * 35,
+                     "AIza" + "a" * 34 + "\n", None, 5, ["x"], {"a": 1}, True):
+            self.assertIsNone(steps.detect(text), repr(text)[:40])
+
+    def test_the_length_is_capped_before_matching(self):
+        self.assertIsNone(steps.detect("a" * 100000))
+        self.assertIsNone(steps.detect(" " * 100000 + KEY))
+        self.assertIsNone(steps.detect("1" * steps.PASTE_MAX + "-a.apps.googleusercontent.com"))
+        self.assertEqual(steps.detect(" " * 100 + KEY + " " * 100)[0], "api_key")
+
+    def test_matches_wants_the_right_kind_and_the_whole_value(self):
+        self.assertTrue(steps.matches("api_key", KEY))
+        self.assertFalse(steps.matches("client_id", KEY))
+        self.assertFalse(steps.matches("api_key", " " + KEY))
 
 
 # ---- the hand-over files ------------------------------------------------------------------------
@@ -386,7 +505,7 @@ class Verdict(Base):
         self.assertEqual(len(net.urls), 1)
         url = net.urls[0]
         self.assertTrue(url.startswith("https://www.googleapis.com/youtube/v3/videos?"), url[:60])
-        for part in ("part=id", "chart=mostPopular", "maxResults=1", "key=AIzaSy-MARKER-KEY-0123456789abcdefWXYZ"):
+        for part in ("part=id", "chart=mostPopular", "maxResults=1", "key=" + KEY):
             self.assertIn(part, url)
         self.assertEqual(net.timeouts, [10])
 
@@ -441,6 +560,62 @@ class Verdict(Base):
         self.assertNotIn("GOOGLE-MESSAGE-TEXT", json.dumps(reply))
 
 
+class ClientVerdict(Base):
+    """A client ID is tried at the device-code endpoint: a TV client gets a device code (dropped at once)."""
+    def verdict(self, answer):
+        net = Net()
+        net.answer = answer
+        return pk.check_client(CID, net.io()), net
+
+    def test_a_device_code_means_a_client_for_tvs(self):
+        (verdict, code), net = self.verdict(DEVICE_OK)
+        self.assertEqual((verdict, code), ("ok", 200))
+        self.assertEqual(pk.hint(verdict, kind="client_id"), "Клиент для ТВ найден.")
+
+    def test_one_post_with_the_id_and_the_scope_in_the_body_not_in_the_url(self):
+        _, net = self.verdict(DEVICE_OK)
+        self.assertEqual(len(net.posts), 1)
+        url, data, method, headers = net.posts[0]
+        self.assertEqual((url, method), ("https://oauth2.googleapis.com/device/code", "POST"))
+        self.assertEqual(sorted(data.decode().split("&")), sorted([
+            "client_id=" + CID, "scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube.readonly"]))
+        self.assertNotIn(CIDTAG, url)
+        self.assertNotIn("?", url)
+        self.assertEqual(net.timeouts, [10])
+        self.assertEqual(headers.get("Content-type"), "application/x-www-form-urlencoded")
+
+    def test_what_google_says_about_a_client(self):
+        cases = [
+            (oauth_error(401, "invalid_client", "The OAuth client was not found."), "client_missing"),
+            (oauth_error(400, "invalid_client"), "client_missing"),
+            (oauth_error(401, "unauthorized_client"), "client_type"),
+            (oauth_error(400, "unauthorized_client", "Unauthorized"), "client_type"),
+            (oauth_error(400, "invalid_request", "Invalid client type."), "client_type"),
+            (oauth_error(400, "invalid_request", "Missing required parameter"), "other"),
+            (oauth_error(400, "invalid_scope"), "other"),
+            (oauth_error(400, "access_denied"), "other"),
+            ((200, b"{}"), "other"),                                          # a 200 without a device code is no proof
+            ((200, b'{"device_code": ""}'), "other"),
+            ((200, b"not json"), "other"),
+            ((400, b"not json"), "other"),
+            ((500, b""), "other"),
+        ]
+        for answer, expected in cases:
+            (verdict, code), _ = self.verdict(answer)
+            self.assertEqual((verdict, code), (expected, answer[0]), answer)
+
+    def test_the_words_for_the_page(self):
+        self.assertEqual(pk.hint("client_missing"), "ID не найден")
+        self.assertEqual(pk.hint("client_type"),
+                         "Это не клиент для ТВ: выберите тип TVs and Limited Input devices")
+
+    def test_no_answer_is_the_network_and_no_text_of_it_leaks(self):
+        for failure in (urllib.error.URLError("no route " + CID), socket.timeout(CID), ConnectionResetError(CID),
+                        ValueError(CID), OSError(CID)):
+            (verdict, code), _ = self.verdict(failure)
+            self.assertEqual((verdict, code), ("net", 0), repr(failure))
+
+
 # ---- the actions, with the add-on's own script behind them -----------------------------------------
 
 class Actions(Base):
@@ -450,7 +625,7 @@ class Actions(Base):
 
     def do(self, body, net=None):
         reply, code = pk.handle(body, self.kodi, (net or self.net).io())
-        self.assertNotIn("MARKER", json.dumps(reply))               # no reply carries a value
+        no_leak(self, json.dumps(reply))                            # no reply carries a value
         return reply, code
 
     def save(self, **extra):
@@ -473,9 +648,9 @@ class Actions(Base):
 
     def test_no_value_reaches_the_log_or_what_kodi_is_asked(self):
         self.save()
-        self.assertNotIn("MARKER", json.dumps(self.kodi.calls))
+        no_leak(self, json.dumps(self.kodi.calls))
         self.assertTrue(any("ytkeys save: done" in line for line in Fake.logs))
-        self.assertNotIn("MARKER", "".join(Fake.logs))
+        no_leak(self, "".join(Fake.logs))
 
     def test_the_page_sees_saved_and_the_last_four_characters(self):
         self.save()
@@ -544,9 +719,20 @@ class Actions(Base):
             self.assertEqual((code, reply["ok"]), (400, False), body)
         self.assertEqual((self.net.urls, self.kodi.calls, os.listdir(ky.DIR)), ([], [], []))
 
+    def test_the_server_does_not_trust_values_that_pass_the_old_rules_but_look_like_nothing(self):
+        for body in (dict(GOOD, api_key="AIza" + "a" * 34), dict(GOOD, api_key="AIza" + "a" * 36),
+                     dict(GOOD, api_key="x" * 40), dict(GOOD, client_id="123-ABC" + ky.ID_SUFFIX),
+                     dict(GOOD, client_id="abc-def" + ky.ID_SUFFIX), dict(GOOD, client_secret="x"),
+                     dict(GOOD, client_secret="GOCSPX-short"), dict(GOOD, client_secret="GOCSPX-" + "a" * 41),
+                     dict(GOOD, client_secret=KEY)):
+            reply, code = self.do(dict(body, action="save"))
+            self.assertEqual((code, reply["ok"]), (400, False), body)
+            self.assertIn("не похоже", reply["error"])
+        self.assertEqual((self.net.urls, self.kodi.calls, os.listdir(ky.DIR), Fake.settings), ([], [], [], {}))
+
     def test_replace_overwrites(self):
         self.save()
-        other = dict(GOOD, api_key="AIzaSy-MARKER-OTHER-0123456789abcdefABCD")
+        other = dict(GOOD, api_key="AIzaMARKER-OTHER-0123456789abcdefghABCD")
         reply, _ = self.do(dict(other, action="save"))
         self.assertEqual(reply["last4"], "ABCD")
         self.assertEqual(Fake.settings["youtube.api.key"], other["api_key"])
@@ -577,7 +763,7 @@ class Actions(Base):
         reply, code = pk.handle(dict(GOOD, action="save"), self.kodi, self.net.io(lambda: next(ticks)))
         self.assertEqual((code, reply["ok"]), (504, False))
         self.assertEqual(os.listdir(ky.DIR), [])                    # the values must not lie in /run
-        self.assertNotIn("MARKER", json.dumps(reply))
+        no_leak(self, json.dumps(reply))
 
     def test_it_waits_for_the_script_as_long_as_it_takes_within_the_limit(self):
         later = []
@@ -620,6 +806,112 @@ class Actions(Base):
     def test_unknown_actions(self):
         for body in ({}, {"action": "format"}, {"action": 5}, {"action": None}, {"action": ["save"]}):
             self.assertEqual(self.do(body)[1], 404, body)
+
+
+class Verify(Base):
+    """The instant check of one pasted text: what it is, and Google's word on it."""
+    def setUp(self):
+        super().setUp()
+        self.kodi, self.net = FakeKodi(), Net()
+
+    def verify(self, text):
+        reply, code = pk.handle({"action": "verify", "value": text}, self.kodi, self.net.io())
+        no_leak(self, json.dumps(reply))
+        return reply, code
+
+    def test_a_key_is_tried_with_the_one_videos_request(self):
+        reply, code = self.verify(KEY)
+        self.assertEqual((code, reply["ok"], reply["kind"], reply["check"], reply["works"]), (200, True, "api_key", "ok", True))
+        self.assertEqual(len(self.net.urls), 1)
+        self.assertTrue(self.net.urls[0].startswith(pk.CHECK_URL + "?"))
+        self.assertEqual(self.net.posts, [])
+
+    def test_a_refused_key_says_why_and_is_not_working(self):
+        self.net.answer = google_error(403, "accessNotConfigured")
+        reply, _ = self.verify("  " + KEY + "\n")                     # trimmed
+        self.assertEqual((reply["kind"], reply["check"], reply["works"]), ("api_key", "disabled", False))
+        self.assertIn("YouTube Data API v3", reply["message"])
+
+    def test_a_key_over_its_quota_still_counts(self):
+        self.net.answer = google_error(403, "quotaExceeded")
+        reply, _ = self.verify(KEY)
+        self.assertEqual((reply["check"], reply["works"]), ("quota", True))
+
+    def test_a_client_id_is_tried_at_the_device_code_endpoint(self):
+        self.net.answer = DEVICE_OK
+        reply, code = self.verify(CID)
+        self.assertEqual((code, reply["kind"], reply["check"], reply["works"], reply["message"]),
+                         (200, "client_id", "ok", True, "Клиент для ТВ найден."))
+        self.assertEqual(len(self.net.posts), 1)
+        self.assertNotIn("DEVICE-CODE-TO-DROP", json.dumps(reply))      # the code is dropped
+        self.assertNotIn("DEVICE-CODE-TO-DROP", self.out.getvalue() + "".join(Fake.logs))
+
+    def test_the_client_verdicts_have_the_agreed_words(self):
+        for answer, check, message in (
+                (oauth_error(401, "invalid_client"), "client_missing", "ID не найден"),
+                (oauth_error(401, "unauthorized_client"), "client_type",
+                 "Это не клиент для ТВ: выберите тип TVs and Limited Input devices"),
+                (oauth_error(400, "invalid_request", "Invalid client type"), "client_type",
+                 "Это не клиент для ТВ: выберите тип TVs and Limited Input devices")):
+            self.net.answer = answer
+            reply, _ = self.verify(CID)
+            self.assertEqual((reply["check"], reply["works"], reply["message"]), (check, False, message))
+
+    def test_a_secret_is_only_checked_for_its_shape_and_asks_nobody(self):
+        reply, code = self.verify(SECRET)
+        self.assertEqual((code, reply["kind"], reply["works"]), (200, "client_secret", True))
+        self.assertEqual((self.net.urls, self.net.posts), ([], []))
+
+    def test_no_network_is_not_a_refusal(self):
+        self.net.answer = urllib.error.URLError("down " + CID)
+        for text in (KEY, CID):
+            reply, _ = self.verify(text)
+            self.assertEqual((reply["check"], reply["works"]), ("net", False), text)
+            self.assertIn("интернет", reply["message"])
+
+    def test_what_is_not_a_key_an_id_or_a_secret_is_refused_and_asks_nobody(self):
+        for text in ("", "hello", KEY + KEY, "AIza" + "a" * 34, CID.upper(), "x" * 5000, None, 5, ["x"], {"a": CID}):
+            reply, code = self.verify(text)
+            self.assertEqual((code, reply["ok"], reply["error"]), (400, False, "Не похоже ни на ключ, ни на ID, ни на secret"), text)
+        self.assertEqual((self.net.urls, self.net.posts), ([], []))
+
+    def test_the_body_may_not_name_the_kind(self):
+        reply, code = pk.handle({"action": "verify", "kind": "api_key", "value": CID}, self.kodi, self.net.io())
+        self.assertEqual((code, reply.get("kind")), (200, "client_id"))      # the server decides what it is
+
+    def test_the_urls_asked_never_log_and_the_key_is_in_one_get_only(self):
+        self.net.answer = DEVICE_OK
+        self.verify(KEY)
+        self.verify(CID)
+        self.verify(SECRET)
+        self.assertEqual(len(self.net.urls), 2)
+        self.assertEqual(len(self.net.posts), 1)
+        self.assertNotIn(CIDTAG, self.net.urls[1])
+
+    def test_the_checks_go_to_the_step_file_and_the_tv_as_booleans_only(self):
+        pk.handle({"action": "step", "step": 4}, self.kodi, self.net.io())
+        self.net.answer = DEVICE_OK
+        self.verify(CID)
+        self.assertEqual(ky.read_step()["checks"], {"key": None, "client_id": True, "secret": None})
+        self.verify(SECRET)
+        self.net.answer = google_error(403, "API_KEY_INVALID", "details")
+        self.verify(KEY)
+        self.assertEqual(ky.read_step()["checks"], {"key": False, "client_id": True, "secret": True})
+        self.assertEqual([i["s"] for i in self.ob.last["items"]], ["wait", "ok", "ok"])
+        self.net.answer = (200, b"{}")
+        self.verify(KEY)
+        self.assertEqual(ky.read_step()["checks"], {"key": True, "client_id": True, "secret": True})
+        self.assertEqual([i["s"] for i in self.ob.last["items"]], ["ok", "ok", "ok"])
+        self.net.answer = urllib.error.URLError("down")
+        self.verify(KEY)
+        self.assertEqual(ky.read_step()["checks"]["key"], None)                # not known is not wrong
+        for _, doc in self.ob.written:
+            check_doc(self, doc)
+
+    def test_nothing_is_written_for_the_tv_while_the_wizard_is_closed(self):
+        self.verify(KEY)
+        self.assertEqual(os.listdir(ky.DIR), [])
+        self.assertEqual((self.ob.written, self.ob.cleared), ([], []))
 
 
 class Script(Base):
@@ -790,6 +1082,27 @@ class StepFile(Base):
         ky.clear_step()
         self.assertEqual(os.listdir(ky.DIR), [])
 
+    def test_the_checks_are_booleans_or_null_and_nothing_else(self):
+        good = {"key": True, "client_id": None, "secret": False}
+        ky.write_step(3, 4, "A", "B", now=self.NOW, checks=good)
+        with open(step_path(), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["checks"], good)
+        self.assertEqual(ky.read_step(now=self.NOW)["checks"], good)
+        for bad in ({"key": "yes"}, {"key": 1}, {"key": KEY}, {"value": True}, [True], "x", {"key": ["x"]}):
+            with self.assertRaises(ValueError, msg=bad):
+                ky.write_step(3, 4, "A", "B", now=self.NOW, checks=bad)
+        self.assertEqual(ky.read_step(now=self.NOW)["checks"], good)             # the refused write changed nothing
+
+    def test_a_partial_checks_object_is_filled_with_nulls(self):
+        ky.write_step(3, 4, "A", "B", now=self.NOW, checks={"key": True})
+        self.assertEqual(ky.read_step(now=self.NOW)["checks"], {"key": True, "client_id": None, "secret": None})
+
+    def test_a_file_with_bad_checks_still_reads_without_them(self):
+        self.put(total=4, checks={"key": "AIza-a-value"})
+        got = ky.read_step(step_path(), self.NOW)
+        self.assertNotIn("checks", got)
+        self.assertEqual(got["step"], 3)
+
 
 class Links(unittest.TestCase):
     """What a step's link looks like on an Android phone (intent) and on an iPhone (x-safari-https): pure."""
@@ -816,8 +1129,8 @@ class Links(unittest.TestCase):
         self.assertEqual(intent.count("#"), 1)
 
     def test_the_safari_link_is_the_url_behind_x_safari(self):
-        self.assertEqual(pk.safari_link("https://console.cloud.google.com/projectcreate"),
-                         "x-safari-https://console.cloud.google.com/projectcreate")
+        self.assertEqual(pk.safari_link("https://console.cloud.google.com/auth/overview"),
+                         "x-safari-https://console.cloud.google.com/auth/overview")
 
     def test_a_url_that_cannot_stand_inside_another_scheme_gives_nothing(self):
         for url in ("http://console.cloud.google.com/", "https://", "https://a/b;c", "https://a/b#frag", "ftp://a/b",
@@ -834,13 +1147,16 @@ class Links(unittest.TestCase):
 
     def test_the_wizard_says_what_the_page_may_claim(self):
         t = pk.WIZARD["texts"]
-        self.assertEqual(t["open"], "Откроется в браузере. Вернитесь в пульт и нажмите «Готово».")
+        self.assertEqual(t["open"], "Откроется в браузере. Вернитесь в пульт и нажмите «Сделано, дальше».")
         self.assertIn("Скопировать ссылку", t["copy"])
         self.assertEqual(t["safari"], "Открыть в Safari")
         self.assertEqual(t["ios_standalone"],
                          "Ссылки открываются внутри приложения. Чтобы открывать их в Safari, откройте пульт в Safari, "
-                         "а не с экрана «Домой». Вернуться сюда можно кнопкой «Готово» вверху.")
-        self.assertEqual(t["resume"] % (3, 6), "Продолжить настройку ключей (шаг 3 из 6)")
+                         "а не с экрана «Домой». Вернуться сюда можно кнопкой «Закрыть» вверху.")
+        self.assertEqual(t["resume"] % (3, 4), "Продолжить настройку ключей (шаг 3 из 4)")
+        self.assertEqual(t["header"], "Ключ Google для YouTube")
+        self.assertEqual(t["intro"] % "pult.local",
+                         "Нужен один раз, минут пять. С компьютера удобнее: откройте pult.local в браузере ноутбука — шаги те же.")
 
 
 class StepActions(Base):
@@ -850,30 +1166,39 @@ class StepActions(Base):
 
     def do(self, body):
         reply, code = pk.handle(body, self.kodi, self.net.io())
-        self.assertNotIn("MARKER", json.dumps(reply))
+        no_leak(self, json.dumps(reply))
         return reply, code
 
-    def test_every_step_writes_its_own_title_and_hint(self):
-        self.assertEqual(pk.STEP_TOTAL, 6)
-        for n in range(1, 7):
+    def test_every_step_writes_its_own_title_and_hint_in_english(self):
+        self.assertEqual(pk.STEP_TOTAL, 4)
+        expected = [
+            ("Project and API", "On your phone: open the Google link and tap Enable."),
+            ("Allow TV sign-in", "Get started › App name: TV › Audience: External › Create, then Audience › Publish app."),
+            ("API key", "Create an API key and paste it on your phone."),
+            ("TV client", "Create a client of type TVs and Limited Input devices, paste its ID and secret on your phone."),
+        ]
+        for n in range(1, 5):
             self.assertEqual(self.do({"action": "step", "step": n}), ({"ok": True, "step": n}, 200))
             got = ky.read_step()
-            title, hint = pk.step_text(n)
-            self.assertEqual((got["step"], got["total"], got["title"], got["hint"]), (n, 6, title, hint))
-            self.assertTrue(title and hint)
-            self.assertLessEqual(len(hint), 120)
-            self.assertLessEqual(len(title), ky.STEP_TITLE_MAX)
+            self.assertEqual((got["step"], got["total"], got["title"], got["hint"]), (n, 4, *expected[n - 1]))
+            self.assertEqual(pk.step_text(n), expected[n - 1])
+            self.assertLessEqual(len(got["hint"]), 120)
+            self.assertLessEqual(len(got["title"]), ky.STEP_TITLE_MAX)
             self.assertEqual(stat.S_IMODE(os.stat(step_path()).st_mode), 0o644)
+            self.assertEqual(got["checks"], {"key": None, "client_id": None, "secret": None})
         self.assertEqual(self.kodi.calls, [])                       # no Kodi call: the TV reads the file itself
 
+    def test_the_file_has_the_old_shape_plus_checks(self):
+        self.do({"action": "step", "step": 3})
+        with open(step_path(), encoding="utf-8") as f:
+            self.assertEqual(set(json.load(f)), {"step", "total", "title", "hint", "updated", "checks"})
+
     def test_the_words_come_from_the_wizard_description(self):
-        for n, s in enumerate(pk.STEPS, 1):
-            self.assertEqual(pk.step_text(n), (s["title"], s["hint"]))
-        self.assertEqual(pk.step_text(6), (pk.FORM["title"], pk.FORM["hint"]))
-        self.assertEqual(pk.WIZARD["form"], pk.FORM)
-        for s in pk.STEPS:
-            self.assertLessEqual(len(s["hint"]), 120)
-        self.assertLessEqual(len(pk.FORM["hint"]), 120)
+        for n, s in enumerate(steps.STEPS, 1):
+            self.assertEqual(pk.step_text(n), (s["tv"], s["tv_hint"]))
+            self.assertLessEqual(len(s["tv_hint"]), 120)
+            self.assertLessEqual(len(s["hint"]), 160)
+            self.assertTrue(s["tv"].isascii() and s["tv_hint"].isascii() or "›" in s["tv_hint"])   # the TV's words are English
 
     def test_step_zero_removes_the_file_and_is_fine_without_one(self):
         self.do({"action": "step", "step": 3})
@@ -883,10 +1208,10 @@ class StepActions(Base):
         self.assertIsNone(ky.read_step())
         self.assertEqual(self.do({"action": "step", "step": 0})[1], 200)
 
-    def test_a_step_outside_zero_to_six_or_not_a_whole_number_is_refused_and_changes_nothing(self):
+    def test_a_step_outside_zero_to_four_or_not_a_whole_number_is_refused_and_changes_nothing(self):
         self.do({"action": "step", "step": 2})
         before = ky.read_step()
-        for bad in (7, -1, 100, "3", "", 2.0, 2.5, True, False, None, [3], {"a": 1}):
+        for bad in (5, 6, -1, 100, "3", "", 2.0, 2.5, True, False, None, [3], {"a": 1}):
             reply, code = self.do({"action": "step", "step": bad})
             self.assertEqual((code, reply["ok"]), (400, False), bad)
         reply, code = self.do({"action": "step"})
@@ -894,37 +1219,39 @@ class StepActions(Base):
         self.assertEqual(ky.read_step(), before)
 
     def test_nothing_from_the_body_reaches_the_file_or_the_reply(self):
-        body = dict(GOOD, action="step", step=5, title="MARKER-TITLE", hint="MARKER-HINT", url="MARKER-URL")
+        body = dict(GOOD, action="step", step=3, title="MARKER-TITLE", hint="MARKER-HINT", url="MARKER-URL")
         reply, code = self.do(body)
-        self.assertEqual((code, reply), (200, {"ok": True, "step": 5}))
+        self.assertEqual((code, reply), (200, {"ok": True, "step": 3}))
         with open(step_path(), encoding="utf-8") as f:
             text = f.read()
-        for secret in (KEY, CID, SECRET, "MARKER"):
+        for secret in (KEY, CID, SECRET, "MARKER", CIDTAG):
             self.assertNotIn(secret, text)
-        self.assertEqual(set(json.loads(text)), {"step", "total", "title", "hint", "updated"})
+        self.assertEqual(set(json.loads(text)), {"step", "total", "title", "hint", "updated", "checks"})
 
     def test_the_file_never_holds_a_value_even_after_a_failed_save(self):
-        self.do({"action": "step", "step": 6})
+        self.do({"action": "step", "step": 4})
         self.net.answer = google_error(403, "API_KEY_INVALID", message="MARKER-GOOGLE")
         reply, code = self.do(dict(GOOD, action="save"))
         self.assertEqual(code, 422)
         with open(step_path(), encoding="utf-8") as f:
             self.assertNotIn("MARKER", f.read())
-        self.assertEqual(ky.read_step()["step"], 6)                  # not saved: the wizard goes on
+        self.assertEqual(ky.read_step()["step"], 4)                  # not saved: the wizard goes on
 
     def test_a_saved_key_ends_the_wizard_on_the_tv_too(self):
-        self.do({"action": "step", "step": 6})
+        self.do({"action": "step", "step": 4})
         reply, code = self.do(dict(GOOD, action="save"))
         self.assertEqual(code, 200)
         self.assertIsNone(ky.read_step())
         self.assertFalse(os.path.exists(step_path()))
+        self.assertEqual(self.ob.cleared, ["youtube"])
 
     def test_a_save_that_kodi_refuses_leaves_the_step(self):
-        self.do({"action": "step", "step": 6})
+        self.do({"action": "step", "step": 4})
         Fake.refuse = True
         reply, code = self.do(dict(GOOD, action="save"))
         self.assertEqual(code, 500)
-        self.assertEqual(ky.read_step()["step"], 6)
+        self.assertEqual(ky.read_step()["step"], 4)
+        self.assertEqual(self.ob.cleared, [])
 
     def test_check_status_and_clear_leave_it_alone(self):
         self.do({"action": "step", "step": 4})
@@ -941,6 +1268,205 @@ class StepActions(Base):
         self.assertIn("шаг", reply["error"])
 
 
+class Ticks(Base):
+    """Step 2's checklist: the ticks stay on the panel with the step and turn into the TV's chips."""
+    def setUp(self):
+        super().setUp()
+        self.kodi, self.net = FakeKodi(), Net()
+
+    def do(self, body):
+        reply, code = pk.handle(body, self.kodi, self.net.io())
+        no_leak(self, json.dumps(reply))
+        return reply, code
+
+    def states(self):
+        return [[c["s"] for c in row] for row in self.ob.last["chips"]]
+
+    def test_the_six_boxes_are_the_six_chips(self):
+        self.assertEqual(steps.TICK_IDS, ("start", "name", "external", "create", "audience", "publish"))
+        self.assertEqual([[c["t"] for c in row] for row in steps.chip_rows([])],
+                         [["Get started", "App name: TV", "Audience: External", "Create"], ["Audience", "Publish app"]])
+        self.assertEqual([t["label"] for t in pk.WIZARD["ticks"]][0], "Нажмите «Начать»")
+
+    def test_the_first_open_chip_is_now_the_ticked_are_done_the_rest_todo(self):
+        self.do({"action": "step", "step": 2})
+        self.assertEqual(self.states(), [["now", "todo", "todo", "todo"], ["todo", "todo"]])
+        self.assertEqual(self.do({"action": "tick", "id": "start", "on": True}), ({"ok": True, "ticks": ["start"]}, 200))
+        self.assertEqual(self.states(), [["done", "now", "todo", "todo"], ["todo", "todo"]])
+        self.do({"action": "tick", "id": "external", "on": True})
+        self.assertEqual(self.states(), [["done", "now", "done", "todo"], ["todo", "todo"]])
+        for i in ("name", "create", "audience"):
+            reply, _ = self.do({"action": "tick", "id": i, "on": True})
+        self.assertEqual(reply["ticks"], ["start", "name", "external", "create", "audience"])
+        self.assertEqual(self.states(), [["done"] * 4, ["done", "now"]])
+        self.do({"action": "tick", "id": "publish", "on": True})
+        self.assertEqual(self.states(), [["done"] * 4, ["done", "done"]])
+        self.do({"action": "tick", "id": "start", "on": False})
+        self.assertEqual(self.states()[0][0], "now")
+
+    def test_every_change_is_written_and_every_document_has_the_shape(self):
+        for body in ({"action": "step", "step": 2}, {"action": "tick", "id": "start", "on": True},
+                     {"action": "tick", "id": "name", "on": True}, {"action": "step", "step": 3}):
+            self.do(body)
+        self.assertEqual([d["step"] for _, d in self.ob.written], [2, 2, 2, 3])
+        self.assertEqual({s for s, _ in self.ob.written}, {"youtube"})
+        for _, doc in self.ob.written:
+            check_doc(self, doc)
+
+    def test_the_ticks_are_kept_when_the_owner_goes_to_another_step_and_back(self):
+        self.do({"action": "step", "step": 2})
+        self.do({"action": "tick", "id": "start", "on": True})
+        self.do({"action": "step", "step": 3})
+        self.do({"action": "step", "step": 2})
+        self.assertEqual(self.states()[0][0], "done")
+        self.assertEqual(self.do({"action": "resume"})[0]["ticks"], ["start"])
+
+    def test_only_a_known_box_and_a_real_boolean(self):
+        for bad in ({"id": "x", "on": True}, {"id": None, "on": True}, {"id": 1, "on": True}, {"id": "start", "on": 1},
+                    {"id": "start", "on": "true"}, {"id": "start"}, {"on": True}, {"id": ["start"], "on": True}):
+            reply, code = self.do(dict(bad, action="tick"))
+            self.assertEqual((code, reply["ok"]), (400, False), bad)
+        self.assertEqual(pk.PROGRESS.ticks, set())
+
+    def test_a_tick_while_the_wizard_is_closed_writes_nothing_for_the_tv(self):
+        self.do({"action": "tick", "id": "start", "on": True})
+        self.assertEqual((self.ob.written, os.listdir(ky.DIR)), ([], []))
+
+    def test_a_tick_that_cannot_be_written_for_the_tv_is_still_taken(self):
+        self.do({"action": "step", "step": 2})
+        with mock.patch.object(ky, "_write_private", side_effect=OSError("full")):
+            reply, code = self.do({"action": "tick", "id": "start", "on": True})
+        self.assertEqual((code, reply["ticks"]), (200, ["start"]))
+
+
+class Resume(Base):
+    def setUp(self):
+        super().setUp()
+        self.kodi, self.net = FakeKodi(), Net()
+
+    def do(self, body):
+        reply, code = pk.handle(body, self.kodi, self.net.io())
+        no_leak(self, json.dumps(reply))
+        return reply, code
+
+    def test_a_page_that_was_away_gets_the_step_back(self):
+        self.assertEqual(self.do({"action": "resume"})[0],
+                         {"ok": True, "step": 1, "open": False, "ticks": [], "checks": {"key": None, "client_id": None, "secret": None}})
+        self.do({"action": "step", "step": 3})
+        self.assertEqual(self.do({"action": "resume"})[0]["step"], 3)
+        self.do({"action": "step", "step": 0})                       # closed: the step is kept for the next «Ключи»
+        reply, _ = self.do({"action": "resume"})
+        self.assertEqual((reply["step"], reply["open"]), (3, False))
+
+    def test_after_a_panel_restart_the_step_file_still_knows(self):
+        ky.write_step(4, 4, "x", "y")
+        pk.PROGRESS.reset()
+        reply, _ = self.do({"action": "resume"})
+        self.assertEqual((reply["step"], reply["open"]), (4, True))
+
+    def test_a_page_with_no_values_forgets_what_was_found_good(self):
+        self.do({"action": "step", "step": 4})
+        self.net.answer = DEVICE_OK
+        self.do({"action": "verify", "value": CID})
+        self.assertTrue(self.do({"action": "resume"})[0]["checks"]["client_id"])       # the page still holds it
+        reply, _ = self.do({"action": "resume", "fresh": True})
+        self.assertEqual(reply["checks"], {"key": None, "client_id": None, "secret": None})
+        self.assertEqual(ky.read_step()["checks"], {"key": None, "client_id": None, "secret": None})
+        self.assertEqual([i["s"] for i in self.ob.last["items"]], ["wait"] * 3)
+
+    def test_a_save_forgets_everything(self):
+        self.do({"action": "step", "step": 2})
+        self.do({"action": "tick", "id": "start", "on": True})
+        self.do(dict(GOOD, action="save"))
+        reply, _ = self.do({"action": "resume"})
+        self.assertEqual((reply["step"], reply["open"], reply["ticks"]), (1, False, []))
+
+
+class Onboarding(Base):
+    """The document for the TV (mediastick_onboarding, when it is there): its shape, its words, no value in it."""
+    def setUp(self):
+        super().setUp()
+        self.kodi, self.net = FakeKodi(), Net()
+
+    def do(self, body):
+        return pk.handle(body, self.kodi, self.net.io())
+
+    def test_each_step_has_the_shape_of_schema_one(self):
+        for n in range(1, 5):
+            self.do({"action": "step", "step": n})
+            doc = self.ob.last
+            check_doc(self, doc)
+            self.assertEqual(doc["step"], n)
+            self.assertEqual(doc["title"], {"tv": "Follow along on your phone", "phone": "Ключ Google для YouTube"})
+            self.assertEqual(doc["steps"][n - 1]["tv"], pk.step_text(n)[0])
+            self.assertEqual(doc["hint"]["tv"], pk.step_text(n)[1])
+            self.assertEqual(doc["hint"]["phone"], steps.STEPS[n - 1]["hint"])
+
+    def test_the_four_steps_in_both_languages(self):
+        self.do({"action": "step", "step": 1})
+        self.assertEqual([(s["id"], s["tv"], s["phone"]) for s in self.ob.last["steps"]], [
+            ("project", "Project and API", "Проект и YouTube API"),
+            ("consent", "Allow TV sign-in", "Разрешить вход с ТВ"),
+            ("api_key", "API key", "Ключ API"),
+            ("client", "TV client", "Клиент для ТВ")])
+
+    def test_the_warning_and_the_chips_are_on_step_two_only(self):
+        for n in (1, 3, 4):
+            self.do({"action": "step", "step": n})
+            self.assertNotIn("warn", self.ob.last)
+            self.assertNotIn("chips", self.ob.last)
+        self.do({"action": "step", "step": 2})
+        self.assertIn("warn", self.ob.last)
+        self.assertEqual(self.ob.last["warn"]["phone"], "Без публикации вход на ТВ слетает через 7 дней.")
+
+    def test_the_time_fields(self):
+        with mock.patch("time.time", return_value=1_900_000_000.7):
+            self.do({"action": "step", "step": 1})
+        self.assertEqual((self.ob.last["updated"], self.ob.last["expires"]), (1_900_000_000, 1_900_001_800))
+
+    def test_finishing_or_closing_clears_it(self):
+        self.do({"action": "step", "step": 4})
+        self.do({"action": "step", "step": 0})
+        self.assertEqual(self.ob.cleared, ["youtube"])
+        self.do({"action": "step", "step": 4})
+        self.do(dict(GOOD, action="save"))
+        self.assertEqual(self.ob.cleared, ["youtube", "youtube"])
+
+    def test_no_value_ever_reaches_the_library(self):
+        self.net.answer = DEVICE_OK
+        for body in ({"action": "step", "step": 4}, {"action": "verify", "value": KEY},
+                     {"action": "verify", "value": CID}, {"action": "verify", "value": SECRET},
+                     dict(GOOD, action="save")):
+            self.do(body)
+        self.assertTrue(self.ob.written)
+        text = json.dumps(self.ob.written) + json.dumps(self.ob.cleared)
+        no_leak(self, text)
+        for _, doc in self.ob.written:
+            check_doc(self, doc)
+
+    def test_without_the_library_the_wizard_works_as_before(self):
+        with mock.patch.object(pk, "ob_write", None), mock.patch.object(pk, "ob_clear", None):
+            self.assertEqual(self.do({"action": "step", "step": 3})[1], 200)
+            self.assertEqual(ky.read_step()["step"], 3)
+            self.assertEqual(self.do({"action": "step", "step": 0})[1], 200)
+            self.assertEqual(self.do(dict(GOOD, action="save"))[1], 200)
+
+    def test_a_library_that_fails_does_not_fail_the_wizard(self):
+        def boom(*a):
+            raise RuntimeError("tv side broke " + KEY)
+        with mock.patch.object(pk, "ob_write", boom), mock.patch.object(pk, "ob_clear", boom):
+            self.assertEqual(self.do({"action": "step", "step": 2})[1], 200)
+            self.assertEqual(self.do({"action": "tick", "id": "start", "on": True})[1], 200)
+            self.assertEqual(self.do({"action": "step", "step": 0})[1], 200)
+
+    def test_the_import_is_guarded(self):
+        with open(os.path.join(LIB, "panel_ytkeys.py"), encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("try:\n    from mediastick_onboarding import write as ob_write, clear as ob_clear\n"
+                      "except ImportError:", text)
+        self.assertIn("ob_write = ob_clear = None", text)
+
+
 # ---- the page ----------------------------------------------------------------------------------
 
 class Page(unittest.TestCase):
@@ -949,39 +1475,106 @@ class Page(unittest.TestCase):
     def test_the_wizard_is_part_of_the_accounts_page(self):
         page = self.PAGE
         self.assertNotIn("@@", page)
-        for text in ("Ключи Google для YouTube", "Проверить и сохранить", "Войти в YouTube заново", "Точно удалить?",
-                     "Ключи заданы (…", "Заменить", "Проверить", "Готово", "Сохранить без проверки",
+        for text in ("Ключ Google для YouTube", "Сохранить и войти", "Вставить из буфера", "Сделано, дальше",
+                     "Открыть страницу Google", "Или загрузить скачанный JSON клиента", "Добавить", "Точно удалить?",
+                     "Ключи заданы (…", "Заменить", "Проверить", "Сохранить без проверки",
+                     "Не похоже ни на ключ, ни на ID, ни на secret", "Нужен один раз, минут пять.",
+                     "Без публикации вход на ТВ слетает через 7 дней.",
                      "Интерфейс Google меняется. Если надписи отличаются, ищите похожие.", "Описание от Google",
-                     "Старый вход сам не удаляется"):
+                     "ждём · начинается с AIza", "ждём · начинается с GOCSPX-", "клиент для ТВ", "работает"):
             self.assertIn(text, page)
         self.assertIn("'Ключи'", page)                              # the YouTube card's button
-        self.assertIn("accStart('youtube')", page)                  # signing in again is the existing sign-in
+        self.assertIn("accStart('youtube')", page)                  # saving goes on to the existing sign-in
 
-    def test_the_fields_are_not_remembered_and_the_secret_is_hidden(self):
-        self.assertIn("i.autocomplete='off'", self.PAGE)
-        self.assertIn("i.type=f.secret?'password':'text'", self.PAGE)
-        wizard = json.loads(self.PAGE.split("const YK=", 1)[1].split(";\nlet ykStep", 1)[0])
-        self.assertEqual({f["name"]: f["secret"] for f in wizard["fields"]},
+    def script(self):
+        return self.PAGE.split("// ---- the YouTube key wizard", 1)[1].split("</script>", 1)[0]
+
+    def wizard(self):
+        return json.loads(self.PAGE.split("const YK=", 1)[1].split(";\nlet ykStep", 1)[0])
+
+    def test_the_colours_and_touch_targets_of_the_mockup(self):
+        for colour in ("#0f1115", "#1b1d28", "#1f2433", "#3a4258", "#2f6b4c", "#f2f3f5", "#f0c674"):
+            self.assertIn(colour, self.PAGE)
+        self.assertIn("min-height:52px", self.PAGE)                  # a step's header is a big button
+        self.assertIn("min-height:44px", self.PAGE)
+
+    def test_steps_are_real_buttons_with_labels_and_three_states(self):
+        js = self.script()
+        self.assertIn("accEl('button','acc-yk-sh')", js)
+        self.assertIn("h.setAttribute('aria-expanded'", js)
+        self.assertIn("cls=n<ykStep?'done':n===ykStep?'cur':'pend'", js)      # done folds to a check, pending is dimmed
+        self.assertIn("cls==='done'?'✓'", js)
+        self.assertIn("if(n!==ykStep)h.onclick=()=>{buzz();ykGo(n)}", js)     # any step can be opened again
+        self.assertIn("aria-label", js)
+        self.assertIn(".acc-yk-st.pend{opacity:.55}", self.PAGE)
+        self.assertIn("ykBtn('Сделано, дальше'", js)
+        self.assertIn("b.type='button'", js)
+
+    def test_the_wizard_has_four_steps_with_a_checklist_on_the_second_and_paste_on_the_last_two(self):
+        w = self.wizard()
+        self.assertEqual(len(w["steps"]), 4)
+        self.assertEqual([bool(s.get("ticks")) for s in w["steps"]], [False, True, False, False])
+        self.assertEqual([bool(s.get("paste")) for s in w["steps"]], [False, False, True, True])
+        self.assertEqual(len(w["ticks"]), 6)
+        self.assertEqual(w["steps"][1]["warn"], "Без публикации вход на ТВ слетает через 7 дней.")
+        self.assertEqual(w["patterns"], dict(steps.PATTERNS))
+        self.assertEqual({f["name"]: f["secret"] for f in w["fields"]},
                          {"api_key": False, "client_id": False, "client_secret": True})
-        self.assertEqual({f["name"]: f["max"] for f in wizard["fields"]},
+        self.assertEqual({f["name"]: f["max"] for f in w["fields"]},
                          {"api_key": 128, "client_id": 256, "client_secret": 128})
 
-    def test_nothing_is_stored_or_shown_back(self):
-        self.assertNotIn("localStorage.setItem('acc-yk-v", self.PAGE)
-        for line in self.PAGE.splitlines():
-            if "localStorage.setItem" in line:
-                self.assertIn("acc-yk-step", line)                  # only the step number and the "unfinished" flag
-                self.assertNotIn(".value", line)
-                self.assertNotIn("ykIn", line)
-        self.assertIn("Object.values(ykIn).forEach(i=>{i.value=''})", self.PAGE)    # emptied after a save
-        self.assertNotIn("innerHTML", self.PAGE.split("// ---- the YouTube keys wizard", 1)[1])
+    def test_the_paste_box_reads_the_clipboard_or_offers_a_field_and_detects_the_kind(self):
+        js = self.script()
+        self.assertIn("navigator.clipboard.readText()", js)
+        self.assertIn("if(ykFallback||!(navigator.clipboard&&navigator.clipboard.readText))", js)
+        self.assertIn("ykPaste.type='text';ykPaste.autocomplete='off'", js)
+        self.assertIn("ykBtn('Добавить'", js)
+        self.assertIn("t.length>YK.paste_max*2", js)                          # capped before it is matched
+        self.assertIn("t.length>YK.paste_max", js)
+        self.assertIn("new RegExp(YK.patterns[k])", js)
+        self.assertIn("YK.texts.unknown", js)
+        self.assertIn("'AIza…'+v.slice(-4)", js)                              # only the last four of the key
+        self.assertIn("v.slice(0,4)+'…apps.googleusercontent.com · клиент для ТВ'", js)
+        self.assertIn("'GOCSPX-… · принят'", js)
+        self.assertIn("ждём · начинается с GOCSPX-", js)
+
+    def test_the_client_json_is_read_on_the_phone_and_never_sent_as_a_file(self):
+        js = self.script()
+        self.assertIn("f.type='file';f.accept='application/json,.json'", js)
+        self.assertIn("file.size>YK.json_max", js)
+        self.assertIn("JSON.parse(await file.text())", js)
+        self.assertIn("j&&(j.installed||j.web)", js)
+        self.assertNotIn("FormData", js)
+        self.assertNotIn("fetch(", js)                                         # accCall is the one way out, with JSON text
+        self.assertEqual(self.wizard()["json_max"], 16384)
+
+    def test_the_values_are_sent_only_to_be_checked_or_saved_and_never_kept(self):
+        js = self.script()
+        self.assertEqual(js.count("action:'verify'"), 1)
+        self.assertIn("accCall('ytkeys',{action:'verify',value:v})", js)
+        self.assertIn("const body={action:'save'};Object.keys(ykVal).forEach(k=>{body[k]=ykVal[k]})", js)
+        self.assertIn("ykWipe();ykSt={set:true", js)                           # emptied after a save
+        self.assertIn("if(ykInfo[k].s==='bad')ykVal[k]=''", js)                # a refused value is dropped
+        for word in ("sessionStorage", "document.cookie", "location.search", "location.hash", "history.", "console.log",
+                     "indexedDB", "innerHTML", "navigator.sendBeacon"):
+            self.assertNotIn(word, js, word)
+        for line in js.splitlines():
+            if "localStorage" in line:
+                self.assertNotIn("ykVal", line)
+                self.assertNotIn("ykPaste", line)
+        self.assertNotIn("confirm(", js)
+
+    def test_save_waits_for_three_good_values_and_then_signs_in(self):
+        js = self.script()
+        self.assertIn("Object.keys(ykInfo).every(k=>ykInfo[k]&&ykInfo[k].s==='ok')", js)
+        self.assertIn("go.disabled=!all", js)
+        self.assertIn("ykSay('');ykHide();buzz();accStart('youtube')", js)
+        self.assertIn("ykBtn('Сохранить без проверки'", js)                    # only offered when Google could not be asked
+        self.assertIn("'Проверить снова'", js)
 
     def test_no_browser_dialogs(self):
         for word in ("confirm(", "alert(", "prompt("):
             self.assertNotIn(word, self.PAGE)
-
-    def script(self):
-        return self.PAGE.split("// ---- the YouTube keys wizard", 1)[1].split("</script>", 1)[0]
 
     def test_the_page_finds_out_which_phone_it_is_on(self):
         js = self.script()
@@ -996,13 +1589,10 @@ class Page(unittest.TestCase):
         self.assertIn("if(!ykAndroid||!intent)return;", js)
         self.assertIn("location.href=intent;e.preventDefault()", js)         # one open, not two
         self.assertIn("s.intent.indexOf('intent://'+u.slice(8)+'#Intent;')===0", js)   # the page checks what the server built
-        wizard = json.loads(self.PAGE.split("const YK=", 1)[1].split(";\nlet ykStep", 1)[0])
-        first = wizard["steps"][0]
+        first = self.wizard()["steps"][0]
         self.assertEqual(first["intent"], pk.android_intent(first["url"]))
         self.assertEqual(first["safari"], "x-safari-" + first["url"])
-        self.assertEqual(wizard["doc"]["intent"], pk.android_intent(pk.DOC_URL))
-        self.assertEqual(wizard["form"]["title"], "Проверим и сохраним")
-        self.assertIn("YK.form.title", js)
+        self.assertEqual(self.wizard()["doc"]["intent"], pk.android_intent(pk.DOC_URL))
 
     def test_beside_each_link_there_is_copy_and_on_an_iphone_open_in_safari(self):
         js = self.script()
@@ -1015,7 +1605,7 @@ class Page(unittest.TestCase):
         self.assertIn("YK.texts.open", js)
         self.assertIn("Скопировать ссылку", self.PAGE)
         self.assertIn("Открыть в Safari", self.PAGE)
-        self.assertIn("Откроется в браузере. Вернитесь в пульт и нажмите «Готово».", self.PAGE)
+        self.assertIn("Откроется в браузере. Вернитесь в пульт и нажмите «Сделано, дальше».", self.PAGE)
         self.assertEqual(self.PAGE.count("acc-yk-url"), 3)       # the style, and the link shown when copying fails
 
     def test_an_iphone_in_the_home_screen_app_is_told_where_the_links_open(self):
@@ -1024,18 +1614,17 @@ class Page(unittest.TestCase):
         self.assertIn("откройте пульт в Safari, а не с экрана «Домой»", self.PAGE)
         self.assertIn("ykIOS&&ykStandalone?YK.texts.back:YK.texts.open", js)  # no "opens in the browser" where it does not
 
-    def test_the_step_and_the_unfinished_flag_are_all_that_is_kept_and_it_is_kept_safely(self):
+    def test_only_the_unfinished_flag_is_kept_on_the_phone_and_kept_safely(self):
         js = self.script()
-        self.assertIn("localStorage.setItem('acc-yk-step',String(n));localStorage.setItem('acc-yk-open','1')", js)
-        self.assertEqual(js.count("localStorage.setItem"), 2)
+        self.assertIn("localStorage.setItem('acc-yk-open','1')", js)
+        self.assertEqual(js.count("localStorage.setItem"), 1)
         self.assertEqual(js.count("localStorage.setItem") + js.count("localStorage.getItem")
-                         + js.count("localStorage.removeItem"), 6)
+                         + js.count("localStorage.removeItem"), 3)
+        self.assertNotIn("acc-yk-step", js)                      # the step is the panel's
         for line in js.splitlines():
             if "localStorage" in line:
                 self.assertIn("try{", line)                      # private mode or a full store must not break the page
                 self.assertIn("catch(e)", line)
-        self.assertNotIn("sessionStorage", js)
-        self.assertNotIn("document.cookie", js)
 
     def test_the_wizard_comes_back_by_itself_until_it_is_closed_or_finished(self):
         js = self.script()
@@ -1043,17 +1632,18 @@ class Page(unittest.TestCase):
         self.assertIn("addEventListener('pageshow',ykResume)", js)
         self.assertIn("\nykResume();\n", js)                      # at load, too
         self.assertIn("if(ykPending()&&!ykHidden)ykOpen(true);else ykBanner()", js)
-        self.assertIn("ykGo(ykSaved())", js)                     # to the saved step
-        self.assertIn("function ykClose(){ykHidden=false;ykDrop(false);ykTell(0);ykHide()}", js)
+        self.assertIn("accCall('ytkeys',{action:'resume',fresh:!ykHas()})", js)   # to the step the panel kept
+        self.assertIn("else ykGo(ykStep)", js)
+        self.assertIn("function ykClose(){ykHidden=false;ykDrop();ykTell(0);ykHide()}", js)
         self.assertIn("$('acc-yk-x').onclick=ykClose", js)       # «Закрыть»
-        self.assertIn("ykDrop(true);   // finished", js)         # saved: the flag and the step go
+        self.assertIn("ykDrop();   // finished", js)             # saved: the flag goes
         self.assertIn("$('acc-yk-back').onclick=ykAside", js)    # a tap beside the sheet only puts it aside
 
     def test_an_unfinished_wizard_has_a_bar_on_the_accounts_tab(self):
         self.assertEqual(self.PAGE.count('id="acc-yk-cont"'), 1)
         self.assertIn("Продолжить настройку ключей (шаг %d из %d)", self.PAGE)
         js = self.script()
-        self.assertIn("YK.texts.resume.replace('%d',ykSaved()).replace('%d',YK.steps.length+1)", js)
+        self.assertIn("YK.texts.resume.replace('%d',ykStep).replace('%d',YK.steps.length)", js)
         self.assertIn("ykPending()&&$('acc-yk').classList.contains('hide')", js)
         section = self.PAGE.split('id="t-acc"', 1)[1].split("</section>", 1)[0]
         self.assertIn('id="acc-yk-cont"', section)
@@ -1061,40 +1651,39 @@ class Page(unittest.TestCase):
     def test_the_tv_is_told_the_step_when_it_changes_and_when_it_ends(self):
         js = self.script()
         self.assertIn("accCall('ytkeys',{action:'step',step:n})", js)
-        self.assertIn("function ykGo(n){ykStep=n;ykKeep(n);ykTell(n);ykShow('step')}", js)
-        self.assertIn("ykTell(0)", js)
+        self.assertIn("function ykGo(n){ykStep=n;ykKeep();ykTell(n);ykShow('step')}", js)
         self.assertEqual(js.count("ykTell(0)"), 2)               # closing, and keys found saved meanwhile
         self.assertIn("if(ykView==='step')ykTell(ykStep)", js)  # returning to the page says "still here"
         self.assertEqual(js.count("{action:'step',step:n}"), 1)     # no other body carries a step
         self.assertEqual(js.count("action:'step'"), 1)
         tell = js.split("function ykTell(n){", 1)[1].split("}\n", 1)[0]
-        self.assertNotIn("ykIn", tell)
+        self.assertNotIn("ykVal", tell)
         self.assertNotIn(".value", tell)
+        self.assertIn("{action:'tick',id:t.id,on}", js)
 
     def test_every_step_opens_a_page_the_whitelist_allows_in_a_new_tab(self):
-        self.assertEqual(len(pk.STEPS), 5)
-        for step in pk.STEPS:
+        self.assertEqual(len(steps.STEPS), 4)
+        for step in steps.STEPS:
             self.assertEqual(pa.safe_link(step["url"]), step["url"], step["url"])
-            self.assertTrue(step["title"] and step["lines"] and step["button"])
-            for name in step.get("fields", []):
-                self.assertIn(name, ky.SETTINGS)
+            self.assertTrue(step["title"] and step["lines"] and step["button"] == "Открыть страницу Google")
         self.assertEqual(pa.safe_link(pk.DOC_URL), pk.DOC_URL)
         self.assertIn("a.target='_blank';a.rel='noopener'", self.PAGE)
-        self.assertEqual([s["url"] for s in pk.STEPS][:3], [
-            "https://console.cloud.google.com/projectcreate",
-            "https://console.cloud.google.com/apis/library/youtube.googleapis.com",
-            "https://console.cloud.google.com/apis/credentials/consent"])
-        self.assertEqual([s["url"] for s in pk.STEPS][3:], [
+        self.assertEqual([s["url"] for s in steps.STEPS], [
+            "https://console.cloud.google.com/flows/enableapi?apiid=youtube.googleapis.com",
+            "https://console.cloud.google.com/auth/overview",
             "https://console.cloud.google.com/apis/credentials",
-            "https://console.cloud.google.com/apis/credentials/oauthclient"])
+            "https://console.cloud.google.com/auth/clients/create"])
         for host in ("console.cloud.google.com", "developers.google.com"):
             self.assertIn('"%s"' % host, self.PAGE)
 
     def test_the_steps_say_what_the_owner_needs_to_do(self):
-        text = json.dumps(pk.STEPS, ensure_ascii=False)
-        for word in ("«TV»", "Включить", "Внешний", "Тестовые пользователи", "In production", "7 дней",
-                     "Ключ API", "Телевизоры и устройства с ограниченным вводом"):
+        text = json.dumps(list(steps.STEPS) + list(pk.WIZARD["ticks"]), ensure_ascii=False)
+        for word in ("Confirm project", "Enable API", "Next", "Enable", "TV", "Начать", "Внешняя", "Создать",
+                     "Опубликовать приложение", "7 дней", "Ключ API", "Создать учётные данные",
+                     "TVs and Limited Input devices", "Client ID"):
             self.assertIn(word, text)
+        self.assertIn("Google покажет два шага: «Confirm project» → «Enable API». Если проекта нет — создайте его в "
+                      "списке проектов сверху (имя любое, например TV), затем «Next» и «Enable».", steps.STEPS[0]["lines"])
 
     def test_every_id_is_prefixed(self):
         import re
@@ -1160,7 +1749,7 @@ class Served(Base):
 
     def post(self, body=None, **kw):
         status, text = self.req("POST", "/api/accounts/ytkeys", body, {"X-Panel": "1"}, **kw)
-        self.assertNotIn("MARKER", text)
+        no_leak(self, text)
         return status, json.loads(text)
 
     def test_the_served_page_has_the_wizard_once(self):
@@ -1178,25 +1767,42 @@ class Served(Base):
         self.assertEqual((status, d["set"], d["last4"]), (200, True, "WXYZ"))
         status, text = self.req("GET", "/api/accounts")                 # and the accounts list is as it was
         self.assertEqual(status, 200)
-        self.assertNotIn("MARKER", text)
+        no_leak(self, text)
+
+    def test_verify_through_http_asks_google_and_answers_without_values(self):
+        self.net.answer = DEVICE_OK
+        status, d = self.post({"action": "verify", "value": CID})
+        self.assertEqual((status, d["kind"], d["works"]), (200, "client_id", True))
+        status, d = self.post({"action": "verify", "value": "nonsense"})
+        self.assertEqual((status, d["ok"]), (400, False))
+        self.assertEqual(d["check"], "unknown")                        # the refusal carries the verdict for the page
 
     def test_the_step_goes_through_http_into_a_file_for_the_tv_and_zero_removes_it(self):
         status, d = self.post({"action": "step", "step": 4})
         self.assertEqual((status, d), (200, {"ok": True, "step": 4}))
         self.assertEqual(stat.S_IMODE(os.stat(step_path()).st_mode), 0o644)
         got = ky.read_step()
-        self.assertEqual((got["step"], got["total"], got["title"], got["hint"]), (4, 6, *pk.step_text(4)))
-        status, d = self.post({"action": "step", "step": 5})
-        self.assertEqual(ky.read_step()["step"], 5)
+        self.assertEqual((got["step"], got["total"], got["title"], got["hint"]), (4, 4, *pk.step_text(4)))
+        status, d = self.post({"action": "step", "step": 3})
+        self.assertEqual(ky.read_step()["step"], 3)
         status, d = self.post({"action": "step", "step": 0})
         self.assertEqual((status, d), (200, {"ok": True, "step": 0}))
         self.assertIsNone(ky.read_step())
         self.assertEqual(os.listdir(ky.DIR), [])
         self.assertEqual((self.kodi.calls, self.net.urls), ([], []))
 
+    def test_ticks_and_resume_through_http(self):
+        self.post({"action": "step", "step": 2})
+        status, d = self.post({"action": "tick", "id": "start", "on": True})
+        self.assertEqual((status, d["ticks"]), (200, ["start"]))
+        status, d = self.post({"action": "resume"})
+        self.assertEqual((status, d["step"], d["ticks"]), (200, 2, ["start"]))
+        status, d = self.post({"action": "tick", "id": "nope", "on": True})
+        self.assertEqual((status, d["ok"]), (400, False))
+
     def test_a_bad_step_through_http_is_a_400_and_the_file_stays(self):
         self.post({"action": "step", "step": 2})
-        for bad in (7, -1, "2", None, True, 1.5):
+        for bad in (5, -1, "2", None, True, 1.5):
             status, d = self.post({"action": "step", "step": bad})
             self.assertEqual((status, d["ok"]), (400, False), bad)
         status, _ = self.req("POST", "/api/accounts/ytkeys", None, {"X-Panel": "1"}, raw='{"action":"step","step":')
@@ -1209,13 +1815,21 @@ class Served(Base):
         status, _ = self.req("POST", "/api/accounts/ytkeys", {"action": "step", "step": 3}, {"X-Panel": "1"}, host="evil.example")
         self.assertIn(status, (403, 421))
         self.assertFalse(os.path.exists(step_path()))
-        status, d = self.post(dict(GOOD, action="step", step=6))
+        status, d = self.post(dict(GOOD, action="step", step=4))
         self.assertEqual(status, 200)
         with open(step_path(), encoding="utf-8") as f:
-            self.assertNotIn("MARKER", f.read())
+            no_leak(self, f.read())
+
+    def test_the_other_routes_are_guarded_too(self):
+        for body in ({"action": "verify", "value": KEY}, {"action": "tick", "id": "start", "on": True}, {"action": "resume"}):
+            status, _ = self.req("POST", "/api/accounts/ytkeys", body)
+            self.assertEqual(status, 403, body)
+            status, _ = self.req("POST", "/api/accounts/ytkeys", body, {"X-Panel": "1"}, host="evil.example")
+            self.assertIn(status, (403, 421), body)
+        self.assertEqual((self.net.urls, self.net.posts), ([], []))
 
     def test_a_saved_key_through_http_removes_the_step(self):
-        self.post({"action": "step", "step": 6})
+        self.post({"action": "step", "step": 4})
         status, d = self.post(dict(GOOD, action="save"))
         self.assertEqual((status, d["saved"]), (200, True))
         self.assertIsNone(ky.read_step())

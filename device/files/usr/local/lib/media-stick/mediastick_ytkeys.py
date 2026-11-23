@@ -8,7 +8,8 @@ through xbmcaddon and answers in a second file that holds no value but the last 
 Values are never logged and never sent back to the page.
 
 Besides that there is one file that holds no secret: ytkeys.step.json (mode 0644), which tells the TV on which step of
-the phone's wizard the owner is. The panel writes it (write_step), the TV's code reads it (read_step).
+the phone's wizard the owner is (and which of the three values the phone found good: booleans, never a value). The
+panel writes it (write_step), the TV's code reads it (read_step).
 
 Standard library only: it imports the same in Kodi's Python, in the panel and in a test.
 """
@@ -27,6 +28,7 @@ ADDON = "plugin.video.youtube"
 SETTINGS = {"api_key": "youtube.api.key", "client_id": "youtube.api.id", "client_secret": "youtube.api.secret"}
 LABELS = {"api_key": "Ключ API", "client_id": "Client ID", "client_secret": "Client secret"}
 LIMITS = {"api_key": 128, "client_id": 256, "client_secret": 128}
+CHECK_NAMES = ("key", "client_id", "secret")      # the step file's "checks": one boolean (or null) for each value
 KEY_MIN = 20
 ID_SUFFIX = ".apps.googleusercontent.com"
 
@@ -211,15 +213,30 @@ def _is_int(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def write_step(step, total, title, hint, now=None):
+def _checks(value):
+    """{key, client_id, secret: True/False/None} as given (booleans only, never a value), or None when it is not that."""
+    if not isinstance(value, dict) or set(value) - set(CHECK_NAMES):
+        return None
+    if any(v is not None and not isinstance(v, bool) for v in value.values()):
+        return None
+    return {name: value.get(name) for name in CHECK_NAMES}
+
+
+def write_step(step, total, title, hint, now=None, checks=None):
     """Panel side: tell the TV the owner is on step `step` of `total`, with that step's title and hint (text from the
-    wizard's own description, never a value from the page). Mode 0644, renamed into place. Raises OSError, ValueError."""
+    wizard's own description, never a value from the page) and, when given, which of the three values the phone has
+    found good (`checks`: booleans or None, no value). Mode 0644, renamed into place. Raises OSError, ValueError."""
     if not (_is_int(step) and _is_int(total)) or not 1 <= step <= total <= STEP_TOTAL_MAX:
         raise ValueError("step out of range")
     if not isinstance(title, str) or not isinstance(hint, str):
         raise ValueError("step text")
-    _write_private(STEP, {"step": step, "total": total, "title": title[:STEP_TITLE_MAX], "hint": hint[:STEP_HINT_MAX],
-                          "updated": int(time.time() if now is None else now)}, 0o644)
+    data = {"step": step, "total": total, "title": title[:STEP_TITLE_MAX], "hint": hint[:STEP_HINT_MAX],
+            "updated": int(time.time() if now is None else now)}
+    if checks is not None:
+        data["checks"] = _checks(checks)
+        if data["checks"] is None:
+            raise ValueError("step checks")
+    _write_private(STEP, data, 0o644)
 
 
 def clear_step():
@@ -228,9 +245,10 @@ def clear_step():
 
 
 def read_step(path=None, now=None):
-    """TV side: {step, total, title, hint, updated} while the step file is good, else None: no file, not JSON, not
-    the right shape, a step outside 1..total, or a file older than STEP_MAX_AGE (the phone went away). `path` is the
-    file (the usual one when None), `now` the time (unix seconds)."""
+    """TV side: {step, total, title, hint, updated[, checks]} while the step file is good, else None: no file, not
+    JSON, not the right shape, a step outside 1..total, or a file older than STEP_MAX_AGE (the phone went away).
+    `path` is the file (the usual one when None), `now` the time (unix seconds). `checks` is there only when the
+    file has a good one."""
     try:
         with open(path or _path(STEP), "rb") as f:
             raw = f.read(MAX_BYTES + 1)
@@ -248,5 +266,9 @@ def read_step(path=None, now=None):
         return None
     if abs((time.time() if now is None else now) - updated) > STEP_MAX_AGE:
         return None
-    return {"step": step, "total": total, "title": title[:STEP_TITLE_MAX], "hint": hint[:STEP_HINT_MAX],
-            "updated": int(updated)}
+    out = {"step": step, "total": total, "title": title[:STEP_TITLE_MAX], "hint": hint[:STEP_HINT_MAX],
+           "updated": int(updated)}
+    checks = _checks(data.get("checks"))
+    if checks is not None:
+        out["checks"] = checks
+    return out
