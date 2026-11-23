@@ -8,6 +8,7 @@ and script live in panel_accounts_ui.py; inject() puts them into the panel's pag
 Standard library only, nothing happens on import.
 """
 import re
+import time
 import unicodedata
 from urllib.parse import urlsplit
 
@@ -205,6 +206,45 @@ def _add(body, rpc):
     return {"ok": True}
 
 
+ANOTHER_WAIT = 8.0   # s for the TV to add / switch the profile before its sign-in starts
+
+
+def _another(body, rpc):
+    """«Войти другим аккаунтом», one tap: a profile with nobody in it becomes current (the current one if
+    it is empty, else one left over from a sign-in that was given up, else a new "Аккаунт N"), then its
+    sign-in starts. No name to type anywhere. `previous` is the profile to go back to if the sign-in is
+    cancelled, so giving up does not leave the TV on an empty profile."""
+    service = _youtube(body)
+    if any(s["service"] == service for s in signin.active()):
+        return {"ok": True, "already": True}
+    profiles = signin.youtube_accounts()
+    cur = next((p for p in profiles if p["current"]), None)
+    spare = next((p for p in profiles if not p["signed_in"] and not p["current"]), None)
+    known = {p["id"] for p in profiles}
+    previous = cur["id"] if cur and cur["signed_in"] else None
+    if cur and not cur["signed_in"]:
+        target = cur["id"]
+    elif spare:
+        target = spare["id"]
+        _launch(rpc, ["accounts", "switch", service, target])
+    else:
+        names = {p["name"] for p in profiles}
+        n = len(profiles) + 1
+        while "Аккаунт %d" % n in names:
+            n += 1
+        target = None
+        _launch(rpc, ["accounts", "add", service, "Аккаунт %d" % n])
+    deadline = time.monotonic() + ANOTHER_WAIT
+    while True:
+        now = next((p for p in signin.youtube_accounts() if p["current"]), None)
+        if now and (now["id"] == target if target else now["id"] not in known):
+            break
+        if time.monotonic() >= deadline:
+            raise Refused("Телевизор не переключил профиль. Посмотрите на ТВ.", 504)
+        time.sleep(0.25)
+    return dict(_signin({"service": service}, rpc), previous=previous)
+
+
 def _signout(body, rpc):
     _launch(rpc, ["accounts", "signout", clean_service(body.get("service"))])
     return {"ok": True}
@@ -218,7 +258,7 @@ def _ytkeys(body, rpc):
     return reply
 
 
-ACTIONS = {"signin": _signin, "cancel": _cancel, "switch": _switch, "add": _add, "signout": _signout,
+ACTIONS = {"signin": _signin, "cancel": _cancel, "switch": _switch, "add": _add, "another": _another, "signout": _signout,
            "ytkeys": _ytkeys}
 
 

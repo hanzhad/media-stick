@@ -1500,7 +1500,7 @@ class Page(unittest.TestCase):
                      "Интерфейс Google меняется. Если надписи отличаются, ищите похожие.", "Описание от Google",
                      "ждём · начинается с AIza", "ждём · начинается с GOCSPX-", "клиент для ТВ", "работает"):
             self.assertIn(text, page)
-        self.assertIn("'Ключи'", page)                              # the YouTube card's button
+        self.assertIn("'Ключи Google ›'", page)                              # the YouTube card's button
         self.assertIn("accStart('youtube')", page)                  # saving goes on to the existing sign-in
 
     def script(self):

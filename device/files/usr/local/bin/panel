@@ -919,6 +919,8 @@ function kbUi(k){
   if(kbHid)return;
   $('kb-t').textContent=k.title||'Ввод на телевизоре';
   inp.inputMode=k.num?'numeric':'text';
+  // the TV says "type on your phone": the box is on the remote tab, so go there from any other tab
+  if(!kbOpen&&tab!=='remote'&&!wide()){const g=document.querySelector('[data-go=remote]');if(g)g.click()}
   if(!kbOpen){kbOpen=true;inp.value=kbSent=k.text||'';box.classList.remove('hide');box.closest('.rc').classList.add('kbon');kbPolling(true)}
   else if((k.text||'')!==inp.value&&!kbT&&performance.now()-kbTyped>1200)inp.value=kbSent=k.text||''
 }

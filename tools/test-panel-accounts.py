@@ -62,6 +62,27 @@ class FakeKodi:
         return self.result
 
 
+class AddingKodi(FakeKodi):
+    """A Kodi whose launcher adds and switches YouTube profiles the way the add-on does."""
+    switch_to = None
+
+    def __call__(self, method, params=None, timeout=3):
+        out = super().__call__(method, params, timeout)
+        args = (params or {}).get("params") or []
+        if args[:2] in (["accounts", "add"], ["accounts", "switch"]):
+            path = os.path.join(ms.USERDATA, "plugin.video.youtube", "access_manager.json")
+            with open(path, encoding="utf-8") as f:
+                m = json.load(f)["access_manager"]
+            if args[1] == "add":
+                uid = str(max([int(u) for u in m["users"]] + [-1]) + 1)
+                m["users"][uid] = {"name": args[3], "refresh_token": ""}
+            else:
+                uid = args[3]
+            m["current_user"] = uid
+            put(path, json.dumps({"access_manager": m}))
+        return out
+
+
 def reset():
     for s in ms.SERVICES:
         ms.begin(s)
@@ -188,8 +209,8 @@ class Reading(unittest.TestCase):
         page = pa.inject("<nav>@@ACC_NAV@@</nav>@@ACC_SECTION@@<body>@@ACC_TAIL@@</body>")
         self.assertIn("нет канала YouTube", page)
         self.assertIn("«Создать канал»", page)
-        self.assertIn("«Добавить профиль»", page)
-        self.assertIn("'Канал YouTube: '+cur.channel_title", page)
+        self.assertIn("«Войти другим аккаунтом»", page)
+        self.assertIn("accLabel", page)
         self.assertIn("ch.textContent=", page)   # the title is text, never markup
         self.assertNotIn("ch.innerHTML", page)
 
@@ -311,6 +332,50 @@ class Actions(unittest.TestCase):
         reply, code = self.post("switch", {"service": "youtube", "id": "9"})
         self.assertEqual(code, 404)
         self.assertEqual(self.k.calls, [])
+
+    def test_another_account_adds_a_profile_switches_to_it_and_starts_its_sign_in(self):
+        yt({"0": {"name": "Основной", "refresh_token": "a|b|c"}}, 0)
+        k = AddingKodi()
+        reply, code = pa.post(pa.PREFIX + "another", {"service": "youtube"}, k)
+        self.assertEqual((code, reply.get("ok"), reply.get("previous")), (200, True, "0"), reply)
+        self.assertEqual([c[1]["params"] for c in k.calls],
+                         [["accounts", "add", "youtube", "Аккаунт 2"], ["accounts", "signin", "youtube"]])
+
+    def test_another_account_uses_an_empty_profile_before_adding_one(self):
+        k = AddingKodi()
+        yt({"0": {"name": "Основной", "refresh_token": "a|b"}, "1": {"name": "Аккаунт 2", "refresh_token": ""}}, 0)
+        k.switch_to = "1"
+        reply, code = pa.post(pa.PREFIX + "another", {"service": "youtube"}, k)
+        self.assertEqual((code, reply["previous"]), (200, "0"), reply)
+        self.assertEqual([c[1]["params"][:2] for c in k.calls], [["accounts", "switch"], ["accounts", "signin"]])
+        reset()
+        k = AddingKodi()
+        yt({"0": {"name": "Основной", "refresh_token": ""}}, 0)   # the TV's profile is empty already
+        reply, code = pa.post(pa.PREFIX + "another", {"service": "youtube"}, k)
+        self.assertEqual((code, reply["previous"]), (200, None), reply)
+        self.assertEqual([c[1]["params"] for c in k.calls], [["accounts", "signin", "youtube"]])
+
+    def test_another_account_names_skip_taken_ones_and_a_slow_tv_is_a_calm_error(self):
+        yt({"0": {"name": "Основной", "refresh_token": "a"}, "1": {"name": "Аккаунт 3", "refresh_token": "b"}}, 0)
+        k = AddingKodi()
+        pa.post(pa.PREFIX + "another", {"service": "youtube"}, k)
+        self.assertEqual(k.calls[0][1]["params"][3], "Аккаунт 4")
+        reset()
+        yt({"0": {"name": "Основной", "refresh_token": "a"}}, 0)
+        k = FakeKodi()   # never adds the profile
+        with mock.patch.object(pa, "ANOTHER_WAIT", 0.3):
+            reply, code = pa.post(pa.PREFIX + "another", {"service": "youtube"}, k)
+        self.assertEqual((code, reply["ok"]), (504, False))
+        self.assertIn("Посмотрите на ТВ", reply["error"])
+        self.assertEqual(len(k.calls), 1)   # no sign-in on a profile that is not there
+
+    def test_another_account_is_youtube_only_and_not_twice(self):
+        reply, code = pa.post(pa.PREFIX + "another", {"service": "sweettv"}, FakeKodi())
+        self.assertEqual(code, 400)
+        ms.publish("youtube", "waiting", code="ABC-DEF-GHI")
+        k = AddingKodi()
+        reply, code = pa.post(pa.PREFIX + "another", {"service": "youtube"}, k)
+        self.assertEqual((code, reply.get("already"), k.calls), (200, True, []))
 
     def test_unknown_action_and_paths(self):
         for path in ("/api/accounts/", "/api/accounts/nope", "/api/accounts/signin/extra", "/api/accounts/../key", "/api/accounts"):

@@ -30,9 +30,10 @@ TAIL = r"""
 .acc-chip small{font-size:13px;opacity:.7;margin-left:6px}
 .acc-btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .acc-btns .btn{flex:1 1 120px;min-height:48px}
-.acc-add{display:flex;gap:8px;margin-top:8px}
-.acc-add input{flex:1;min-width:0}
-.acc-add .btn{flex:0 0 auto}
+.acc-who{margin-top:12px}
+.acc-who b{display:block;font-size:20px;font-weight:600;overflow-wrap:anywhere}
+.acc-who small{display:block;margin-top:2px;color:var(--dim);font-size:14px}
+.acc-lnk{display:block;margin-top:12px;padding:0;min-height:44px;background:none;border:0;color:var(--dim);font-size:15px;text-align:left}
 .acc-ch{margin-top:12px;color:var(--dim);font-size:14px;line-height:1.45}
 .acc-ch.warn{color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .acc-m{margin-top:10px;color:var(--dim);font-size:14px;min-height:1.4em}
@@ -85,7 +86,7 @@ const ACC_HOSTS=@@HOSTS@@;
 const accEl=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e};
 const ACC_NO_CHANNEL='У этого аккаунта Google нет канала YouTube, поэтому на ТВ пусто в «Подписках», «Смотреть позже» и «Плейлистах» (рекомендации и поиск работают). '
   +'Создайте канал в приложении YouTube: аватар → «Создать канал». Надпись пропадёт сама; если на ТВ всё ещё пусто — «Выйти» и «Войти». '
-  +'Или войдите другим аккаунтом Google: «Добавить профиль».';
+  +'Или «Войти другим аккаунтом».';
 function accSafe(u){   // only https links to the sign-in pages themselves
   try{const x=new URL(u);return x.protocol==='https:'&&!x.username&&!x.password&&x.port===''&&ACC_HOSTS.indexOf(x.hostname)>=0?x.href:''}catch(e){return ''}
 }
@@ -123,20 +124,15 @@ function accCard(svc){
   const hd=accEl('div','acc-hd');hd.append(accEl('b','', ''),accEl('span','acc-st'));
   const chips=accEl('div','acc-chips');
   const btns=accEl('div','acc-btns');
-  const bin=accEl('button','btn','Войти'),badd=accEl('button','btn','Добавить профиль'),bout=accEl('button','btn','Выйти');
+  const bin=accEl('button','btn','Войти'),bother=accEl('button','btn','Войти другим аккаунтом'),bout=accEl('button','btn','Выйти');
   const bpar=accEl('button','btn','Через партнёра');   // SWEET.TV only: a partner's specialist types the code in
-  const bkeys=accEl('button','btn','Ключи');   // YouTube only: the Google keys wizard (panel_ytkeys_ui.py)
-  bin.dataset.k='in';badd.dataset.k='add';bout.dataset.k='out';bpar.dataset.k='partner';bkeys.dataset.k='keys';bout.id='acc-out-'+svc;
-  bin.onclick=()=>accStart(svc);bpar.onclick=()=>accStart(svc,'partner');bkeys.onclick=()=>ykOpen();
-  badd.onclick=()=>{const f=c.querySelector('.acc-add');f.classList.toggle('hide');if(!f.classList.contains('hide'))f.querySelector('input').focus()};
+  const bkeys=accEl('button','acc-lnk','Ключи Google ›');   // YouTube only: the Google keys wizard (panel_ytkeys_ui.py), needed once
+  bin.dataset.k='in';bother.dataset.k='another';bout.dataset.k='out';bpar.dataset.k='partner';bkeys.dataset.k='keys';bout.id='acc-out-'+svc;
+  bin.onclick=()=>accStart(svc);bpar.onclick=()=>accStart(svc,'partner');bkeys.onclick=()=>ykOpen();bother.onclick=()=>accAnother(svc);
   bout.onclick=()=>{if(armed(bout.id,'Точно выйти?'))accOut(svc)};
-  btns.append(bin,bpar,badd,bkeys,bout);
-  const add=accEl('div','acc-add hide'),inp=accEl('input');
-  inp.maxLength=32;inp.placeholder='Имя профиля';inp.autocomplete='off';inp.setAttribute('enterkeyhint','done');
-  const go=accEl('button','btn acc','Добавить');
-  go.onclick=()=>accAdd(svc,inp,add);inp.addEventListener('keydown',e=>{if(e.key==='Enter')go.click()});
-  add.append(inp,go);
-  c.append(hd,chips,accEl('div','acc-ch hide'),btns,add,accEl('div','acc-m'));
+  btns.append(bin,bother,bpar,bout);
+  const who=accEl('div','acc-who hide');who.append(accEl('b'),accEl('small'));
+  c.append(hd,who,accEl('div','acc-ch hide'),chips,btns,accEl('div','acc-m'),bkeys);
   $('acc-list').append(c);return c
 }
 function accMsg(svc,t,bad){const m=accCard(svc).querySelector('.acc-m');m.textContent=t||'';m.classList.toggle('bad',!!bad)}
@@ -149,26 +145,32 @@ function accRender(list){
     const yt=a.service==='youtube', cur=a.profiles.find(p=>p.current), waiting=!!(a.signin&&a.signin.state==='waiting');
     const byPartner=waiting&&a.signin.mode==='partner';
     c.querySelector('.acc-hd b').textContent=a.name;
-    c.querySelector('.acc-st').textContent=byPartner?'ждёт партнёра':waiting?'ждёт ввода кода':a.signed_in?(yt&&cur?'вы вошли · '+cur.name:'вы вошли'):'вход не выполнен';
+    // YouTube: the profile on the TV is who is signed in; any of the add-on's tokens is enough to watch
+    const on=yt?!!(cur&&cur.signed_in):a.signed_in;
+    c.querySelector('.acc-st').textContent=byPartner?'ждёт партнёра':waiting?'ждёт ввода кода':on?'вы вошли':'вход не выполнен';
+    const who=c.querySelector('.acc-who');
+    who.querySelector('b').textContent=yt&&on?accLabel(cur):'';
+    who.querySelector('small').textContent=yt&&on?(cur.channel==='yes'?'Канал YouTube':cur.channel==='no'?'Аккаунт Google без канала':'Аккаунт Google')
+      +(a.profiles.length>1&&accLabel(cur)!==cur.name?' · профиль «'+cur.name+'»':''):'';
+    who.classList.toggle('hide',!(yt&&on));
     const chips=c.querySelector('.acc-chips');chips.textContent='';
     a.profiles.forEach(p=>{
-      const b=accEl('button','acc-chip'+(p.current?' cur':''),p.name);
+      const b=accEl('button','acc-chip'+(p.current?' cur':''),accLabel(p));
       if(p.current)b.setAttribute('aria-pressed','true');
-      if(p.tokens>0&&p.tokens<4)b.append(accEl('small','',p.tokens+' из 4'));
-      else if(!p.signed_in)b.append(accEl('small','','не вошёл'));
+      if(!p.signed_in)b.append(accEl('small','','не вошёл'));
       b.onclick=()=>{if(!p.current)accSwitch(a.service,p)};
       chips.append(b)});
-    chips.classList.toggle('hide',!a.profiles.length);
+    chips.classList.toggle('hide',a.profiles.length<2);   // one account: the line above says it all
     // no YouTube channel on the Google account: Google gives the add-on no subscriptions, Watch Later or playlists
     const ch=c.querySelector('.acc-ch'),cs=yt&&cur&&cur.signed_in?cur.channel:'';
-    ch.textContent=cs==='no'?ACC_NO_CHANNEL:cs==='yes'&&cur.channel_title?'Канал YouTube: '+cur.channel_title:'';
+    ch.textContent=cs==='no'?ACC_NO_CHANNEL:'';
     ch.classList.toggle('warn',cs==='no');ch.classList.toggle('hide',!ch.textContent);
-    const need=!a.signed_in||(yt&&(!cur||cur.tokens<4));
     const q=k=>c.querySelector('[data-k='+k+']');
-    q('in').classList.toggle('acc',need);q('in').disabled=waiting;   // always there (a token may have expired), the main button when it is needed
-    q('partner').classList.toggle('hide',a.service!=='sweettv');q('partner').disabled=waiting;
-    q('add').classList.toggle('hide',!yt);q('keys').classList.toggle('hide',!yt);
-    q('out').classList.toggle('hide',!a.signed_in);
+    q('in').classList.toggle('hide',on);q('in').classList.add('acc');q('in').disabled=waiting;
+    q('another').classList.toggle('hide',!(yt&&on));q('another').classList.add('acc');q('another').disabled=waiting;
+    q('partner').classList.toggle('hide',a.service!=='sweettv'||on);q('partner').disabled=waiting;
+    q('keys').classList.toggle('hide',!yt);
+    q('out').classList.toggle('hide',!on);
   })
 }
 async function accRun(svc,what,body,doing,done){
@@ -182,10 +184,17 @@ async function accStart(svc,mode){
     setTimeout(()=>{if(!accSheet&&Date.now()-accAsked[svc]>=14000)accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)},15000)
 }
 function accSwitch(svc,p){buzz();accRun(svc,'switch',{service:svc,id:p.id},'Переключаю на «'+p.name+'»…','Профиль «'+p.name+'» выбран.')}
-async function accAdd(svc,inp,row){
-  const name=inp.value.trim();
-  if(!name||name.length>32){accMsg(svc,'Имя профиля — от 1 до 32 символов.',true);return}
-  if(await accRun(svc,'add',{service:svc,name},'Добавляю профиль…','Профиль «'+name+'» добавлен. Нажмите «Войти».')){inp.value='';row.classList.add('hide')}
+// a profile's name on the phone: its channel when it has one ("Default" says nothing)
+const accLabel=p=>p.channel==='yes'&&p.channel_title?p.channel_title:p.name;
+let accBackTo=null;   // the profile to go back to when a sign-in with another account is given up
+async function accAnother(svc){
+  buzz();accMsg(svc,'Готовлю вход…');
+  try{
+    const r=await accCall('another',{service:svc});
+    if(!r.already)accBackTo=r.previous||null;
+    accMsg(svc,'Жду код от приставки…');accAsked[svc]=Date.now();accPoll();
+    setTimeout(()=>{if(!accSheet&&Date.now()-accAsked[svc]>=14000)accMsg(svc,'Код не появился. Посмотрите на телевизор.',true)},15000)
+  }catch(e){accMsg(svc,e.message,true)}
 }
 function accOut(svc){accRun(svc,'signout',{service:svc},'Выхожу…','Вы вышли.')}
 
@@ -218,6 +227,8 @@ function accShow(s){
 }
 function accEnd(res){
   const sh=$('acc-sheet');
+  if(accBackTo&&res!=='done')accCall('switch',{service:'youtube',id:accBackTo}).then(accPoll,()=>{});   // back to who was signed in
+  accBackTo=null;
   $('acc-fin').textContent=res==='done'?'Готово — вы вошли':res==='cancelled'?'Отменено':'Не получилось';
   sh.classList.remove('acc-min','acc-partner');sh.classList.add('acc-end');accSheet=null;
   clearTimeout(accCloseT);accCloseT=setTimeout(()=>{sh.classList.add('hide');accCloseT=null;accLoop()},2600);
