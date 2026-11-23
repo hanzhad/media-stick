@@ -22,6 +22,7 @@ import types
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import mediastick_signin as signin
+import mediastick_screen as screen   # a cast or a web app has the TV: say so, not "Kodi не отвечает"
 import panel_watch_ui as ui
 
 PREFIX = "/api/watch/"
@@ -381,7 +382,7 @@ def _rpc(rpc, method, params=None):
     try:
         return rpc(method, params or {})
     except (OSError, ValueError):
-        raise Refused(KODI_DOWN, 503)
+        raise Refused(screen.kodi_down(), 503)
 
 
 def _read_json(path):
@@ -441,7 +442,7 @@ def _directory(data, rpc, route):
         result = rpc("Files.GetDirectory", {"directory": route, "media": media, "properties": data.PROPERTIES,
                                             "sort": {"method": "none"}}, 6)
     except (OSError, ValueError):
-        raise Refused(KODI_DOWN, 503)
+        raise Refused(screen.kodi_down(), 503)
     return data.parse_reply(youtube_reply(data, result))
 
 

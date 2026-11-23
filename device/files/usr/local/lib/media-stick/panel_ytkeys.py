@@ -22,6 +22,7 @@ import urllib.request
 from http.client import HTTPException
 from typing import Callable, NamedTuple
 
+import mediastick_screen as screen   # a cast or a web app has the TV: say so, not "Kodi не отвечает"
 import mediastick_ytkeys as keys
 import panel_ytkeys_steps as st
 from panel_ytkeys_steps import DOC_URL, STEP_TOTAL, STEPS, TICK_IDS, linked, step_text  # noqa: F401  (the tests read them here)
@@ -315,7 +316,7 @@ def _hand_over(op, values, rpc, io):
         try:
             rpc("Addons.ExecuteAddon", {"addonid": LAUNCHER, "params": ["ytkeys"]})
         except (OSError, ValueError):
-            raise Refused(KODI_DOWN, 503)
+            raise Refused(screen.kodi_down(), 503)
         end = io.clock() + WAIT
         while True:
             result = keys.read_result(rid)

@@ -13,6 +13,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 import mediastick_signin as signin
+import mediastick_screen as screen   # a cast or a web app has the TV: say so, not "Kodi не отвечает"
 try:
     import mediastick_ytchannel as ytchannel   # does the signed-in Google account have a YouTube channel
 except ImportError:
@@ -160,7 +161,7 @@ def _launch(rpc, params):
     try:
         rpc("Addons.ExecuteAddon", {"addonid": LAUNCHER, "params": params})
     except (OSError, ValueError):
-        raise Refused(KODI_DOWN, 503)
+        raise Refused(screen.kodi_down(), 503)
 
 
 def _signin(body, rpc):
