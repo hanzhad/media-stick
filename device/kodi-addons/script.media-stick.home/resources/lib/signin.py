@@ -69,10 +69,22 @@ class Frame(NamedTuple):
     ob_link: str = ""            # the sign-in link, for a QR when the phone page has none to show
 
 
+def time_left(seconds):
+    """(line, English line) for the time left. Under an hour it is minutes and seconds, "59:59" or "0:05", as a clock
+    counts down (nothing to translate: the English line is empty). From an hour on the hours are said, in whole minutes
+    rounded down so it only ever goes down: 21599 -> "5 ч 59 мин" and "5 h 59 min", 3600 -> "1 ч 00 мин". The line is
+    Russian (it is big: the screen is read by a partner's specialist) and the English one goes under it, small:
+    both do not fit side by side in the label. 0 and anything that is not a time -> "0:00"."""
+    total = max(0, int(seconds or 0))
+    if total < 3600:
+        return f"{total // 60}:{total % 60:02d}", ""
+    hour, minute = divmod(total // 60, 60)
+    return f"{hour} ч {minute:02d} мин", f"{hour} h {minute:02d} min"
+
+
 def hours(seconds):
-    """Time left as h:mm: 21540 -> 5:59, 61 -> 0:02, 1 -> 0:01 (a started minute counts as left), 0 -> 0:00."""
-    minutes = (max(0, int(seconds or 0)) + 59) // 60
-    return f"{minutes // 60}:{minutes % 60:02d}"
+    """The first line of time_left: what the big label shows."""
+    return time_left(seconds)[0]
 
 
 def asked_partner(service):
@@ -208,7 +220,7 @@ class Follow:
 
     def _props(self, waiting):
         props = {"title": self.name, "step": "", "code": "", "codelong": "", "site": "", "headline": "", "status": "",
-                 "status2": "", "left": "", "partner": "1" if self.partner else "",
+                 "status2": "", "left": "", "left2": "", "partner": "1" if self.partner else "",
                  "btn1": (PARTNER_BUTTONS if self.partner else BUTTONS)[0],
                  "btn2": (PARTNER_BUTTONS if self.partner else BUTTONS)[1]}
         if self.result:
@@ -223,7 +235,7 @@ class Follow:
             props["code"] = spaced(code)
             props["codelong"] = "1" if len(code) > 14 else ""
             if self.partner:         # a person reads the code off the screen: no QR, no "scan", the time left instead
-                props["left"] = hours(waiting.get("left", 0))
+                props["left"], props["left2"] = time_left(waiting.get("left", 0))
                 props["status"], props["status2"] = PARTNER_STATUS
                 return props, ""
             if waiting.get("url"):

@@ -3,8 +3,8 @@
      headline, status, status2, left, partner, btn1, btn2, qr, skip. While `headline` is set (starting,
      cancelling, a result) it takes the place of the code and the QR. Buttons, labels from btn1/btn2:
      10 Cancel (focused first), 11 Continue without account. In partner mode (`partner` set: a partner's
-     specialist types the code in by hand, for hours) there is no QR, the time left (`left`, h:mm) takes
-     its place, `status`/`status2` are the Russian and English lines, 10 says Wait (so a stray OK does
+     specialist types the code in by hand, for hours) there is no QR, the time left takes its place
+     (`left`: m:ss under an hour, else "5 ч 59 мин"; `left2`, small under it: the same in English, "5 h 59 min"), `status`/`status2` are the Russian and English lines, 10 says Wait (so a stray OK does
      nothing) and 11 says Cancel (the code asks first).
      The onboarding layout (properties ob, ob_badge, ob_badge_colour, ob_kicker, ob_title, ob_hint, ob_site, ob_code,
      ob_codelong, ob_caption, ob_footer, ob_qr; list 20 of the steps with the items t1, t2, state, num, fg, ring; see
@@ -97,6 +97,18 @@
                     <align>center</align>
                     <aligny>center</aligny>
                     <label>$INFO[Window.Property(left)]</label>
+                </control>
+                <control type="label">
+                    <left>60</left>
+                    <top>412</top>
+                    <width>400</width>
+                    <height>36</height>
+                    <font>Reg25</font>
+                    <textcolor>CCFFFFFF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(left2)]</label>
+                    <visible>!String.IsEmpty(Window.Property(left2))</visible>
                 </control>
             </control>
 

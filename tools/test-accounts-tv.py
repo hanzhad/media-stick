@@ -650,20 +650,58 @@ class PartnerFollow(unittest.TestCase):
     def follow(self, **kw):
         return signin.Follow("SWEET.TV", 1000.0, **kw)
 
-    def test_the_time_left_is_hours_and_minutes_and_a_started_minute_still_counts(self):
-        self.assertEqual([signin.hours(s) for s in (21600, 21540, 3600, 61, 60, 1, 0)],
-                         ["6:00", "5:59", "1:00", "0:02", "0:01", "0:01", "0:00"])
-        self.assertEqual([signin.hours(s) for s in (None, "", -5)], ["0:00"] * 3)
+    def test_the_time_left_is_minutes_and_seconds_under_an_hour_and_hours_from_then_on(self):
+        """The owner read "5:59" (hours and minutes) as minutes and seconds: from an hour on the hours are said."""
+        cases = [(5 * 3600 + 59 * 60 + 59, "5 ч 59 мин", "5 h 59 min"),     # 5:59:59, minutes rounded down
+                 (21540, "5 ч 59 мин", "5 h 59 min"), (21600, "6 ч 00 мин", "6 h 00 min"),
+                 (3600, "1 ч 00 мин", "1 h 00 min"), (3659, "1 ч 00 мин", "1 h 00 min"), (3660, "1 ч 01 мин", "1 h 01 min"),
+                 (3599, "59:59", ""), (59 * 60, "59:00", ""), (61, "1:01", ""), (5, "0:05", ""), (1, "0:01", ""),
+                 (0, "0:00", "")]
+        for seconds, line, english in cases:
+            self.assertEqual(signin.time_left(seconds), (line, english), seconds)
+            self.assertEqual(signin.hours(seconds), line, seconds)
+        for odd in (None, "", -5, -3600):                                    # expired, or not a time
+            self.assertEqual(signin.time_left(odd), ("0:00", ""), odd)
+
+    def test_the_countdown_goes_down_at_every_tick_and_never_up(self):
+        lines = [signin.time_left(left) for left in range(6 * 3600, -1, -1)]
+        seen = []
+        for line in lines:
+            if not seen or seen[-1] != line:
+                seen.append(line)
+        self.assertEqual(seen[0], ("6 ч 00 мин", "6 h 00 min"))
+        self.assertEqual(seen[-1], ("0:00", ""))
+        under = [line for line, english in seen if not english]
+        self.assertEqual(len(under), 3600)                                    # every second of the last hour shows
+        self.assertEqual(len([1 for line, english in seen if english]), 5 * 60 + 1)     # every minute from 6 h to 1 h
+        minutes = [int(line.split()[0]) * 60 + int(line.split()[2]) for line, english in seen if english]
+        self.assertEqual(minutes, sorted(minutes, reverse=True))
+
+    def test_the_longest_line_fits_the_label_and_the_english_line_its_own(self):
+        from resources.lib import textfit
+        root = ET.parse(os.path.join(SKIN, "script-media-stick-signin.xml")).getroot()
+        labels = {c.findtext("label"): c for c in root.iter("control") if c.get("type") == "label"}
+        big = labels["$INFO[Window.Property(left)]"]
+        small = labels["$INFO[Window.Property(left2)]"]
+        longest = max(signin.time_left(h * 3600 + 59 * 60) for h in range(1, 7))
+        self.assertLessEqual(textfit.text_px(longest[0], 60), int(big.findtext("width")))        # Light60
+        self.assertLessEqual(textfit.text_px(longest[1], 25), int(small.findtext("width")))      # Reg25
+        self.assertEqual(small.findtext("visible"), "!String.IsEmpty(Window.Property(left2))")
+        self.assertLessEqual(int(big.findtext("top")) + int(big.findtext("height")), int(small.findtext("top")))
 
     def test_a_partner_wait_says_so_in_russian_and_english_counts_down_and_has_no_qr(self):
         frame = self.follow().feed(partner_state(), 1001)
         p = frame.props
-        self.assertEqual((p["partner"], p["left"], p["headline"]), ("1", "5:59", ""))
+        self.assertEqual((p["partner"], p["left"], p["left2"], p["headline"]), ("1", "5 ч 59 мин", "5 h 59 min", ""))
         self.assertEqual(p["status"], "Ждём подключения специалистом партнёра. Не выключайте ТВ.")
         self.assertEqual(p["status2"], "Waiting for the partner's specialist to connect. Keep the TV on.")
         self.assertEqual(p["code"], "1 2 3 4 5")
         self.assertEqual((frame.link, p["site"], p["step"]), ("", "", ""))             # no QR, no "scan" hint
-        self.assertEqual(self.follow().feed(partner_state(left=3 * 3600 + 1), 1001).props["left"], "3:01")
+        self.assertEqual(self.follow().feed(partner_state(left=3 * 3600 + 1), 1001).props["left"], "3 ч 00 мин")
+        short = self.follow().feed(partner_state(left=59 * 60 + 59), 1001).props
+        self.assertEqual((short["left"], short["left2"]), ("59:59", ""))
+        gone = self.follow().feed(partner_state(left=0), 1001).props
+        self.assertEqual((gone["left"], gone["left2"]), ("0:00", ""))
 
     def test_the_buttons_name_wait_and_cancel_in_partner_mode_and_cancel_and_continue_otherwise(self):
         normal = self.follow().feed(waiting(updated=1001), 1001).props
@@ -779,7 +817,7 @@ class PartnerScreen(unittest.TestCase):
         self.assertEqual(signin.run("sweettv", attach=True), "done")
         first = next(p for p in self.shown if p.get("code"))
         self.assertEqual((first["partner"], first["code"], first["btn1"]), ("1", "1 2 3 4 5", "Ждать / Wait"))
-        self.assertRegex(first["left"], r"^[56]:\d\d$")
+        self.assertEqual((first["left"], first["left2"]), ("5 ч 59 мин", "5 h 59 min"))
         self.assertIn("Ждём подключения специалистом партнёра. Не выключайте ТВ.", first["status"])
         self.assertIn("Keep the TV on.", first["status2"])
         self.assertEqual(first["skip"], "1")                                            # the second button (Cancel) is shown
