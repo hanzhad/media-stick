@@ -589,7 +589,7 @@ class Page(unittest.TestCase):
 
     def test_a_missing_marker_raises(self):
         # the page must not come out without the tab, or with half of it
-        for marker in ("@@WATCH_NAV@@", "@@WATCH_SECTION@@", "@@WATCH_BAR@@", "@@WATCH_TAIL@@"):
+        for marker in ("@@WATCH_NAV@@", "@@WATCH_SECTION@@", "@@WATCH_BAR@@", "@@WATCH_TAIL@@", "@@RESUME_ROW@@"):
             self.assertIn(marker, self.base)
             with self.assertRaises(ValueError) as e:
                 pw.inject(self.base.replace(marker, ""))
@@ -626,6 +626,84 @@ class Page(unittest.TestCase):
         # polling rules as before
         self.assertIn("if(document.hidden||W.busy||!(wide()||tab==='watch'||tab==='remote'))return;", js)
         self.assertNotIn("'/api/watch/'+p,b)).catch(()=>{})", js)
+
+    def test_the_resume_switch_sits_in_the_settings_list_after_the_language_row(self):
+        p = self.page
+        self.assertNotIn("@@RESUME_ROW@@", p)
+        row = p.index('id="wt-resume"')
+        self.assertLess(p.index('data-sp="lang"'), row)
+        self.assertLess(row, p.index('data-sp="info"'))
+        self.assertGreater(row, p.index('id="t-setlist"'))
+        self.assertIn('<input id="wt-rs" type="checkbox" role="switch"', p)
+        self.assertIn('class="srow wt-sw hide"', p)                    # hidden until the API answers
+        panel_text = open(PANEL, encoding="utf-8").read()
+        self.assertIn("@@LANG_ROW@@@@RESUME_ROW@@", panel_text)
+        import panel_watch_ui as ui
+        self.assertIn("sg('settings')", ui.JS)
+        self.assertIn("spst('settings',{local_resume:want})", ui.JS)
+        self.assertIn("set(!want);toast(errText(e))", ui.JS)           # an error reverts the switch
+        self.assertIn("show(false)", ui.JS)                            # no answer: no row, no card
+        # the wide layout has no settings list: the same switch is a card of its own there, one state with the row
+        self.assertIn('<section id="wt-rcard" class="wt-rcoff" data-tab="settings">', p)
+        self.assertIn('id="wt-rs2" type="checkbox" role="switch"', p)
+        self.assertIn("#wt-rcard{display:none!important}", ui.CSS)
+        self.assertIn("#wt-rcard{display:block!important;grid-column:1/-1}", ui.CSS)
+        self.assertIn("min-height:31px;max-height:31px", ui.CSS)       # the page's input{min-height:52px} must not stretch the track
+
+    def test_the_play_button_and_the_sections_look_right(self):
+        import panel_watch_ui as ui
+        self.assertIn(".wt .wt-go{", ui.CSS)                            # `.wt button{color:inherit}` is more specific than `.wt-go`
+        self.assertNotRegex(ui.CSS, r"(?m)^\.wt-go\{")
+        self.assertIn("class:'wt-seg'", ui.JS)
+        self.assertIn(".wt .wt-seg button.on{background:#fff;color:var(--bg)", ui.CSS)
+        self.assertIn("class:'wt-upr'", ui.JS)                          # what is to come: plain rows, not cards
+        self.assertIn("'Завтра'", ui.JS)
+        self.assertIn("'Выйдет '+(REL.includes(n)?n.toLowerCase():n)+' в '+hm(s)", ui.JS)
+        self.assertIn("icons[String(it.cid)]", ui.JS)                   # the films have the picture of their channel
+
+    def test_the_sweettv_pages_ask_the_routes_of_the_api(self):
+        import panel_watch_ui as ui
+        js = ui.JS
+        self.assertIn("api('/api/sweettv/'+p)", js)
+        self.assertIn("api('/api/sweettv/'+p,b)", js)
+        for call in ("sg('sections')", "sg('guide?cid='", "sg('shows')", "sg('show?id='", "sg('films')", "spst('play',b)",
+                     "spst('golive',{})", "sg('settings')", "spst('settings'"):
+            self.assertIn(call, js)
+        for page in ("t:'swguide'", "t:'swshow'", "d.t==='swguide'", "d.t==='swshow'"):
+            self.assertIn(page, js)
+        # the channel's own ▶ still plays live through the old route, and does not open the guide
+        self.assertIn("pst('play',{file:c.play})", js)
+        self.assertIn("e.stopPropagation();play(c)", js)
+        self.assertIn("at:'start'", js)
+        self.assertIn("at:'resume'", js)
+        # what the player does with the new fields of /api/watch/now and of the seek
+        for text in ("st.programme", "st.go_live", "text:'К эфиру'", "if(r&&r.note)toast(r.note)", "r&&r.switched==='archive'",
+                     "Перешёл в архив передачи"):
+            self.assertIn(text, js)
+        # no markup from the API, no image that is not a picture() one
+        self.assertNotIn("innerHTML", js)
+        self.assertNotRegex(js, r"style:'background-image:'\s*\+\s*(?!picture)")
+
+    def test_the_script_is_one_piece_with_the_sweettv_part(self):
+        import panel_watch_ui as ui
+        self.assertNotIn("@@", ui.JS + ui.CSS)
+        self.assertNotIn("SWEET_JS", ui.JS)
+        self.assertNotIn("SWEET_CSS", ui.CSS)
+        self.assertEqual(ui.JS.count("async function renderSweet("), 1)
+        self.assertEqual(ui.JS.count("const plural="), 1)
+        self.assertIn(".wt-sw input[type=checkbox]:checked", ui.CSS)
+
+    def test_the_script_passes_node_check(self):
+        import subprocess
+        import panel_watch_ui as ui
+        node = shutil.which("node") or shutil.which("nodejs")
+        if not node:
+            self.skipTest("no node here")
+        src = re.search(r"<script>(.*?)</script>", ui.JS, re.S).group(1)
+        path = os.path.join(TMP, "watch.js")
+        put(path, src)
+        done = subprocess.run([node, "--check", path], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
 
     def test_the_toast_is_the_pages(self):
         import panel_watch_ui as ui

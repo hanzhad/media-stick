@@ -1,9 +1,12 @@
 """The Смотреть part of the page: markup, style and script, as strings. No logic worth testing here;
 inject() puts them into the panel's page at its four @@WATCH_...@@ markers (the first tab, the section before the
-remote's, the remote's bar, the page's tail) and raises when one is missing: a page that silently lost
-the whole tab is worse than one that does not start. Everything is prefixed `wt` / `wt-` so it
+remote's, the remote's bar, the page's tail) and at @@RESUME_ROW@@ (the switch «remember where I stopped» in the
+settings list), and raises when one is missing: a page that silently lost the whole tab is worse than one that does
+not start. Everything is prefixed `wt` / `wt-` so it
 cannot collide with the page's own ids, classes and functions (the page already uses w-ssid, w-btn...).
 Pure DOM and fetch; text goes in with textContent, pictures only as https addresses."""
+
+import panel_watch_sweet_ui as sweet
 
 NAV = """<button data-go="watch" class="on"><span class="pb"><svg class="i"><use href="#wt-i-tv"/></svg></span>Смотреть</button>
     """
@@ -20,9 +23,14 @@ SECTION = """<section id="t-watch" data-tab="watch">
       <div id="wt-body"></div>
     </div>
   </section>
+  <section id="wt-rcard" class="wt-rcoff" data-tab="settings"><label class="card wt-sw"><span class="wt-swt"><b id="wt-rl2"></b><small id="wt-rh2"></small></span><input id="wt-rs2" type="checkbox" role="switch" aria-labelledby="wt-rl2" aria-describedby="wt-rh2"></label></section>
   """
 
 BAR = """<div data-wtbar class="hide"></div>"""
+
+# a row of the settings list: hidden until /api/sweettv/settings answers, then its label and hint are the API's
+RESUME_ROW = """<label id="wt-resume" class="srow wt-sw hide"><span class="wt-swt"><b id="wt-rl"></b><small id="wt-rh"></small></span><input id="wt-rs" type="checkbox" role="switch" aria-labelledby="wt-rl" aria-describedby="wt-rh"></label>
+      """
 
 CSS = r"""
 <style>
@@ -63,8 +71,8 @@ CSS = r"""
 .wt-txt .wt-sub{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wt-bar{height:4px;border-radius:2px;background:var(--line);margin:6px 0 4px;overflow:hidden}
 .wt-bar i{display:block;height:100%;background:#fff}
-.wt-go{flex:none;width:48px;height:48px;border-radius:50%;border:0;background:#fff;color:var(--bg);display:flex;align-items:center;justify-content:center}
-.wt-go .i{fill:currentColor;stroke:none}
+.wt .wt-go{flex:none;width:48px;height:48px;border-radius:50%;border:0;background:#fff;color:var(--bg);display:flex;align-items:center;justify-content:center}
+.wt .wt-go .i{fill:currentColor;stroke:none}
 .wt-msg{padding:28px 12px;text-align:center;color:var(--dim)}
 .wt-msg b{display:block;color:#fff;font-size:17px;margin-bottom:6px}
 .wt-msg .wt-btn{margin-top:14px}
@@ -96,7 +104,25 @@ CSS = r"""
 .wt-nb .wt-btn .i{fill:currentColor}
 /* the player sheet */
 .wt-pbox .wt-p{gap:12px}
+/*@@SWEET_CSS@@*/
+/* the switch «remember where I stopped» in the settings list */
+.wt-sw{display:flex;align-items:center;gap:12px;cursor:pointer}
+.wt-swt{flex:1 1 0;min-width:0}
+.wt-swt b{display:block;font-weight:400;font-size:17px}
+.wt-swt small{display:block;margin-top:2px;color:var(--faint);font-size:13px;line-height:1.35}
+/* the page gives every input width:100% and min-height:52px: the track says its own size, min- and max- both */
+.wt-sw input[type=checkbox]{flex:none;position:relative;box-sizing:border-box;width:51px;min-width:51px;height:31px;min-height:31px;max-height:31px;margin:0;padding:0;border:0;border-radius:999px;background:rgba(255,255,255,.22);-webkit-appearance:none;appearance:none;outline:none;transition:background .15s}
+.wt-sw input[type=checkbox]::before{content:"";position:absolute;left:-6px;right:-6px;top:-8px;bottom:-8px}
+.wt-sw input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.35);transition:transform .15s}
+.wt-sw input[type=checkbox]:checked{background:var(--ok)}
+.wt-sw input[type=checkbox]:checked::after{transform:translateX(20px)}
+.wt-sw input[type=checkbox]:focus-visible{box-shadow:0 0 0 3px rgba(255,255,255,.45)}
+.wt-sw input[type=checkbox]:disabled{opacity:.5}
+/* the same switch as a card of its own, for the wide layout (where the settings list is hidden and every page is a card) */
+#wt-rcard{display:none!important}
 @media (min-width:900px){
+  #wt-rcard{display:block!important;grid-column:1/-1}
+  #wt-rcard.wt-rcoff{display:none!important}
   #t-watch{grid-area:watch}
   #t-remote>[data-wtbar]{display:none!important}
   .wt-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
@@ -126,6 +152,19 @@ const tm=s=>{s=Math.max(0,Math.floor(s||0));const H=Math.floor(s/3600),M=Math.fl
 const picture=u=>/^https:\/\//.test(u||'')?'url("'+u.replace(/["\\()\s]/g,encodeURIComponent)+'")':'';
 const errText=e=>{try{return JSON.parse(e.message).error||e.message}catch(_){return e.message}};
 const g=p=>api('/api/watch/'+p), pst=(p,b)=>api('/api/watch/'+p,b);
+const sg=p=>api('/api/sweettv/'+p), spst=(p,b)=>api('/api/sweettv/'+p,b);
+const plural=(n,one,few,many)=>{const m=n%100,k=n%10;return m>10&&m<20?many:k===1?one:k>1&&k<5?few:many};
+const norm=s=>String(s==null?'':s).toLowerCase().replace(/ё/g,'е');
+const hm=s=>{const d=new Date(s*1000);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
+// the day of a time: «Сегодня», «Вчера», «Завтра», else «23 нояб.»
+const REL=['Сегодня','Вчера','Завтра'];
+function dayName(s){
+  const d=new Date(s*1000),n=new Date(),at=k=>new Date(n.getFullYear(),n.getMonth(),n.getDate()+k).toDateString(),t=d.toDateString();
+  return t===at(0)?REL[0]:t===at(-1)?REL[1]:t===at(1)?REL[2]:d.toLocaleDateString('ru',{day:'numeric',month:'short'})}
+// «Сегодня 18:30», «Вчера 21:00», «Завтра 00:51», else «23 нояб., 21:00»
+function dayTime(s){const n=dayName(s);return n+(REL.includes(n)?' ':', ')+hm(s)}
+// «Выйдет завтра в 07:36», «Выйдет 26 нояб. в 06:29»
+function airs(s){const n=dayName(s);return 'Выйдет '+(REL.includes(n)?n.toLowerCase():n)+' в '+hm(s)}
 function views(n){if(!n)return'';if(n>=1e6)return (n/1e6).toFixed(1).replace('.',',')+' млн просмотров';
   return n>=1e3?Math.round(n/1e3)+' тыс. просмотров':n+' просмотров'}
 function sub(it){return [it.channel,views(it.views),it.published?new Date(it.published*1000).toLocaleDateString('ru'):''].filter(Boolean).join(' · ')}
@@ -152,11 +191,12 @@ function mkPlayer(){
   vol.addEventListener('change',()=>{P.vdrag=false;P.vhold=Date.now()+1500;ctl({op:'volume',level:+vol.value})});
   const vm=h('button',{class:'wt-btn ico','aria-label':'Тише',onclick:()=>ctl({op:'volume',by:-5})},ico('i-vdn'));
   const vp=h('button',{class:'wt-btn ico','aria-label':'Громче',onclick:()=>ctl({op:'volume',by:5})},ico('i-vup'));
+  const goLive=h('button',{class:'wt-btn wide hide',text:'К эфиру',onclick:()=>{buzz();spst('golive',{}).then(()=>setTimeout(tick,250)).catch(e=>toast(errText(e)))}});
   const stop=h('button',{class:'wt-btn wide',text:'Остановить',onclick:()=>{buzz();ctl({op:'stop'});toast('Останавливаю…')}});
   const osd=h('button',{class:'wt-btn','data-a':'osd',text:'Меню плеера',onclick:()=>pressKey('osd')});
   const inf=h('button',{class:'wt-btn','data-a':'info',text:'Описание',onclick:()=>pressKey('info')});
   const root=h('div',{class:'wt-p'},art,title,subl,seekRow,
-    h('div',{class:'wt-tr'},rw,pp,ff),h('div',{class:'wt-opts'},bSub,bAud),optBox,
+    h('div',{class:'wt-tr'},rw,pp,ff),goLive,h('div',{class:'wt-opts'},bSub,bAud),optBox,
     h('div',{class:'wt-vol'},vm,vol,vp),h('div',{class:'wt-two'},osd,inf),stop);
   function pick(kind){
     P.open=P.open===kind?null:kind;draw()}
@@ -174,7 +214,8 @@ function mkPlayer(){
   P.update=function(st){
     P.st=st;
     title.textContent=st.title||'Без названия';
-    subl.textContent=[st.channel,st.live?'В эфире':'',({youtube:'YouTube',sweettv:'SWEET.TV'})[st.app]].filter(Boolean).join(' · ');
+    subl.textContent=[st.programme,st.channel&&st.channel!==st.title?st.channel:'',st.live?'В эфире':'',({youtube:'YouTube',sweettv:'SWEET.TV'})[st.app]].filter(Boolean).join(' · ');
+    goLive.classList.toggle('hide',!st.go_live);
     art.style.backgroundImage=picture(st.thumb);art.classList.toggle('hide',!picture(st.thumb));   // no picture: no grey box
     pp.replaceChildren(ico(st.speed===0?'i-play':'wt-i-pause'));
     const total=st.total>0&&!st.live;seekRow.classList.toggle('hide',!total);   // live: the player's ~1 minute is not a length
@@ -184,7 +225,11 @@ function mkPlayer(){
     if(typeof st.volume==='number'&&!P.vdrag&&Date.now()>(P.vhold||0))vol.value=st.volume;
     draw()};
   return P}
-function ctl(b){return pst('ctl',b).then(()=>setTimeout(tick,250)).catch(e=>toast(errText(e)))}
+// the answer of a seek on a live SWEET.TV channel says what happened: the archive of the programme plays, or only a note
+function ctl(b){return pst('ctl',b).then(r=>{
+  if(r&&r.note)toast(r.note);
+  if(r&&r.switched==='archive')toast('Перешёл в архив передачи');
+  setTimeout(tick,250)}).catch(e=>toast(errText(e)))}
 
 // ---- navigation ----
 const body=()=>$('wt-body');
@@ -216,6 +261,8 @@ function render(){
   if(d.t==='apps')return renderApps(b);
   if(d.t==='yt')return renderYt(b,d);
   if(d.t==='sweet')return renderSweet(b,d);
+  if(d.t==='swguide')return renderGuide(b,d);
+  if(d.t==='swshow')return renderShow(b,d);
 }
 function openOnTv(id){return pst('launch',{app:id}).then(()=>toast('Открываю на ТВ…')).catch(e=>toast(errText(e)))}
 // the app's own picture in the square; a letter on a colour when it has none or it does not load
@@ -281,31 +328,7 @@ async function renderYt(b,d){
     catch(e){toast(errText(e))}moreBtn.disabled=false}});out.append(moreBtn)}
 }
 
-// ---- SWEET.TV ----
-async function renderSweet(b,d){
-  header(d.title,h('button',{class:'wt-btn',text:'Открыть на ТВ',onclick:()=>openOnTv('plugin.video.sweettv')}));
-  const out=h('div');b.append(out);out.append(h('div',{class:'wt-msg',text:'Загружаю…'}));
-  let r;try{r=await g('sweettv')}catch(e){if(cur()===d)out.replaceChildren(msgCard('error',render,'SWEET.TV'));return}
-  if(cur()!==d)return;out.replaceChildren();
-  if(r.state==='signin'){out.append(msgCard('signin',render,'SWEET.TV'));return}
-  if(r.state!=='data'){out.append(msgCard(r.state==='empty'?'empty':'error',render,'SWEET.TV'));return}
-  const chips=h('div',{class:'wt-chips',role:'tablist'}),list=h('div',{class:'wt-list'});out.append(chips,list);
-  const cats=[{key:'all',name:'Все'}].concat(r.categories);
-  const fill=()=>{
-    chips.replaceChildren(...cats.map(c=>h('button',{class:'wt-chip'+(d.cat===c.key?' on':''),role:'tab','aria-selected':d.cat===c.key,text:c.name,onclick:()=>{d.cat=c.key;fill()}})));
-    list.replaceChildren();
-    lazy(list,r.channels.filter(c=>d.cat==='all'||c.cats.includes(d.cat)),chRow)};
-  const play=c=>{buzz();pst('play',{file:c.play}).catch(e=>toast(errText(e)));toast('Открываю на ТВ…');W.wait=Date.now()+25000;W.last=null;openSheet()};
-  function chRow(c){
-    const n=c.now;
-    return h('div',{class:'wt-item'},
-      h('div',{class:'wt-ch',style:'background-image:'+picture(c.icon)}),
-      h('div',{class:'wt-txt'},h('b',{text:c.name}),
-        n?h('span',{class:'wt-sub',text:n.title}):h('span',{class:'wt-sub',text:'Нет программы'}),
-        n?h('div',{class:'wt-bar'},h('i',{style:'width:'+n.percent+'%'})):'',
-        c.next?h('span',{class:'wt-sub',text:'Далее '+c.next.time+' · '+c.next.title}):''),
-      h('button',{class:'wt-go','aria-label':'Смотреть '+c.name+' на ТВ',onclick:()=>play(c)},ico('i-play')))}
-  fill()}
+//@@SWEET_JS@@
 
 // ---- now playing: a bar (one at the top of «Смотреть», one of «Пульт») and the one player, in a sheet ----
 function mkBar(host){
@@ -316,7 +339,7 @@ function mkBar(host){
     art,h('div',{class:'wt-txt'},title,line),pp));
   return {update(st){
     host.classList.toggle('hide',!st);if(!st)return;
-    title.textContent=st.title||'Без названия';
+    title.textContent=st.programme&&st.title?st.title+' · '+st.programme:st.title||'Без названия';
     const pic=picture(st.thumb);art.classList.toggle('hide',!pic);art.style.backgroundImage=pic;
     const pct=st.total>0&&!st.live?Math.min(100,100*st.time/st.total):0;line.classList.toggle('hide',!pct);fill.style.width=pct+'%';
     pp.replaceChildren(ico(st.speed===0?'i-play':'wt-i-pause'))}}}
@@ -354,12 +377,35 @@ W.pbox.addEventListener('touchend',e=>{if(swipeY!==null&&e.changedTouches[0].cli
 W.bars=[...document.querySelectorAll('[data-wtbar]')].map(mkBar);
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>setTimeout(tick,0)));
 setInterval(tick,1500);
+
+// ---- the switch «remember where I stopped»: a row of the settings list (phone) and a card of its own (wide), one state;
+// the texts are the API's; no answer: no row, no card ----
+async function loadResume(){
+  const row=$('wt-resume'),card=$('wt-rcard'),boxes=[$('wt-rs'),$('wt-rs2')].filter(Boolean);
+  if(!row||!boxes.length)return;
+  const show=on=>{row.classList.toggle('hide',!on);if(card)card.classList.toggle('wt-rcoff',!on)};
+  let r;try{r=await sg('settings')}catch(e){show(false);return}
+  if(!r||typeof r.local_resume!=='boolean'){show(false);return}
+  ['wt-rl','wt-rl2'].forEach(i=>{const e=$(i);if(e)e.textContent=r.label||''});
+  ['wt-rh','wt-rh2'].forEach(i=>{const e=$(i);if(e)e.textContent=r.hint||''});
+  const set=v=>boxes.forEach(b=>{b.checked=v});
+  set(r.local_resume);show(true);
+  boxes.forEach(box=>{box.onchange=async()=>{
+    const want=box.checked;boxes.forEach(b=>{b.disabled=true});buzz();
+    try{const a=await spst('settings',{local_resume:want});set(!!a.local_resume)}
+    catch(e){set(!want);toast(errText(e))}
+    boxes.forEach(b=>{b.disabled=false})}})}
+loadResume();
+document.querySelectorAll('[data-go=settings]').forEach(b=>b.addEventListener('click',loadResume));
 render();tick();
 })();
 </script>"""
 
+CSS = CSS.replace("/*@@SWEET_CSS@@*/", sweet.CSS.strip(), 1)
+JS = JS.replace("//@@SWEET_JS@@", sweet.JS.strip(), 1)
+
 MARKERS = {"@@WATCH_NAV@@": NAV, "@@WATCH_SECTION@@": SECTION, "@@WATCH_BAR@@": BAR,
-           "@@WATCH_TAIL@@": CSS + JS}
+           "@@WATCH_TAIL@@": CSS + JS, "@@RESUME_ROW@@": RESUME_ROW}
 
 def inject(page):
     """The page with the Смотреть tab put at its four markers. A marker the page does not have raises ValueError:

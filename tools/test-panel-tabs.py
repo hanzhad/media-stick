@@ -266,6 +266,10 @@ class Page(unittest.TestCase):
         self.assertEqual(re.findall(r'class="sname">([^<]+)<', lst),
                          ["Аккаунты", "Wi-Fi", "Пульт как приложение", "Язык", "О приставке", "Обслуживание"])
         self.assertEqual(lst.count('class="chev" aria-hidden="true">›<'), 6)
+        # the switch «remember where I stopped» is a row of the list, after the language, and not a link to a page
+        self.assertLess(lst.index('data-sp="lang"'), lst.index('id="wt-resume"'))
+        self.assertLess(lst.index('id="wt-resume"'), lst.index('data-sp="info"'))
+        self.assertIn('<input id="wt-rs" type="checkbox" role="switch"', lst)
         for i in ("sv-acc", "sv-wifi", "sv-https", "sv-info"):
             self.assertIn('id="%s"' % i, lst)
         for page, sec in (("acc", "t-acc"), ("wifi", "t-wifi"), ("https", "t-https"), ("info", "t-info"), ("act", "t-act")):

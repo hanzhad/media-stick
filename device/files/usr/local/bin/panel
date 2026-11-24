@@ -878,7 +878,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <button class="srow" data-sp="acc"><svg class="i"><use href="#i-user"/></svg><span class="sname">Аккаунты</span><span class="sval" id="sv-acc"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="wifi"><svg class="i"><use href="#i-wifi"/></svg><span class="sname">Wi-Fi</span><span class="sval" id="sv-wifi"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="https"><svg class="i"><use href="#i-lock"/></svg><span class="sname">Пульт как приложение</span><span class="sval" id="sv-https"></span><span class="chev" aria-hidden="true">›</span></button>
-      @@LANG_ROW@@<button class="srow" data-sp="info"><svg class="i"><use href="#i-info"/></svg><span class="sname">О приставке</span><span class="sval" id="sv-info"></span><span class="chev" aria-hidden="true">›</span></button>
+      @@LANG_ROW@@@@RESUME_ROW@@<button class="srow" data-sp="info"><svg class="i"><use href="#i-info"/></svg><span class="sname">О приставке</span><span class="sval" id="sv-info"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="act"><svg class="i"><use href="#i-rot"/></svg><span class="sname">Обслуживание</span><span class="sval" id="sv-act"></span><span class="chev" aria-hidden="true">›</span></button>
     </div>
   </section>
