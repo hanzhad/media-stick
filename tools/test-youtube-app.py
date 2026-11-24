@@ -2757,6 +2757,23 @@ class Splash(WindowCase):
         timer.function(*timer.args)
         self.assertEqual((window.getProperty("splash"), window.mode, seen), ("", D.LOADING, self.COLD))
 
+    def test_the_mode_is_set_before_onInit_returns_so_the_splash_of_an_unbuilt_window_comes_down(self):
+        self.rec(vid(1, "One"))
+        self.open().stop()                                                      # a warm start
+        self.site.held[self.REC] = hold = threading.Event()
+        window, _ = self.start()
+        self.assertEqual((window.getProperty("mode"), window.getProperty("splash")), (D.DATA, ""))
+        window.stop()
+        page_cache.drop(P.namespace("p1"))                                      # a cold start
+        window, _ = self.start()
+        self.assertEqual((window.getProperty("mode"), window.getProperty("splash")), (D.LOADING, "1"))
+        window.stop()
+        for scenario in ("", "signin", "loading"):                              # the demo
+            window, _ = self.start(demo=True, scenario=scenario)
+            self.assertNotEqual(window.getProperty("mode"), "", scenario)
+            window.stop()
+        hold.set()
+
     def test_warming_begins_with_the_launch_and_still_waits_for_the_first_page(self):
         self.others()
         self.rec(vid(1, "R"))
@@ -3232,12 +3249,12 @@ class Skin(unittest.TestCase):
         for window in ({"mode": "data"}, {"mode": "data", "kind": "channel"}, {"mode": "empty", "action": "Search"}):
             self.assertFalse([c for c in self.shown(header, window=window) if c.get("id") in map(str, KIND_IDS)], window)
         for kind in D.KIND_KEYS:                                                                  # one pill marks the chosen type
-            marks = [c for c in self.shown(header, window={"search": "1", "kind": kind})
+            marks = [c for c in self.shown(header, window={"mode": "data", "search": "1", "kind": kind})
                      if c.get("type") == "image" and c.findtext("colordiffuse") == "26FFFFFF"]
             self.assertEqual(len(marks), 1, kind)
             index = D.KIND_KEYS.index(kind)
             self.assertEqual(marks[0].findtext("left"), buttons[index].findtext("left"), kind)
-        self.assertEqual(len([c for c in self.shown(header, window={"search": "1"}) if c.get("type") == "image"
+        self.assertEqual(len([c for c in self.shown(header, window={"mode": "data", "search": "1"}) if c.get("type") == "image"
                               and c.findtext("colordiffuse") == "26FFFFFF"]), 0)                  # no type known: none marked
         for a, b in zip(buttons, buttons[1:]):                                                    # in a row, apart, left to right
             self.assertEqual(a.findtext("top"), b.findtext("top"))
@@ -3282,7 +3299,7 @@ class Skin(unittest.TestCase):
         button = self.by_id(root, AVATAR)
         self.assertEqual(button.get("type"), "button")
         self.assertEqual(button.findtext("visible"),                                  # drawn with the circle only, and not under the splash
-                         "!String.IsEmpty(Window.Property(avatar))+String.IsEmpty(Window.Property(splash))")
+                         "!String.IsEmpty(Window.Property(avatar))+String.IsEmpty(Window.Property(splash))+!String.IsEmpty(Window.Property(mode))")
         circle = next(g for g in root.find("controls").findall("control") if g.findtext("left") == "1808" and g.get("type") == "group")
         box = [int(button.findtext(k)) for k in ("left", "top", "width", "height")]
         around = [int(circle.findtext(k)) for k in ("left", "top", "width", "height")]
@@ -3351,36 +3368,43 @@ class Skin(unittest.TestCase):
             if name.startswith("youtube-"):
                 self.assertLess(os.path.getsize(os.path.join(MEDIA, name)), 6000, name)
 
-    def test_the_splash_is_the_only_thing_shown_while_the_property_is_set_one_picture_and_nothing_to_focus(self):
+    def test_the_splash_is_the_only_thing_shown_while_the_property_is_set_or_mode_is_not_yet_known(self):
         root = self.tree()
         top = root.find("controls").findall("control")
-        splash = [c for c in top if c.findtext("visible") == "!String.IsEmpty(Window.Property(splash))"]
+        splash = [c for c in top if c.findtext("visible") == "!String.IsEmpty(Window.Property(splash))|String.IsEmpty(Window.Property(mode))"]
         self.assertEqual(len(splash), 1)
-        not_splash = "String.IsEmpty(Window.Property(splash))"
+        calm = "String.IsEmpty(Window.Property(splash))+!String.IsEmpty(Window.Property(mode))"
         for control in top:
             if control is not splash[0]:
                 condition = control.findtext("visible") or ""
-                self.assertTrue(condition == not_splash or condition.endswith("+" + not_splash), (control.get("id"), condition))
-        for mode, search, avatar, demo_mark, notice, action in itertools.product(
-                ("data", "signin", "loading", "needkey"), ("", "1"), ("", "A"), ("", "1"), ("", "x"), ("", "Try again")):
-            window = {"mode": mode, "search": search, "avatar": avatar, "demo": demo_mark, "notice": notice, "action": action,
-                      "kind": "video", "key_qr": "/tmp/q.png", "step": "Step 1 of 6"}
-            self.assertNotIn(splash[0], self.shown(root.find("controls"), window=window), window)
-            shown = self.shown(root.find("controls"), window={**window, "splash": "1"})
-            self.assertEqual(set(shown), set(splash[0].iter("control")), window)         # the splash and what is in it, nothing else
-            self.assertEqual([c.get("id") for c in shown if c.get("id")], [], "nothing in it takes the focus")
-            self.assertEqual([c.get("type") for c in shown].count("image"), 1, window)
+                self.assertTrue(condition == calm or condition.endswith("+" + calm), (control.get("id"), condition))
+        for mode, splashing, search, avatar, demo_mark, notice, action in itertools.product(
+                ("", "data", "signin", "loading", "needkey"), ("", "1"), ("", "1"), ("", "A"), ("", "1"), ("", "x"), ("", "Try again")):
+            window = {"mode": mode, "splash": splashing, "search": search, "avatar": avatar, "demo": demo_mark, "notice": notice,
+                      "action": action, "kind": "video", "key_qr": "/tmp/q.png", "step": "Step 1 of 6"}
+            shown = self.shown(root.find("controls"), window=window)
+            if mode == "" or splashing:                       # the window just built, or the load of a cold start: the splash alone
+                self.assertEqual(set(shown), set(splash[0].iter("control")), window)
+                self.assertEqual([c.get("id") for c in shown if c.get("id")], [], "nothing in it takes the focus")
+                self.assertEqual([c.get("type") for c in shown].count("image"), 1, window)
+            else:
+                self.assertNotIn(splash[0], shown, window)
         mark = next(c for c in splash[0].iter("control") if c.get("type") == "image")
         logo = next(c for c in top if c.get("type") == "image")
-        self.assertEqual((mark.findtext("texture"), logo.findtext("texture")), ("youtube-mark.png",) * 2)
+        self.assertEqual((mark.findtext("texture"), logo.findtext("texture")), ("youtube-splash.png", "youtube-mark.png"))
         self.assertGreaterEqual(int(mark.findtext("width")), 2 * int(logo.findtext("width")))         # larger than the top bar's
+        size = (int(mark.findtext("width")), int(mark.findtext("height")))
+        picture = self.png_size(os.path.join(MEDIA, "youtube-splash.png"))
+        self.assertEqual(picture[0] * size[1], picture[1] * size[0], "the picture has the control's proportions")
+        self.assertGreaterEqual(picture[0], size[0], "drawn for this size, not a smaller one stretched")
         self.assertEqual(int(mark.findtext("left")) + int(mark.findtext("width")) // 2, 960)        # centred on 1920 x 1080
         labels = {c.findtext("label"): c for c in splash[0].iter("control") if c.get("type") == "label"}
         self.assertEqual(set(labels), {"YouTube", "Loading…"})
         for label in labels.values():
             self.assertEqual(int(label.findtext("left")) + int(label.findtext("width")) // 2, 960)
             self.assertEqual(label.findtext("align"), "center")
-        self.assertEqual(self.pictures(root.find("controls"), window={"mode": "data", "splash": "1"}), 1)
+        for window in ({"mode": "data", "splash": "1"}, {}, {"avatar": "A", "demo": "1"}):
+            self.assertEqual(self.pictures(root.find("controls"), window=window), 1, window)
         self.assertEqual(self.pictures(root.find("controls"), window={"mode": "data"}), 1, "and without it: the mark of the top bar")
 
     def test_demo_is_marked_on_screen(self):

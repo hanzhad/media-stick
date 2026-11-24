@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pictures of the YouTube app (resources/lib/youtube_app.py): eight invented scenes for the demo's thumbnails, the
 plate a card shows when a video has none, the rounded-corner mask of a thumbnail, the focus ring, the pill, the
-logo mark, the seven section icons and the strips (length pill and watched bar of a card, one picture per card).
+logo mark (and the same mark at 256 x 180 for the launch splash), the seven section icons and the strips (length pill and watched bar of a card, one picture per card).
 
 Dev tool, needs python3-pil, python3-numpy; uses the helpers of make-launcher-art.py.
 Usage: python3 tools/make-youtube-art.py <repo path>
@@ -370,6 +370,19 @@ def make_shapes():
     d.rounded_rectangle([0, 0, 64 * 8 - 1, 45 * 8 - 1], 13 * 8, fill=(255, 0, 0, 255))
     d.polygon([(26 * 8, 13 * 8), (26 * 8, 32 * 8), (43 * 8, 22.5 * 8)], fill=(255, 255, 255, 255))
     save(mark.resize((64, 45), Image.LANCZOS), "youtube-mark.png")
+    make_splash_mark()
+
+
+def make_splash_mark():
+    """The mark of the launch splash, drawn again at 4 times the top bar's size (256 x 180, shown at that size, one picture
+    pixel to one screen pixel on a 1080p screen), not the small one stretched."""
+    ss, unit = 4, 4
+    scale = ss * unit
+    mark = Image.new("RGBA", (64 * scale, 45 * scale), (0, 0, 0, 0))
+    d = ImageDraw.Draw(mark)
+    d.rounded_rectangle([0, 0, 64 * scale - 1, 45 * scale - 1], 13 * scale, fill=(255, 0, 0, 255))
+    d.polygon([(26 * scale, 13 * scale), (26 * scale, 32 * scale), (43 * scale, 22.5 * scale)], fill=(255, 255, 255, 255))
+    save(mark.resize((64 * unit, 45 * unit), Image.LANCZOS), "youtube-splash.png")
 
 
 def make_strip(style, width, bar):
