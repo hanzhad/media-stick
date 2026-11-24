@@ -2218,11 +2218,17 @@ class Skin(unittest.TestCase):
         self.assertIn(types_.get(410), ("list", "grouplist"))
         for cid in range(401, 409):
             self.assertIn(cid, types_, cid)
+        self.assertEqual(types_.get(209), "grouplist")
+        self.assertEqual(types_.get(409), "grouplist")
         panel = self.control(root, 200)
-        self.assertEqual(panel.findtext("orientation"), "vertical")
+        self.assertEqual(panel.findtext("orientation"), "horizontal")
         cols = int(panel.findtext("width")) // int(panel.find("itemlayout").get("width"))
         rows = int(panel.findtext("height")) // int(panel.find("itemlayout").get("height"))
-        self.assertEqual((cols, rows), (4, 2))
+        self.assertEqual((cols, rows), (4, 1))
+        for ar in root.iter("aspectratio"):
+            if ar.text == "scale":
+                self.assertEqual(ar.get("align"), "center")
+                self.assertEqual(ar.get("aligny"), "center")
         for node in panel.iter("texture"):
             if "ListItem.Art" in (node.text or ""):
                 self.assertEqual(node.get("background"), "true")
@@ -2233,7 +2239,7 @@ class Skin(unittest.TestCase):
         static_pics = sum(1 for c in top if c.get("type") in ("image", "button"))
         panel = self.control(root, 200)
         panel_pics_per_card = count_pictures(panel.find("focusedlayout"))
-        self.assertLessEqual(static_pics + 8 * panel_pics_per_card, 34)
+        self.assertLessEqual(static_pics + 4 * panel_pics_per_card, 34)
 
     def test_brand_palette_navy_and_turquoise_no_netflix_red(self):
         text = ET.tostring(self.tree(), encoding="unicode")

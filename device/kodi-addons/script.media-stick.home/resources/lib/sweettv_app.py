@@ -486,7 +486,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         super().onAction(action)
         if self._focus() == ROW:
             self._sync_hero()
-            if action_id == ACTION_MOVE_DOWN:
+            if action_id in (ACTION_MOVE_RIGHT, ACTION_MOVE_DOWN):
                 self._maybe_paginate()
             if PREVIEW_VIDEO:
                 self._later("preview", PREVIEW_DELAY, self._preview_start)
