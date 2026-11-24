@@ -1,0 +1,386 @@
+#!/usr/bin/python3
+"""mediastick-displayd: centralized display & power-state arbitrator daemon.
+
+Listens on /run/media-stick/display.sock (overridable via DISPLAYD_SOCK), mode 0660
+group media, serving line-delimited JSON RPC serialized behind a single asyncio.Lock.
+"""
+import asyncio
+import glob
+import grp
+import json
+import os
+import signal
+import sys
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO_LIB = os.path.normpath(os.path.join(_HERE, "..", "lib", "media-stick"))
+for _lib in ("/usr/local/lib/media-stick", _REPO_LIB):
+    if os.path.isdir(_lib) and _lib not in sys.path:
+        sys.path.insert(0, _lib)
+
+from mediastick_display import (  # noqa: E402
+    CAST_STATES,
+    DisplayState,
+    DisplayStateMachine,
+    is_p2p_allowed,
+    resolve_sock_path,
+)
+
+VALID_GOVERNORS = frozenset({"powersave", "ondemand", "performance"})
+
+
+class SystemExecutor:
+    """Async interface for OS side effects; injectable for offline tests."""
+
+    async def stop_unit(self, unit):
+        raise NotImplementedError
+
+    async def start_unit(self, unit):
+        raise NotImplementedError
+
+    async def draw_splash(self):
+        raise NotImplementedError
+
+    async def flush(self):
+        raise NotImplementedError
+
+    async def cec_standby(self):
+        raise NotImplementedError
+
+    async def cec_wake(self):
+        raise NotImplementedError
+
+    async def kms_dpms(self, on):
+        raise NotImplementedError
+
+    async def set_governor(self, governor):
+        raise NotImplementedError
+
+    async def p2p_pause(self):
+        raise NotImplementedError
+
+    async def p2p_resume(self):
+        raise NotImplementedError
+
+
+async def _run_cmd(*args, timeout=15.0):
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return 124, "", "timeout"
+    return proc.returncode, stdout.decode("utf-8", "replace"), stderr.decode("utf-8", "replace")
+
+
+class OSExecutor(SystemExecutor):
+    """Real OS executor for the Raspberry Pi 3B+."""
+
+    def __init__(self, flush_cb=None):
+        self._flush_cb = flush_cb
+
+    async def stop_unit(self, unit):
+        await _run_cmd("systemctl", "stop", unit, timeout=30.0)
+
+    async def start_unit(self, unit):
+        await _run_cmd("systemctl", "start", unit, timeout=30.0)
+
+    async def draw_splash(self):
+        if os.path.exists("/usr/local/bin/console-splash"):
+            await _run_cmd("/usr/local/bin/console-splash", timeout=10.0)
+
+    async def flush(self):
+        if self._flush_cb is not None:
+            res = self._flush_cb()
+            if asyncio.iscoroutine(res):
+                await res
+
+    async def cec_standby(self):
+        if os.path.exists("/dev/cec0"):
+            await _run_cmd("cec-ctl", "-d", "/dev/cec0", "--to", "0", "--standby", timeout=5.0)
+
+    async def cec_wake(self):
+        if os.path.exists("/dev/cec0"):
+            await _run_cmd("cec-ctl", "-d", "/dev/cec0", "--to", "0", "--image-view-on", timeout=5.0)
+
+    async def kms_dpms(self, on):
+        mode = "On" if on else "Off"
+        for path in sorted(glob.glob("/sys/class/drm/card*-HDMI-*/dpms")):
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(mode + "\n")
+            except OSError:
+                pass
+
+    async def set_governor(self, governor):
+        if governor not in VALID_GOVERNORS:
+            raise ValueError("invalid CPU governor: %r" % (governor,))
+        for path in sorted(glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor")):
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(governor + "\n")
+            except OSError:
+                pass
+
+    async def p2p_pause(self):
+        await _run_cmd(
+            "wpa_cli", "-p", "/run/wpa_supplicant", "-i", "p2p-dev-wlan0", "p2p_stop_find",
+            timeout=5.0,
+        )
+
+    async def p2p_resume(self):
+        pass
+
+
+class DisplayServer:
+    """Asyncio Unix socket RPC server serializing display & power transitions."""
+
+    def __init__(self, sock_path=None, executor=None):
+        self.sock_path = resolve_sock_path(sock_path)
+        self.executor = executor if executor is not None else OSExecutor()
+        self.sm = DisplayStateMachine()
+        self._lock = asyncio.Lock()
+        self._server = None
+        self._stopping = False
+        self._clients = set()
+        self._subscribers = set()
+        self._lease_conn = None
+        self._next_conn_id = 0
+
+    async def start(self):
+        self._stopping = False
+        parent = os.path.dirname(self.sock_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        try:
+            os.unlink(self.sock_path)
+        except FileNotFoundError:
+            pass
+        self._server = await asyncio.start_unix_server(self._handle_client, path=self.sock_path)
+        os.chmod(self.sock_path, 0o660)
+        try:
+            gid = grp.getgrnam("media").gr_gid
+            os.chown(self.sock_path, -1, gid)
+        except (KeyError, PermissionError, OSError):
+            pass
+
+    async def stop(self):
+        self._stopping = True
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+        for writer in list(self._subscribers):
+            writer.close()
+        self._subscribers.clear()
+        for task in list(self._clients):
+            task.cancel()
+        if self._clients:
+            await asyncio.gather(*self._clients, return_exceptions=True)
+        self._clients.clear()
+        try:
+            os.unlink(self.sock_path)
+        except FileNotFoundError:
+            pass
+
+    async def _execute_actions(self, actions):
+        for action in actions:
+            kind = action.kind
+            arg = action.arg
+            if kind == "stop_unit":
+                await self.executor.stop_unit(arg)
+            elif kind == "start_unit":
+                await self.executor.start_unit(arg)
+            elif kind == "draw_splash":
+                await self.executor.draw_splash()
+            elif kind == "flush":
+                await self.executor.flush()
+            elif kind == "cec_standby":
+                await self.executor.cec_standby()
+            elif kind == "cec_wake":
+                await self.executor.cec_wake()
+            elif kind == "kms_dpms":
+                await self.executor.kms_dpms(arg)
+            elif kind == "set_governor":
+                await self.executor.set_governor(arg)
+            elif kind == "p2p_pause":
+                await self.executor.p2p_pause()
+            elif kind == "p2p_resume":
+                await self.executor.p2p_resume()
+            else:
+                raise ValueError("unknown action: %r" % (kind,))
+
+    def _broadcast(self, event_payload):
+        line = (json.dumps(event_payload) + "\n").encode("utf-8")
+        dead = []
+        for writer in list(self._subscribers):
+            try:
+                writer.write(line)
+            except OSError:
+                dead.append(writer)
+        for writer in dead:
+            self._subscribers.discard(writer)
+
+    async def _run_plan(self, plan, lease_conn=None):
+        prev_state = self.sm.state
+        prev_app = self.sm.app
+        prev_owner = self.sm.owner
+        await self._execute_actions(plan.actions)
+        self.sm.apply_plan(plan)
+        if self.sm.state == DisplayState.KODI:
+            self._lease_conn = None
+        else:
+            self._lease_conn = lease_conn
+        if (
+            self.sm.state != prev_state
+            or self.sm.app != prev_app
+            or self.sm.owner != prev_owner
+        ):
+            ev = self.sm.snapshot()
+            ev["event"] = "state_changed"
+            ev["prev_state"] = prev_state.name
+            self._broadcast(ev)
+
+    async def _update_p2p_flag(self, attr, value):
+        async with self._lock:
+            was_allowed = is_p2p_allowed(
+                self.sm.state, self.sm.kodi_playing, self.sm.hotspot_active
+            )
+            setattr(self.sm, attr, bool(value))
+            now_allowed = is_p2p_allowed(
+                self.sm.state, self.sm.kodi_playing, self.sm.hotspot_active
+            )
+            if now_allowed != was_allowed:
+                if now_allowed:
+                    await self.executor.p2p_resume()
+                else:
+                    await self.executor.p2p_pause()
+                ev = self.sm.snapshot()
+                ev["event"] = "p2p_allowed"
+                self._broadcast(ev)
+            return {"ok": True, **self.sm.snapshot()}
+
+    async def _handle_rpc(self, req, conn_id, writer):
+        cmd = req.get("cmd")
+        if cmd == "status":
+            async with self._lock:
+                return {"ok": True, **self.sm.snapshot()}
+
+        if cmd == "subscribe":
+            async with self._lock:
+                self._subscribers.add(writer)
+                return {"ok": True, **self.sm.snapshot()}
+
+        if cmd == "acquire":
+            async with self._lock:
+                plan = self.sm.plan_transition(
+                    req.get("target"),
+                    owner=req.get("owner"),
+                    app=req.get("app"),
+                )
+                await self._run_plan(plan, lease_conn=conn_id)
+                return {"ok": True, **self.sm.snapshot()}
+
+        if cmd == "release":
+            async with self._lock:
+                plan = self.sm.check_release(
+                    owner=req.get("owner"),
+                    force=bool(req.get("force", False)),
+                )
+                await self._run_plan(plan, lease_conn=None)
+                return {"ok": True, **self.sm.snapshot()}
+
+        if cmd == "standby":
+            async with self._lock:
+                plan = self.sm.plan_transition(
+                    DisplayState.STANDBY,
+                    owner=req.get("owner") or "standby",
+                )
+                await self._run_plan(plan, lease_conn=None)
+                return {"ok": True, **self.sm.snapshot()}
+
+        if cmd == "wake":
+            async with self._lock:
+                if self.sm.state == DisplayState.STANDBY:
+                    plan = self.sm.check_release(force=True)
+                    await self._run_plan(plan, lease_conn=None)
+                return {"ok": True, **self.sm.snapshot()}
+
+        if cmd == "set_kodi_playing":
+            return await self._update_p2p_flag("kodi_playing", req.get("playing"))
+
+        if cmd == "set_hotspot":
+            return await self._update_p2p_flag("hotspot_active", req.get("active"))
+
+        return {"ok": False, "error": "unknown command: %r" % (cmd,)}
+
+    async def _on_disconnect(self, conn_id, writer):
+        self._subscribers.discard(writer)
+        if self._stopping:
+            return
+        async with self._lock:
+            if self._lease_conn == conn_id and self.sm.state in CAST_STATES:
+                plan = self.sm.check_release(force=True)
+                await self._run_plan(plan, lease_conn=None)
+
+    async def _handle_client(self, reader, writer):
+        task = asyncio.current_task()
+        if task is not None:
+            self._clients.add(task)
+            task.add_done_callback(self._clients.discard)
+        self._next_conn_id += 1
+        conn_id = self._next_conn_id
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                try:
+                    req = json.loads(line.decode("utf-8"))
+                    if not isinstance(req, dict):
+                        raise ValueError("request must be a JSON object")
+                    resp = await self._handle_rpc(req, conn_id, writer)
+                except (ValueError, PermissionError, json.JSONDecodeError) as e:
+                    resp = {"ok": False, "error": str(e)}
+                except Exception as e:
+                    resp = {"ok": False, "error": str(e)}
+                writer.write((json.dumps(resp) + "\n").encode("utf-8"))
+                await writer.drain()
+        except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
+            pass
+        finally:
+            await self._on_disconnect(conn_id, writer)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass
+
+
+async def _serve_forever():
+    server = DisplayServer()
+    await server.start()
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except NotImplementedError:
+            pass
+    try:
+        await stop_event.wait()
+    finally:
+        await server.stop()
+
+
+def main():
+    asyncio.run(_serve_forever())
+
+
+if __name__ == "__main__":
+    main()

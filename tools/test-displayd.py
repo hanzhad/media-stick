@@ -331,21 +331,35 @@ class DisplayDaemonRPCTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(acq_web["p2p_allowed"])
 
         self.executor.calls.clear()
-        acq_air = await self._rpc(
-            {"cmd": "acquire", "target": "CAST_AIRPLAY", "owner": "airplay"}
-        )
-        self.assertTrue(acq_air["ok"])
-        self.assertEqual(acq_air["state"], "CAST_AIRPLAY")
-        self.assertIn(("stop_unit", "web-app@youtube.service"), self.executor.calls)
-        self.assertNotIn(("start_unit", "kodi.service"), self.executor.calls)
+        air_r, air_w = await asyncio.open_unix_connection(self.sock_path)
+        try:
+            air_w.write(
+                (
+                    json.dumps(
+                        {"cmd": "acquire", "target": "CAST_AIRPLAY", "owner": "airplay"}
+                    )
+                    + "\n"
+                ).encode("utf-8")
+            )
+            await air_w.drain()
+            acq_air = json.loads(
+                (await asyncio.wait_for(air_r.readline(), timeout=2.0)).decode("utf-8")
+            )
+            self.assertTrue(acq_air["ok"])
+            self.assertEqual(acq_air["state"], "CAST_AIRPLAY")
+            self.assertIn(("stop_unit", "web-app@youtube.service"), self.executor.calls)
+            self.assertNotIn(("start_unit", "kodi.service"), self.executor.calls)
 
-        wrong_rel = await self._rpc({"cmd": "release", "owner": "panel"})
-        self.assertFalse(wrong_rel["ok"])
+            wrong_rel = await self._rpc({"cmd": "release", "owner": "panel"})
+            self.assertFalse(wrong_rel["ok"])
 
-        rel = await self._rpc({"cmd": "release", "owner": "airplay"})
-        self.assertTrue(rel["ok"])
-        self.assertEqual(rel["state"], "KODI")
-        self.assertTrue(rel["p2p_allowed"])
+            rel = await self._rpc({"cmd": "release", "owner": "airplay"})
+            self.assertTrue(rel["ok"])
+            self.assertEqual(rel["state"], "KODI")
+            self.assertTrue(rel["p2p_allowed"])
+        finally:
+            air_w.close()
+            await air_w.wait_closed()
 
     async def test_kodi_playing_and_hotspot_flip_p2p_allowed(self):
         r1 = await self._rpc({"cmd": "set_kodi_playing", "playing": True})
