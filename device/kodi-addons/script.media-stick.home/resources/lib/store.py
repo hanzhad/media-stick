@@ -21,7 +21,24 @@ try:        # whether a YouTube profile's Google account has a channel; a device
 except ImportError:
     ytchannel = None
 
+try:        # where the person stopped; a device without it keeps what the places read before
+    import mediastick_resume as resume  # noqa: E402
+except ImportError:
+    resume = None
+
 SERVICES = lib.SERVICES
+
+
+def local_resume():
+    """The positions the stick saved while anything played (mediastick_resume's document) when the choice "remember where I
+    stopped, on the device" is on; None when it is off, the library is missing or it fails: the places then read what they
+    always did."""
+    if resume is None:
+        return None
+    try:
+        return resume.load() if resume.enabled() else None
+    except Exception:
+        return None
 
 
 def channel_state(profile_id) -> str:

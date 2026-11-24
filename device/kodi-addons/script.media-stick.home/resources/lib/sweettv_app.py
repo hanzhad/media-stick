@@ -109,7 +109,7 @@ class SweetTV(Guide, DigitJump, xbmcgui.WindowXML):
         if not self.started:
             self.started = True
             if not self.demo:
-                self.state = saved.load_state(files.state_path())
+                self.state = saved.merge_local(saved.load_state(files.state_path()), files.local_positions())
                 self.writer.start()
             self._show_mode(data.EMPTY, self._status_props(words.status("", False, False, 0)))
         else:

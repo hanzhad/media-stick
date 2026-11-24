@@ -108,6 +108,7 @@ GET  /api/sweettv/guide?cid=<id>
      {"ok": true, "cid", "name", "archive", "archive_days", "now",
       "past":    [{"id", "title", "start", "stop", "archive"}],   over, newest first; archive: can be played from the archive
       "current": {"id", "title", "start", "stop", "archive"} | null,   on now; archive: can be played from its start
+                       (with the local resume on, a past or current entry also has "resume" seconds, 0: none, and "watched")
       "next":    [{"id", "title", "start", "stop"}],              to come, soonest first; information only, not playable
       "counts": {"past", "next"}}
      400 wrong id, 404 the channel is not in the list. Play an entry with POST play below.
@@ -118,14 +119,22 @@ POST /api/sweettv/play {"cid", "epg"?, "at"?}
      epg + at "start"       the archive from the beginning (default)
      epg + at "now"         from the place the live stream is at (only for the programme on now)
      epg + at <seconds>     from that second, clamped into the programme
+     epg + at "resume"      from the place the stick saved (local resume on; 0 when there is none or it is off)
      {"ok": true, "epg", "offset"}; 404 no such programme in the channel's guide, 409 no archive for it (the channel keeps none,
      it is older than `catchup_duration` days, it has not started, `available` is false)
 POST /api/sweettv/golive {}   {"ok": true}; 409 when an archived programme is not what is playing
+GET  /api/sweettv/settings    {"ok": true, "local_resume": false, "default": false, "saved": 12, "label", "hint"}
+POST /api/sweettv/settings {"local_resume": true}   the same answer; 400 for anything but a boolean, 503 without the library
 ```
+
+Remember where I stopped, on the device ("local resume"). One choice for the whole device, YouTube and SWEET.TV alike (the route is under `/api/sweettv/` because that is where the page asks for SWEET.TV things; `label` and `hint` are the texts for the switch, ru/uk through the dictionary). It is one line, `1` or `0`, in `/var/lib/media-stick/prefs/local-resume` (`MEDIASTICK_PREFS_DIR` moves it); with no file the default is off, because the places that continue today read the history of Kodi and of the accounts, and a switch that silently dropped all of that on an update would look like lost progress. What the stick saved is `/var/lib/media-stick/resume/positions.json` (`MEDIASTICK_RESUME_DIR` moves it; library `mediastick_resume`, standard library only): `{"v": 1, "items": {"yt:<video id>": {"pos", "total", "done", "at"}, "sw:<channel>|<programme>": {"cid", "epg", "pos", "total", "done", "at", "title", "start", "stop"}}, "live": {"cid", "at"}}`. The home add-on's service (`resume_recorder`) looks at what plays every 5 seconds, whoever started it, and writes a place at most every 30 seconds (at once when a video changes, stops or ends), the whole file renamed into place; at most 300 items are kept, the newest. A SWEET.TV live stream has no place, only the channel; a video within 30 s of its end, or past 97 %, is `done` (a full bar, no place); a place in the first 5 s is not kept. The positions are recorded whether or not the choice is on, so switching it on shows what was watched since this version.
+
+With it on, every place that offers to continue reads only those positions, and Kodi's own bookmark is not asked for (`Player.Open` goes with `"resume": false` and the seek is made once the video runs):
+the YouTube app of the TV (the red bars under the cards, and where a video starts), the phone's «Смотреть» for YouTube (`resume` and `progress` of the cards, «на ТВ с mm:ss», the number the page sends is ignored), the SWEET.TV app of the TV (its own state file gets the newer record per channel from the positions: «Продолжить» and the card's label; a programme left in its first minute or last minute and a half is forgotten, as before) and the programme sheet of the phone (`resume`/`watched`, `at: "resume"`). Off, each place reads what it always read. Not covered: Kodi's own resume dialog when something is opened from Kodi's own lists (not the TV apps or the phone), which would need Kodi's video database turned off for plugin paths; and the history lists of YouTube itself ("История" is YouTube's own server list: it is shown as it is, only its bars change).
 
 Texts. A string a person sees is looked up as `tr(msgid)` from `sweettv_text.py` (`TEXT = {msgid: {"ru", "uk"}}`, the msgid is the English text; `tr` answers Russian where there is a translation, else English, until the language setting exists). The panel and the SWEET.TV add-on's service reach the dictionary through `mediastick_sweetlive.text(msgid)` (it loads the launcher add-on's file on its own, and falls back to the msgid). `tools/test-sweetlive.py` checks that every msgid has `ru` and `uk` and that every `_t("...")` in the panel is in the dictionary.
 
-Assumed, to be checked on a device: the picture of a live stream is the wall clock (`LIVE_LAG` = 0 s behind it); Kodi calls `onPlayBackSeek` with a negative `seekOffset` in milliseconds for a seek back on a live item; the item's `StartOffset` (seconds) and `TotalTime` properties are honoured for a plugin-resolved item; the archive stream of a programme that is still running can be played from its beginning.
+Assumed, to be checked on a device: the picture of a live stream is the wall clock (`LIVE_LAG` = 0 s behind it); Kodi calls `onPlayBackSeek` with a negative `seekOffset` in milliseconds for a seek back on a live item; the item's `StartOffset` (seconds) and `TotalTime` properties are honoured for a plugin-resolved item; the archive stream of a programme that is still running can be played from its beginning; `Player.getPlayingFile()` (or the `Player.Filenameandpath` label) gives the plugin path of a plugin-resolved item, which is what the recorder keys on; `getTime()` of an archive item is the second inside the programme; `Player.Open` accepts `"options": {"resume": false}` for a plugin path.
 
 ## Self-update
 

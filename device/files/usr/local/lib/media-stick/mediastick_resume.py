@@ -1,0 +1,241 @@
+"""Where the person stopped, remembered on the stick and nowhere else. Standard library only; nothing happens on import.
+
+Every place that offers to continue (a red bar under a YouTube card, "Смотреть на ТВ с 12:30", SWEET.TV "Continue
+from 23:10", the programme sheet of the phone) can read its position from three kinds of source: what the stick saved
+itself while something played here, what Kodi keeps for the file (its video database: a bookmark and a play count for
+a plugin path), and what an add-on brings from outside (YouTube and SWEET.TV accounts, the add-on's own history).
+The choice «Помнить, где остановились, на приставке» (local resume) makes every one of those places read only the
+first kind: the positions this library keeps in /var/lib/media-stick/resume/positions.json. Off (the default), the
+places read what they always did. The positions are recorded either way, so switching on shows what has been
+watched since this version, not nothing.
+
+  enabled() / set_enabled(flag)       the choice: one line, 1 or 0, in prefs/local-resume (missing: DEFAULT)
+  load() / save(data)                 the positions file, written whole and renamed into place
+  record(data, file, pos, total, now) the new positions after `file` was seen at `pos` of `total` seconds
+  lookup(data, file), seconds_for, progress_for     what the places read
+  localize_reply(reply, data)         a YouTube Files.GetDirectory answer with only the local resume and play count
+
+Positions (the same document for every app):
+  {"v": 1, "items": {"yt:<video id>": {"pos", "total", "done", "at"},
+                     "sw:<channel>|<programme>": {"cid", "epg", "pos", "total", "done", "at", "title", "start", "stop"}},
+   "live": {"cid": "105", "at": <unix>}}                    the SWEET.TV channel that was on last
+A SWEET.TV live stream has no place in it, only the channel; an archived programme has the programme id and the
+seconds; a video or programme watched to its end is kept as done (a full bar), not as a place.
+"""
+import json
+import os
+import re
+import tempfile
+from urllib.parse import parse_qs, urlsplit
+
+PREFS = os.environ.get("MEDIASTICK_PREFS_DIR", "/var/lib/media-stick/prefs")
+DIR = os.environ.get("MEDIASTICK_RESUME_DIR", "/var/lib/media-stick/resume")
+FLAG_FILE, STORE_FILE = "local-resume", "positions.json"
+DEFAULT = False                     # off: the places keep reading what they read before this setting existed
+MAX_ITEMS = 300                     # the newest ones are kept
+MIN_POS = 5                         # s: a place nearer the start than this is not worth coming back to
+END_MARGIN = 30                     # s: a place nearer the end than this (or past 97 %) means watched to the end
+WRITE_EVERY = 30                    # s between two writes of a place that moves on (a stop or the end writes at once)
+
+SWEET_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvid/([0-9]{1,12})\|(null|[0-9]{1,12})(?:\?[^\s]*)?")
+YOUTUBE_RE = re.compile(r"plugin://plugin\.video\.youtube/[^\s]*")
+VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{6,20}")
+
+
+# ---- the choice -------------------------------------------------------------------------------
+
+def _write_atomic(folder, name, text):
+    tmp = None
+    try:
+        os.makedirs(folder, mode=0o755, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, os.path.join(folder, name))
+        return True
+    except OSError:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return False
+
+
+def enabled() -> bool:
+    """Whether the places read only what the stick saved. Anything but a clear 1 or 0 in the file is DEFAULT."""
+    try:
+        with open(os.path.join(PREFS, FLAG_FILE), encoding="utf-8") as f:
+            line = f.readline().strip()
+    except (OSError, ValueError):
+        return DEFAULT
+    return True if line == "1" else False if line == "0" else DEFAULT
+
+
+def set_enabled(flag) -> bool:
+    """Make the choice; False when the disk refuses."""
+    return _write_atomic(PREFS, FLAG_FILE, "1\n" if flag else "0\n")
+
+
+# ---- what a played file is -------------------------------------------------------------------
+
+def parse(file):
+    """("yt", video id), ("sw", channel id, programme id or "" for live), or None: not something that is remembered."""
+    if not isinstance(file, str):
+        return None
+    m = SWEET_RE.fullmatch(file.strip())
+    if m:
+        return ("sw", m.group(1), "" if m.group(2) == "null" else m.group(2))
+    if YOUTUBE_RE.fullmatch(file.strip()):
+        found = parse_qs(urlsplit(file.strip()).query).get("video_id", [""])[0]
+        return ("yt", found) if VIDEO_ID_RE.fullmatch(found) else None
+    return None
+
+
+def key_of(parsed):
+    if not parsed:
+        return ""
+    return "yt:" + parsed[1] if parsed[0] == "yt" else "sw:%s|%s" % (parsed[1], parsed[2]) if parsed[2] else ""
+
+
+# ---- the positions ---------------------------------------------------------------------------
+
+def empty():
+    return {"v": 1, "items": {}, "live": {}}
+
+
+def _number(value):
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value == value \
+        and abs(value) < 10 ** 12 else None
+
+
+def _clean(raw):
+    """A positions document read from disk, reduced to what this library writes; anything else reads as nothing."""
+    out = empty()
+    items = raw.get("items") if isinstance(raw, dict) else None
+    for key, e in (items.items() if isinstance(items, dict) else ()):
+        if not isinstance(key, str) or not isinstance(e, dict) or not re.fullmatch(r"(yt:[A-Za-z0-9_-]{6,20}|sw:[0-9]{1,12}\|[0-9]{1,12})", key):
+            continue
+        pos, total, at = _number(e.get("pos")), _number(e.get("total")), _number(e.get("at"))
+        if at is None or total is None or total <= 0 or pos is None or pos < 0:
+            continue
+        item = {"pos": int(pos), "total": int(total), "done": e.get("done") is True, "at": int(at)}
+        if key.startswith("sw:"):
+            cid, epg = key[3:].split("|")
+            item.update(cid=cid, epg=epg, title=str(e.get("title") or "")[:120])
+            for field in ("start", "stop"):
+                value = _number(e.get(field))
+                item[field] = int(value) if value and value > 0 else 0
+        out["items"][key] = item
+    live = raw.get("live") if isinstance(raw, dict) else None
+    cid, at = (live.get("cid"), _number(live.get("at"))) if isinstance(live, dict) else (None, None)
+    if isinstance(cid, str) and re.fullmatch(r"[0-9]{1,12}", cid) and at is not None:
+        out["live"] = {"cid": cid, "at": int(at)}
+    return out
+
+
+def load(path=None):
+    try:
+        with open(path or os.path.join(DIR, STORE_FILE), encoding="utf-8") as f:
+            return _clean(json.load(f))
+    except (OSError, ValueError, MemoryError):
+        return empty()
+
+
+def save(data, path=None) -> bool:
+    """Write the whole document and rename it into place: a power cut leaves the old one or the new one."""
+    if path:
+        return _write_atomic(os.path.dirname(path), os.path.basename(path), json.dumps(data, ensure_ascii=False))
+    return _write_atomic(DIR, STORE_FILE, json.dumps(data, ensure_ascii=False))
+
+
+def record(data, file, pos, total, now, meta=None):
+    """The positions after `file` was seen at `pos` of `total` seconds (a new dict; `data` is not changed).
+    `meta` is {"title", "start", "stop"} of a SWEET.TV programme when the caller knows it."""
+    parsed = parse(file)
+    data = _clean(data)
+    if not parsed:
+        return data
+    if parsed[0] == "sw" and not parsed[2]:
+        data["live"] = {"cid": parsed[1], "at": int(now)}          # live: the channel, no place
+        return data
+    pos, total = _number(pos), _number(total)
+    if pos is None or total is None or total <= 0 or pos < 0:
+        return data
+    key = key_of(parsed)
+    done = total - pos <= END_MARGIN or pos >= 0.97 * total
+    if not done and pos < MIN_POS:
+        return data                                              # seen at the start: an older place is not erased
+    item = {"pos": 0 if done else int(pos), "total": int(total), "done": done, "at": int(now)}
+    if parsed[0] == "sw":
+        meta = meta if isinstance(meta, dict) else {}
+        old = data["items"].get(key, {})
+        item.update(cid=parsed[1], epg=parsed[2], title=str(meta.get("title") or old.get("title") or "")[:120],
+                    start=int(_number(meta.get("start")) or old.get("start") or 0),
+                    stop=int(_number(meta.get("stop")) or old.get("stop") or 0))
+    data["items"][key] = item
+    if len(data["items"]) > MAX_ITEMS:
+        newest = sorted(data["items"].items(), key=lambda kv: -kv[1]["at"])[:MAX_ITEMS]
+        data["items"] = dict(newest)
+    return data
+
+
+def lookup(data, file):
+    """The saved entry of `file`, or None."""
+    return _clean(data)["items"].get(key_of(parse(file)))
+
+
+def seconds_for(data, file) -> int:
+    """Where to continue `file` from: 0 when there is no place worth it (never saved, done, or nearer the start)."""
+    e = lookup(data, file)
+    return e["pos"] if e and not e["done"] and e["pos"] >= MIN_POS else 0
+
+
+def progress_for(data, file) -> float:
+    """How much of `file` was watched, 0..1 (1 for one watched to the end)."""
+    e = lookup(data, file)
+    if not e:
+        return 0.0
+    return 1.0 if e["done"] else min(1.0, e["pos"] / e["total"])
+
+
+def due(last_write, now) -> bool:
+    return now - last_write >= WRITE_EVERY
+
+
+def programme_meta(raw, cid, epg):
+    """{"title", "start", "stop"} of programme `epg` of channel `cid` in the add-on's channelList.json (already parsed), {}
+    when it is not there."""
+    for c in raw.get("list", ()) if isinstance(raw, dict) and isinstance(raw.get("list"), list) else ():
+        if isinstance(c, dict) and str(c.get("id")) == str(cid):
+            for p in c.get("epg", ()) if isinstance(c.get("epg"), list) else ():
+                if isinstance(p, dict) and str(p.get("id")) == str(epg):
+                    return {"title": str(p.get("text") or "")[:120], "start": p.get("time_start"), "stop": p.get("time_stop")}
+    return {}
+
+
+# ---- YouTube listings ------------------------------------------------------------------------
+
+def localize_reply(reply, data):
+    """A Files.GetDirectory answer ({"result": {"files": [...]}}) in which every YouTube video has only the local resume and
+    play count: what Kodi or the add-on said about it is dropped, what this library saved is put in. Anything that does not
+    look like such an answer comes back as it is."""
+    result = reply.get("result") if isinstance(reply, dict) else None
+    files = result.get("files") if isinstance(result, dict) else None
+    if not isinstance(files, list):
+        return reply
+    data = _clean(data)
+    out = []
+    for item in files:
+        parsed = parse(item.get("file")) if isinstance(item, dict) else None
+        if not parsed or parsed[0] != "yt":
+            out.append(item)
+            continue
+        item = {k: v for k, v in item.items() if k not in ("resume", "playcount", "lastplayed")}
+        e = data["items"].get(key_of(parsed))
+        item["playcount"] = 1 if e and e["done"] else 0
+        if e and not e["done"] and e["pos"] >= MIN_POS:
+            item["resume"] = {"position": e["pos"], "total": e["total"]}
+        out.append(item)
+    return {**reply, "result": {**result, "files": out}}

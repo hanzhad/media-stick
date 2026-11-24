@@ -1,0 +1,129 @@
+"""Remembers where the person stopped, whoever started the video (the phone, the YouTube or SWEET.TV app of the TV, Kodi's
+own lists), in the stick's own file (mediastick_resume). Runs in the home add-on's service: the Player's callbacks and
+one look every SAMPLE_EVERY seconds at what plays.
+
+The positions are recorded whether or not «remember where I stopped, on the device» is on: the choice only decides
+whether the places that offer to continue read them (mediastick_resume.enabled()). So switching it on shows what was
+watched since this version, not an empty page.
+
+Recorder is plain Python (it is fed samples, the tests feed it directly); Watcher is the thin Kodi part.
+"""
+import time
+
+import xbmc
+
+from resources.lib import store
+
+LOG = "[script.media-stick.home]"
+SAMPLE_EVERY = 5                      # s between two looks at the player (the place of a stop is at most this old)
+CHANNEL_LIST = "special://temp/channelList.json"   # SWEET.TV add-on's own cache: the title and times of an archived programme
+
+
+class Recorder:
+    """Samples of (file, position, length) in, positions out: written when a video changes, stops or ends, and otherwise at
+    most every mediastick_resume.WRITE_EVERY seconds, so the SD card is not written to every few seconds."""
+
+    def __init__(self, lib, clock=time.time, meta=None, path=None, log=None):
+        self.lib, self.clock, self.meta_of, self.path, self.log = lib, clock, meta, path, log or (lambda text: None)
+        self.file = ""                # the item being followed ("" when none)
+        self.last = None              # (position, length) seen last
+        self.written = 0.0            # when the place of this item was last written
+        self.meta = None              # title, start, stop of a SWEET.TV programme (looked up once per item)
+
+    def _remembered(self, file):
+        return bool(file) and self.lib.parse(file) is not None
+
+    def sample(self, file, pos, total):
+        """What plays now: `file` at `pos` of `total` seconds. A file that is not one of the remembered kinds ends the
+        previous one and is itself ignored."""
+        if file != self.file:
+            self.flush()
+            self.file, self.last, self.written, self.meta = (file if self._remembered(file) else ""), None, 0.0, None
+        if not self.file:
+            return
+        self.last = (pos, total)
+        if self.lib.due(self.written, self.clock()):
+            self._write()
+
+    def flush(self):
+        """The item stopped (or is replaced): its last sample is its place."""
+        if self.file and self.last:
+            self._write()
+        self.last = None
+
+    def finish(self):
+        """The item played to its end: the place is the end (watched, a full bar)."""
+        if self.file and self.last:
+            self.last = (self.last[1], self.last[1])
+            self._write()
+        self.last = None
+
+    def _meta(self):
+        parsed = self.lib.parse(self.file)
+        if self.meta is None:
+            self.meta = {}
+            if parsed and parsed[0] == "sw" and parsed[2] and self.meta_of:
+                try:
+                    self.meta = self.meta_of(parsed[1], parsed[2]) or {}
+                except Exception as e:
+                    self.log("programme not looked up: %r" % (e,))
+        return self.meta
+
+    def _write(self):
+        pos, total = self.last
+        before = self.lib.load(self.path)
+        after = self.lib.record(before, self.file, pos, total, self.clock(), self._meta())
+        self.written = self.clock()
+        if after != before and not self.lib.save(after, self.path):
+            self.log("positions not written")
+
+
+def programme_meta(cid, epg):
+    """{"title", "start", "stop"} of a SWEET.TV programme from the add-on's own channel list; {} when it is not there."""
+    import json
+    import xbmcvfs
+    with open(xbmcvfs.translatePath(CHANNEL_LIST), encoding="utf-8") as f:
+        return store.resume.programme_meta(json.load(f), cid, epg)
+
+
+class Watcher(xbmc.Player):
+    def __init__(self, recorder):
+        xbmc.Player.__init__(self)
+        self.recorder = recorder
+
+    def _file(self):
+        """The path of what plays: the player's own, else the label Kodi keeps for a plugin item; "" when neither is one
+        the library remembers."""
+        for ask in (self.getPlayingFile, lambda: xbmc.getInfoLabel("Player.Filenameandpath")):
+            try:
+                found = ask()
+            except RuntimeError:
+                continue
+            if self.recorder.lib.parse(found):
+                return found
+        return ""
+
+    def tick(self):
+        try:
+            if not self.isPlayingVideo():
+                return
+            self.recorder.sample(self._file(), self.getTime(), self.getTotalTime())
+        except RuntimeError:           # it stopped between the look and the question
+            pass
+
+    def onPlayBackStopped(self):
+        self.recorder.flush()
+
+    def onPlayBackError(self):
+        self.recorder.flush()
+
+    def onPlayBackEnded(self):
+        self.recorder.finish()
+
+
+def start():
+    """The watcher of the service, None when the device has no library for it."""
+    if store.resume is None:
+        return None
+    return Watcher(Recorder(store.resume, meta=programme_meta,
+                            log=lambda text: xbmc.log("%s resume: %s" % (LOG, text), xbmc.LOGWARNING)))

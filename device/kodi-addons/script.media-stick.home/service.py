@@ -10,6 +10,7 @@ from resources.lib.launcher import ADDON_PATH, Launcher
 LOG = "[script.media-stick.home]"
 HOME_WINDOWS = (10000,)
 STATUS_EVERY = 5                     # seconds between IP / network refreshes
+SAMPLE_EVERY = 5                     # seconds between two looks at what plays (resume_recorder)
 BLOCKED = "System.ScreenSaverActive | System.HasModalDialog | System.HasActiveModalDialog"
 
 
@@ -30,12 +31,30 @@ def apply_language():
         xbmc.log(f"{LOG} language not applied: {type(e).__name__}", xbmc.LOGERROR)
 
 
+def start_recorder():
+    """Remembers where the person stopped (resume_recorder); None when the device has no library for it."""
+    try:
+        from resources.lib import resume_recorder
+        return resume_recorder.start()
+    except Exception as e:
+        xbmc.log(f"{LOG} positions not recorded: {type(e).__name__}", xbmc.LOGERROR)
+        return None
+
+
+def sample(watcher):
+    try:
+        watcher.tick()
+    except Exception as e:
+        xbmc.log(f"{LOG} position not read: {e!r}", xbmc.LOGWARNING)
+
+
 def main():
     xbmc.log(f"{LOG} service started", xbmc.LOGINFO)
     apply_language()
+    watcher = start_recorder()
     monitor = xbmc.Monitor()
     launcher = None
-    last_status = time.monotonic()
+    last_status = last_sample = time.monotonic()
     while not monitor.abortRequested():
         try:
             current = xbmcgui.getCurrentWindowId()
@@ -63,6 +82,9 @@ def main():
             drop(launcher)
             monitor.waitForAbort(5)
             launcher = None
+        if watcher is not None and time.monotonic() - last_sample >= SAMPLE_EVERY:
+            last_sample = time.monotonic()
+            sample(watcher)
         if monitor.waitForAbort(0.15):
             break
     drop(launcher)

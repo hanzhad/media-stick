@@ -107,3 +107,12 @@ def phone_page():
         QR_FAILED.add(url)                       # one try per address: the next look is three seconds away
         ui.log(f"phone page QR failed: {e!r}")
         return url, ""
+
+
+def local_positions():
+    """What the stick saved while anything played, when "remember where I stopped, on the device" is on; else None."""
+    try:
+        from resources.lib import store
+        return store.local_resume()
+    except Exception:
+        return None

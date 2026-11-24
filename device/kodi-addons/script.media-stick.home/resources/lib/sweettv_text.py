@@ -96,6 +96,18 @@ TEXT = {
     "Wrong start place.": {"ru": "Неверное место начала.", "uk": "Невірне місце початку."},
     "An archived programme is not playing.": {"ru": "Сейчас играет не архив.", "uk": "Зараз грає не архів."},
     "This channel is not in the list.": {"ru": "Такого канала нет в списке.", "uk": "Такого каналу немає у списку."},
+    "Remember where I stopped, on the device": {"ru": "Помнить, где остановились, на приставке",
+                                                 "uk": "Пам'ятати, де зупинилися, на приставці"},
+    "Places to continue from are taken only from what this device saved while you watched. The history of YouTube, "
+    "SWEET.TV and Kodi is not used.": {
+        "ru": "Продолжать можно только с мест, которые приставка сама запомнила при просмотре. "
+              "История YouTube, SWEET.TV и Kodi не используется.",
+        "uk": "Продовжувати можна лише з місць, які приставка сама запам'ятала під час перегляду. "
+              "Історія YouTube, SWEET.TV і Kodi не використовується."},
+    "Wrong value.": {"ru": "Неверное значение.", "uk": "Невірне значення."},
+    "Remembering places is not available on this device.": {"ru": "Запоминание мест недоступно на этом устройстве.",
+                                                             "uk": "Запам'ятовування місць недоступне на цьому пристрої."},
+    "The choice could not be saved.": {"ru": "Не удалось сохранить выбор.", "uk": "Не вдалося зберегти вибір."},
 }
 
 

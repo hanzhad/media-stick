@@ -27,6 +27,11 @@ import mediastick_signin as signin
 import mediastick_screen as screen   # a cast or a web app has the TV: say so, not "Kodi не отвечает"
 import panel_watch_ui as ui
 
+try:
+    import mediastick_resume as mr   # where the person stopped, kept on the stick
+except ImportError:
+    mr = None
+
 PREFIX = "/api/watch/"
 LAUNCHER = "script.media-stick.home"
 KODI_DOWN = "ТВ не отвечает. Подождите минуту и попробуйте снова."
@@ -166,6 +171,15 @@ def play_target(file):
     if m and sw is not None:
         return sw.play_url(m.group(1), None if m.group(2) == "null" else m.group(2))
     return ""
+
+
+def _local_resume():
+    """The positions the stick saved, when "remember where I stopped, on the device" is on; None when it is off or the
+    library is missing: the page then gets what Kodi and the add-ons say, as before."""
+    try:
+        return mr.load() if mr is not None and mr.enabled() else None
+    except Exception:
+        return None
 
 
 def clean_resume(value):
@@ -593,7 +607,9 @@ def _directory(data, rpc, route):
                                             "sort": {"method": "none"}}, 6)
     except (OSError, ValueError):
         raise Refused(screen.kodi_down(), 503)
-    return data.parse_reply(youtube_reply(data, result))
+    reply = youtube_reply(data, result)
+    local = _local_resume()
+    return data.parse_reply(mr.localize_reply(reply, local) if local is not None else reply)
 
 
 def _routes(data, rpc):
@@ -701,8 +717,12 @@ def play(body, rpc):
     target = play_target(body.get("file"))
     if not target:
         raise Refused("Это нельзя запустить.")
-    _rpc(rpc, "Player.Open", {"item": {"file": target}})
-    resume = clean_resume(body.get("resume"))
+    params, resume = {"item": {"file": target}}, clean_resume(body.get("resume"))
+    local = _local_resume()
+    if local is not None:   # only what the stick saved: the page's number and Kodi's bookmark are not used
+        resume = clean_resume(mr.seconds_for(local, target))
+        params["options"] = {"resume": False}
+    _rpc(rpc, "Player.Open", params)
     if resume:
         threading.Thread(target=_seek_when_started, args=(rpc, resume), daemon=True).start()
     return {"ok": True}

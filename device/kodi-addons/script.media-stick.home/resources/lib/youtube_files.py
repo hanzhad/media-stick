@@ -4,6 +4,8 @@ or one call; what to make of the answer is youtube_data's business. get_director
 take seconds on the network: call it from a worker thread, never from the UI."""
 import json
 import os
+import threading
+import time
 
 import xbmc
 import xbmcvfs
@@ -34,12 +36,49 @@ def get_directory(route):
     The route is passed as it is, never with a slash added or dropped. The main page is a plain file listing (what
     the add-on answered it as when seen on a device); everything below it lists videos."""
     media = "files" if route == data.ROOT else "video"
-    return rpc("Files.GetDirectory", {"directory": route, "media": media, "properties": data.PROPERTIES,
-                                      "sort": {"method": "none"}})
+    reply = rpc("Files.GetDirectory", {"directory": route, "media": media, "properties": data.PROPERTIES,
+                                       "sort": {"method": "none"}})
+    lib, local = _local()                 # "remember where I stopped, on the device": the bars are what the stick saved
+    return lib.localize_reply(reply, local) if lib else reply
+
+
+def _local():
+    """(library, the stick's saved positions) when \"remember where I stopped, on the device\" is on, else (None, None)."""
+    try:
+        from resources.lib import store
+        found = store.local_resume()
+        return (store.resume, found) if found is not None else (None, None)
+    except Exception:
+        return None, None
+
+
+START_WAIT = 40                  # s a started video gets before the seek to the saved place is given up on
+
+
+def _seek_when_started(seconds):
+    """Once the video runs (and is longer than the place), go to the place."""
+    monitor, player = xbmc.Monitor(), xbmc.Player()
+    end = time.monotonic() + START_WAIT
+    while time.monotonic() < end and not monitor.waitForAbort(1.5):
+        try:
+            if player.isPlayingVideo() and player.getTotalTime() > seconds + 5:
+                if player.getTime() < seconds:
+                    player.seekTime(seconds)
+                return
+        except RuntimeError:
+            continue
 
 
 def play(path):
-    return rpc("Player.Open", {"item": {"file": path}})
+    lib, local = _local()
+    if not lib:
+        return rpc("Player.Open", {"item": {"file": path}})
+    # only what the stick saved: Kodi's own bookmark is not asked for, the saved place is gone to once it runs
+    seconds = lib.seconds_for(local, path)
+    reply = rpc("Player.Open", {"item": {"file": path}, "options": {"resume": False}})
+    if seconds:
+        threading.Thread(target=_seek_when_started, args=(seconds,), daemon=True).start()
+    return reply
 
 
 def _current_profile():

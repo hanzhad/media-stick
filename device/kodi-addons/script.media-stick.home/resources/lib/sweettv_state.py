@@ -95,6 +95,32 @@ def record_position(state, cid, programme, pos, total, now):
     return normalize_state({**state, "resume": resume})
 
 
+def merge_local(state, local):
+    """The state with the places the stick saved while anything played (mediastick_resume's document `local`, None: the
+    choice is off, nothing changes): for each channel the newer of the two records wins, a programme watched to its end
+    or left near an edge is forgotten, and the channel that was on last is the last one when it is newer."""
+    if not isinstance(local, dict):
+        return state
+    resume = dict(state["resume"])
+    for key, e in (local.get("items") or {}).items():
+        if not str(key).startswith("sw:") or not e.get("start") or not e.get("stop"):
+            continue                    # something else, or a place saved without its programme's times: not used
+        cid = e["cid"]
+        if cid in resume and resume[cid]["at"] >= e["at"]:
+            continue
+        length = e["total"] or e["stop"] - e["start"]
+        if e["done"] or not MIN_RESUME <= e["pos"] <= length - END_MARGIN:
+            resume.pop(cid, None)
+        else:
+            resume[cid] = {"epg": e["epg"], "title": e.get("title") or "Programme", "start": e["start"],
+                           "stop": e["stop"], "pos": e["pos"], "at": e["at"]}
+    merged = normalize_state({**state, "resume": resume})
+    live = local.get("live") or {}
+    if live.get("cid") and live.get("at", 0) > (merged["recent"][0]["at"] if merged["recent"] else 0):
+        merged = record_played(merged, live["cid"], live["at"])
+    return merged
+
+
 def forget_position(state, cid):
     return normalize_state({**state, "resume": {c: e for c, e in state["resume"].items() if c != cid}})
 

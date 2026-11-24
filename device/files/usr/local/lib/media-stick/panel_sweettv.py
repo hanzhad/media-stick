@@ -12,6 +12,11 @@ from urllib.parse import parse_qs
 import panel_watch as pw
 
 try:
+    import mediastick_resume as mr
+except ImportError:
+    mr = None
+
+try:
     import mediastick_sweetlive as ml
 except ImportError:   # a device without the library: the routes refuse, the rest of the panel works
     ml = None
@@ -20,6 +25,9 @@ PREFIX = "/api/sweettv/"
 SEEK_BACK_MAX = 86400
 LIST_KEEP = ("id", "name", "catchup", "catchup_duration", "available")
 EPG_KEEP = ("id", "text", "time_start", "time_stop", "available", "tv_show_id", "season_number", "episode_number")
+LOCAL_LABEL = "Remember where I stopped, on the device"
+LOCAL_HINT = ("Places to continue from are taken only from what this device saved while you watched. The history of "
+              "YouTube, SWEET.TV and Kodi is not used.")
 _slim_cache = {"key": None, "value": None}
 
 
@@ -94,15 +102,27 @@ def archive_ok(channel, p, now):
     return p.get("available") is not False
 
 
-def _entry(channel, p, now, archive=True):
-    return {"id": str(p.get("id")), "title": str(p.get("text") or "")[:200], "start": ml._seconds(p.get("time_start")),
-            "stop": ml._seconds(p.get("time_stop")), **({"archive": archive_ok(channel, p, now)} if archive else {})}
+def _saved(local, cid, epg):
+    """The saved entry of a programme in the stick's positions (mediastick_resume's document), or None."""
+    return ((local or {}).get("items") or {}).get("sw:%s|%s" % (cid, epg))
 
 
-def guide_view(raw, cid, now):
+def _entry(channel, p, now, archive=True, local=None):
+    entry = {"id": str(p.get("id")), "title": str(p.get("text") or "")[:200], "start": ml._seconds(p.get("time_start")),
+             "stop": ml._seconds(p.get("time_stop")), **({"archive": archive_ok(channel, p, now)} if archive else {})}
+    if archive and local is not None:     # "remember where I stopped, on the device" is on
+        saved = _saved(local, channel.get("id"), p.get("id"))
+        entry["resume"] = saved["pos"] if saved and not saved["done"] and saved["pos"] >= mr.MIN_POS else 0
+        entry["watched"] = bool(saved and saved["done"])
+    return entry
+
+
+def guide_view(raw, cid, now, local=None):
     """GET guide?cid=: the programmes of one channel as the channel list holds them. past: the ones that are over, the
     newest first, each with archive (can it be played from the archive); current: the one on now (archive: can it be
-    played from its start); next: the ones to come, soonest first, for information (they cannot be played)."""
+    played from its start); next: the ones to come, soonest first, for information (they cannot be played). With
+    `local` (the stick's positions, given when the choice to remember them on the device is on) each past and current
+    entry also has resume (seconds to continue from, 0: none) and watched (played to its end)."""
     if ml is None:
         raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
     if not isinstance(cid, str) or not ml.url(cid):
@@ -127,8 +147,8 @@ def guide_view(raw, cid, now):
             "archive": bool(channel.get("catchup")) and channel.get("available") is not False,
             "archive_days": channel.get("catchup_duration") if isinstance(channel.get("catchup_duration"), int) else 0,
             "now": int(now),
-            "past": [_entry(channel, p, now) for p in past],
-            "current": _entry(channel, current, now) if current else None,
+            "past": [_entry(channel, p, now, local=local) for p in past],
+            "current": _entry(channel, current, now, local=local) if current else None,
             "next": [_entry(channel, p, now, archive=False) for p in upcoming],
             "counts": {"past": len(past), "next": len(upcoming)}}
 
@@ -170,10 +190,11 @@ def rewind(raw, file, by, now):
     return {"switched": "", "note": ""}
 
 
-def play_request(raw, body, now):
+def play_request(raw, body, now, local=None):
     """POST play {cid, epg?, at?}, checked: (url, epg, offset). Without epg it is the live channel. With it, the
     programme must be one of the channel, started, and in the archive; at is "start" (default), "now" (the place the
-    live stream is at, for the programme on now) or seconds from the start."""
+    live stream is at, for the programme on now), "resume" (the place the stick saved, `local`: its positions when the
+    choice to remember them on the device is on; 0 when there is none) or seconds from the start."""
     if ml is None:
         raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
     body = body if isinstance(body, dict) else {}
@@ -196,6 +217,9 @@ def play_request(raw, body, now):
         offset = 0
     elif at == "now":
         offset = now - ml.LIVE_LAG - start
+    elif at == "resume":
+        saved = _saved(local, cid, epg)
+        offset = saved["pos"] if saved and not saved["done"] else 0
     elif isinstance(at, (int, float)) and not isinstance(at, bool) and at == at:
         offset = at
     else:
@@ -204,8 +228,37 @@ def play_request(raw, body, now):
     return ml.url(cid, epg, offset), str(epg), offset
 
 
+def local():
+    """The stick's saved positions when "remember where I stopped, on the device" is on, else None."""
+    try:
+        return mr.load() if mr is not None and mr.enabled() else None
+    except Exception:
+        return None
+
+
+def settings_view():
+    """GET settings: the choice and what the page says about it. It is one choice for the whole device (YouTube and
+    SWEET.TV), kept here because this is where the page asks for SWEET.TV things."""
+    if mr is None:
+        raise pw.Refused(_t("Remembering places is not available on this device."), 503)
+    return {"ok": True, "local_resume": bool(mr.enabled()), "default": mr.DEFAULT, "saved": len(mr.load()["items"]),
+            "label": _t(LOCAL_LABEL), "hint": _t(LOCAL_HINT)}
+
+
+def set_settings(body):
+    """POST settings {local_resume: true|false}."""
+    if mr is None:
+        raise pw.Refused(_t("Remembering places is not available on this device."), 503)
+    value = body.get("local_resume") if isinstance(body, dict) else None
+    if not isinstance(value, bool):
+        raise pw.Refused(_t("Wrong value."))
+    if not mr.set_enabled(value):
+        raise pw.Refused(_t("The choice could not be saved."), 500)
+    return settings_view()
+
+
 def play(body, rpc):
-    url, epg, offset = play_request(channels(), body, time.time())
+    url, epg, offset = play_request(channels(), body, time.time(), local())
     pw._rpc(rpc, "Player.Open", {"item": {"file": url}})
     return {"ok": True, "epg": epg, "offset": offset}
 
@@ -233,7 +286,9 @@ def get(path, rpc):
     try:
         if route == PREFIX + "guide":
             cid = (parse_qs(query).get("cid") or [""])[0]
-            return guide_view(channels(), cid, time.time()), 200
+            return guide_view(channels(), cid, time.time(), local()), 200
+        if route == PREFIX + "settings":
+            return settings_view(), 200
     except pw.Refused as e:
         return {"error": e.message}, e.code
     return {"error": "not found"}, 404
@@ -247,6 +302,8 @@ def post(path, body, rpc):
             return play(body, rpc), 200
         if route == PREFIX + "golive":
             return golive(rpc), 200
+        if route == PREFIX + "settings":
+            return set_settings(body), 200
     except pw.Refused as e:
         return {"error": e.message}, e.code
     return {"error": "not found"}, 404
