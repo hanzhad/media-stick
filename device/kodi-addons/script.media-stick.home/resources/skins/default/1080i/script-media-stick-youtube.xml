@@ -5,7 +5,8 @@
      300 the card's button, 401-404 what a search is for (Videos, Channels, Playlists, Live).
      Window properties: mode (data | signin | needkey | empty | loading | error | unavailable | prompt), demo, signed (1 | 0 | none),
      search (1 while the search is shown: the row 401-404 is), kind (video | channel | playlist | live: the chosen one),
-     avatar (the letter in the circle, none: no circle), avatar_color, title (the section's name), notice (the line
+     splash (1 while the launch splash is up: every other control is hidden; none: the screen), avatar (the letter in the
+     circle, none: no circle), avatar_color, title (the section's name), notice (the line
      at the bottom while the next page loads), msg_title, msg_text, action (the button's label; none: no button).
      The "Set up your Google key" card (mode needkey) also reads key_qr (the phone page's QR picture, none: no QR),
      key_url (its address), step ("Step 2 of 6: <title>"), step_hint1, step_hint2 (the hint in two lines); step is
@@ -19,6 +20,8 @@
      - the thumbnail is rounded by a diffuse mask (youtube-mask.png, as the launcher's cards are), no box behind it;
      - a card's title is two labels cut in Python (a label that is too wide scrolls sideways when focused);
      - 9-slice textures (border=) are at least twice the border in each direction, and so is the control they fill;
+     - every top-level control but the splash group has a visible condition with `splash` empty in it, and the splash
+       group shows only while it is set (one picture, no control to focus: Back leaves the app);
      - Budget (Pi 3B+): at most 34 pictures in view at once (counted by the test: 4 x 2 cards and the top of a third row
        with one thumbnail and one strip each, ring, avatar, logo, rail), no animation, thumbnails load in the background.
      The grid is 4 columns of 384 (352 picture + 32 gap) and rows of 382: two rows and the top 144 px of a third. -->
@@ -32,6 +35,7 @@
             <width>64</width>
             <height>45</height>
             <texture>youtube-mark.png</texture>
+            <visible>String.IsEmpty(Window.Property(splash))</visible>
         </control>
         <control type="label">
             <left>128</left>
@@ -42,13 +46,14 @@
             <textcolor>FFFFFFFF</textcolor>
             <aligny>center</aligny>
             <label>YouTube</label>
+            <visible>String.IsEmpty(Window.Property(splash))</visible>
         </control>
         <control type="group">
             <left>1540</left>
             <top>24</top>
             <width>200</width>
             <height>64</height>
-            <visible>!String.IsEmpty(Window.Property(demo))</visible>
+            <visible>!String.IsEmpty(Window.Property(demo))+String.IsEmpty(Window.Property(splash))</visible>
             <control type="image">
                 <left>0</left>
                 <top>0</top>
@@ -85,14 +90,14 @@
             <ondown>100</ondown>
             <texturefocus border="32" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
             <texturenofocus />
-            <visible>!String.IsEmpty(Window.Property(avatar))</visible>
+            <visible>!String.IsEmpty(Window.Property(avatar))+String.IsEmpty(Window.Property(splash))</visible>
         </control>
         <control type="group">
             <left>1808</left>
             <top>24</top>
             <width>64</width>
             <height>64</height>
-            <visible>!String.IsEmpty(Window.Property(avatar))</visible>
+            <visible>!String.IsEmpty(Window.Property(avatar))+String.IsEmpty(Window.Property(splash))</visible>
             <control type="image">
                 <left>0</left>
                 <top>0</top>
@@ -122,6 +127,7 @@
             <textcolor>FFFFFFFF</textcolor>
             <aligny>center</aligny>
             <label>$INFO[Window.Property(title)]</label>
+            <visible>String.IsEmpty(Window.Property(splash))</visible>
         </control>
 
         <!-- what a search is for: Videos, Channels, Playlists, Live (400 + n). Shown with the search only (window property
@@ -130,7 +136,7 @@
              (both are done in Python); Left of the first one is the rail. 56 px high at the top of the page, between the
              title and the DEMO mark: x 560, 776, 992, 1208, each 200 wide. -->
         <control type="group">
-            <visible>!String.IsEmpty(Window.Property(search))</visible>
+            <visible>!String.IsEmpty(Window.Property(search))+String.IsEmpty(Window.Property(splash))</visible>
             <control type="image">
                 <left>560</left>
                 <top>28</top>
@@ -243,6 +249,7 @@
             <scrolltime>150</scrolltime>
             <onright>200</onright>
             <onup condition="!String.IsEmpty(Window.Property(avatar))">150</onup>
+            <visible>String.IsEmpty(Window.Property(splash))</visible>
             <itemlayout width="304" height="76">
                 <control type="image">
                     <left>0</left>
@@ -369,7 +376,7 @@
             <orientation>vertical</orientation>
             <scrolltime>150</scrolltime>
             <onleft>100</onleft>
-            <visible>String.IsEqual(Window.Property(mode),data)</visible>
+            <visible>String.IsEqual(Window.Property(mode),data)+String.IsEmpty(Window.Property(splash))</visible>
             <onup condition="String.IsEqual(Window.Property(kind),video)">401</onup>
             <onup condition="String.IsEqual(Window.Property(kind),channel)">402</onup>
             <onup condition="String.IsEqual(Window.Property(kind),playlist)">403</onup>
@@ -566,7 +573,7 @@
             <top>992</top>
             <width>240</width>
             <height>64</height>
-            <visible>!String.IsEmpty(Window.Property(notice))</visible>
+            <visible>!String.IsEmpty(Window.Property(notice))+String.IsEmpty(Window.Property(splash))</visible>
             <control type="image">
                 <left>0</left>
                 <top>0</top>
@@ -594,7 +601,7 @@
             <top>190</top>
             <width>1504</width>
             <height>760</height>
-            <visible>!String.IsEqual(Window.Property(mode),data)</visible>
+            <visible>!String.IsEqual(Window.Property(mode),data)+String.IsEmpty(Window.Property(splash))</visible>
             <control type="group">
                 <visible>!String.IsEqual(Window.Property(mode),needkey)</visible>
                 <control type="image">
@@ -763,6 +770,42 @@
                 <align>center</align>
                 <aligny>center</aligny>
                 <label>Back returns to Home.</label>
+            </control>
+        </control>
+
+        <!-- the launch splash (window property splash, set from Python on a cold start): the black page with the mark (the top
+             bar's, four times as large), the word under it and one quiet line; no control in it takes the focus, so Back is the
+             window's and leaves the app. One picture. -->
+        <control type="group">
+            <visible>!String.IsEmpty(Window.Property(splash))</visible>
+            <control type="image">
+                <left>832</left>
+                <top>360</top>
+                <width>256</width>
+                <height>180</height>
+                <texture>youtube-mark.png</texture>
+            </control>
+            <control type="label">
+                <left>560</left>
+                <top>560</top>
+                <width>800</width>
+                <height>80</height>
+                <font>Light60</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>YouTube</label>
+            </control>
+            <control type="label">
+                <left>560</left>
+                <top>664</top>
+                <width>800</width>
+                <height>48</height>
+                <font>Reg25</font>
+                <textcolor>80FFFFFF</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>Loading…</label>
             </control>
         </control>
     </controls>

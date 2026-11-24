@@ -13,6 +13,12 @@ a stale one is asked for again in the background and swapped in only if it chang
 sections are fetched into it one at a time (prefetch). A long list loads its next page by itself, in a worker,
 when the cursor comes within two rows of the last card. The thin Kodi part is here; the choices are in youtube_data
 and what a card says is in youtube_cards.
+
+A cold start (no page of the first section on disk or in memory, so the window would show an empty grid and a Loading card)
+shows a splash instead, like the YouTube app on a set-top box: the window property `splash`, which the skin answers by hiding
+everything else and drawing the mark, the word and a quiet line. It comes down when the first listing or card is shown,
+whatever that card is (an error is never hidden), and in SPLASH_CAP seconds whatever happens. A warm start, and the demo
+(but for its `loading` card), have none.
 """
 import os
 import threading
@@ -46,6 +52,7 @@ RUNNING = "media-stick.youtube"  # Home window property while the app is open (s
 FOCUS_POLL = 0.05                # s between looks at whether Kodi shows a control yet
 FOCUS_WAIT = 2.0                 # s a worker waits for the control to be shown before it gives up
 PAGES = True                     # the first pages are kept on disk (page_cache) and the sections are fetched at start-up (prefetch)
+SPLASH_CAP = 15.0                # s the launch splash is up at most, whatever the first load is doing
 NO_THUMB = os.path.join(ui.MEDIA, data.NO_THUMB)
 DEMO_ART = f"{ui.ADDON_PATH}/resources/media/demo"
 DEMO_NOTICE = "Demo: nothing is played."
@@ -99,11 +106,13 @@ class YouTube(xbmcgui.WindowXML):
         self.refreshing = 0                      # shown pages from the disk cache that are being asked for again
         self.refresh_token = 0                   # the token of the view whose page was shown from the disk cache and is asked for again
         self.warming = None                      # the prefetch run (prefetch.Handle) of this profile
+        self.splash = False                      # the launch splash is up (window property splash): a cold start, until the first page or card
 
     def onInit(self):
         if self.instance is not None:
             self.instance.bind(xbmcgui.getCurrentWindowId())
         self._prop("demo", "1" if self.demo else "")
+        self._prop("splash", "")
         if self.started:
             self._after_player()
             return
@@ -113,10 +122,11 @@ class YouTube(xbmcgui.WindowXML):
             self.profile, self.profile_known = files.profile_id(), True    # the disk cache is the profile's: know it before the first look
         self._set_avatar(None, "")
         self._fill_rail()
-        self._navigate(data.section_view(self.state["section"], query=self.state["query"], kind=self.state["kind"]), focus=True)
+        self._navigate(data.section_view(self.state["section"], query=self.state["query"], kind=self.state["kind"]), focus=True,
+                       launch=True)
         if not self.demo:
             self._later("profile", PROFILE_POLL, self._profile_tick)
-            self._start_warm()
+            self._start_warm()                   # now, splash or not: it waits by itself (_idle) while the first page is asked for
 
     def _profile_tick(self):
         """On a timer: the window follows the add-on's current profile, as the phone does. A switch from the phone (or
@@ -152,14 +162,51 @@ class YouTube(xbmcgui.WindowXML):
         if not self.demo and self.started:
             saved.save_state(files.state_path(), self.state)
 
+    # -- the launch splash --
+
+    def _splash_up(self):
+        """A cold start: the splash instead of the empty grid and the Loading card, for SPLASH_CAP seconds at most. The demo
+        loads nothing and has none, but for the card that never ends."""
+        if self.demo and self.scenario != "loading":
+            return
+        with self._lock:
+            self.splash = True
+            self._prop("splash", "1")
+            self._later("splash", SPLASH_CAP, self._splash_cap)
+
+    def _end_splash(self):
+        """Take the splash down; True when it was up. Called with the page or the card that replaces it already set."""
+        with self._lock:
+            if not self.splash:
+                return False
+            self.splash = False
+            self._cancel("splash")
+            self._prop("splash", "")
+            return True
+
+    def _splash_cap(self):
+        """On a timer: the splash has been up for SPLASH_CAP seconds. The window shows what it has (the Loading card, or the
+        page if it came a moment ago); the answer that comes later is shown as it would be."""
+        if not self._stop.is_set() and self._end_splash():
+            self._focus_after_splash(FOCUS_WAIT)
+
+    def _focus_after_splash(self, wait=0.0):
+        """The splash is down and nothing has the focus (the controls were hidden): where the window puts it, else the rail."""
+        if self._wanted():
+            self._focus_content(wait)
+        else:
+            self._focus_on(RAIL, wait)
+
     # -- asking for a list (worker thread) --
 
-    def _navigate(self, view, focus=False, select=0):
+    def _navigate(self, view, focus=False, select=0, launch=False):
         """Show `view`: from the cache at once (the one in memory, else the first page kept on disk, even a stale one, which
-        is then asked for again in the background), else a card says Loading and a worker asks the add-on."""
+        is then asked for again in the background), else a card says Loading and a worker asks the add-on. `launch` is the
+        window's first look: when it finds nothing to show it is the splash that covers the Loading card."""
         self._cancel("rail")
         self._cancel("focus")
         stored = None
+        dropped = False
         with self._lock:
             self.token += 1
             token, self.view = self.token, view
@@ -184,8 +231,12 @@ class YouTube(xbmcgui.WindowXML):
             else:
                 self._show_card(data.LOADING)
                 shown = False
+                if launch:
+                    self._splash_up()
+            if shown:
+                dropped = self._end_splash()
         if shown:
-            if focus:
+            if focus or dropped:
                 self._focus_content()
             if stored is not None and stored[1]:
                 threading.Thread(target=self._load, args=(token, view, False, select, stored[0]), daemon=True).start()
@@ -252,6 +303,7 @@ class YouTube(xbmcgui.WindowXML):
         that is the same page changes nothing, a changed page replaces it with the cursor where it was, and a card (the
         section is empty now, or needs the sign-in) replaces it and drops the page from the cache."""
         prepared = None
+        dropped = False
         mode = gated or data.mode_for(listing, keys)
         if shown is not None and mode in (data.ERROR, data.UNAVAILABLE):
             return
@@ -271,7 +323,10 @@ class YouTube(xbmcgui.WindowXML):
                     self._forget(view)
                 self._show_card(mode, keys, listing.error)
                 self._watch_channel(view, token, mode)
-        if focus:
+            dropped = self._end_splash()         # the page or the card (an error, a sign-in: any) is set: nothing covers it now
+        if dropped:
+            self._focus_after_splash(FOCUS_WAIT)
+        elif focus:
             self._focus_content(FOCUS_WAIT)
         if prepared is not None:
             self._more_when_near()

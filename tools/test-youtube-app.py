@@ -2622,6 +2622,191 @@ class DiskCache(WindowCase):
         self.assertEqual(self.titles(self.kept("s:subs", "p1")), ["S1"])
 
 
+class Splash(WindowCase):
+    """The launch splash: a cold start shows it instead of the empty grid and the Loading card, until the first page or card is
+    shown; a warm start never does; the cache is warmed from the start of the launch in every case."""
+    T0 = 1_800_000_000.0
+    REC = D.SECTIONS[0].route
+    COLD = ["", "1", ""]                         # what the splash property took: the empty start, the splash, the end of it
+
+    def setUp(self):
+        super().setUp()
+        self.real_warm = prefetch.warm
+        for patch in (mock.patch.object(youtube_app, "PAGES", True),
+                      mock.patch.object(prefetch, "warm", side_effect=lambda ns, jobs, **k: self.real_warm(
+                          ns, jobs, **{**k, "pause": 0, "nice": 0}))):
+            patch.start()
+            self.addCleanup(patch.stop)
+        page_cache.drop(P.namespace("p1"))
+
+    def start(self, **kw):
+        """A window opened, its first load not waited for, and the list of the values its splash property takes."""
+        self.assertTrue(wait_for(lambda: not prefetch._running), "the fetch of an earlier window is over")
+        window = self.make(**kw)
+        seen = []
+        set_property = window.setProperty
+
+        def watch(key, value):
+            if key == "splash":
+                seen.append(value)
+            set_property(key, value)
+        window.setProperty = watch
+        window.onInit()
+        return window, seen
+
+    def others(self):
+        for i in (1, 3, 4, 5):
+            self.site.routes[D.SECTIONS[i].route] = answer(vid(10 + i, f"S{i}"))
+        self.site.routes[LATER] = answer(vid(20, "Later one"))
+
+    def finish(self, window):
+        self.assertTrue(wait_for(lambda: window.loads >= 1), "the first load")
+
+    def test_a_cold_start_shows_the_splash_until_the_first_listing_is_shown(self):
+        self.rec(vid(1, "One"))
+        self.site.held[self.REC] = hold = threading.Event()
+        window, seen = self.start()
+        self.assertEqual((window.getProperty("splash"), window.splash, window.mode), ("1", True, D.LOADING))
+        self.assertEqual((window.focus, youtube_app.SPLASH_CAP, window._timers["splash"].interval), (0, 15.0, 15.0))
+        hold.set()
+        self.finish(window)
+        self.assertEqual((window.getProperty("splash"), window.splash, self.shown(window), window.focus), ("", False, ["One"], GRID))
+        self.assertEqual(seen, self.COLD)
+        self.assertNotIn("splash", window._timers, "the cap is cancelled with the splash")
+
+    def test_a_warm_start_never_has_a_splash_fresh_or_stale(self):
+        for name, age in (("fresh", 0), ("stale", P.PAGE_TTL + 1)):
+            page_cache.drop(P.namespace("p1"))
+            Fake.now = self.T0
+            self.rec(vid(1, "One"))
+            self.open().stop()
+            Fake.now = self.T0 + age
+            window, seen = self.start()
+            self.assertEqual((self.shown(window), window.mode, window.focus), (["One"], D.DATA, GRID), name)   # before onInit returned
+            self.assertEqual((window.getProperty("splash"), window.splash, "splash" in window._timers), ("", False, False), name)
+            if name == "stale":
+                self.finish(window)
+            time.sleep(0.05)
+            self.assertEqual(seen, [""], name)
+            window.stop()
+
+    def test_a_first_load_that_ends_in_a_card_drops_the_splash_and_shows_the_card(self):
+        error = {"id": 1, "error": {"code": 1, "message": "boom"}}
+        for name, mode, world in (("error", D.ERROR, lambda: self.site.routes.update({self.REC: error})),
+                                  ("refused", D.UNAVAILABLE, lambda: self.site.routes.update({self.REC: INVALID})),
+                                  ("empty", D.EMPTY, lambda: self.site.routes.update({self.REC: answer()})),
+                                  ("signin", D.SIGNIN, lambda: setattr(Fake, "signed", False)),
+                                  ("needkey", D.NEEDKEY, lambda: (setattr(Fake, "signed", False), setattr(Fake, "keys", False)))):
+            Fake.signed, Fake.keys = True, True
+            self.site.routes.pop(self.REC, None)
+            world()
+            window, seen = self.start()
+            self.finish(window)
+            self.assertEqual(window.mode, mode, name)
+            self.assertEqual((seen, window.getProperty("splash"), window.splash), (self.COLD, "", False), name)
+            self.assertTrue(window.getProperty("msg_title"), name)
+            self.assertEqual(window.focus, ACTION if window.getProperty("action") else RAIL, name)
+            window.stop()
+
+    def test_the_splash_is_dropped_after_the_cap_whatever_the_load_does(self):
+        self.rec(vid(1, "One"))
+        self.site.held[self.REC] = hold = threading.Event()
+        window, seen = self.start()
+        timer = window._timers["splash"]
+        timer.cancel()                                                         # not the 15 s: what the timer then runs
+        timer.function(*timer.args)
+        self.assertEqual((window.getProperty("splash"), window.mode, window.getProperty("msg_title")), ("", D.LOADING, "Loading…"))
+        self.assertEqual(window.focus, RAIL, "the Loading card has no button: the focus is where the window had it")
+        hold.set()                                                             # the answer that comes later is shown as always
+        self.finish(window)
+        self.assertEqual((self.shown(window), window.focus, seen), (["One"], GRID, self.COLD))
+
+    def test_the_cap_is_a_timer_of_the_window_and_stops_with_it(self):
+        self.site.held[self.REC] = hold = threading.Event()
+        with mock.patch.object(youtube_app, "SPLASH_CAP", 0.05):
+            window, seen = self.start()
+            self.assertTrue(wait_for(lambda: window.getProperty("splash") == ""))
+        self.assertEqual((window.mode, seen), (D.LOADING, self.COLD))
+        window.stop()
+        other, _ = self.start()
+        timer = other._timers["splash"]
+        other.stop()
+        self.assertTrue(timer.finished.is_set(), "closing the window cancels the cap")
+        hold.set()
+
+    def test_back_and_home_during_the_splash_close_the_app(self):
+        self.site.held[self.REC] = hold = threading.Event()
+        window, seen = self.start()
+        self.assertEqual(window.getProperty("splash"), "1")
+        for action_id in youtube_app.ui.BACK_ACTIONS:
+            window.closed = False
+            self.press(window, action_id)
+            self.assertTrue(window.closed, action_id)
+        hold.set()
+
+    def test_the_demo_has_no_splash_but_for_the_card_that_never_ends(self):
+        for scenario in ("", "signin", "needkey", "empty", "error", "unavailable"):
+            window, seen = self.start(demo=True, scenario=scenario)
+            self.finish(window)
+            self.assertEqual((seen, window.getProperty("splash"), window.warming), ([""], "", None), scenario)
+            window.stop()
+        window, seen = self.start(demo=True, scenario="loading")
+        self.assertEqual((window.getProperty("splash"), window.mode, window.warming), ("1", D.LOADING, None))
+        timer = window._timers["splash"]
+        timer.cancel()
+        timer.function(*timer.args)
+        self.assertEqual((window.getProperty("splash"), window.mode, seen), ("", D.LOADING, self.COLD))
+
+    def test_warming_begins_with_the_launch_and_still_waits_for_the_first_page(self):
+        self.others()
+        self.rec(vid(1, "R"))
+        self.site.held[self.REC] = hold = threading.Event()
+        window, _ = self.start()
+        handle = window.warming
+        self.assertTrue(handle is not None and handle.running, "begun with the splash up")
+        time.sleep(0.5)
+        self.assertEqual(self.site.asked(), [R, self.REC], "nothing competes with the window's own load")
+        timer = window._timers["splash"]
+        timer.cancel()
+        timer.function(*timer.args)                                            # the splash is down, the Loading card is not
+        time.sleep(0.5)
+        self.assertEqual(self.site.asked(), [R, self.REC])
+        hold.set()
+        self.assertTrue(handle.wait(5))
+        self.assertEqual(self.site.asked(), [R, self.REC, D.SECTIONS[1].route, LATER, D.SECTIONS[3].route,
+                                              D.SECTIONS[4].route, D.SECTIONS[5].route])
+        self.assertEqual([page_cache.get(P.namespace("p1"), "s:" + key) is not None for key in D.SECTION_KEYS[:6]], [True] * 6)
+
+    def test_warming_goes_on_when_the_first_load_ends_in_a_card(self):
+        error = {"id": 1, "error": {"code": 1, "message": "boom"}}
+        for name, world, asked in (("error", lambda: self.site.routes.update({self.REC: error}), 7),
+                                   ("empty", lambda: self.site.routes.update({self.REC: answer()}), 7),
+                                   ("signin", lambda: setattr(Fake, "signed", False), 2)):      # signed out: only what needs no account
+            Fake.signed = True
+            self.site.calls.clear()
+            self.others()
+            world()
+            window, seen = self.start()
+            self.finish(window)
+            self.assertEqual(seen, self.COLD, name)
+            self.assertTrue(window.warming.wait(5), name)
+            self.assertEqual(len(self.site.asked()), asked, (name, self.site.asked()))
+            self.assertIn(D.SECTIONS[5].route, self.site.asked(), name)
+            self.assertIsNotNone(page_cache.get(P.namespace("p1"), "s:trend"), name)
+            window.stop()
+            page_cache.drop(P.namespace("p1"))
+
+    def test_warming_begins_on_a_warm_start_too(self):
+        self.others()
+        self.rec(vid(1, "R"))
+        self.open().stop()
+        self.site.calls.clear()
+        window, seen = self.start()
+        self.assertEqual((seen, self.shown(window)), ([""], ["R"]))
+        self.assertTrue(window.warming is not None)
+        self.assertTrue(window.warming.wait(5))
+
+
 class Files(unittest.TestCase):
     def setUp(self):
         shutil.rmtree(os.path.join(TMP, "addon_data"), ignore_errors=True)
@@ -3057,7 +3242,7 @@ class Skin(unittest.TestCase):
         for a, b in zip(buttons, buttons[1:]):                                                    # in a row, apart, left to right
             self.assertEqual(a.findtext("top"), b.findtext("top"))
             self.assertGreaterEqual(int(b.findtext("left")), int(a.findtext("left")) + int(a.findtext("width")) + 8)
-        demo_mark = next(g for g in header.findall("control") if g.findtext("visible") == "!String.IsEmpty(Window.Property(demo))")
+        demo_mark = next(g for g in header.findall("control") if (g.findtext("visible") or "").startswith("!String.IsEmpty(Window.Property(demo))"))
         title = next(c for c in header.findall("control") if c.findtext("label") == "$INFO[Window.Property(title)]")
         logo = next(c for c in header.findall("control") if c.findtext("label") == "YouTube")
         last = buttons[-1]
@@ -3096,7 +3281,8 @@ class Skin(unittest.TestCase):
         root = self.tree()
         button = self.by_id(root, AVATAR)
         self.assertEqual(button.get("type"), "button")
-        self.assertEqual(button.findtext("visible"), "!String.IsEmpty(Window.Property(avatar))")      # drawn with the circle only
+        self.assertEqual(button.findtext("visible"),                                  # drawn with the circle only, and not under the splash
+                         "!String.IsEmpty(Window.Property(avatar))+String.IsEmpty(Window.Property(splash))")
         circle = next(g for g in root.find("controls").findall("control") if g.findtext("left") == "1808" and g.get("type") == "group")
         box = [int(button.findtext(k)) for k in ("left", "top", "width", "height")]
         around = [int(circle.findtext(k)) for k in ("left", "top", "width", "height")]
@@ -3164,6 +3350,38 @@ class Skin(unittest.TestCase):
         for name in os.listdir(MEDIA):
             if name.startswith("youtube-"):
                 self.assertLess(os.path.getsize(os.path.join(MEDIA, name)), 6000, name)
+
+    def test_the_splash_is_the_only_thing_shown_while_the_property_is_set_one_picture_and_nothing_to_focus(self):
+        root = self.tree()
+        top = root.find("controls").findall("control")
+        splash = [c for c in top if c.findtext("visible") == "!String.IsEmpty(Window.Property(splash))"]
+        self.assertEqual(len(splash), 1)
+        not_splash = "String.IsEmpty(Window.Property(splash))"
+        for control in top:
+            if control is not splash[0]:
+                condition = control.findtext("visible") or ""
+                self.assertTrue(condition == not_splash or condition.endswith("+" + not_splash), (control.get("id"), condition))
+        for mode, search, avatar, demo_mark, notice, action in itertools.product(
+                ("data", "signin", "loading", "needkey"), ("", "1"), ("", "A"), ("", "1"), ("", "x"), ("", "Try again")):
+            window = {"mode": mode, "search": search, "avatar": avatar, "demo": demo_mark, "notice": notice, "action": action,
+                      "kind": "video", "key_qr": "/tmp/q.png", "step": "Step 1 of 6"}
+            self.assertNotIn(splash[0], self.shown(root.find("controls"), window=window), window)
+            shown = self.shown(root.find("controls"), window={**window, "splash": "1"})
+            self.assertEqual(set(shown), set(splash[0].iter("control")), window)         # the splash and what is in it, nothing else
+            self.assertEqual([c.get("id") for c in shown if c.get("id")], [], "nothing in it takes the focus")
+            self.assertEqual([c.get("type") for c in shown].count("image"), 1, window)
+        mark = next(c for c in splash[0].iter("control") if c.get("type") == "image")
+        logo = next(c for c in top if c.get("type") == "image")
+        self.assertEqual((mark.findtext("texture"), logo.findtext("texture")), ("youtube-mark.png",) * 2)
+        self.assertGreaterEqual(int(mark.findtext("width")), 2 * int(logo.findtext("width")))         # larger than the top bar's
+        self.assertEqual(int(mark.findtext("left")) + int(mark.findtext("width")) // 2, 960)        # centred on 1920 x 1080
+        labels = {c.findtext("label"): c for c in splash[0].iter("control") if c.get("type") == "label"}
+        self.assertEqual(set(labels), {"YouTube", "Loading…"})
+        for label in labels.values():
+            self.assertEqual(int(label.findtext("left")) + int(label.findtext("width")) // 2, 960)
+            self.assertEqual(label.findtext("align"), "center")
+        self.assertEqual(self.pictures(root.find("controls"), window={"mode": "data", "splash": "1"}), 1)
+        self.assertEqual(self.pictures(root.find("controls"), window={"mode": "data"}), 1, "and without it: the mark of the top bar")
 
     def test_demo_is_marked_on_screen(self):
         text = ET.tostring(self.tree(), encoding="unicode")
