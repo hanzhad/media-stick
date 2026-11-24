@@ -267,9 +267,11 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def _refresh_channels(self, now):
         cards = [sections.channel_card(c, self.cat_names, now, self.resume_doc, self.fav_keys) for c in self.shown]
         ctrl = self.getControl(ROW)
+        size = ctrl.size() if hasattr(ctrl, "size") else len(ctrl.items)
         for idx, card in enumerate(cards):
-            if idx < len(ctrl.items):
-                self._shown_props[card.key] = items.apply_card(ctrl.items[idx], card, self._shown_props.get(card.key))
+            if idx < size:
+                item = ctrl.getListItem(idx) if hasattr(ctrl, "getListItem") else ctrl.items[idx]
+                self._shown_props[card.key] = items.apply_card(item, card, self._shown_props.get(card.key))
         self.cards = cards
         self._sync_hero()
 
