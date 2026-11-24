@@ -71,6 +71,8 @@ YT_SECTIONS = {"home": "rec", "subscriptions": "subs", "history": "history", "pl
 CATALOG_APPS = ("plugin.video.sweettv", "plugin.video.youtube")
 SWEET_PLAY_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvid/([0-9]{1,12})\|(null|[0-9]{1,12})")
 SWEET_ITEM_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvid/([0-9]{1,12})\|(null|[0-9]{1,12})(?:\?[^\s]*)?")
+SWEET_VOD_PLAY_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvod/([0-9]{1,12})\|(null|[0-9]{1,12})\|([0-9]{1,12})(?:\?start=([0-9]{1,6}))?")
+SWEET_VOD_ITEM_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvod/([0-9]{1,12})\|(null|[0-9]{1,12})\|([0-9]{1,12})(?:\?[^\s]*)?")
 APPS_TTL, ROUTES_TTL = 60, 300
 RESUME_MIN, RESUME_MAX = 5, 86400
 SEEK_MAX = 86400
@@ -175,16 +177,20 @@ def play_target(file):
     m = SWEET_PLAY_RE.fullmatch(text)
     if m and sw is not None:
         return sw.play_url(m.group(1), None if m.group(2) == "null" else m.group(2))
+    m = SWEET_VOD_PLAY_RE.fullmatch(text)
+    if m and sw is not None:
+        ep = None if m.group(2) == "null" else m.group(2)
+        start = int(m.group(4)) if m.group(4) else 0
+        if sweetlive is not None:
+            return sweetlive.vod_url(m.group(1), ep, m.group(3), start)
+        return "plugin://plugin.video.sweettv/playvod/%s|%s|%s%s" % (
+            m.group(1), m.group(2), m.group(3), "?start=%d" % start if start > 0 else "")
     return ""
 
 
 def _local_resume():
-    """The positions the stick saved, when "remember where I stopped, on the device" is on; None when it is off or the
-    library is missing: the page then gets what Kodi and the add-ons say, as before."""
-    try:
-        return mr.load() if mr is not None and mr.enabled() else None
-    except Exception:
-        return None
+    """YouTube uses its own profile/account history; local resume override is disabled."""
+    return None
 
 
 def clean_resume(value):
@@ -319,12 +325,14 @@ def _streams(items, current, label):
 
 
 def sweet_ref(file):
-    """(channel id, epg id or "" for live) of a SWEET.TV item as Kodi reports it, or None: its plugin path, or - Kodi gives
-    the address of the stream the add-on resolved for an archived programme, not the plugin path - an address the add-on
-    wrote down when it resolved it (mediastick_sweetlive.recall)."""
-    m = SWEET_ITEM_RE.fullmatch(file) if isinstance(file, str) else None
-    if m:
-        return (m.group(1), "" if m.group(2) == "null" else m.group(2))
+    """(channel id, epg id or "" for live) or ("vod:<movie_id>", episode id or "") of a SWEET.TV item as Kodi reports it, or None."""
+    if isinstance(file, str):
+        m = SWEET_ITEM_RE.fullmatch(file)
+        if m:
+            return (m.group(1), "" if m.group(2) == "null" else m.group(2))
+        m = SWEET_VOD_ITEM_RE.fullmatch(file)
+        if m:
+            return ("vod:" + m.group(1), "" if m.group(2) == "null" else m.group(2))
     try:
         known = sweetlive.recall(file, time.time()) if sweetlive and isinstance(file, str) else None
     except Exception:     # the file is the add-on's to write: whatever is wrong with it, the item is simply not known

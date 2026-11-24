@@ -136,9 +136,9 @@ def phone_page():
 
 
 def local_positions():
-    """What the stick saved while anything played, when "remember where I stopped, on the device" is on; else None."""
+    """SWEET.TV always reads the stick's local positions; None only when mediastick_resume is unavailable."""
     try:
         from resources.lib import store
-        return store.local_resume()
+        return store.resume.load() if store.resume is not None else None
     except Exception:
         return None

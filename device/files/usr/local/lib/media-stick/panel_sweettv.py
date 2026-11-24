@@ -232,9 +232,9 @@ def play_request(raw, body, now, local=None):
 
 
 def local():
-    """The stick's saved positions when "remember where I stopped, on the device" is on, else None."""
+    """SWEET.TV always uses the stick's local positions."""
     try:
-        return mr.load() if mr is not None and mr.enabled() else None
+        return mr.load() if mr is not None else None
     except Exception:
         return None
 

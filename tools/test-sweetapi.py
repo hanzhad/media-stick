@@ -165,7 +165,7 @@ class Search(unittest.TestCase):
         self.assertEqual((other["cid"], other["playable"]), ("99", False))
         movie, person = rows_of(rows, "movie")[0], rows_of(rows, "person")[0]
         self.assertEqual((movie["title"], movie["subtitle"], movie["playable"], movie["cid"], movie["epg"]),
-                         ("Divorce Club", "2020, Comedy", False, "", ""))
+                         ("Divorce Club", "2020, Comedy", True, "", ""))
         self.assertEqual((person["title"], person["playable"]), ("Іван Холостяк", False))
         self.assertEqual(len(rows), 9)                                                               # the weird kind, bad ids, no title and no start are gone
 
@@ -588,6 +588,240 @@ class Words(unittest.TestCase):
         for msgid in (*api.MESSAGES.values(), *api.WEEKDAYS, *api.MONTHS, api.MORE_ONE, api.MORE_MANY):
             self.assertTrue(words.TEXT.get(msgid, {}).get("ru") and words.TEXT[msgid].get("uk"), msgid)
         self.assertEqual([words.TEXT[api.MORE_MANY][lang].count("|") for lang in ("ru", "uk")], [2, 2])
+
+
+CONFIG, COLLECTIONS, MOVIES, TOP = (
+    fixture("sweettv-config.json"),
+    fixture("sweettv-collections.json"),
+    fixture("sweettv-movies.json"),
+    fixture("sweettv-top.json"),
+)
+
+
+class VodAndCatalog(unittest.TestCase):
+    def test_quality_id_mapping(self):
+        for q, expected in (("720p", 1), ("1080p", 2), ("unlimited", 3), (None, 2), ("bad", 2)):
+            self.assertEqual(api.quality_id(q), expected, q)
+
+    def test_owner_of_prefers_preferred_external_id_pair_then_first_then_owners(self):
+        self.assertEqual(api.owner_of({"id": 9558, "external_id_pairs": [{"owner_id": 12}, {"owner_id": 69, "preferred": True}], "owners": None}), 69)
+        self.assertEqual(api.owner_of({"id": 1, "external_id_pairs": [{"owner_id": 12}, {"owner_id": 34}], "owners": [99]}), 12)
+        self.assertEqual(api.owner_of({"id": 2, "external_id_pairs": [], "owners": [42]}), 42)
+        self.assertEqual(api.owner_of({"id": 3}), 0)
+
+    def test_configuration_normalizes_and_caches_for_600s(self):
+        clock = Clock(NOW)
+        c, sender = client(reply(CONFIG), clock=clock)
+        first = api.configuration(client=c)
+        self.assertTrue(first["ok"])
+        self.assertIn("genres", first)
+        self.assertIn("sort_modes", first)
+        self.assertEqual([m["id"] for m in first["sort_modes"]], [1, 2, 3, 5, 6])
+        clock.now += 599
+        second = api.configuration(client=c)
+        self.assertEqual(len(sender.calls), 1)
+        self.assertEqual(second["sort_modes"], first["sort_modes"])
+        clock.now += 2
+        api.configuration(client=c)
+        self.assertEqual(len(sender.calls), 2)
+        self.assertEqual(sender.calls[0]["url"], "https://api.sweet.tv/MovieService/GetConfiguration.json")
+
+    def test_catalog_page_movies_filters_tvod_uhd_and_ignores_watch_info(self):
+        def by(call):
+            if call["url"].endswith("GetGenreMovies.json"):
+                gid = call["body"]["genre_id"]
+                if gid == 61:
+                    return reply({"status": "OK", "movies": [9558, 9559, 9560, 1001]})
+                if gid == 1:
+                    return reply({"status": "OK", "movies": [1001]})
+                if gid == 3:
+                    return reply({"status": "OK", "movies": []})
+            if call["url"].endswith("GetMovieInfo.json"):
+                return reply(MOVIES)
+            return reply({"status": "OK"})
+
+        c, sender = client(by=by)
+        res = api.catalog_page("movies", genre_id=0, sort_mode_id=1, offset=0, limit=30, quality="1080p", client=c)
+        self.assertTrue(res["ok"])
+        ids = [m["id"] for m in res["items"]]
+        self.assertEqual(ids, [9558])
+        m = res["items"][0]
+        self.assertEqual((m["owner_id"], m["year"], m["imdb"]), (69, 2024, 8.2))
+        self.assertNotIn("watch_info", m)
+
+        res_4k = api.catalog_page("movies", genre_id=0, quality="unlimited", client=c)
+        self.assertEqual([x["id"] for x in res_4k["items"]], [9558, 9560])
+
+    def test_catalog_page_series_unions_genre_1_and_collections_type_3(self):
+        def by(call):
+            if call["url"].endswith("GetGenreMovies.json"):
+                return reply({"status": "OK", "movies": [9558]})
+            if call["url"].endswith("GetCollections.json"):
+                self.assertEqual(call["body"], {"type": 3})
+                return reply({"status": "OK", "collections": [{"id": 301, "id_list": [9559, 9560]}]})
+            if call["url"].endswith("GetMovieInfo.json"):
+                return reply(MOVIES)
+            return reply({"status": "OK"})
+
+        c, _ = client(by=by)
+        res = api.catalog_page("series", quality="unlimited", client=c)
+        self.assertTrue(res["ok"])
+        self.assertEqual([x["id"] for x in res["items"]], [9558, 9560])
+
+    def test_shows_unifies_movie_and_epg_collections_without_promo_slogans(self):
+        epg_info = {
+            "status": "OK",
+            "collections": [
+                {"id": 801, "title": "Холостяк", "poster_url": "https://img.example/801-p.jpg",
+                 "secondary_id_list": [501, 502]},
+                {"id": 802, "title": "Найкращі шоу тижня",
+                 "secondary_id_list": [601, 602]},
+            ],
+        }
+        epg_records = {
+            "status": "OK",
+            "list": [
+                {"id": 501, "channel_id": 15, "text": "Холостяк. Випуск 1", "time_start": NOW - 7200, "time_stop": NOW - 3600,
+                 "tv_show_id": 111, "image_url": "https://img.example/501.jpg", "available": True},
+                {"id": 502, "channel_id": 15, "text": "Холостяк. Випуск 2", "time_start": NOW - 3600, "time_stop": NOW - 1800,
+                 "tv_show_id": 111, "available": True},
+                {"id": 601, "channel_id": 15, "text": "МастерШеф. Випуск 1", "time_start": NOW - 7200, "time_stop": NOW - 3600,
+                 "tv_show_id": 222, "image_url": "https://img.example/601.jpg", "available": True},
+                {"id": 602, "channel_id": 15, "text": "Супермама. Випуск 1", "time_start": NOW - 3600, "time_stop": NOW - 1800,
+                 "tv_show_id": 333, "image_url": "https://img.example/602.jpg", "available": True},
+            ],
+        }
+
+        def by(call):
+            url = call["url"]
+            if url.endswith("GetCollections.json"):
+                return reply(COLLECTIONS)
+            if url.endswith("GetMovieInfo.json"):
+                return reply(MOVIES)
+            if url.endswith("GetCollectionInfo.json"):
+                return reply(epg_info)
+            if url.endswith("GetEpgRecords.json"):
+                return reply(epg_records)
+            return reply({"status": "OK"})
+
+        channels = {"list": [
+            {"id": 15, "name": "СТБ", "catchup": True, "catchup_duration": 7, "available": True, "epg": [
+                {"id": 700, "text": "Destination X", "time_start": NOW - 3600, "time_stop": NOW - 1800, "tv_show_id": 444, "available": True},
+                {"id": 501, "text": "Холостяк. Випуск 1", "time_start": NOW - 7200, "time_stop": NOW - 3600, "tv_show_id": 111, "available": True},
+            ]}
+        ]}
+        c, _ = client(by=by)
+        res = api.shows(channels, now=NOW, quality="1080p", client=c, tr=ENGLISH)
+        self.assertTrue(res["ok"])
+        titles = [item["title"] for item in res["items"]]
+        self.assertNotIn("Промо-слоган не должен попасть в карточку", titles)
+        self.assertIn("Зрадники", titles)
+        self.assertIn("Холостяк", titles)
+        self.assertIn("МастерШеф", titles)
+        self.assertIn("Супермама", titles)
+        self.assertIn("Destination X", titles)
+        vod_item = next(x for x in res["items"] if x["title"] == "Зрадники")
+        self.assertEqual((vod_item["kind"], vod_item["id"], vod_item["owner_id"]), ("show_vod", "vod:9558", 69))
+
+    def test_vod_detail_and_show_detail_vod_use_local_resume_and_favs_never_watch_info(self):
+        extended_movie = {
+            "status": "OK",
+            "movies": [{
+                "id": 9558,
+                "title": "Зрадники",
+                "year": 2024,
+                "duration": 3600,
+                "rating_imdb": 8.2,
+                "poster_url": "https://img.example/9558-p.jpg",
+                "external_id_pairs": [{"owner_id": 69, "preferred": True}],
+                "availability_info": {"available": True},
+                "watch_info": {"position": 999},
+                "seasons": [{
+                    "id": 1,
+                    "title": "Сезон 1",
+                    "owner_id": 69,
+                    "episodes": [
+                        {"id": 101, "number": 1, "title": "Епізод 1", "duration": 2400, "preview_url": "https://img.example/e1.jpg", "available": True},
+                        {"id": 102, "number": 2, "title": "Епізод 2", "duration": 2400, "preview_url": "https://img.example/e2.jpg", "available": True},
+                    ],
+                }],
+            }],
+        }
+        c, _ = client(reply(extended_movie))
+        local = {"v": 1, "items": {
+            "sw:vod:9558|101": {"pos": 500, "total": 2400, "done": False, "at": NOW},
+            "sw:vod:9558|102": {"pos": 0, "total": 2400, "done": True, "at": NOW},
+        }, "live": {}}
+        favs = {"show:vod:9558"}
+        detail = api.vod_detail(9558, local=local, favs=favs, client=c, tr=ENGLISH)
+        self.assertTrue(detail["ok"])
+        self.assertTrue(detail["favourite"])
+        eps = detail["seasons"][0]["episodes"]
+        self.assertEqual((eps[0]["resume"], eps[0]["watched"]), (500, False))
+        self.assertEqual((eps[1]["resume"], eps[1]["watched"]), (0, True))
+
+        show_res = api.show_detail("vod:9558", CHANNELS, now=NOW, local=local, favs=favs, client=c, tr=ENGLISH)
+        self.assertTrue(show_res["ok"])
+        self.assertEqual(len(show_res["seasons"][0]["episodes"]), 2)
+
+    def test_vod_link_resolves_owner_and_first_episode_and_never_logs_secret_url(self):
+        extended_series = {
+            "status": "OK",
+            "movies": [{
+                "id": 9558,
+                "title": "Зрадники",
+                "duration": 2400,
+                "external_id_pairs": [{"owner_id": 69, "preferred": True}],
+                "availability_info": {"available": True},
+                "seasons": [{
+                    "id": 1,
+                    "title": "Сезон 1",
+                    "owner_id": 77,
+                    "episodes": [
+                        {"id": 101, "number": 1, "title": "Епізод 1", "duration": 2400, "available": True},
+                    ],
+                }],
+            }],
+        }
+        link_reply = {
+            "status": "OK",
+            "http_stream": {"host": {"address": "vod-cdn.example"}, "url": "/vod/9558/101/index.m3u8?token=SECRET-STREAM"},
+            "scheme": "HTTP_HLS",
+            "license_url": "https://drm.example/widevine",
+        }
+        c, sender = client(reply(extended_series), reply(link_reply))
+        res = api.vod_link(9558, episode_id=None, owner_id=0, quality="720p", client=c, tr=ENGLISH)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["protocol"], "hls")
+        self.assertIn("SECRET-STREAM", res["url"])
+        self.assertEqual(res["license_url"], "https://drm.example/widevine")
+        get_link_call = sender.calls[-1]
+        self.assertEqual(get_link_call["url"], "https://api.sweet.tv/MovieService/GetLink.json")
+        self.assertEqual(get_link_call["body"]["owner_id"], 77)
+        self.assertEqual(get_link_call["body"]["episode_id"], 101)
+        self.assertEqual(get_link_call["body"]["video_quality_id"], 1)
+
+    def test_top_search_and_search_mark_playable_movies_preserve_image_and_hide_uhd(self):
+        c, sender = client(reply(TOP))
+        res = api.top_search(MAP, now=NOW, quality="1080p", client=c, tr=ENGLISH)
+        self.assertTrue(res["ok"])
+        self.assertEqual(sender.calls[0]["url"], "https://api.sweet.tv/SearchService/GetTop.json")
+        titles = [r["title"] for r in res["items"]]
+        self.assertIn("Зрадники", titles)
+        self.assertIn("СТБ HD", titles)
+        self.assertNotIn("Космос 4K", titles)
+        self.assertNotIn("UHD 4K", titles)
+        avail_movie = next(r for r in res["items"] if r["title"] == "Зрадники")
+        tvod_movie = next(r for r in res["items"] if r["title"] == "Платний фільм TVOD")
+        self.assertTrue(avail_movie["playable"])
+        self.assertEqual(avail_movie["vod_url"], ml.vod_url(9558, None, 0))
+        self.assertEqual(avail_movie["image_url"], "https://img.example/top-9558.jpg")
+        self.assertFalse(tvod_movie["playable"])
+        self.assertEqual(tvod_movie["image_url"], "https://img.example/top-9559.jpg")
+
+        res_4k = api.top_search(MAP, now=NOW, quality="unlimited", client=c, tr=ENGLISH)
+        self.assertIn("Космос 4K", [r["title"] for r in res_4k["items"]])
+        self.assertIn("UHD 4K", [r["title"] for r in res_4k["items"]])
 
 
 if __name__ == "__main__":

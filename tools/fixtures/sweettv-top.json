@@ -1,0 +1,48 @@
+{
+  "status": "OK",
+  "result": [
+    {
+      "type": "Movie",
+      "id": 9558,
+      "text": "Зрадники",
+      "year": 2024,
+      "genres": "Шоу",
+      "image_url": "https://img.example/top-9558.jpg",
+      "availability_info": {"available": true}
+    },
+    {
+      "type": "Movie",
+      "id": 9559,
+      "text": "Платний фільм TVOD",
+      "year": 2025,
+      "genres": "Фильмы",
+      "image_url": "http://img.example/top-9559.jpg",
+      "availability_info": {"available": false}
+    },
+    {
+      "type": "Movie",
+      "id": 9560,
+      "text": "Космос 4K",
+      "year": 2024,
+      "genres": [57],
+      "image_url": "https://img.example/top-9560.jpg",
+      "availability_info": {"available": true}
+    },
+    {
+      "type": "Channel",
+      "id": 15,
+      "text": "СТБ HD",
+      "genres": "Новини, шоу",
+      "image_url": "//img.example/ch-15.jpg",
+      "category": [20]
+    },
+    {
+      "type": "Channel",
+      "id": 240,
+      "text": "UHD 4K",
+      "genres": "Ultra HD",
+      "image_url": "https://img.example/ch-240.jpg",
+      "category": [24]
+    }
+  ]
+}

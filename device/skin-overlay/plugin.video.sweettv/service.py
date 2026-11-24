@@ -70,9 +70,20 @@ class _MsPlayer(xbmc.Player):
             _ms_gui.Dialog().notification('SWEET.TV', _ml.text(_ml.NO_ARCHIVE), _ms_gui.NOTIFICATION_INFO)
 
     def onPlayBackSeek(self, seek_time, seek_offset):
-        cid = self._live() if seek_offset < 0 else ''
-        if cid:
-            self._rewind(cid, -seek_offset / 1000.0)
+        if seek_offset < 0:
+            cid = self._live()
+            if cid:
+                self._rewind(cid, -seek_offset / 1000.0)
+            return
+        try:
+            found = _ml.identify(self.getPlayingFile(), time.time())
+            if found and not found[0].startswith('vod:') and found[1]:
+                handoff = _ml.forward_handoff(_ms_sweettv.helper.get_channel_list(), found[0], found[1],
+                                              self.getTime(), int(time.time()))
+                if handoff and handoff.get('ok'):
+                    xbmc.executebuiltin('PlayMedia(%s)' % handoff['url'])
+        except Exception:
+            pass
 
     def onPlayBackPaused(self):
         self.paused_at = time.time() if self._live() else 0
@@ -88,6 +99,14 @@ class _MsPlayer(xbmc.Player):
 
     def onPlayBackEnded(self):
         self.paused_at = 0
+        try:
+            found = _ml.identify(self.getPlayingFile(), time.time())
+            if found and not found[0].startswith('vod:') and found[1]:
+                nxt = _ml.ended_plan(_ms_sweettv.helper.get_channel_list(), found[0], found[1], int(time.time()))
+                if nxt:
+                    xbmc.executebuiltin('PlayMedia(%s)' % nxt)
+        except Exception:
+            pass
 # media-stick end
 
 if __name__ == '__main__':

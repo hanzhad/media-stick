@@ -119,6 +119,38 @@ class Library(unittest.TestCase):
         raw = {"list": [{"id": 5, "catchup": True, "epg": [dict(SHOW, id=True)]}]}
         self.assertFalse(ml.plan(raw, 5, 10, NOW)["ok"])
 
+    def test_vod_url_and_split_vod_id(self):
+        self.assertEqual(ml.vod_url(9558), "plugin://plugin.video.sweettv/playvod/9558|null|0")
+        self.assertEqual(ml.vod_url(9558, 101, 69, 120), "plugin://plugin.video.sweettv/playvod/9558|101|69?start=120")
+        self.assertEqual(ml.vod_url(9558, None, 69, -5), "plugin://plugin.video.sweettv/playvod/9558|null|69")
+        for bad in (("", None, 0), ("abc", None, 0), (9558, "bad", 0), (9558, None, "bad")):
+            self.assertEqual(ml.vod_url(*bad), "", bad)
+        self.assertEqual(ml.split_vod_id("9558|null|69"), ("9558", "null", "69"))
+        self.assertEqual(ml.split_vod_id("9558|101|69?start=120"), ("9558", "101", "69"))
+        for bad in ("9558", "9558|null", "x|null|0", "9558|bad|0", "", None):
+            self.assertIsNone(ml.split_vod_id(bad), bad)
+
+    def test_live_timeline_and_forward_handoff_and_ended_plan(self):
+        live_tl = ml.live_timeline(LIST, "5", None, 10, 60, NOW)
+        self.assertEqual((live_tl["programme"], live_tl["in_progress"], live_tl["can_rewind"], live_tl["go_live"]),
+                         ("Холостяк", True, True, False))
+        arch_tl = ml.live_timeline(LIST, "5", "50", 1200, 3600, NOW)
+        self.assertEqual((arch_tl["programme"], arch_tl["in_progress"], arch_tl["go_live"]), ("Утро", False, True))
+
+        # forward_handoff: ONLY in-progress (51: NOW-3600..NOW+3600) within 15s of live edge (3600)
+        self.assertEqual(ml.forward_handoff(LIST, "5", "51", 3585, NOW),
+                         {"ok": True, "switched": "live", "url": "plugin://plugin.video.sweettv/playvid/5|null"})
+        self.assertIsNone(ml.forward_handoff(LIST, "5", "51", 3584, NOW))
+        # finished archive (50: NOW-7200..NOW-3600): NEVER switches to live
+        self.assertIsNone(ml.forward_handoff(LIST, "5", "50", 3595, NOW))
+
+        # ended_plan: near live edge -> live; behind real time with started next programme -> next archive
+        self.assertEqual(ml.ended_plan(LIST, "5", "51", NOW + 3600 - 30),
+                         "plugin://plugin.video.sweettv/playvid/5|null")
+        self.assertEqual(ml.ended_plan(LIST, "5", "50", NOW),
+                         "plugin://plugin.video.sweettv/playvid/5|51")
+        self.assertFalse(ml.ended_plan(LIST, "5", "51", NOW))
+
 
 class Identity(unittest.TestCase):
     """What the address of a stream is: the add-on writes it down when it resolves, whoever sees the address looks it up."""
@@ -226,6 +258,17 @@ class Identity(unittest.TestCase):
         with open(os.path.join(ml.NOW_DIR, ml.NOW_FILE), "w", encoding="utf-8") as f:
             json.dump({"items": [good]}, f)
         self.assertEqual(ml.recall(DVR)["epg"], "50")                                            # the sound shape does read
+
+    def test_vod_remember_identify_and_start_place(self):
+        vod_stream = "https://vod.sweet.tv/vod/9558/101/index.m3u8?token=secret"
+        self.assertTrue(ml.remember("vod:9558", "101", vod_stream, 120, now=NOW))
+        self.assertEqual(ml.identify(vod_stream, NOW), ("vod:9558", "101", 120))
+        self.assertEqual(ml.start_place(vod_stream, NOW + 3)["offset"], 120)
+        vod_path = "plugin://plugin.video.sweettv/playvod/9558|101|69?start=120"
+        self.assertEqual(ml.identify(vod_path, NOW), ("vod:9558", "101", 120))
+        self.assertEqual(ml.start_place(vod_path, NOW)["offset"], 120)
+        self.assertEqual(ml.start_of(["plugin://plugin.video.sweettv/playvod/9558|101|69", "1", "?start=120"],
+                                     "9558|101|69", "vod:9558", "101", now=NOW), (120, "query"))
 
     def test_a_place_that_cannot_be_written_says_so(self):
         self.assertFalse(ml.remember(5, 50, DVR, 10, folder=os.path.join(TMP, "blocker", "now")))
@@ -767,6 +810,27 @@ class Service(unittest.TestCase):
         self.assertEqual(place, [10.0])
         self.assertEqual(len(threads), 1)
 
+    def test_forward_seek_on_in_progress_epg_near_live_edge_switches_to_live_but_finished_archive_does_not(self):
+        clean_now()
+        self.addCleanup(clean_now)
+        ml.remember(5, 51, DVR_NOW, 0, now=NOW)
+        player, calls, _ = self.make([DVR_NOW], place=[3590.0])
+        self.run_at(player.onPlayBackSeek, 3590, 0)
+        self.assertEqual(calls, ["PlayMedia(plugin://plugin.video.sweettv/playvid/5|null)"])
+
+        ml.remember(5, 50, DVR, 0, now=NOW)
+        player, calls, _ = self.make([DVR], place=[3590.0])
+        self.run_at(player.onPlayBackSeek, 3590, 0)
+        self.assertEqual(calls, [])
+
+    def test_playback_ended_on_archive_continues_to_next_programme(self):
+        clean_now()
+        self.addCleanup(clean_now)
+        ml.remember(5, 50, DVR, 0, now=NOW)
+        player, calls, _ = self.make([DVR])
+        self.run_at(player.onPlayBackEnded)
+        self.assertEqual(calls, ["PlayMedia(plugin://plugin.video.sweettv/playvid/5|51)"])
+
     def test_a_device_without_the_library_leaves_the_add_on_as_upstream(self):
         lib = types.ModuleType("resources.lib.sweettv")
         lib.refreshToken, lib.initSettings, lib.refreshChannelList = (lambda: True), (lambda: None), (lambda: None)
@@ -965,9 +1029,13 @@ class Panel(unittest.TestCase):
         return base
 
     def test_the_list_is_kept_small(self):
-        raw = ps.slim(dict(LIST, junk="x", list=LIST["list"] + [{"id": 8, "icon_url": "u" * 500, "epg": [dict(SHOW, external_ids=[1] * 99)]}]))
+        raw = ps.slim(dict(LIST, junk="x", list=LIST["list"] + [{"id": 8, "icon_url": "u" * 500, "is_fast_channel": True,
+                                                                 "banner_url": "https://img.example/b.jpg",
+                                                                 "epg": [dict(SHOW, external_ids=[1] * 99)]}]))
         self.assertEqual(sorted(raw), ["categories", "list"])
         self.assertNotIn("junk", raw)
+        self.assertTrue(raw["list"][-1]["is_fast_channel"])
+        self.assertEqual(raw["list"][-1]["banner_url"], "https://img.example/b.jpg")
         self.assertNotIn("logo_url", ps.slim({"list": [{"id": 9, "logo_url": "x"}]})["list"][0])
         self.assertNotIn("external_ids", raw["list"][-1]["epg"][0])
         self.assertEqual(ps.slim(None), {"list": [], "categories": []})

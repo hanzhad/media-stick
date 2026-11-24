@@ -48,7 +48,9 @@ TEXT_DIRS = (os.environ.get("MEDIASTICK_ADDON_LIB", ""), "/home/media/.kodi/addo
              "/opt/media-stick/device/kodi-addons/" + ADDON_LIB)
 _words = []
 PLAY = "plugin://plugin.video.sweettv/playvid/{cid}|{epg}"
+PLAY_VOD = "plugin://plugin.video.sweettv/playvod/{movie_id}|{ep}|{owner}"
 REF_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvid/([0-9]{1,12})\|(null|[0-9]{1,12})(?:\?ms_start=([0-9]{1,6}))?")
+VOD_REF_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvod/([0-9]{1,12})\|(null|[0-9]{1,12})\|([0-9]{1,12})(?:\?start=([0-9]{1,6}))?")
 LIVE_LAG = 0               # s the picture of a live stream is behind the clock; 0 until measured on a device
 START_MAX = 3 * 86400
 NO_ARCHIVE = "No archive for this channel"   # a msgid: text(NO_ARCHIVE) is what a person reads
@@ -64,10 +66,12 @@ SEEK_RETRY = 3             # s between two seeks of one start
 SEEK_ATTEMPTS = 3
 MIN_TOTAL = 30             # s: a length shorter than this is the player not knowing yet, not a programme
 ID_RE = re.compile(r"[0-9]{1,12}")
+CID_OR_VOD_RE = re.compile(r"(?:[0-9]{1,12}|vod:[0-9]{1,12})")
 ASK_FILE = "sweettv-ask.json"
 ASK_FRESH = 30             # s an ask is good for: the add-on is asked to resolve the item a moment after it is written
-START_RE = re.compile(r"ms_start=([0-9]{1,12})")
+START_RE = re.compile(r"(?:ms_start|start)=([0-9]{1,12})")
 ITEM_RE = re.compile(r"\s*([0-9]{1,12})\|(null|[0-9]{1,12})(?=$|[?&|#/%\s])")   # `<channel>|<programme or null>` and what Kodi may leave after it
+VOD_ITEM_RE = re.compile(r"\s*([0-9]{1,12})\|(null|[0-9]{1,12})\|([0-9]{1,12})(?=$|[?&|#/%\s])")
 
 
 def _dictionary():
@@ -117,10 +121,31 @@ def url(cid, epg=None, start=0):
     return link + "?ms_start=%d" % min(start, START_MAX) if epg != "null" and start > 0 else link
 
 
+def vod_url(movie_id, episode_id=None, owner_id=0, start=0):
+    """Plugin path for SWEET.TV VOD playback: playvod/<movie_id>|<episode_id|null>|<owner_id>[?start=<sec>]."""
+    if isinstance(movie_id, bool):
+        return ""
+    mid = str(movie_id) if movie_id is not None else ""
+    ep = "null" if episode_id in (None, "", "null") else ("" if isinstance(episode_id, bool) else str(episode_id))
+    owner = "0" if owner_id in (None, "") else ("" if isinstance(owner_id, bool) else str(owner_id))
+    if not ID_RE.fullmatch(mid) or (ep != "null" and not ID_RE.fullmatch(ep)) or not ID_RE.fullmatch(owner):
+        return ""
+    link = PLAY_VOD.format(movie_id=mid, ep=ep, owner=owner)
+    start = int(start) if isinstance(start, (int, float)) and not isinstance(start, bool) and start == start else 0
+    return link + "?start=%d" % min(start, START_MAX) if start > 0 else link
+
+
 def ref(file):
-    """(channel id, programme id or "" for live, start seconds) of a played SWEET.TV item, or None."""
-    m = REF_RE.fullmatch(file) if isinstance(file, str) else None
-    return (m.group(1), "" if m.group(2) == "null" else m.group(2), int(m.group(3) or 0)) if m else None
+    """(channel id or "vod:<movie_id>", programme/episode id or "", start seconds) of a played SWEET.TV item, or None."""
+    if not isinstance(file, str):
+        return None
+    m = REF_RE.fullmatch(file)
+    if m:
+        return (m.group(1), "" if m.group(2) == "null" else m.group(2), int(m.group(3) or 0))
+    m = VOD_REF_RE.fullmatch(file)
+    if m:
+        return ("vod:" + m.group(1), "" if m.group(2) == "null" else m.group(2), int(m.group(4) or 0))
+    return None
 
 
 def _seconds(value):
@@ -138,7 +163,8 @@ def _channel(raw, cid):
     return None
 
 
-LIST_KEEP = ("id", "name", "catchup", "catchup_duration", "epg_days_future", "available", "category", "icon_v2_url", "icon_url")
+LIST_KEEP = ("id", "name", "catchup", "catchup_duration", "epg_days_future", "available", "category", "icon_v2_url", "icon_url",
+             "is_fast_channel", "banner_url")
 EPG_KEEP = ("id", "text", "time_start", "time_stop", "available", "tv_show_id", "season_number", "episode_number")
 
 
@@ -151,7 +177,7 @@ def slim(raw):
     for c in rows if isinstance(rows, list) else ():
         if not isinstance(c, dict) or c.get("id") is None:
             continue
-        item = {k: c[k] for k in LIST_KEEP if k in c}
+        item = {k: c[k] for k in LIST_KEEP if k in c and (k != "banner_url" or (isinstance(c[k], str) and len(c[k]) <= 256))}
         epg = c.get("epg") if isinstance(c.get("epg"), list) else []
         item["epg"] = [{k: p[k] for k in EPG_KEEP if k in p} for p in epg if isinstance(p, dict)]
         out.append(item)
@@ -253,7 +279,7 @@ def _entries(folder=None):
             continue
         cid, epg, at, offset = e.get("cid"), e.get("epg"), _number(e.get("at")), _number(e.get("offset"))
         sha, where = e.get("sha"), e.get("where")
-        if not (isinstance(cid, str) and ID_RE.fullmatch(cid) and isinstance(epg, str) and (not epg or ID_RE.fullmatch(epg))
+        if not (isinstance(cid, str) and CID_OR_VOD_RE.fullmatch(cid) and isinstance(epg, str) and (not epg or ID_RE.fullmatch(epg))
                 and isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha) and at is not None and offset is not None):
             continue
         out.append({"cid": cid, "epg": epg, "offset": max(0, offset), "at": at, "sha": sha,
@@ -262,11 +288,11 @@ def _entries(folder=None):
 
 
 def remember(cid, epg, url, offset=0, now=None, folder=None):
-    """The add-on has resolved `url` for channel `cid` (programme `epg`, "" or None for live) to start `offset` s into it:
-    written down so that the stream's address tells what it is. Only a hash of the address is kept. True when written."""
+    """The add-on has resolved `url` for channel `cid` (or `vod:<movie_id>`, with `epg` programme/episode id or ""/None)
+    to start `offset` s into it: written down so that the stream's address tells what it is. Only a hash of the address is kept."""
     cid, epg = str(cid), "" if epg in (None, "", "null") else str(epg)
     stream = _stream(url)
-    if not stream or not ID_RE.fullmatch(cid) or (epg and not ID_RE.fullmatch(epg)):
+    if not stream or not CID_OR_VOD_RE.fullmatch(cid) or (epg and not ID_RE.fullmatch(epg)):
         return False
     offset = offset if isinstance(offset, (int, float)) and not isinstance(offset, bool) and offset == offset else 0
     entry = {"cid": cid, "epg": epg, "offset": int(max(0, min(offset, START_MAX))), "at": int(time.time() if now is None else now),
@@ -363,6 +389,100 @@ def split_id(videoid):
     options): None when it does not begin with `<channel>|<programme or null>`."""
     m = ITEM_RE.match(videoid) if isinstance(videoid, str) else None
     return (m.group(1), m.group(2)) if m else None
+
+
+def split_vod_id(videoid):
+    """(movie_id, episode_id or "null", owner_id) of a `playvod` `videoid`, or None."""
+    m = VOD_ITEM_RE.match(videoid) if isinstance(videoid, str) else None
+    return (m.group(1), m.group(2), m.group(3)) if m else None
+
+
+def _find_epg(raw, cid, epg, now):
+    """Return (channel, programme_dict_or_None, start, stop) for (cid, epg or None), falling back to sweetapi.recall."""
+    channel = _channel(raw, cid)
+    epg_str = "" if epg in (None, "", "null") else str(epg)
+    if channel:
+        for p in channel.get("epg") if isinstance(channel.get("epg"), list) else ():
+            if not isinstance(p, dict):
+                continue
+            start, stop = _seconds(p.get("time_start")), _seconds(p.get("time_stop"))
+            if start is None or stop is None:
+                continue
+            if epg_str:
+                if str(p.get("id")) == epg_str:
+                    return channel, p, start, stop
+            elif start <= now < stop:
+                return channel, p, start, stop
+    if epg_str:
+        try:
+            import mediastick_sweetapi as _api
+            rec = _api.recall(cid, epg_str, now)
+            if rec:
+                return channel, {"id": epg_str, "text": "", "time_start": rec["start"], "time_stop": rec["stop"],
+                                 "available": rec.get("available", True)}, rec["start"], rec["stop"]
+        except Exception:
+            pass
+    return channel, None, 0, 0
+
+
+def live_timeline(raw, cid, epg, pos, total, now):
+    """Unified Live/DVR timeline state for both live (epg=None) and archive/DVR (epg set) playback."""
+    epg_str = "" if epg in (None, "", "null") else str(epg)
+    channel, prog, start, stop = _find_epg(raw, cid, epg_str, now)
+    in_progress = bool(start and stop and start <= now < stop)
+    live_edge = int(max(0, now - start)) if in_progress else 0
+    pos_s = max(0, int(pos)) if isinstance(pos, (int, float)) and not isinstance(pos, bool) and pos == pos else 0
+    if not epg_str:
+        lag_seconds = 0
+    elif in_progress:
+        lag_seconds = int(max(0, (now - start) - pos_s))
+    else:
+        lag_seconds = int(max(0, now - (start + pos_s))) if start else 0
+    return {
+        "programme": str(prog.get("text") or "")[:120] if prog else "",
+        "start": start,
+        "stop": stop,
+        "in_progress": in_progress,
+        "live_edge": live_edge,
+        "lag_seconds": lag_seconds,
+        "can_rewind": bool(channel and channel.get("catchup") and channel.get("available") is not False),
+        "go_live": bool(epg_str),
+    }
+
+
+def forward_handoff(raw, cid, epg, target_sec, now):
+    """When seeking forward on an in-progress EPG broadcast within 15s of live edge, hand off to live stream.
+    Never triggers for finished archives (now >= stop)."""
+    epg_str = "" if epg in (None, "", "null") else str(epg)
+    if not epg_str:
+        return None
+    _, prog, start, stop = _find_epg(raw, cid, epg_str, now)
+    if not prog or not (start <= now < stop):
+        return None
+    if target_sec >= (now - start) - 15:
+        return {"ok": True, "switched": "live", "url": url(cid)}
+    return None
+
+
+def ended_plan(raw, cid, epg, now):
+    """When an EPG archive stream ends, return live URL if near live edge, else next started archived programme URL, else False."""
+    epg_str = "" if epg in (None, "", "null") else str(epg)
+    if not epg_str:
+        return False
+    channel, prog, start, stop = _find_epg(raw, cid, epg_str, now)
+    if not prog or not stop:
+        return False
+    if abs(now - stop) <= 60:
+        return url(cid)
+    if channel:
+        epg_list = [p for p in (channel.get("epg") or ()) if isinstance(p, dict) and _seconds(p.get("time_start")) is not None]
+        epg_list.sort(key=lambda p: _seconds(p.get("time_start")))
+        for nxt in epg_list:
+            n_start = _seconds(nxt.get("time_start"))
+            nid = nxt.get("id")
+            if n_start >= stop and n_start <= now and str(nid) != epg_str and archive_ok(channel, nxt, now):
+                return url(cid, nid, 0)
+    return False
 
 
 def ask(cid, epg, offset, now=None, folder=None):

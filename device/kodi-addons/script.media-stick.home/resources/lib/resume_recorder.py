@@ -115,6 +115,8 @@ class Watcher(xbmc.Player):
             except Exception:
                 known = None
             if known:
+                if known[0].startswith("vod:"):
+                    return lib.vod_url(known[0][4:], known[1] or None, 0)
                 return lib.url(known[0], known[1])   # no place in it: one string for the whole item, whatever its start was
         return ""
 

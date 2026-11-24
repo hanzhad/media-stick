@@ -247,5 +247,81 @@ class CaptionsAreOnlyLabels(unittest.TestCase):
         self.assertEqual([(c.cid, c.cats) for c in hu.channels], [(c.cid, c.cats) for c in ru.channels])
 
 
+class VodAndOverlayCaps(unittest.TestCase):
+    def setUp(self):
+        import mediastick_resume as mr
+        self.mr = mr
+        self.prefs = tempfile.mkdtemp()
+        self.now_dir = tempfile.mkdtemp()
+        p1 = mock.patch.object(mr, "PREFS", self.prefs)
+        p2 = mock.patch.object(os.environ, "MEDIASTICK_SWEETNOW_DIR", self.now_dir, create=True) if False else None
+        p1.start()
+        self.addCleanup(p1.stop)
+
+    def test_playvod_resolves_stream_sets_props_quality_cap_and_remembers(self):
+        import mediastick_sweetapi as api
+        import mediastick_sweetlive as ml
+        self.mr.write_quality("720p")
+        log = []
+        plugin = kodi_plugin(log)
+        calls = []
+
+        class VodHelper(PlayHelper):
+            def playstream(self, url, lic, protocol, drm, flags=True, subs=None, vod=False):
+                calls.append((url, lic, protocol, drm, vod))
+                self.resolve(Item())
+
+        helper = type("H", (VodHelper,), {"resolved": [], "plugin": plugin})
+        sweet = stubs.load_sweettv(helper_class=helper, xbmcplugin=plugin)
+        stubs.Settings.values.update(logged=True, bearer="Bearer x", playerType="inputstream")
+        sweet.time = types.SimpleNamespace(time=lambda: NOW)
+
+        fake_link = {
+            "ok": True,
+            "url": "https://vod-cdn.example/vod/9558/101/index.m3u8?token=s",
+            "protocol": "hls",
+            "license_url": "",
+            "duration": 2400,
+            "title": "Зрадники",
+        }
+        with mock.patch.object(api, "vod_link", return_value=fake_link) as mock_link, \
+             mock.patch.object(ml, "NOW_DIR", self.now_dir), \
+             mock.patch.object(sys, "argv", ["plugin://plugin.video.sweettv/playvod/9558|101|69?start=120", "1", ""]):
+            sweet.playvod("9558|101|69")
+        mock_link.assert_called_once()
+        self.assertEqual(mock_link.call_args.kwargs.get("quality") or mock_link.call_args[1].get("quality"), "720p")
+        self.assertEqual(len(log), 1)
+        item = log[0][2]
+        self.assertEqual(item.props.get("ResumeTime"), "120")
+        self.assertEqual(item.props.get("TotalTime"), "2400")
+        self.assertEqual(item.props.get("inputstream.adaptive.max_resolution"), "720p")
+        self.assertEqual(calls[0][0], fake_link["url"])
+
+    def test_playvid_recall_fallback_in_progress_dvr_and_quality_cap(self):
+        import mediastick_sweetapi as api
+        self.mr.write_quality("1080p")
+        log = []
+        plugin = kodi_plugin(log)
+        helper = type("H", (PlayHelper,), {"resolved": [], "channel_list": LIST, "plugin": plugin})
+        sweet = stubs.load_sweettv(helper_class=helper, xbmcplugin=plugin)
+        stubs.Settings.values.update(logged=True, bearer="Bearer x", playerType="inputstream")
+        sweet.time = types.SimpleNamespace(time=lambda: NOW)
+
+        # In-progress broadcast (51: NOW-3600..NOW+3600) with offset -> full manifest update & ResumeTime, not fixed TotalTime
+        with mock.patch.object(sys, "argv", ["plugin://plugin.video.sweettv/playvid/5|51?ms_start=300", "1", ""]):
+            sweet.playvid("5|51")
+        item_live_dvr = log[-1][2]
+        self.assertEqual(item_live_dvr.props.get("ResumeTime"), "300")
+        self.assertEqual(item_live_dvr.props.get("inputstream.adaptive.manifest_update_parameter"), "full")
+        self.assertEqual(item_live_dvr.props.get("inputstream.adaptive.max_resolution"), "1080p")
+
+        # Programme outside channelList.json -> falls back to mediastick_sweetapi.recall for TotalTime
+        with mock.patch.object(api, "recall", return_value={"start": NOW - 7200, "stop": NOW - 5400, "available": True}), \
+             mock.patch.object(sys, "argv", ["plugin://plugin.video.sweettv/playvid/5|9999", "1", ""]):
+            sweet.playvid("5|9999")
+        item_recalled = log[-1][2]
+        self.assertEqual(item_recalled.props.get("TotalTime"), "1800")
+
+
 if __name__ == "__main__":
     unittest.main()

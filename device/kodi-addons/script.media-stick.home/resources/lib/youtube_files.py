@@ -36,20 +36,13 @@ def get_directory(route):
     The route is passed as it is, never with a slash added or dropped. The main page is a plain file listing (what
     the add-on answered it as when seen on a device); everything below it lists videos."""
     media = "files" if route == data.ROOT else "video"
-    reply = rpc("Files.GetDirectory", {"directory": route, "media": media, "properties": data.PROPERTIES,
-                                       "sort": {"method": "none"}})
-    lib, local = _local()                 # "remember where I stopped, on the device": the bars are what the stick saved
-    return lib.localize_reply(reply, local) if lib else reply
+    return rpc("Files.GetDirectory", {"directory": route, "media": media, "properties": data.PROPERTIES,
+                                      "sort": {"method": "none"}})
 
 
 def _local():
-    """(library, the stick's saved positions) when \"remember where I stopped, on the device\" is on, else (None, None)."""
-    try:
-        from resources.lib import store
-        found = store.local_resume()
-        return (store.resume, found) if found is not None else (None, None)
-    except Exception:
-        return None, None
+    """YouTube uses its own profile/account history; local resume override is disabled."""
+    return None, None
 
 
 START_WAIT = 40                  # s a started video gets before the seek to the saved place is given up on
@@ -70,15 +63,7 @@ def _seek_when_started(seconds):
 
 
 def play(path):
-    lib, local = _local()
-    if not lib:
-        return rpc("Player.Open", {"item": {"file": path}})
-    # only what the stick saved: Kodi's own bookmark is not asked for, the saved place is gone to once it runs
-    seconds = lib.seconds_for(local, path)
-    reply = rpc("Player.Open", {"item": {"file": path}, "options": {"resume": False}})
-    if seconds:
-        threading.Thread(target=_seek_when_started, args=(seconds,), daemon=True).start()
-    return reply
+    return rpc("Player.Open", {"item": {"file": path}})
 
 
 def _current_profile():
