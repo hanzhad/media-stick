@@ -1,35 +1,4 @@
-"""The SWEET.TV app window, laid out like the launcher: a full-screen backdrop in the colour of the focused card, a menu on
-the left, a row of cards (a carousel) along the bottom, and over the row what the focused card is (for a channel: what it is
-showing now, times, progress, description, what comes next, badges, and the buttons for the programme guide and for
-continuing an archived programme; for a show: its title, how many episodes, the channel and the newest one; for a film: its
-title, length, channel and time). Also a sign-in card and, when there is nothing to show, a status card (loading, empty,
-error) with a retry button.
-
-  RunScript(script.media-stick.home,sweettv,open)    the app, from the plugin's channel list
-  RunScript(script.media-stick.home,sweettv,demo)    the same screen on invented channels, shows and films; plays nothing
-
-One screen. The menu (100) lists Continue, Favourites, All, "Search", "Shows and series" and "Films" (the last two in the accent colour),
-then a small heading "Genres" and under it the genres of SWEET.TV (about 18, so the entries that matter come first). The
-heading is never focused: the cursor steps over it, key repeat too. The row (200) holds what the menu is on: that category's channel
-cards, or the cards of the shows, or of the films (sweettv_shelf). OK on a channel plays it live, on a film plays it from its
-start in the archive, on a show opens its episodes in the same row; OK on an episode plays it (one not on air yet, or not in
-the archive, says so). Back goes one step up: the episodes to the shows (the cursor on the same show), the row to the menu,
-the menu closes the app. OK on "Search" opens the on-screen keyboard (a worker thread, sweettv_find); the row then holds
-the cards of what api.sweet.tv found (sweettv_search, mediastick_sweetapi), the last query is kept while the window is open;
-OK plays a programme from the archive or a channel live, a card out of the archive is dimmed and says so. The menu's up/down changes the row to that entry's cards a moment after the key rests; right goes
-into the row, left from its first card back. The screen opens on "Continue" (the channels watched last, the last one first
-and focused) or, with nothing watched yet, on "All".
-
-Focus: the menu (100), the row (200), the buttons over the row (210 continue, 211 guide), the guide's list (400).
-
-The channels come from special://temp/channelList.json, which the SWEET.TV plugin writes while it is
-signed in (sweettv_data describes it). The file is read and parsed off the UI thread, once per change of
-its mtime/size. What is on now and next is worked out from the clock, so a minute's tick refreshes the cards.
-The state (favourites, recent, places in the archive) is written by sweettv_writer's thread, Player.Open and the
-watch of the player run on worker threads. The thin Kodi part is here; the choices are in sweettv_data and
-sweettv_view, the words in sweettv_text (said in the device's language: sweettv_files.language), the number keys in sweettv_jump, the guide in sweettv_guide, the shows and
-films in sweettv_shelf (rows in sweettv_sections), the streams in sweettv_play.
-"""
+"""SWEET.TV app window: Netflix-style TV UI with 7-section left rail, hero banner, 4x2 card grid, and modals."""
 import os
 import threading
 import time
@@ -37,29 +6,27 @@ import time
 import xbmc
 import xbmcgui
 
-from resources.lib import single_instance, sweettv_data as data, sweettv_demo, sweettv_files as files, sweettv_items as items, \
-    sweettv_play as play, sweettv_state as saved, sweettv_text as words, sweettv_view as view, ui
+import mediastick_resume as mr
+from resources.lib import page_cache, single_instance, sweettv_data as data, sweettv_demo, \
+    sweettv_files as files, sweettv_items as items, sweettv_pages as pages, sweettv_play as play, \
+    sweettv_sections as sections, sweettv_state as saved, sweettv_text as words, ui
 from resources.lib.sweettv_find import Find
-from resources.lib.sweettv_guide import GUIDE, GUIDE_BUTTON, Guide
+from resources.lib.sweettv_guide import GUIDE, GUIDE_BUTTON, MODAL_TABS, Guide
 from resources.lib.sweettv_jump import DigitJump
-from resources.lib.sweettv_shelf import CHANNELS, EPISODES, Shelf
+from resources.lib.sweettv_shelf import CHIP_FIRST, CHIP_LAST, Shelf
 from resources.lib.sweettv_writer import StateWriter
 
 XML = "script-media-stick-sweettv.xml"
-MENU, ROW, ACTIONS, RESUME = 100, 200, 209, 210          # the buttons over the row are the group 209: 210, 211
+MENU, ROW, ACTIONS, RESUME = 100, 200, 209, 210
+BTN_ALT, BTN_FAV = 211, 213
 SIGNIN_BUTTON, RETRY = 300, 301
 ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_CONTEXT_MENU = 2, 3, 4, 117
-MENU_DELAY = 0.12                # s the menu rests on an entry before the row follows (key repeat does not thrash it)
-RETURN_GRACE = 2                 # s: the window coming back sooner than this after Play is not a return from the player
-RUNNING = "media-stick.sweettv"  # Home window property while the app is open (single_instance): a live one blocks a second launch
+MENU_DELAY = 0.12
+RETURN_GRACE = 2
+RUNNING = "media-stick.sweettv"
 DEMO_LOGOS = os.path.join(ui.ADDON_PATH, "resources", "media", "demo")
-STALE_NOTICE = "The channel list is out of date. Refreshing…"      # a msgid (sweettv_text)
+STALE_NOTICE = "The channel list is out of date. Refreshing…"
 
-# Live video in the preview is off: the Pi 3B+ has one hardware decoder and the guide would fight the stream for it.
-# To try it: set True. The skin then shows a video window over the big logo (the property `preview_video`), the focused
-# channel starts playing in it after PREVIEW_DELAY seconds of rest, OK on it goes full screen without reopening, and
-# coming back from full screen leaves the stream running. Unverified on the device; it also needs the preview muted
-# (JSON-RPC Application.SetMute) and stopped when the window closes, which is not done here.
 PREVIEW_VIDEO = False
 PREVIEW_DELAY = 1.5
 
@@ -75,48 +42,53 @@ def playing():
         return False
 
 
-# ---- the window ------------------------------------------------------------------------------
-
 class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     """Set up with setup() after construction: the Kodi window constructors take no extra arguments."""
-    GRID_ID = ROW                # the row of cards, for the number keys
-    MENU_ID = MENU               # the menu on the left
-    instance = None              # the launch's single_instance flag; main() sets it
+    GRID_ID = ROW
+    MENU_ID = MENU
+    DEMO_LOGOS = DEMO_LOGOS
+    instance = None
 
     def setup(self, demo=False):
-        words.set_language(files.language())     # before anything is said: the items, the pages and the cache follow it
+        words.set_language(files.language())
         self.demo = demo
         self._lock = threading.RLock()
-        self._loading = threading.Lock()         # one look at the file at a time
+        self._loading = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
         self._timers = {}
         self._io = None
-        self._shown_props = {}                   # channel id -> the properties its item has now
         self._window_props = {}
+        self._shown_props = {}
         self.writer = None if demo else StateWriter(files.state_path())
         self.started = False
-        self.looks = 0                           # looks at the data that have finished (a test waits on it)
-        self.mode = self.kind = ""               # what the window shows, and which status card when it is one
-        self.waiting_since = None                # when this screen began to wait for a first channel list
+        self.looks = 0
+        self.mode = self.kind = ""
+        self.signed = False
+        self.dropped = False
+        self.waiting_since = None
         self.catalog = None
-        self.demo_catalog = None                 # the demo's channels, parsed once
+        self.raw_catalog = None
+        self.demo_catalog = None
         self.stamp = self.mtime = None
         self.state = saved.normalize_state({})
-        self.cat_key = ""                        # the menu entry the row shows; "" until the first catalog
+        self.resume_doc = mr.empty()
+        self.favs_doc = {"v": 1, "items": {}}
+        self.fav_keys = set()
+        self.cat_key = ""
         self.cat_names = {}
-        self.items = {}                          # channel id -> ListItem, kept so a minute's tick updates it in place
-        self.shown = []                          # the channels in the row (none while it holds shows, episodes or films)
-        self.entries = []                        # the menu's entries
+        self.items = {}
+        self.shown = []
         self.menu_list = []
         self.numbered = False
-        self.archive_any = False                 # some channel has an archive (the key hints say so)
+        self.archive_any = False
         self.digits = ""
         self.play_at = 0.0
-        self.session = None                      # the archived programme being played, if one is
-        self.previewing = ""                     # PREVIEW_VIDEO: the channel in the preview window
+        self.session = None
+        self.previewing = ""
         self._shelf_setup()
         self._find_setup()
+        self._guide_setup()
 
     def onInit(self):
         if self.instance is not None:
@@ -129,6 +101,10 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self.started = True
             if not self.demo:
                 self.state = saved.merge_local(saved.load_state(files.state_path()), files.local_positions())
+                self.resume_doc = mr.load()
+                self.favs_doc = mr.load_favs()
+                self._migrate_legacy_favs()
+                self.fav_keys = mr.fav_keys(self.favs_doc)
                 self.writer.start()
             self._show_mode(data.EMPTY, self._status_props(words.status("", False, False, 0)))
         else:
@@ -145,7 +121,21 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self._thread.join(2)
         if self.writer is not None:
             self.writer.stop()
-        self.library.release()
+
+    def _migrate_legacy_favs(self):
+        legacy = self.state.get("favourites") or ()
+        if not legacy:
+            return
+        existing = mr.fav_keys(self.favs_doc)
+        now = int(self._now())
+        changed = False
+        for cid in legacy:
+            key = f"ch:{cid}"
+            if key not in existing:
+                mr.toggle_fav(key, {"title": f"Channel {cid}"}, now=now)
+                changed = True
+        if changed:
+            self.favs_doc = mr.load_favs()
 
     def _now(self):
         return clock()
@@ -162,7 +152,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     def _watch(self):
         while not self._stop.wait(data.poll_interval(self.mode == data.DATA)):
-            if not playing():                    # a parse is the last thing a stream on a Pi 3 needs
+            if not playing():
                 self._look()
 
     def _look(self):
@@ -182,24 +172,28 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         return sweettv_demo.demo_data(now, DEMO_LOGOS)
 
     def _snapshot(self, now) -> files.Snapshot:
-        if self.demo:                            # the built-in channels: never the real file, never the real sign-in
+        if self.demo:
             if self.demo_catalog is None:
                 raw = self._demo_raw(now)
+                self.raw_catalog = raw
                 self.state = saved.normalize_state(sweettv_demo.demo_state(raw, now))
+                self.resume_doc = sweettv_demo.demo_resume_doc(raw, now)
+                self.favs_doc = sweettv_demo.demo_favs_doc(raw, now)
+                self.fav_keys = set(self.favs_doc["items"].keys())
                 self.demo_catalog = data.parse_catalog(raw, now)
             return files.Snapshot(True, self.demo_catalog, ("demo",), now, True, False)
-        return files.snapshot(now, self.catalog, self.stamp, self.mtime)
+        snap = files.snapshot(now, self.catalog, self.stamp, self.mtime)
+        if snap.catalog is not None and snap.catalog is not self.catalog:
+            raw = files.read_raw(files.channel_path())
+            if isinstance(raw, dict):
+                self.raw_catalog = raw
+        return snap
 
     def _apply(self, snap, now):
         mode = data.view_mode(snap.signed, snap.catalog)
-        prepared = phone = None
+        phone = None
         ip, kind = files.network()
-        if mode == data.DATA:
-            if snap.catalog is not self.catalog:
-                prepared = items.build(snap.catalog, now, self.state)
-            else:
-                items.refresh(self.items, self.catalog.channels, now, self.state, self.cat_names, self._shown_props)
-        elif mode == data.SIGNIN:
+        if mode == data.SIGNIN:
             phone = files.phone_page()
         with self._lock:
             if self._stop.is_set():
@@ -212,8 +206,10 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             if mode == data.DATA:
                 self.waiting_since = None
                 self._prop("notice", words.tr(STALE_NOTICE) if data.is_stale(snap.mtime, now) and not self.demo else "")
-                if prepared is not None:
-                    self._install(snap.catalog, prepared)
+                if snap.catalog is not self.catalog:
+                    self._install(snap.catalog, now)
+                elif self.section == "channels":
+                    self._refresh_channels(now)
                 self.stamp, self.mtime = snap.stamp, snap.mtime
                 self._show_mode(mode, {})
             else:
@@ -222,10 +218,13 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if snap.signed:
             self.dropped = False
         elif not self.dropped:
-            self._signed_out()
+            self.dropped = True
+            if not self.demo:
+                ns = pages.namespace()
+                if ns:
+                    page_cache.drop_namespace(ns)
 
     def _card_props(self, mode, snap, now, phone):
-        """The window properties of a card that is not the channels: sign in on the phone, or a status."""
         if mode == data.SIGNIN:
             self.waiting_since = None
             url, qr = phone
@@ -237,26 +236,37 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     @staticmethod
     def _status_props(status):
-        return {"msg_kind": status.kind, "msg_glyph": status.glyph, "msg_tint": status.tint, "msg_title": status.title,
-                "msg_text": status.text, "msg_note": status.note}
+        return {"msg_kind": status.kind, "msg_glyph": status.glyph, "msg_tint": status.tint,
+                "msg_title": status.title, "msg_text": status.text, "msg_note": status.note}
 
-    def _install(self, catalog, prepared):
-        """A new catalog: the channel cards and the menu, and the row, keeping the focused channel (or the last one played).
-        A row that holds shows, episodes or films stays as it is: those are made from the file when they are asked for."""
-        self.items, self._shown_props, self.cat_names = prepared
-        keep = self._selected()
-        focus = keep.cid if keep else self.state["last"]
+    def _install(self, catalog, now):
+        keep = self._focused_card()
+        focus_cid = keep.cid if keep and keep.cid else self.state["last"]
         self.catalog = catalog
+        self.cat_names = dict(catalog.categories)
         self.numbered = any(c.number for c in catalog.channels)
         self.archive_any = any(c.catchup for c in catalog.channels)
-        self.counts = self.library.counts(self._now()) or self._stored_counts() or self.counts
-        self._prop("hint", self._hint())
-        keys = {e.key for e in data.rail(catalog, self.state)}
-        self.cat_key = self.cat_key if self.cat_key in keys else data.default_category(catalog, self.state)
+        if not self.section:
+            has_cont = bool(sections.continue_cards(self.resume_doc, catalog, now, self.fav_keys))
+            self.section = "continue" if has_cont else "channels"
         self._fill_menu()
-        if self.row_kind == CHANNELS:
-            self._fill_row(self.cat_key, focus)
-        self._start_warm()
+        if self.section == "channels":
+            if self.filter_key.startswith("c:") and self.filter_key not in self.cat_names:
+                self.filter_key = "all"
+            self._show_channels(focus_cid)
+        elif self.section == "continue":
+            self._show_continue()
+        elif self.section == "favourites":
+            self._show_favourites()
+
+    def _refresh_channels(self, now):
+        cards = [sections.channel_card(c, self.cat_names, now, self.resume_doc, self.fav_keys) for c in self.shown]
+        ctrl = self.getControl(ROW)
+        for idx, card in enumerate(cards):
+            if idx < len(ctrl.items):
+                self._shown_props[card.key] = items.apply_card(ctrl.items[idx], card, self._shown_props.get(card.key))
+        self.cards = cards
+        self._sync_hero()
 
     # -- the controls --
 
@@ -266,7 +276,6 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self.setProperty(key, value)
 
     def _show_mode(self, mode, props):
-        """Show `mode` with the window properties of its card; focus moves when the mode or the status card changes."""
         for key, value in props.items():
             self._prop(key, value)
         kind = props.get("msg_kind", "")
@@ -281,15 +290,9 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if self.mode == data.SIGNIN:
             self._focus_on(SIGNIN_BUTTON)
         elif self.mode == data.DATA:
-            self._focus_on(ROW if self._row_size() else MENU)
-        elif self.kind != "loading":             # nothing to press while it loads
+            self._focus_on(ROW if self.cards else MENU)
+        elif self.kind != "loading":
             self._focus_on(RETRY)
-
-    def _hint(self):
-        """The key hints over the screen: the channel keys, or only OK and Back while the row holds shows or films."""
-        if self.row_kind == CHANNELS:
-            return words.hint_line(self.numbered, self.archive_any)
-        return words.section_hint(self.row_kind)
 
     def _focus(self):
         try:
@@ -298,7 +301,6 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             return 0
 
     def _focus_on(self, control_id, tries=6):
-        """Focus a control that has only just been made visible: Kodi takes a moment to agree."""
         for _ in range(tries):
             try:
                 self.setFocusId(control_id)
@@ -309,120 +311,363 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             xbmc.sleep(60)
         return False
 
-    def _rail(self):
-        return data.rail(self.catalog, self.state, self.counts)
+    def _section_counts(self):
+        cont = len(sections.continue_cards(self.resume_doc, self.catalog, self._now(), self.fav_keys))
+        favs = len(self.fav_keys)
+        chans = len(self.catalog.channels) if self.catalog else 0
+        return {"continue": cont or None, "favourites": favs or None, "channels": chans or None}
 
     def _fill_menu(self):
-        self.entries = self._rail()
-        self.menu_list = items.menu_items(self.entries, self.cat_key)
-        control = self.getControl(MENU)
-        control.reset()
-        control.addItems(self.menu_list)
-        control.selectItem(next((i for i, e in enumerate(self.entries) if e.key == self.cat_key), 0))
+        ctrl = self.getControl(MENU)
+        self.menu_list = items.rail_items(self.section, self._section_counts())
+        ctrl.reset()
+        ctrl.addItems(self.menu_list)
+        idx = next((i for i, k in enumerate(sections.SECTION_KEYS) if k == self.section), 0)
+        ctrl.selectItem(idx)
 
     def _update_menu(self, follow=False):
-        """Counts, headings and the marked entry, in place; with `follow` the cursor goes to that entry."""
-        self.entries = self._rail()
-        items.update_menu(self.menu_list, self.entries, self.cat_key)
-        if follow:
-            self.getControl(MENU).selectItem(next((i for i, e in enumerate(self.entries) if e.key == self.cat_key), 0))
+        counts = self._section_counts()
+        for idx, (li, (key, _)) in enumerate(zip(self.menu_list, sections.RAIL)):
+            li.setProperty("active", "1" if key == self.section else "")
+            c = counts.get(key)
+            li.setLabel2(str(c) if c is not None else "")
+            if follow and key == self.section:
+                self.getControl(MENU).selectItem(idx)
 
-    def _fill_row(self, key, focus_cid="", sync_menu=False):
-        """The row shows the channels of category `key`."""
-        if self.row_kind != CHANNELS:
-            self._leave_shelf()
-        self.cat_key = key
-        self.shown = data.channels_for(self.catalog, key, self.state)
-        control = self.getControl(ROW)
-        control.reset()
-        control.addItems([self.items[c.cid] for c in self.shown])
-        if self.shown:
-            control.selectItem(data.focus_index(self.shown, focus_cid))
-        self._prop("emptycat", "" if self.shown else words.tr(data.empty_category_text(key)))
-        self._prop("hint", self._hint())
-        self._update_menu(sync_menu)
+    def _apply_cards(self, cards, focus_key="", empty_msg="", keep_pos=False):
+        ctrl = self.getControl(ROW)
+        old_pos = ctrl.getSelectedPosition() if keep_pos else 0
+        self.cards = list(cards)
+        self._shown_props = {}
+        list_items = []
+        for c in self.cards:
+            li = items.card_item(c)
+            self._shown_props[c.key] = dict(li.props) if hasattr(li, "props") else items.card_props(c)
+            list_items.append(li)
+        ctrl.reset()
+        ctrl.addItems(list_items)
+        if self.cards:
+            pos = next((i for i, c in enumerate(self.cards) if c.key == focus_key), 0) if focus_key else min(
+                max(0, old_pos), len(self.cards) - 1)
+            ctrl.selectItem(pos)
+        self._prop("emptycat", "" if self.cards else empty_msg)
+        self._sync_hero()
 
-    def _selected(self):
-        """The channel under the cursor of the row; None while the row holds shows, episodes or films."""
+    def _select_grid(self, pos):
+        ctrl = self.getControl(ROW)
+        if 0 <= pos < len(self.cards):
+            ctrl.selectItem(pos)
+            self._sync_hero()
+
+    def _focused_card(self):
         try:
-            position = self.getControl(ROW).getSelectedPosition()
+            pos = self.getControl(ROW).getSelectedPosition()
         except RuntimeError:
             return None
-        return self.shown[position] if 0 <= position < len(self.shown) else None
+        return self.cards[pos] if 0 <= pos < len(self.cards) else None
 
-    # -- keys --
+    def _sync_hero(self):
+        card = self._focused_card()
+        info = sections.hero_info(card)
+        for k, v in info.items():
+            self._prop(k, v)
+        self.getControl(RESUME).setLabel(info["hero_play"])
+        self.getControl(BTN_ALT).setLabel(info["hero_alt"])
+        self.getControl(GUIDE_BUTTON).setLabel(info["hero_guide"])
+        self.getControl(BTN_FAV).setLabel(info["hero_fav"])
+
+    # -- section switching --
+
+    def _open_section(self, key, focus_cid="", sync_menu=False):
+        with self._lock:
+            self.section = key
+            self._update_menu(follow=sync_menu)
+            if key == "search":
+                self._set_chips("search", [("new", words.tr("New search"))])
+                self._prop("hint", words.section_hint("films"))
+                if self.search_cards:
+                    self._apply_cards(self.search_cards)
+                else:
+                    self._apply_cards([], empty_msg=words.tr("Loading…"))
+                    self._load_top_search()
+            elif key == "continue":
+                self._set_chips("continue", [])
+                self._prop("hint", words.section_hint("films"))
+                self._show_continue()
+            elif key == "favourites":
+                self._set_chips("favourites", [])
+                self._prop("hint", words.section_hint("films"))
+                self._show_favourites()
+            elif key == "shows":
+                self._set_chips("shows", [])
+                self._prop("hint", words.section_hint("shows"))
+                self._apply_cards([], empty_msg=words.tr("Loading…"))
+                self._load_shows()
+            elif key in ("series", "movies"):
+                self.genre_id = 0
+                self._set_chips(key, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
+                self._prop("hint", words.section_hint("shows" if key == "series" else "films"))
+                self._apply_cards([], empty_msg=words.tr("Loading…"))
+                self._load_catalog(key, offset=0)
+            elif key == "channels":
+                self._show_channels(focus_cid)
+
+    def _fill_row(self, key, focus_cid="", sync_menu=False):
+        if key == data.ALL:
+            self.filter_key = "all"
+            self._open_section("channels", focus_cid=focus_cid, sync_menu=sync_menu)
+        elif key == data.RECENT:
+            self._open_section("continue", sync_menu=sync_menu)
+        elif key == data.FAVOURITES:
+            self._open_section("favourites", sync_menu=sync_menu)
+        elif key in sections.SECTION_KEYS:
+            self._open_section(key, focus_cid=focus_cid, sync_menu=sync_menu)
+
+    def _show_continue(self):
+        if not self.demo:
+            self.resume_doc = mr.load()
+        cards = sections.continue_cards(self.resume_doc, self.catalog, self._now(), self.fav_keys)
+        self._apply_cards(cards, empty_msg=words.tr("Nothing in Continue yet."))
+
+    def _show_favourites(self):
+        if not self.demo:
+            self.favs_doc = mr.load_favs()
+            self.fav_keys = mr.fav_keys(self.favs_doc)
+        cards = sections.favourites_cards(self.favs_doc, self.catalog, self.cat_names, self._now(), self.resume_doc)
+        self._apply_cards(cards, empty_msg=words.tr("No favourites yet."))
+
+    def _show_channels(self, focus_cid=""):
+        if not self.catalog:
+            return
+        self.shown = sections.filter_channels(self.catalog.channels, self.filter_key)
+        self._set_chips("channels", sections.channel_chips(self.catalog.categories))
+        self._prop("hint", words.hint_line(self.numbered, self.archive_any))
+        now = self._now()
+        cards = [sections.channel_card(c, self.cat_names, now, self.resume_doc, self.fav_keys) for c in self.shown]
+        self._apply_cards(cards, focus_key=focus_cid, empty_msg=words.tr("No channels here."))
+
+    # -- keys & clicks --
 
     def onAction(self, action):
         action_id = action.getId()
         if action_id in ui.BACK_ACTIONS:
-            if self.guide_open:
+            if self._modal_open():
                 self._guide_close()
             elif self.digits:
                 self._digits_clear()
-            elif self.mode == data.DATA and self._focus() in (ROW, RESUME, GUIDE_BUTTON):
-                self._back()
+            elif self.mode == data.DATA and self._focus() in (ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV,
+                                                              *range(CHIP_FIRST, CHIP_LAST + 1)):
+                self._focus_on(MENU)
             else:
                 self.close()
             return
         if self.mode == data.DATA:
             digit = data.digit_of(action_id, action.getButtonCode())
-            if self.guide_open:
+            if self._modal_open():
                 if digit is not None or action_id == ACTION_CONTEXT_MENU:
                     return
             else:
                 if action_id == ACTION_CONTEXT_MENU:
-                    if self._focus() in (ROW, RESUME, GUIDE_BUTTON):
+                    if self._focus() in (ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV):
                         self._toggle_favourite()
                     return
                 if digit is not None:
-                    if self.numbered and self.row_kind == CHANNELS:      # channel numbers mean nothing among shows and films
+                    if self.numbered and self.section == "channels":
                         self._digit(digit)
-                    return
-                if action_id == ACTION_MOVE_UP and self._focus() == ROW and self._focus_actions():
                     return
                 if action_id == ACTION_MOVE_RIGHT and self._focus() == MENU:
                     self._cancel("menu")
-                    self._apply_menu()           # the row is what the menu shows, before the focus goes into it
-                    self.enter_row = not self._row_size()
+                    self._apply_menu()
         super().onAction(action)
-        if self._focus() == MENU:
-            self._skip_heading(action_id)
-        if action_id in (ACTION_MOVE_UP, ACTION_MOVE_DOWN) and self._focus() == MENU:
+        if self._focus() == ROW:
+            self._sync_hero()
+            if action_id == ACTION_MOVE_DOWN:
+                self._maybe_paginate()
+            if PREVIEW_VIDEO:
+                self._later("preview", PREVIEW_DELAY, self._preview_start)
+        elif action_id in (ACTION_MOVE_UP, ACTION_MOVE_DOWN) and self._focus() == MENU:
             self._later("menu", MENU_DELAY, self._apply_menu)
-        elif PREVIEW_VIDEO and self._focus() == ROW:
-            self._later("preview", PREVIEW_DELAY, self._preview_start)
 
     def onClick(self, control_id):
         try:
             if control_id == ROW:
-                if self.row_kind == CHANNELS:
-                    self._play(self._selected())
-                else:
-                    self._ok_card()
+                self._ok_card()
             elif control_id == MENU:
                 self._cancel("menu")
-                self._apply_menu()
-                if self._menu_key() == data.SEARCH:
-                    self._search_ask()           # OK on Search asks for words; the row holds the last results meanwhile
-                    return
-                self.enter_row = not self._row_size()
-                if not self.enter_row:
-                    self._focus_on(ROW)
+                pos = self.getControl(MENU).getSelectedPosition()
+                if 0 <= pos < len(sections.SECTION_KEYS):
+                    key = sections.SECTION_KEYS[pos]
+                    if key == "search" and self.section == "search":
+                        self._ask_search()
+                        return
+                    self._open_section(key)
+                    if self.cards:
+                        self._focus_on(ROW)
             elif control_id == RESUME:
-                self._resume_archive()
+                self._ok_card()
+            elif control_id == BTN_ALT:
+                self._alt_action()
             elif control_id == GUIDE_BUTTON:
                 self._guide_show()
+            elif control_id == BTN_FAV:
+                self._toggle_favourite()
+            elif CHIP_FIRST <= control_id <= CHIP_LAST:
+                self._chip_click(control_id)
+            elif control_id == MODAL_TABS:
+                self._modal_select_tab(self.getControl(MODAL_TABS).getSelectedPosition())
             elif control_id == GUIDE:
-                self._guide_play()
+                self._modal_click()
             elif control_id == SIGNIN_BUTTON:
                 self._signin()
             elif control_id == RETRY:
                 self._look_soon()
-        except Exception as e:                   # never let a click kill the window
+        except Exception as e:
             ui.log(f"click {control_id} failed: {e!r}", xbmc.LOGERROR)
 
+    def _apply_menu(self):
+        with self._lock:
+            pos = self.getControl(MENU).getSelectedPosition()
+            if 0 <= pos < len(sections.SECTION_KEYS):
+                key = sections.SECTION_KEYS[pos]
+                if key != self.section:
+                    self._open_section(key)
+
+    def _ok_card(self):
+        card = self._focused_card()
+        if card is None:
+            return
+        if card.kind in ("show_vod", "show_epg", "show_tv", "series"):
+            self._open_show_modal(card)
+            return
+        if not card.playable or not card.play_url:
+            ui.notify(words.tr("This programme has not aired yet."))
+            return
+        if card.kind == "channel":
+            self._start_playback(card.play_url, cid=card.cid)
+        else:
+            session = play.Session(card.cid, card.epg, card.title, card.start, card.stop, url=card.play_url)
+            self._start_playback(card.play_url, cid=card.cid, session=session, seek_to=card.resume_pos)
+
+    def _alt_action(self):
+        card = self._focused_card()
+        if card is None:
+            return
+        if card.kind in ("show_vod", "show_epg", "show_tv", "series"):
+            self._open_show_modal(card)
+            return
+        if card.alt_url:
+            session = play.Session(card.cid, card.epg, card.title, card.start, card.stop, url=card.alt_url)
+            self._start_playback(card.alt_url, cid=card.cid, session=session, seek_to=0)
+
+    # -- playback & resume --
+
+    def _start_playback(self, url, cid="", session=None, seek_to=0):
+        if self.demo:
+            ui.notify(words.tr("Demo: nothing is played."))
+            return
+        if not url:
+            return
+        now = self._now()
+        if PREVIEW_VIDEO and cid and session is None and self.previewing == cid and playing():
+            xbmc.executebuiltin("Action(FullScreen)")
+            self.play_at = now
+            return
+        with self._lock:
+            if cid:
+                self.state = saved.record_played(self.state, cid, now)
+                self._update_menu()
+            self.session = session
+        if self.writer is not None and cid:
+            self.writer.submit(self.state)
+        self.play_at = now
+        self._in_worker(self._start_stream, url, session, seek_to)
+
+    def _start_stream(self, url, session, seek_to):
+        xbmc.executeJSONRPC(play.open_request(url))
+        if session is not None:
+            play.follow(session, self._player(), self._stop, self._report, seek_to)
+
+    def _player(self):
+        if self._io is None:
+            self._io = play.PlayerIO()
+        return self._io
+
+    def _report(self, session, pos, total):
+        with self._lock:
+            if self.session is not session:
+                return
+            self.session = None
+            now = self._now()
+            if session.url:
+                self.resume_doc = mr.record(self.resume_doc, session.url, pos, total, now,
+                                            {"title": session.title, "start": session.start, "stop": session.stop})
+                mr.save(self.resume_doc)
+            if session.cid and session.epg:
+                self.state = saved.record_position(self.state, session.cid, session.programme(), pos, total, now)
+                if self.writer is not None:
+                    self.writer.submit(self.state)
+
+    def _after_player(self):
+        if self.play_at and clock() - self.play_at > RETURN_GRACE:
+            self.play_at = 0.0
+            if not PREVIEW_VIDEO:
+                self._in_worker(self._stop_stream)
+            self._in_worker(self._focus_back)
+
+    def _stop_stream(self):
+        io = self._player()
+        session = self.session
+        if session is not None:
+            seen = io.position()
+            if seen:
+                self._report(session, *seen)
+        if io.playing():
+            io.stop()
+
+    def _focus_back(self):
+        if self.mode == data.DATA and self._focus() not in (MENU, ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV, GUIDE):
+            self._focus_on(GUIDE if self._modal_open() else ROW)
+
+    def _preview_start(self):
+        card = self._focused_card()
+        url = card.play_url if (card and card.kind == "channel" and not self.demo) else ""
+        if url and self.mode == data.DATA and not self._modal_open():
+            self.previewing = card.cid
+            xbmc.Player().play(url, None, True)
+
+    def _toggle_favourite(self):
+        card = self._focused_card()
+        if card is None or not card.fav_key:
+            return
+        with self._lock:
+            if self.demo:
+                items_map = self.favs_doc["items"]
+                if card.fav_key in items_map:
+                    del items_map[card.fav_key]
+                    added = False
+                else:
+                    items_map[card.fav_key] = {"title": card.title, "thumb": card.art, "at": int(self._now())}
+                    added = True
+            else:
+                added, _ = mr.toggle_fav(card.fav_key, {"title": card.title, "thumb": card.art}, now=self._now())
+                self.favs_doc = mr.load_favs()
+            self.fav_keys = set(self.favs_doc["items"].keys())
+            pos = max(0, self.getControl(ROW).getSelectedPosition())
+            if self.section == "favourites" and not added:
+                self._show_favourites()
+                if self.cards:
+                    self._select_grid(min(pos, len(self.cards) - 1))
+            else:
+                updated = card._replace(fav=added)
+                self.cards[pos] = updated
+                li = self.getControl(ROW).items[pos]
+                self._shown_props[card.key] = items.apply_card(li, updated, self._shown_props.get(card.key))
+                self._sync_hero()
+            self._update_menu()
+
+    # -- timers & workers --
+
     def _later(self, name, delay, function):
-        """Run `function` once after `delay`; asking again for the same `name` starts the wait over."""
         self._cancel(name)
         timer = threading.Timer(delay, self._guarded, args=(function,))
         timer.daemon = True
@@ -442,168 +687,14 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             ui.log(f"background job failed: {e!r}")
 
     def _in_worker(self, function, *args):
-        """Run `function` on a thread of its own: JSON-RPC and the player never block the UI."""
         thread = threading.Thread(target=self._guarded, args=(function,) + args, daemon=True)
         thread.start()
         return thread
-
-    def _back(self):
-        """Back in the row: the episodes of a show to the shows (the cursor on the same show), anything else to the menu."""
-        if self.row_kind == EPISODES and self.trail:
-            self._episodes_back()
-        else:
-            self._focus_on(MENU)
-
-    def _skip_heading(self, action_id):
-        """The cursor of the menu landed on a heading (it is no entry): on to the next entry in the direction of the key. Every
-        key press (and every repeat of a held one) comes through here, so the heading is never stopped on."""
-        control = self.getControl(MENU)
-        position = control.getSelectedPosition()
-        if 0 <= position < len(self.entries) and not self.entries[position].focusable:
-            control.selectItem(data.next_focusable(self.entries, position, -1 if action_id == ACTION_MOVE_UP else 1))
-
-    def _apply_menu(self):
-        """The row follows the menu: the channels of a category, or the cards of the shows or of the films."""
-        with self._lock:
-            position = self.getControl(MENU).getSelectedPosition()
-            if self.catalog is not None and 0 <= position < len(self.entries) and self.entries[position].focusable                     and self.entries[position].key != self.cat_key:
-                key = self.entries[position].key
-                self.enter_row = False
-                if key in (data.SHOWS, data.FILMS):
-                    self.trail = []
-                    self._open_section(key)
-                elif key == data.SEARCH:
-                    self.trail = []
-                    self._open_search()
-                else:
-                    self._fill_row(key)
-
-    def _focus_actions(self):
-        """Up from the row: the button for continuing an archived programme, else the one for the guide."""
-        channel = self._selected()
-        props = self._shown_props.get(channel.cid, {}) if channel else {}
-        for control_id, key in ((RESUME, "resume"), (GUIDE_BUTTON, "guide")):
-            if props.get(key):
-                return self._focus_on(control_id, tries=2)
-        return False
-
-    # -- what OK, menu and the number keys do --
-
-    def _play(self, channel, programme=None, resume_at=0):
-        """Start `channel` live, or `programme` (a sweettv_view.GuideRow) of its archive, `resume_at` seconds in."""
-        if channel is not None:
-            self._start(channel.cid, programme, resume_at)
-
-    def _start(self, cid, programme=None, resume_at=0):
-        """The same by channel id: the shows and films play a programme of a channel the screen may not be showing."""
-        if self.demo:
-            ui.notify(words.tr("Demo: nothing is played."))
-            return
-        url = data.play_url(cid, programme.epg_id if programme else None)
-        if not url:
-            return
-        now = self._now()
-        if PREVIEW_VIDEO and not programme and self.previewing == cid and playing():
-            xbmc.executebuiltin("Action(FullScreen)")      # already playing in the preview: just make it big
-            self.play_at = now
-            return
-        session = play.Session(cid, programme.epg_id, programme.title, programme.start, programme.stop) \
-            if programme else None
-        with self._lock:
-            self.state = saved.record_played(self.state, cid, now)
-            self.session = session
-            self._update_menu()
-        self._save_state()
-        self.play_at = now
-        self._in_worker(self._start_stream, url, session, resume_at)
-
-    def _start_stream(self, url, session, resume_at):
-        xbmc.executeJSONRPC(play.open_request(url))
-        if session is not None:
-            play.follow(session, self._player(), self._stop, self._report, resume_at)
-
-    def _player(self):
-        if self._io is None:
-            self._io = play.PlayerIO()
-        return self._io
-
-    def _report(self, session, pos, total):
-        """The player stopped (or the screen came back) at `pos` s of the archived programme `session`."""
-        with self._lock:
-            if self.session is not session:
-                return                           # already reported by the other path
-            self.session = None
-            self.state = saved.record_position(self.state, session.cid, session.programme(), pos, total, self._now())
-            channel = next((c for c in self.catalog.channels if c.cid == session.cid), None) if self.catalog else None
-            if channel is not None and session.cid in self.items:
-                items.write_props(self.items[session.cid], channel, self._now(), self.state, self.cat_names,
-                                  self._shown_props)
-        self._save_state()
-
-    def _save_state(self):
-        if self.writer is not None:
-            self.writer.submit(self.state)
-
-    def _resume_archive(self):
-        """The "Continue from ..." button: the saved programme of the focused channel, from where it stopped."""
-        channel = self._selected()
-        entry = view.resume_for(self.state, channel, self._now()) if channel else None
-        if entry:
-            self._play(channel, view.GuideRow(entry["epg"], entry["title"], "", "archive", entry["start"], entry["stop"]),
-                       entry["pos"])
-
-    def _after_player(self):
-        """Back from the player: the stream is stopped (with the place it reached noted), so no sound runs behind
-        a screen with no picture, unless the preview is meant to keep playing."""
-        if self.play_at and clock() - self.play_at > RETURN_GRACE:
-            self.play_at = 0.0
-            if not PREVIEW_VIDEO:
-                self._in_worker(self._stop_stream)
-            self._in_worker(self._focus_back)
-
-    def _stop_stream(self):
-        io = self._player()
-        session = self.session
-        if session is not None:
-            seen = io.position()
-            if seen:
-                self._report(session, *seen)
-        if io.playing():
-            io.stop()
-
-    def _focus_back(self):
-        """Kodi keeps the focus where it was; if it lost it, the row (or the open guide) gets it."""
-        if self.mode == data.DATA and self._focus() not in (MENU, ROW, RESUME, GUIDE_BUTTON, GUIDE):
-            self._focus_on(GUIDE if self.guide_open else ROW)
-
-    def _preview_start(self):
-        """PREVIEW_VIDEO: play the focused channel in the window over the big logo."""
-        channel = self._selected()
-        url = data.play_url(channel.cid) if channel and not self.demo else ""
-        if url and self.mode == data.DATA and not self.guide_open:
-            self.previewing = channel.cid
-            xbmc.Player().play(url, None, True)
-
-    def _toggle_favourite(self):
-        channel = self._selected()
-        if channel is None:
-            return
-        with self._lock:
-            self.state, added = saved.toggle_favourite(self.state, channel.cid)
-            items.write_props(self.items[channel.cid], channel, self._now(), self.state, self.cat_names, self._shown_props)
-            if self.cat_key == data.FAVOURITES and not added:
-                i = self.shown.index(channel)
-                near = self.shown[i + 1] if i + 1 < len(self.shown) else self.shown[i - 1] if i else None
-                self._fill_row(self.cat_key, near.cid if near else "")
-            else:
-                self._update_menu()
-        self._save_state()
 
     def _look_soon(self):
         threading.Thread(target=self._look, daemon=True).start()
 
     def _signin(self):
-        """Run the existing sign-in screen; when it ends, look again (the plugin writes the list within seconds)."""
         from resources.lib import accounts
         accounts.signin_service("sweettv")
         self._look_soon()
@@ -613,7 +704,7 @@ def main(args):
     """Entry for `RunScript(script.media-stick.home,sweettv,open|demo)`. True when the window was shown."""
     instance = single_instance.claim(xbmcgui.Window(ui.HOME), RUNNING)
     if instance is None:
-        return False                             # already open (a double press on the card)
+        return False
     try:
         window = ui.load(SweetTV, XML)
         window.instance = instance

@@ -20,12 +20,13 @@ SEEK_MARGIN = 5                  # s: a stream is "seekable" when it is this muc
 
 
 class Session(NamedTuple):
-    """An archived programme being played."""
+    """An archived programme or VOD item being played."""
     cid: str
     epg: str
     title: str
     start: int
     stop: int
+    url: str = ""
 
     def programme(self) -> dict:
         return {"epg": self.epg, "title": self.title, "start": self.start, "stop": self.stop}

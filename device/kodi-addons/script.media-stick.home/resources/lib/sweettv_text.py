@@ -34,7 +34,8 @@ def chip(demo, signed) -> str:
 def labels() -> dict:
     """The fixed labels of the skin, as window properties (the skin has no text of its own: it is in the device's language)."""
     return {"l_catchup": tr("Catch-up"), "l_favourite": tr("Favourite"),
-            "l_guide": tr("Programme guide"), "l_guide_help": tr("OK plays the programme. Back closes the guide."),
+            "l_play": tr("Watch"), "l_guide": tr("Programme guide"),
+            "l_guide_help": tr("OK plays. Back closes."),
             "l_signin_title": tr("Sign in on your phone"), "l_signin_sub": tr("Live TV and the channel guide"),
             "l_scan": tr("Scan to open the phone page"), "l_code": tr("Or sign in here with a code"),
             "l_press_ok": tr("Press OK. Back returns to Home."), "l_retry": tr("Try again")}
@@ -283,6 +284,29 @@ TEXT = {
     # the name of an episode: S2 E7
     "S{n}": {"ru": "С{n}", "uk": "С{n}"},
     "E{n}": {"ru": "Э{n}", "uk": "Е{n}"},
+    # Netflix-style rail, filter chips, hero actions and modals
+    "Shows": {"ru": "Шоу", "uk": "Шоу"},
+    "Series": {"ru": "Сериалы", "uk": "Серіали"},
+    "Movies": {"ru": "Фильмы", "uk": "Фільми"},
+    "TV Channels": {"ru": "ТВ-каналы", "uk": "ТБ-канали"},
+    "All items": {"ru": "Все", "uk": "Усі"},
+    "Live TV": {"ru": "Эфирные", "uk": "Ефірні"},
+    "24/7": {"ru": "24/7", "uk": "24/7"},
+    "From start": {"ru": "С начала", "uk": "Спочатку"},
+    "Seasons and episodes": {"ru": "Сезоны и серии", "uk": "Сезони та серії"},
+    "Episodes": {"ru": "Выпуски", "uk": "Випуски"},
+    "Add to favourites": {"ru": "В избранное", "uk": "В обране"},
+    "In favourites": {"ru": "В избранном", "uk": "В обраному"},
+    "Popular": {"ru": "Популярные", "uk": "Популярні"},
+    "IMDb Rating": {"ru": "Рейтинг IMDb", "uk": "Рейтинг IMDb"},
+    "Newest": {"ru": "Новинки", "uk": "Новинки"},
+    "A-Z": {"ru": "А-Я", "uk": "А-Я"},
+    "New search": {"ru": "Новый поиск", "uk": "Новий пошук"},
+    "Archive": {"ru": "В архиве", "uk": "В архіві"},
+    "Watched": {"ru": "Просмотрено", "uk": "Переглянуто"},
+    "Nothing in Continue yet.": {"ru": "Пока нет начатых просмотров.", "uk": "Поки немає розпочатих переглядів."},
+    "No favourites yet.": {"ru": "Избранного пока нет.", "uk": "Обраного поки немає."},
+    "OK plays. Back closes.": {"ru": "OK воспроизводит. Назад закрывает.", "uk": "OK відтворює. Назад закриває."},
 }
 
 

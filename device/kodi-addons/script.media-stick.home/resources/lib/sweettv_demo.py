@@ -150,7 +150,7 @@ def demo_data(now, logo_dir) -> dict:
         channel = {"id": cid, "name": name, "number": i + 1, "slug": f"demo-{cid}", "available": True,
                    "category": [category, HIDDEN] if category else [HIDDEN],
                    "catchup": i % 4 != 3, "catchup_duration": DAYS, "icon_v2_url": logo,
-                   "live_blackout": False}
+                   "is_fast_channel": i % 5 == 4, "live_blackout": False}
         if name != NO_EPG:
             channel["epg"] = _schedule(cid, category or 5, now, rng, gap=name == GAP)
         channels.append(channel)
@@ -172,3 +172,170 @@ def demo_state(raw, now) -> dict:
                                            "stop": p["time_stop"], "pos": min(25 * 60, (p["time_stop"] - p["time_start"]) // 2),
                                            "at": int(now) - 1500}
     return state
+
+
+DEMO_GENRES = [{"id": 12, "name": "Sci-Fi"}, {"id": 14, "name": "Comedy"},
+               {"id": 15, "name": "Action"}, {"id": 16, "name": "Drama"}]
+DEMO_SORT_MODES = [{"id": 1, "name": "Popular"}, {"id": 3, "name": "IMDb Rating"},
+                   {"id": 2, "name": "Newest"}, {"id": 5, "name": "A-Z"}]
+
+
+def _demo_logo(logo_dir, idx):
+    return os.path.join(logo_dir, f"logo-{(idx % LOGOS) + 1}.png") if logo_dir else ""
+
+
+def demo_config() -> dict:
+    return {"ok": True, "genres": list(DEMO_GENRES), "sort_modes": list(DEMO_SORT_MODES)}
+
+
+def demo_catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, logo_dir="") -> dict:
+    base_id = 5000 if section == "movies" else 6000
+    titles = [t for t, _ in SHOWS[FILM]] + ["Night Harbour", "Northern Star", "Silver Line"]
+    items = []
+    for idx, title in enumerate(titles):
+        gid = DEMO_GENRES[idx % len(DEMO_GENRES)]["id"]
+        if genre_id and gid != genre_id:
+            continue
+        mid = base_id + idx
+        items.append({
+            "id": mid,
+            "title": f"{title} ({'Series' if section == 'series' else 'Film'})" if idx >= 9 else title,
+            "owner_id": 10,
+            "poster": _demo_logo(logo_dir, idx),
+            "banner": _demo_logo(logo_dir, idx),
+            "year": 2020 + (idx % 6),
+            "duration": 2700 if section == "series" else 5400 + idx * 300,
+            "imdb": round(7.2 + (idx % 5) * 0.4, 1),
+            "genres": [gid],
+            "vod_url": f"plugin://plugin.video.sweettv/playvod/{mid}|null|10",
+            "available": True,
+        })
+    if sort_mode_id == 3:
+        items.sort(key=lambda x: -x["imdb"])
+    elif sort_mode_id == 2:
+        items.sort(key=lambda x: -x["year"])
+    elif sort_mode_id == 5:
+        items.sort(key=lambda x: x["title"].casefold())
+    total = len(items)
+    return {"ok": True, "section": section, "items": items[offset:offset + limit], "total": total}
+
+
+def demo_shows(now, logo_dir="") -> dict:
+    return {
+        "ok": True,
+        "items": [
+            {"kind": "show_vod", "id": "vod:7001", "movie_id": "7001", "owner_id": 11,
+             "title": "Harbour Kitchen", "poster": _demo_logo(logo_dir, 0), "banner": _demo_logo(logo_dir, 0),
+             "year": 2025, "imdb": 8.1, "vod_url": "plugin://plugin.video.sweettv/playvod/7001|null|11"},
+            {"kind": "show_epg", "id": "epg:8001", "collection_id": "8001", "channel_ids": ["101"],
+             "curated_epg_ids": ["101001"], "title": "Evening Desk Live",
+             "poster": _demo_logo(logo_dir, 1), "banner": _demo_logo(logo_dir, 1)},
+        ],
+    }
+
+
+def demo_show_detail(show_key, now) -> dict:
+    if show_key.startswith("epg:") or show_key.startswith("tv:"):
+        return {
+            "ok": True, "id": show_key, "title": "Evening Desk Live", "favourite": False,
+            "episodes": [
+                {"epg": "101001", "cid": "101", "title": "Episode 1 - Opening", "start": int(now) - 7200,
+                 "stop": int(now) - 3600, "curated": True, "playable": True,
+                 "url": "plugin://plugin.video.sweettv/playvid/101|101001"},
+                {"epg": "101002", "cid": "101", "title": "Episode 2 - Review", "start": int(now) - 3600,
+                 "stop": int(now) - 1800, "curated": True, "playable": True,
+                 "url": "plugin://plugin.video.sweettv/playvid/101|101002"},
+            ],
+        }
+    mid = show_key[4:] if show_key.startswith("vod:") else str(show_key)
+    return {
+        "ok": True, "id": f"vod:{mid}", "movie_id": mid, "title": "Harbour Kitchen",
+        "poster": "", "banner": "", "year": 2025, "duration": 0, "imdb": 8.1, "owner_id": 11,
+        "favourite": False, "resume": 0, "watched": False,
+        "vod_url": f"plugin://plugin.video.sweettv/playvod/{mid}|null|11",
+        "seasons": [
+            {"id": 1, "title": "Season 1", "owner_id": 11, "episodes": [
+                {"id": 9001, "episode_id": 9001, "number": 1, "title": "The First Dish", "duration": 2700,
+                 "preview": "", "owner_id": 11, "vod_url": f"plugin://plugin.video.sweettv/playvod/{mid}|9001|11",
+                 "resume": 0, "watched": False},
+                {"id": 9002, "episode_id": 9002, "number": 2, "title": "Night Market", "duration": 2700,
+                 "preview": "", "owner_id": 11, "vod_url": f"plugin://plugin.video.sweettv/playvod/{mid}|9002|11",
+                 "resume": 420, "watched": False},
+            ]},
+            {"id": 2, "title": "Season 2", "owner_id": 11, "episodes": [
+                {"id": 9003, "episode_id": 9003, "number": 1, "title": "Return", "duration": 2800,
+                 "preview": "", "owner_id": 11, "vod_url": f"plugin://plugin.video.sweettv/playvod/{mid}|9003|11",
+                 "resume": 0, "watched": False},
+            ]},
+        ],
+    }
+
+
+def demo_top_search(now, logo_dir="") -> dict:
+    return {
+        "ok": True,
+        "items": [
+            {"kind": "movie", "id": "5000", "title": "Harbour Lights", "subtitle": "2020", "cid": "", "epg": "",
+             "start": 0, "stop": 0, "channel_name": "", "when": "", "live": False, "playable_in_archive": False,
+             "playable": True, "available": True, "vod_url": "plugin://plugin.video.sweettv/playvod/5000|null|10",
+             "preview": "", "image_url": _demo_logo(logo_dir, 0), "repeats": 0, "more": ""},
+        ],
+        "count": 1,
+    }
+
+
+def demo_search(needle, now, logo_dir="") -> dict:
+    q = (needle or "").strip().casefold()
+    pool = demo_top_search(now, logo_dir)["items"] + [
+        {"kind": "programme", "id": "101001", "title": "Morning Briefing", "subtitle": "Aurora News 24",
+         "cid": "101", "epg": "101001", "start": int(now) - 3600, "stop": int(now) - 1800,
+         "channel_name": "Aurora News 24", "when": "07:00", "live": False, "playable_in_archive": True,
+         "playable": True, "available": True, "preview": "", "image_url": _demo_logo(logo_dir, 2),
+         "repeats": 0, "more": ""},
+    ]
+    hits = [r for r in pool if not q or q in r["title"].casefold()]
+    return {"ok": True, "query": needle, "items": hits, "count": len(hits)}
+
+
+def demo_day(cid, day_unix, raw, now) -> dict:
+    ch = next((c for c in raw.get("list", ()) if str(c.get("id")) == str(cid)), None)
+    name = ch.get("name", f"Channel {cid}") if ch else f"Channel {cid}"
+    base = int(day_unix) - (int(day_unix) % 86400)
+    items = []
+    for i in range(6):
+        st = base + (8 + i * 2) * 3600
+        sp = st + 3600
+        items.append({
+            "epg": str(int(cid) * 1000 + i), "cid": str(cid), "title": f"{name} Show {i + 1}",
+            "start": st, "stop": sp, "when": f"{8 + i * 2:02d}:00",
+            "live": st <= now < sp, "playable_in_archive": st < now, "available": True,
+            "preview": "", "season": 0, "episode": 0, "show_id": "",
+        })
+    return {"ok": True, "cid": str(cid), "name": name, "date": "2027-01-15",
+            "now": int(now), "archive_days": DAYS, "future_days": 3, "items": items}
+
+
+def demo_resume_doc(raw, now) -> dict:
+    ch = next(c for c in raw["list"] if c["name"] == RESUME_ON)
+    past = [p for p in ch.get("epg", ()) if p["time_stop"] <= now]
+    items = {
+        "sw:vod:5000": {"pos": 1200, "total": 5400, "done": False, "at": int(now) - 600,
+                        "movie_id": "5000", "episode_id": "", "title": "Harbour Lights"},
+    }
+    if past:
+        p = past[-1]
+        items[f"sw:{ch['id']}|{p['id']}"] = {
+            "cid": str(ch["id"]), "epg": str(p["id"]), "pos": 900,
+            "total": p["time_stop"] - p["time_start"], "done": False, "at": int(now) - 1500,
+            "title": p["text"], "start": p["time_start"], "stop": p["time_stop"],
+        }
+    return {"v": 1, "items": items, "live": {"cid": str(ch["id"]), "at": int(now) - 300}}
+
+
+def demo_favs_doc(raw, now) -> dict:
+    ids = {name: str(cid_of(name)) for name, _ in names()}
+    return {
+        "v": 1,
+        "items": {f"ch:{ids[name]}": {"title": name, "thumb": "", "at": int(now) - i * 60}
+                  for i, name in enumerate(FAVOURITES) if name in ids},
+    }
