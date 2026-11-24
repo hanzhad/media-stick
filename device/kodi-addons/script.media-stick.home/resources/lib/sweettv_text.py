@@ -18,6 +18,13 @@ def hint_line(numbered, archive=False) -> str:
     return "        ".join(f"[COLOR {ACCENT}]{key}[/COLOR]  {what}" for key, what in keys)
 
 
+def section_hint(kind) -> str:
+    """The key hints of the screens that are not the channels: the three sections ("home"), the shows ("shows"), the
+    episodes of a show and the films ("episodes", "films"). Only the keys of a remote: OK and Back."""
+    what = "Open" if kind in ("home", "shows") else "Watch"
+    return "        ".join(f"[COLOR {ACCENT}]{key}[/COLOR]  {tr(text)}" for key, text in (("OK", what), ("Back", "Back")))
+
+
 def chip(demo, signed) -> str:
     """The account chip top left. "Demo" only when the screen runs as the demo."""
     return "Demo" if demo else "Signed in" if signed else "Sign in"
@@ -113,6 +120,36 @@ TEXT = {
     "Films": {"ru": "Фильмы", "uk": "Фільми"},
     "Wrong show.": {"ru": "Неверное шоу.", "uk": "Невірне шоу."},
     "This show is not in the list.": {"ru": "Такого шоу нет в списке.", "uk": "Такого шоу немає у списку."},
+    # the TV's three sections: the choice, the shows, their episodes, the films
+    "What to watch?": {"ru": "Что смотрим?", "uk": "Що дивимося?"},
+    "Live TV and the archive": {"ru": "Телеканалы в эфире и архив передач", "uk": "Телеканали в ефірі та архів передач"},
+    "Shows and series you can watch from the archive": {
+        "ru": "Шоу и сериалы, которые можно посмотреть в архиве", "uk": "Шоу та серіали, які можна подивитися в архіві"},
+    "Films you can watch from the archive": {
+        "ru": "Фильмы, которые можно посмотреть в архиве", "uk": "Фільми, які можна подивитися в архіві"},
+    "Channels: {n}": {"ru": "Каналов: {n}", "uk": "Каналів: {n}"},
+    "Shows: {n}": {"ru": "Шоу и сериалов: {n}", "uk": "Шоу та серіалів: {n}"},
+    "Films: {n}": {"ru": "Фильмов: {n}", "uk": "Фільмів: {n}"},
+    "Episodes: {n}": {"ru": "Серий: {n}", "uk": "Серій: {n}"},
+    "Airings: {n}": {"ru": "Показов: {n}", "uk": "Показів: {n}"},
+    "Season {n}": {"ru": "Сезон {n}", "uk": "Сезон {n}"},
+    "Episode {n}": {"ru": "Серия {n}", "uk": "Серія {n}"},
+    "Episode": {"ru": "Серия", "uk": "Серія"},
+    "{n} min": {"ru": "{n} мин", "uk": "{n} хв"},
+    "Soon": {"ru": "Скоро", "uk": "Незабаром"},
+    "Not in the archive": {"ru": "Нет в архиве", "uk": "Немає в архіві"},
+    "This programme has not aired yet.": {"ru": "Эта передача ещё не вышла в эфир.", "uk": "Ця передача ще не вийшла в ефір."},
+    "Loading…": {"ru": "Загрузка…", "uk": "Завантаження…"},
+    "No shows with episodes in the archive yet.": {"ru": "Шоу и сериалов с архивом пока нет.",
+                                                   "uk": "Шоу та серіалів з архівом поки немає."},
+    "No films in the archive yet.": {"ru": "Фильмов в архиве пока нет.", "uk": "Фільмів в архіві поки немає."},
+    "This show has no episodes to show.": {"ru": "У этого шоу нет серий для показа.",
+                                           "uk": "У цього шоу немає серій для показу."},
+    "The list could not be loaded. Try again in a minute.": {
+        "ru": "Не удалось загрузить список. Попробуйте через минуту.", "uk": "Не вдалося завантажити список. Спробуйте за хвилину."},
+    "Open": {"ru": "Открыть", "uk": "Відкрити"},
+    "Watch": {"ru": "Смотреть", "uk": "Дивитися"},
+    "Back": {"ru": "Назад", "uk": "Назад"},
 }
 
 

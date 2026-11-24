@@ -60,6 +60,33 @@ def update_menu(items, entries, active_key):
         item.setProperty("active", "1" if entry.key == active_key else "")
 
 
+def home_items(entries):
+    """The three cards of the first screen: the section's name, what is behind it, how many, its colours."""
+    out = []
+    for entry in entries:
+        item = xbmcgui.ListItem(entry.title, offscreen=True)
+        for key, value in (("desc", entry.desc), ("count", entry.count), ("plate", entry.plate), ("plate_hi", entry.plate_hi)):
+            item.setProperty(key, value)
+        out.append(item)
+    return out
+
+
+def row_items(rows):
+    """The lines of a list of shows, episodes or films (sweettv_sections.Row): the title, its second line, the note on the right,
+    the channel's picture or its badge, and `dim` for what cannot be watched now."""
+    out = []
+    for row in rows:
+        item = xbmcgui.ListItem(row.title, row.side, offscreen=True)
+        if row.icon:
+            item.setArt({"icon": row.icon})
+        item.setProperty("sub", row.sub)
+        item.setProperty("initials", view.initials(row.mark))
+        item.setProperty("plate", view.colours(row.mark)["plate"])
+        item.setProperty("dim", "" if row.playable else "1")
+        out.append(item)
+    return out
+
+
 def guide_items(rows):
     out = []
     for row in rows:

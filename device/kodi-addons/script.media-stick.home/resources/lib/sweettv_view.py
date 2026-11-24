@@ -42,7 +42,11 @@ def tint(name) -> str:
 
 def colours(name) -> dict:
     """The channel's own colours: its tint, the card, the card when focused, the screen behind the preview."""
-    base = tint(name)
+    return shades(tint(name))
+
+
+def shades(base) -> dict:
+    """The colours made from one tint (a card of a section has a tint of its own, not one made from its name)."""
     return {"tint": base, "plate": mix(PLATE, base, 0.30), "plate_hi": mix(PLATE_HI, base, 0.42),
             "bg": mix(GROUND, base, 0.30)}
 

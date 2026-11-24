@@ -31,6 +31,11 @@ try:        # what the address of a SWEET.TV stream is (the add-on wrote it down
 except ImportError:
     sweetlive = None
 
+try:        # the shows and films the phone page makes from the channel list; the TV's sections use the same code
+    import mediastick_sweetsections as sweetsections  # noqa: E402
+except ImportError:
+    sweetsections = None
+
 SERVICES = lib.SERVICES
 
 

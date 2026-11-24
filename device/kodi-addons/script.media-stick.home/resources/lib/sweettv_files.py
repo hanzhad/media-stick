@@ -40,6 +40,19 @@ def read_catalog(path, now):
     return data.parse_catalog(raw, now)
 
 
+def read_raw(path):
+    """The plugin's channel list as it is (a dict), or None when it cannot be read now. The shows and films need what the
+    channel screen drops (show ids, season and episode numbers, the whole guide), so they read the file once more, when a
+    section is opened, and keep only what mediastick_sweetlive.slim leaves of it."""
+    try:
+        with open(path, "rb") as f:
+            raw = json.load(f)
+    except (OSError, ValueError, MemoryError) as e:
+        ui.log(f"channel list not readable for the sections: {e!r}")
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
 def signed_in():
     """True/False as the plugin's `logged` setting says; None when the sign-in library is not on this device."""
     try:

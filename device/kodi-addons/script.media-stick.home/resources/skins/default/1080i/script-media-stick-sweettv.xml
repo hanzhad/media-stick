@@ -2,7 +2,14 @@
 <!-- SWEET.TV app (resources/lib/sweettv_app.py), laid out like the launcher (script-media-stick-home.xml): a backdrop in
      the colour of the focused channel, a row of channel cards along the bottom, a narrow category menu on the left.
      Controls: 100 category menu, 200 row of channel cards, 209 the buttons over the row (group): 210 "Continue from ..."
-     and 211 "Programme guide", 400 the guide's list of programmes, 300 sign-in button, 301 retry button of the status card.
+     and 211 "Programme guide", 400 the guide's list of programmes, 300 sign-in button, 301 retry button of the status card,
+     500 the three cards of the first screen (Channels, Shows and series, Films), 600 the one list of shows, episodes and films.
+     The data mode has three screens (window property screen): home (500), channels (100, 200, 209, 400 and the backdrop),
+     list (600). home: home_title; card items: label, properties desc, count, plate, plate_hi. list: list_title, list_sub,
+     list_msg (loading / empty / failed text over an empty list); items: label (title), label2 (note on the right), art
+     "icon" (the channel's picture), properties sub (second line), initials and plate (the badge without a picture), dim
+     (not playable now: dimmed). Pictures on screen: home about 11, list 22 (6 lines of a plate and a logo, the cursor's pill,
+     the card and its shadow, the gradients and the header), both under the channels' 33.
      Window properties: mode (data | signin | empty), demo, signed, chip, notice, hint, jump, emptycat, ip, net,
      preview_video (PREVIEW_VIDEO in the Python: a video window over the big logo), guide (set while the guide is open),
      guide_title; sign-in card: phone_step1, phone_url, phone_step2, phone_step3, phone_qr; status card (mode empty):
@@ -35,7 +42,7 @@
             <top>0</top>
             <width>1920</width>
             <height>1080</height>
-            <visible>String.IsEqual(Window.Property(mode),data)</visible>
+            <visible>String.IsEqual(Window.Property(mode),data) + String.IsEqual(Window.Property(screen),channels)</visible>
             <control type="image">
                 <left>0</left>
                 <top>0</top>
@@ -289,7 +296,7 @@
             <top>0</top>
             <width>1920</width>
             <height>1080</height>
-            <visible>String.IsEqual(Window.Property(mode),data)</visible>
+            <visible>String.IsEqual(Window.Property(mode),data) + String.IsEqual(Window.Property(screen),channels)</visible>
             <control type="group">
                 <left>0</left>
                 <top>0</top>
@@ -899,6 +906,359 @@
                     <aligny>center</aligny>
                     <label>OK plays the programme. Back closes the guide.</label>
                 </control>
+            </control>
+        </control>
+        <!-- the first screen: three cards, Channels, Shows and series, Films -->
+        <control type="group">
+            <left>0</left>
+            <top>0</top>
+            <width>1920</width>
+            <height>1080</height>
+            <visible>String.IsEqual(Window.Property(mode),data) + String.IsEqual(Window.Property(screen),home)</visible>
+            <control type="label">
+                <left>110</left>
+                <top>190</top>
+                <width>1700</width>
+                <height>70</height>
+                <font>Light60</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(home_title)]</label>
+            </control>
+            <control type="list" id="500">
+                <left>90</left>
+                <top>290</top>
+                <width>1740</width>
+                <height>580</height>
+                <orientation>horizontal</orientation>
+                <scrolltime>150</scrolltime>
+                <itemlayout width="580" height="580">
+                    <control type="image">
+                        <left>20</left>
+                        <top>20</top>
+                        <width>540</width>
+                        <height>500</height>
+                        <texture border="32">card-mask.png</texture>
+                        <colordiffuse>$INFO[ListItem.Property(plate)]</colordiffuse>
+                    </control>
+                    <control type="label">
+                        <left>40</left>
+                        <top>120</top>
+                        <width>500</width>
+                        <height>90</height>
+                        <font>Light60</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <selectedcolor>FFFFFFFF</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                    </control>
+                    <control type="textbox">
+                        <left>70</left>
+                        <top>230</top>
+                        <width>440</width>
+                        <height>130</height>
+                        <font>Reg25</font>
+                        <textcolor>B3FFFFFF</textcolor>
+                        <align>center</align>
+                        <label>$INFO[ListItem.Property(desc)]</label>
+                    </control>
+                    <control type="label">
+                        <left>40</left>
+                        <top>420</top>
+                        <width>500</width>
+                        <height>60</height>
+                        <font>Med32</font>
+                        <textcolor>FFFFC857</textcolor>
+                        <selectedcolor>FFFFC857</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(count)]</label>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="580" height="580">
+                    <control type="group">
+                        <left>0</left>
+                        <top>0</top>
+                        <width>580</width>
+                        <height>580</height>
+                        <control type="image">
+                            <left>0</left>
+                            <top>4</top>
+                            <width>580</width>
+                            <height>532</height>
+                            <texture border="56">card-glow.png</texture>
+                            <visible>Control.HasFocus(500)</visible>
+                        </control>
+                        <control type="image">
+                            <left>20</left>
+                            <top>20</top>
+                            <width>540</width>
+                            <height>500</height>
+                            <texture border="32">card-mask.png</texture>
+                            <colordiffuse>$INFO[ListItem.Property(plate_hi)]</colordiffuse>
+                        </control>
+                        <control type="label">
+                            <left>40</left>
+                            <top>120</top>
+                            <width>500</width>
+                            <height>90</height>
+                            <font>Light60</font>
+                            <textcolor>FFFFFFFF</textcolor>
+                            <selectedcolor>FFFFFFFF</selectedcolor>
+                            <align>center</align>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Label]</label>
+                        </control>
+                        <control type="textbox">
+                            <left>70</left>
+                            <top>230</top>
+                            <width>440</width>
+                            <height>130</height>
+                            <font>Reg25</font>
+                            <textcolor>E6FFFFFF</textcolor>
+                            <align>center</align>
+                            <label>$INFO[ListItem.Property(desc)]</label>
+                        </control>
+                        <control type="label">
+                            <left>40</left>
+                            <top>420</top>
+                            <width>500</width>
+                            <height>60</height>
+                            <font>Med32</font>
+                            <textcolor>FFFFC857</textcolor>
+                            <selectedcolor>FFFFC857</selectedcolor>
+                            <align>center</align>
+                            <aligny>center</aligny>
+                            <label>$INFO[ListItem.Property(count)]</label>
+                        </control>
+                    </control>
+                </focusedlayout>
+            </control>
+        </control>
+        <!-- one list for the shows, the episodes of a show and the films: a card like the programme guide's -->
+        <control type="group">
+            <left>360</left>
+            <top>100</top>
+            <width>1200</width>
+            <height>860</height>
+            <visible>String.IsEqual(Window.Property(mode),data) + String.IsEqual(Window.Property(screen),list)</visible>
+            <control type="image">
+                <left>-40</left>
+                <top>-30</top>
+                <width>1280</width>
+                <height>920</height>
+                <texture border="56">card-shadow.png</texture>
+            </control>
+            <control type="image">
+                <left>0</left>
+                <top>0</top>
+                <width>1200</width>
+                <height>860</height>
+                <texture border="47">pill.png</texture>
+                <colordiffuse>F2141922</colordiffuse>
+            </control>
+            <control type="label">
+                <left>60</left>
+                <top>28</top>
+                <width>1080</width>
+                <height>80</height>
+                <font>Light60</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(list_title)]</label>
+            </control>
+            <control type="label">
+                <left>60</left>
+                <top>108</top>
+                <width>1080</width>
+                <height>36</height>
+                <font>Reg25</font>
+                <textcolor>FFFFC857</textcolor>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(list_sub)]</label>
+            </control>
+            <control type="textbox">
+                <left>160</left>
+                <top>340</top>
+                <width>880</width>
+                <height>200</height>
+                <font>Med32</font>
+                <textcolor>99FFFFFF</textcolor>
+                <align>center</align>
+                <label>$INFO[Window.Property(list_msg)]</label>
+            </control>
+            <control type="list" id="600">
+                <left>40</left>
+                <top>160</top>
+                <width>1120</width>
+                <height>600</height>
+                <orientation>vertical</orientation>
+                <scrolltime>150</scrolltime>
+                <itemlayout width="1120" height="100">
+                    <control type="image">
+                        <left>28</left>
+                        <top>14</top>
+                        <width>72</width>
+                        <height>72</height>
+                        <texture border="28">card-mask.png</texture>
+                        <colordiffuse>$INFO[ListItem.Property(plate)]</colordiffuse>
+                    </control>
+                    <control type="image">
+                        <left>32</left>
+                        <top>18</top>
+                        <width>64</width>
+                        <height>64</height>
+                        <aspectratio>keep</aspectratio>
+                        <texture background="true">$INFO[ListItem.Art(icon)]</texture>
+                    </control>
+                    <control type="label">
+                        <left>28</left>
+                        <top>14</top>
+                        <width>72</width>
+                        <height>72</height>
+                        <font>Reg25</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <selectedcolor>FFFFFFFF</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(initials)]</label>
+                        <visible>String.IsEmpty(ListItem.Art(icon))</visible>
+                    </control>
+                    <control type="label">
+                        <left>124</left>
+                        <top>8</top>
+                        <width>750</width>
+                        <height>48</height>
+                        <font>Med28</font>
+                        <textcolor>E6FFFFFF</textcolor>
+                        <selectedcolor>E6FFFFFF</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>String.IsEmpty(ListItem.Property(dim))</visible>
+                    </control>
+                    <control type="label">
+                        <left>124</left>
+                        <top>8</top>
+                        <width>750</width>
+                        <height>48</height>
+                        <font>Med28</font>
+                        <textcolor>66FFFFFF</textcolor>
+                        <selectedcolor>66FFFFFF</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(dim))</visible>
+                    </control>
+                    <control type="label">
+                        <left>124</left>
+                        <top>56</top>
+                        <width>750</width>
+                        <height>34</height>
+                        <font>Reg22</font>
+                        <textcolor>80FFFFFF</textcolor>
+                        <selectedcolor>80FFFFFF</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(sub)]</label>
+                    </control>
+                    <control type="label">
+                        <left>880</left>
+                        <top>0</top>
+                        <width>210</width>
+                        <height>100</height>
+                        <font>Reg22</font>
+                        <textcolor>FFFFC857</textcolor>
+                        <selectedcolor>FFFFC857</selectedcolor>
+                        <align>right</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label2]</label>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="1120" height="100">
+                    <control type="image">
+                        <left>0</left>
+                        <top>4</top>
+                        <width>1120</width>
+                        <height>92</height>
+                        <texture border="40">pill-80.png</texture>
+                        <colordiffuse>FFFFFFFF</colordiffuse>
+                    </control>
+                    <control type="image">
+                        <left>28</left>
+                        <top>14</top>
+                        <width>72</width>
+                        <height>72</height>
+                        <texture border="28">card-mask.png</texture>
+                        <colordiffuse>$INFO[ListItem.Property(plate)]</colordiffuse>
+                    </control>
+                    <control type="image">
+                        <left>32</left>
+                        <top>18</top>
+                        <width>64</width>
+                        <height>64</height>
+                        <aspectratio>keep</aspectratio>
+                        <texture background="true">$INFO[ListItem.Art(icon)]</texture>
+                    </control>
+                    <control type="label">
+                        <left>28</left>
+                        <top>14</top>
+                        <width>72</width>
+                        <height>72</height>
+                        <font>Reg25</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <selectedcolor>FFFFFFFF</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(initials)]</label>
+                        <visible>String.IsEmpty(ListItem.Art(icon))</visible>
+                    </control>
+                    <control type="label">
+                        <left>124</left>
+                        <top>8</top>
+                        <width>750</width>
+                        <height>48</height>
+                        <font>Med28</font>
+                        <textcolor>FF000000</textcolor>
+                        <selectedcolor>FF000000</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>String.IsEmpty(ListItem.Property(dim))</visible>
+                    </control>
+                    <control type="label">
+                        <left>124</left>
+                        <top>8</top>
+                        <width>750</width>
+                        <height>48</height>
+                        <font>Med28</font>
+                        <textcolor>80000000</textcolor>
+                        <selectedcolor>80000000</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(dim))</visible>
+                    </control>
+                    <control type="label">
+                        <left>124</left>
+                        <top>56</top>
+                        <width>750</width>
+                        <height>34</height>
+                        <font>Reg22</font>
+                        <textcolor>99000000</textcolor>
+                        <selectedcolor>99000000</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(sub)]</label>
+                    </control>
+                    <control type="label">
+                        <left>880</left>
+                        <top>0</top>
+                        <width>210</width>
+                        <height>100</height>
+                        <font>Reg22</font>
+                        <textcolor>FF8A5A00</textcolor>
+                        <selectedcolor>FF8A5A00</selectedcolor>
+                        <align>right</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label2]</label>
+                    </control>
+                </focusedlayout>
             </control>
         </control>
         <!-- signed out: sign in on the phone (the address and its QR), or here with a code -->

@@ -123,6 +123,39 @@ def _channel(raw, cid):
     return None
 
 
+LIST_KEEP = ("id", "name", "catchup", "catchup_duration", "available", "category", "icon_v2_url", "icon_url")
+EPG_KEEP = ("id", "text", "time_start", "time_stop", "available", "tv_show_id", "season_number", "episode_number")
+
+
+def slim(raw):
+    """The channel list reduced to what the guide, the sections and the play routes read (the file holds pictures, links and
+    ids for 200 channels, 5 MB, which is not kept in memory for a page that polls or a TV screen that is left open). The phone's
+    routes and the TV's shows and films both take their list from here."""
+    rows = raw.get("list") if isinstance(raw, dict) else None
+    out = []
+    for c in rows if isinstance(rows, list) else ():
+        if not isinstance(c, dict) or c.get("id") is None:
+            continue
+        item = {k: c[k] for k in LIST_KEEP if k in c}
+        epg = c.get("epg") if isinstance(c.get("epg"), list) else []
+        item["epg"] = [{k: p[k] for k in EPG_KEEP if k in p} for p in epg if isinstance(p, dict)]
+        out.append(item)
+    cats = raw.get("categories") if isinstance(raw, dict) and isinstance(raw.get("categories"), list) else ()
+    return {"list": out, "categories": [{k: c[k] for k in ("id", "caption", "name") if k in c} for c in cats if isinstance(c, dict)]}
+
+
+def archive_ok(channel, p, now):
+    """Can this programme be played from the archive? The channel keeps one (catchup, for catchup_duration days), the
+    programme is available, and it has started. The one rule of the phone's guide and of the TV's guide, shows and films."""
+    start = _seconds(p.get("time_start"))
+    if not channel or not channel.get("catchup") or channel.get("available") is False or start is None or start > now:
+        return False
+    days = channel.get("catchup_duration")
+    if isinstance(days, int) and not isinstance(days, bool) and days > 0 and now - start > days * 86400:
+        return False
+    return p.get("available") is not False
+
+
 def plan(raw, cid, back, now):
     """What to play when the person goes `back` seconds on the live channel `cid`:
     {"ok": True, "epg", "title", "start", "stop", "offset", "url"} - the programme on now, from `offset` s in (never

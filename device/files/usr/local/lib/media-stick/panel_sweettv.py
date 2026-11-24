@@ -28,8 +28,6 @@ except ImportError:   # a device without the library: the routes refuse, the res
 
 PREFIX = "/api/sweettv/"
 SEEK_BACK_MAX = 86400
-LIST_KEEP = ("id", "name", "catchup", "catchup_duration", "available", "category", "icon_v2_url", "icon_url")
-EPG_KEEP = ("id", "text", "time_start", "time_stop", "available", "tv_show_id", "season_number", "episode_number")
 LOCAL_LABEL = "Remember where I stopped, on the device"
 LOCAL_HINT = ("Places to continue from are taken only from what this device saved while you watched. The history of "
               "YouTube, SWEET.TV and Kodi is not used.")
@@ -45,17 +43,7 @@ def _t(msgid):
 def slim(raw):
     """The channel list reduced to what these routes read (the file holds pictures, links and ids for 200 channels, 5 MB,
     which is not kept in memory for a page that polls)."""
-    rows = raw.get("list") if isinstance(raw, dict) else None
-    out = []
-    for c in rows if isinstance(rows, list) else ():
-        if not isinstance(c, dict) or c.get("id") is None:
-            continue
-        item = {k: c[k] for k in LIST_KEEP if k in c}
-        epg = c.get("epg") if isinstance(c.get("epg"), list) else []
-        item["epg"] = [{k: p[k] for k in EPG_KEEP if k in p} for p in epg if isinstance(p, dict)]
-        out.append(item)
-    cats = [{k: c[k] for k in ("id", "caption", "name") if k in c} for c in _rows(raw.get("categories") if isinstance(raw, dict) else None)]
-    return {"list": out, "categories": cats}
+    return ml.slim(raw) if ml else {"list": [], "categories": []}     # the one function the TV's shows and films use too
 
 
 def channels():
@@ -99,14 +87,8 @@ def _on_now(channel, now):
 
 def archive_ok(channel, p, now):
     """Can this programme be played from the archive? The channel keeps one (catchup, for catchup_duration days), the
-    programme is available, and it has started."""
-    start = ml._seconds(p.get("time_start"))
-    if not channel or not channel.get("catchup") or channel.get("available") is False or start is None or start > now:
-        return False
-    days = channel.get("catchup_duration")
-    if isinstance(days, int) and not isinstance(days, bool) and days > 0 and now - start > days * 86400:
-        return False
-    return p.get("available") is not False
+    programme is available, and it has started (mediastick_sweetlive.archive_ok: the TV's screens ask the same function)."""
+    return ml.archive_ok(channel, p, now)
 
 
 def _saved(local, cid, epg):
