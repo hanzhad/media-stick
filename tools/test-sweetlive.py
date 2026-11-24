@@ -337,11 +337,12 @@ class Panel(unittest.TestCase):
 
     def test_the_list_is_kept_small(self):
         raw = ps.slim(dict(LIST, junk="x", list=LIST["list"] + [{"id": 8, "icon_url": "u" * 500, "epg": [dict(SHOW, external_ids=[1] * 99)]}]))
-        self.assertEqual(sorted(raw), ["list"])
-        self.assertNotIn("icon_url", raw["list"][-1])
+        self.assertEqual(sorted(raw), ["categories", "list"])
+        self.assertNotIn("junk", raw)
+        self.assertNotIn("logo_url", ps.slim({"list": [{"id": 9, "logo_url": "x"}]})["list"][0])
         self.assertNotIn("external_ids", raw["list"][-1]["epg"][0])
-        self.assertEqual(ps.slim(None), {"list": []})
-        self.assertEqual(ps.slim({"list": [None, 3, {"name": "no id"}]}), {"list": []})
+        self.assertEqual(ps.slim(None), {"list": [], "categories": []})
+        self.assertEqual(ps.slim({"list": [None, 3, {"name": "no id"}]}), {"list": [], "categories": []})
 
     def test_the_list_is_read_again_only_when_the_file_changes(self):
         first = ps.channels()

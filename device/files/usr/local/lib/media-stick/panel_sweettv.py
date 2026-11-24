@@ -12,6 +12,11 @@ from urllib.parse import parse_qs
 import panel_watch as pw
 
 try:
+    import mediastick_sweetsections as sections
+except ImportError:
+    sections = None
+
+try:
     import mediastick_resume as mr
 except ImportError:
     mr = None
@@ -23,12 +28,13 @@ except ImportError:   # a device without the library: the routes refuse, the res
 
 PREFIX = "/api/sweettv/"
 SEEK_BACK_MAX = 86400
-LIST_KEEP = ("id", "name", "catchup", "catchup_duration", "available")
+LIST_KEEP = ("id", "name", "catchup", "catchup_duration", "available", "category", "icon_v2_url", "icon_url")
 EPG_KEEP = ("id", "text", "time_start", "time_stop", "available", "tv_show_id", "season_number", "episode_number")
 LOCAL_LABEL = "Remember where I stopped, on the device"
 LOCAL_HINT = ("Places to continue from are taken only from what this device saved while you watched. The history of "
               "YouTube, SWEET.TV and Kodi is not used.")
 _slim_cache = {"key": None, "value": None}
+_index_cache = {"raw": None, "value": None}
 
 
 def _t(msgid):
@@ -48,7 +54,8 @@ def slim(raw):
         epg = c.get("epg") if isinstance(c.get("epg"), list) else []
         item["epg"] = [{k: p[k] for k in EPG_KEEP if k in p} for p in epg if isinstance(p, dict)]
         out.append(item)
-    return {"list": out}
+    cats = [{k: c[k] for k in ("id", "caption", "name") if k in c} for c in _rows(raw.get("categories") if isinstance(raw, dict) else None)]
+    return {"list": out, "categories": cats}
 
 
 def channels():
@@ -257,6 +264,57 @@ def set_settings(body):
     return settings_view()
 
 
+def _index(raw):
+    """The sections' index of the channel list, made again only when the list is a new one."""
+    if _index_cache["raw"] is not raw or _index_cache["value"] is None:
+        _index_cache.update(raw=raw, value=sections.build(raw))
+    return _index_cache["value"]
+
+
+def _playable(now):
+    """The guide's own archive rule, for a record of the index."""
+    return lambda r: archive_ok(r["channel_ref"], r["programme_ref"], now)
+
+
+def _sections_ready():
+    if ml is None or sections is None:
+        raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
+
+
+def sections_view(raw, now):
+    """GET sections: how many there are in each, the genres of the channels, the names of the sections."""
+    _sections_ready()
+    index, ok = _index(raw), _playable(now)
+    return {"ok": True, "channels": index["channels"], "shows": len(sections.shows(index, ok)),
+            "films": len(sections.films(index, ok)), "genres": sections.genres(index),
+            "labels": {"channels": _t("Channels"), "shows": _t("Shows and series"), "films": _t("Films")}}
+
+
+def shows_view(raw, now):
+    """GET shows: the shows with something to play now, by title."""
+    _sections_ready()
+    return {"ok": True, "items": [{"id": s["id"], "title": s["title"], "episodes": s["episodes"],
+                                    "thumb": pw.image_url(s["icon"])} for s in sections.shows(_index(raw), _playable(now))]}
+
+
+def show_view(raw, sid, now):
+    """GET show?id=: the episodes of one show, playable now (available) or still to come."""
+    _sections_ready()
+    if not isinstance(sid, str) or not sections.SHOW_ID_RE.fullmatch(sid):
+        raise pw.Refused(_t("Wrong show."))
+    found = sections.show(_index(raw), sid, _playable(now))
+    if found is None:
+        raise pw.Refused(_t("This show is not in the list."), 404)
+    return {"ok": True, "id": sid, "title": found["title"], "thumb": pw.image_url(found["icon"]),
+            "episodes": found["episodes"]}
+
+
+def films_view(raw, now):
+    """GET films: the films that can be played now, by title."""
+    _sections_ready()
+    return {"ok": True, "items": sections.films(_index(raw), _playable(now))}
+
+
 def play(body, rpc):
     url, epg, offset = play_request(channels(), body, time.time(), local())
     pw._rpc(rpc, "Player.Open", {"item": {"file": url}})
@@ -289,6 +347,14 @@ def get(path, rpc):
             return guide_view(channels(), cid, time.time(), local()), 200
         if route == PREFIX + "settings":
             return settings_view(), 200
+        if route == PREFIX + "sections":
+            return sections_view(channels(), time.time()), 200
+        if route == PREFIX + "shows":
+            return shows_view(channels(), time.time()), 200
+        if route == PREFIX + "show":
+            return show_view(channels(), (parse_qs(query).get("id") or [""])[0], time.time()), 200
+        if route == PREFIX + "films":
+            return films_view(channels(), time.time()), 200
     except pw.Refused as e:
         return {"error": e.message}, e.code
     return {"error": "not found"}, 404
