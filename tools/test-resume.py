@@ -114,7 +114,6 @@ class Base(unittest.TestCase):
         self.addCleanup(clean_dirs)
 
     def on(self, positions=None):
-        self.assertTrue(mr.set_enabled(True))
         if positions is not None:
             self.assertTrue(mr.save(positions))
 
@@ -225,22 +224,12 @@ class Library(Base):
     def test_a_disk_that_refuses_is_a_false_not_a_crash(self):
         self.assertFalse(mr.save(mr.empty(), os.path.join(BLOCKER, "positions.json")))
         with mock.patch.object(mr, "PREFS", os.path.join(BLOCKER, "prefs")):
-            self.assertFalse(mr.set_enabled(True))
-            self.assertFalse(mr.enabled())
+            self.assertFalse(mr.write_quality("720p"))
+            self.assertEqual(mr.read_quality(), "1080p")
 
-    def test_the_choice_is_off_until_it_is_made_and_survives_garbage(self):
-        self.assertFalse(mr.DEFAULT)
-        self.assertFalse(mr.enabled())
-        self.assertTrue(mr.set_enabled(True))
-        self.assertTrue(mr.enabled())
-        with open(os.path.join(mr.PREFS, "local-resume"), encoding="utf-8") as f:
-            self.assertEqual(f.read(), "1\n")
-        self.assertTrue(mr.set_enabled(False))
-        self.assertFalse(mr.enabled())
-        for text in ("yes\n", "", "11", "true"):
-            with open(os.path.join(mr.PREFS, "local-resume"), "w", encoding="utf-8") as f:
-                f.write(text)
-            self.assertEqual(mr.enabled(), mr.DEFAULT, text)
+    def test_the_deprecated_global_local_resume_override_is_removed(self):
+        self.assertFalse(hasattr(mr, "enabled"))
+        self.assertFalse(hasattr(mr, "set_enabled"))
 
     def test_writes_are_spaced(self):
         self.assertFalse(mr.due(100, 100 + mr.WRITE_EVERY - 1))
@@ -658,9 +647,8 @@ class SweetState(Base):
         local["live"]["at"] = NOW - 9000
         self.assertEqual(saved.merge_local(self.state(), local)["last"], "9")
 
-    def test_the_app_always_reads_local_positions_even_when_local_resume_off(self):
+    def test_the_app_always_reads_local_positions(self):
         mr.save(self.placed((ARCHIVE, 1500, 3600)))
-        self.assertFalse(mr.enabled())
         self.assertIn("sw:5|50", sweettv_files.local_positions()["items"])
         with open(os.path.join(ADDON_LIB, "sweettv_app.py"), encoding="utf-8") as f:
             self.assertIn("saved.merge_local(saved.load_state(files.state_path()), files.local_positions())", f.read())
@@ -675,9 +663,8 @@ class SweetState(Base):
 
 
 class PhoneSweet(Base):
-    def test_the_programme_sheet_always_has_the_stick_places_even_when_local_resume_off(self):
+    def test_the_programme_sheet_always_has_the_stick_places(self):
         mr.save(self.placed((ARCHIVE, 1500, 3600), ("plugin://plugin.video.sweettv/playvid/5|51", 3590, 3600)))
-        self.assertFalse(mr.enabled())
         view = ps.guide_view(LIST, "5", NOW, ps.local())
         self.assertEqual((view["past"][0]["resume"], view["past"][0]["watched"]), (1500, False))
         self.assertEqual((view["current"]["resume"], view["current"]["watched"]), (0, True))

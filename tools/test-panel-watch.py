@@ -1074,10 +1074,35 @@ class SweetRoutes(unittest.TestCase):
         self.assertFalse(dv["can_rewind"])
         self.assertFalse(dv["go_live"])
 
-    def test_legacy_compat_signatures_still_work(self):
-        self.assertTrue(self.ps.sections_view(FIXTURE, NOW)["ok"])
-        self.assertTrue(self.ps.shows_view(FIXTURE, NOW)["ok"])
-        self.assertTrue(self.ps.films_view(FIXTURE, NOW)["ok"])
+    def test_legacy_sweettv_compat_wrappers_and_routes_are_removed(self):
+        for attr in ("sections", "sections_view", "shows_view", "show_view", "films_view"):
+            self.assertFalse(hasattr(self.ps, attr), attr)
+        for route in ("sections", "films"):
+            body, code = self.ps.get(self.ps.PREFIX + route, self.rpc)
+            self.assertEqual(code, 404, route)
+            self.assertIn("error", body)
+
+    def test_legacy_sweetsections_scraper_and_references_are_retired(self):
+        legacy_mod = "mediastick_" + "sweetsections"
+        self.assertFalse(os.path.exists(os.path.join(LIB, legacy_mod + ".py")))
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "tools", "test-" + "sweetsections.py")))
+        for folder in ("device", "tools"):
+            base = os.path.join(ROOT, folder)
+            for dirpath, _, filenames in os.walk(base):
+                for fname in filenames:
+                    if not fname.endswith((".py", ".sh", ".conf", ".xml", ".md")):
+                        continue
+                    fpath = os.path.join(dirpath, fname)
+                    with open(fpath, encoding="utf-8", errors="ignore") as f:
+                        self.assertNotIn(legacy_mod, f.read(), os.path.relpath(fpath, ROOT))
+
+    def test_readme_documents_new_sweettv_routes_and_emulator(self):
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as f:
+            readme = f.read()
+        for token in ("/api/sweettv/home", "/api/sweettv/shows", "/api/sweettv/show", "/api/sweettv/movies",
+                      "/api/sweettv/series", "/api/sweettv/vod", "/api/sweettv/favourite", "/api/sweettv/top",
+                      "/api/sweettv/search", "/api/sweettv/day", "/api/sweettv/settings", "tools/emulator/"):
+            self.assertTrue(token in readme, f"{token} not found in README.md")
 
 
 if __name__ == "__main__":
