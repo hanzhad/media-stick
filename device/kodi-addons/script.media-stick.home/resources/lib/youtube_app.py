@@ -644,6 +644,8 @@ class YouTube(xbmcgui.WindowXML):
         if action_id == ACTION_MOVE_UP and self._searching() and (focus == ACTION or focus == GRID and self._first_row()):
             self._focus_on(next(button for button, kind in KIND_BUTTONS.items() if kind == self.state["kind"]))
             return True
+        if action_id == ACTION_MOVE_UP and focus in KIND_BUTTONS:        # the skin has already moved the focus here: nothing is above
+            return True
         if action_id == ACTION_MOVE_DOWN and focus in KIND_BUTTONS:
             self._focus_content()
             return True

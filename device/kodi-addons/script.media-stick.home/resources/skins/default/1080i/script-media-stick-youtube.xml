@@ -136,6 +136,7 @@
                 <onleft>100</onleft>
                 <onright>402</onright>
                 <texturefocus border="28" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
+                <texturenofocus />
             </control>
             <control type="image">
                 <left>776</left>
@@ -160,6 +161,7 @@
                 <onleft>401</onleft>
                 <onright>403</onright>
                 <texturefocus border="28" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
+                <texturenofocus />
             </control>
             <control type="image">
                 <left>992</left>
@@ -184,6 +186,7 @@
                 <onleft>402</onleft>
                 <onright>404</onright>
                 <texturefocus border="28" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
+                <texturenofocus />
             </control>
             <control type="image">
                 <left>1208</left>
@@ -208,6 +211,7 @@
                 <onleft>403</onleft>
                 <onright>404</onright>
                 <texturefocus border="28" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
+                <texturenofocus />
             </control>
         </control>
 
@@ -347,6 +351,10 @@
             <scrolltime>150</scrolltime>
             <onleft>100</onleft>
             <visible>String.IsEqual(Window.Property(mode),data)</visible>
+            <onup condition="String.IsEqual(Window.Property(kind),video)">401</onup>
+            <onup condition="String.IsEqual(Window.Property(kind),channel)">402</onup>
+            <onup condition="String.IsEqual(Window.Property(kind),playlist)">403</onup>
+            <onup condition="String.IsEqual(Window.Property(kind),live)">404</onup>
             <itemlayout width="384" height="382">
                 <control type="image">
                     <left>16</left>
@@ -716,6 +724,10 @@
                 <align>center</align>
                 <aligny>center</aligny>
                 <onleft>100</onleft>
+                <onup condition="String.IsEqual(Window.Property(kind),video)">401</onup>
+                <onup condition="String.IsEqual(Window.Property(kind),channel)">402</onup>
+                <onup condition="String.IsEqual(Window.Property(kind),playlist)">403</onup>
+                <onup condition="String.IsEqual(Window.Property(kind),live)">404</onup>
                 <texturenofocus border="32" colordiffuse="33FFFFFF">youtube-pill.png</texturenofocus>
                 <texturefocus border="32" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
                 <visible>!String.IsEmpty(Window.Property(action))</visible>

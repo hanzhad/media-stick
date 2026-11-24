@@ -1898,6 +1898,8 @@ class SearchKinds(WindowCase):
         window.focus = ACTION
         self.press(window, UP)
         self.assertEqual(window.focus, self.PLAYLISTS)                                                # the chosen one gets the focus
+        self.press(window, UP)                                                                        # the skin may have moved there already: Up stays
+        self.assertEqual(window.focus, self.PLAYLISTS)
         self.press(window, DOWN)
         self.assertEqual(window.focus, ACTION)
 
@@ -2345,7 +2347,7 @@ class Skin(unittest.TestCase):
         self.assertLessEqual({f.text for f in root.iter("font")}, fonts)
         for tag in ("texture", "texturefocus", "texturenofocus"):
             for node in root.iter(tag):
-                if "$" not in node.text:
+                if node.text and "$" not in node.text:                      # an empty texture is the point of nofocus
                     self.assertTrue(os.path.exists(os.path.join(MEDIA, node.text)), node.text)
                 if node.get("fallback"):
                     self.assertTrue(os.path.exists(os.path.join(MEDIA, node.get("fallback"))), node.get("fallback"))
@@ -2598,11 +2600,21 @@ class Skin(unittest.TestCase):
             self.assertLessEqual(int(button.findtext("top")) + int(button.findtext("height")), int(title.findtext("top")))   # above the title
             self.assertEqual((button.findtext("textcolor"), button.findtext("focusedcolor")), ("FFFFFFFF", "FF000000"))
             self.assertEqual(button.find("texturefocus").get("colordiffuse"), "FFFFFFFF")        # as the rail: white pill, black text
+            nofocus = button.find("texturenofocus")                                               # else Kodi draws its own dark oval
+            self.assertIsNotNone(nofocus, button.get("id"))
+            self.assertEqual((nofocus.text or "").strip(), "", button.get("id"))
+            self.assertEqual(nofocus.attrib, {}, button.get("id"))
             self.assertEqual(button.findtext("font"), "Reg25")
         self.assertEqual([b.findtext("onleft") for b in buttons], ["100", "401", "402", "403"])    # Left of the first is the rail
         self.assertEqual([b.findtext("onright") for b in buttons], ["402", "403", "404", "404"])
         rail = self.by_id(root, RAIL)
         self.assertLess(int(rail.findtext("left")) + int(rail.findtext("width")), int(buttons[0].findtext("left")))
+
+    def test_up_from_the_first_row_and_from_the_card_is_the_skins_since_the_base_window_moves_before_python_does(self):
+        root = self.tree()
+        for control in (GRID, ACTION):
+            ups = [(up.get("condition"), up.text) for up in self.by_id(root, control).findall("onup")]
+            self.assertEqual(ups, [(f"String.IsEqual(Window.Property(kind),{key})", str(button)) for key, button in zip(D.KIND_KEYS, KIND_IDS)], control)
 
     def test_the_row_of_types_fits_the_pi_budget(self):
         root = self.tree()
