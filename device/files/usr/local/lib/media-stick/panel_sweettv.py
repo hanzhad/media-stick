@@ -12,11 +12,6 @@ from urllib.parse import parse_qs
 import panel_watch as pw
 
 try:
-    import mediastick_sweetsections as sections
-except ImportError:
-    sections = None
-
-try:
     import mediastick_resume as mr
 except ImportError:
     mr = None
@@ -55,7 +50,6 @@ HOME_LABELS = {
     "channels": "ТВ-каналы",
 }
 _slim_cache = {"key": None, "value": None}
-_index_cache = {"raw": None, "value": None}
 
 
 def _t(msgid):
@@ -572,53 +566,6 @@ def ctl(body, rpc):
     return {"ok": True}
 
 
-# ---- legacy compatibility (removed after #3 & #4 merge) --------------------------------------
-
-def _index(raw):
-    if _index_cache["raw"] is not raw or _index_cache["value"] is None:
-        _index_cache.update(raw=raw, value=sections.build(raw))
-    return _index_cache["value"]
-
-
-def _playable(now):
-    return lambda r: archive_ok(r["channel_ref"], r["programme_ref"], now)
-
-
-def _sections_ready():
-    if ml is None or sections is None:
-        raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
-
-
-def sections_view(raw, now):
-    _sections_ready()
-    index, ok = _index(raw), _playable(now)
-    return {"ok": True, "channels": index["channels"], "shows": len(sections.shows(index, ok)),
-            "films": len(sections.films(index, ok)), "genres": sections.genres(index),
-            "labels": {"channels": _t("Channels"), "shows": _t("Shows and series"), "films": _t("Films")}}
-
-
-def shows_view(raw, now):
-    _sections_ready()
-    return {"ok": True, "items": [{"id": s["id"], "title": s["title"], "episodes": s["episodes"],
-                                    "thumb": pw.image_url(s["icon"])} for s in sections.shows(_index(raw), _playable(now))]}
-
-
-def show_view(raw, sid, now):
-    _sections_ready()
-    if not isinstance(sid, str) or not sections.SHOW_ID_RE.fullmatch(sid):
-        raise pw.Refused(_t("Wrong show."))
-    found = sections.show(_index(raw), sid, _playable(now))
-    if found is None:
-        raise pw.Refused(_t("This show is not in the list."), 404)
-    return {"ok": True, "id": sid, "title": found["title"], "thumb": pw.image_url(found["icon"]),
-            "episodes": found["episodes"]}
-
-
-def films_view(raw, now):
-    _sections_ready()
-    return {"ok": True, "items": sections.films(_index(raw), _playable(now))}
-
-
 # ---- API helpers -----------------------------------------------------------------------------
 
 def _answered(result):
@@ -696,8 +643,6 @@ def get(path, rpc):
             return guide_view(channels(), (args.get("cid") or [""])[0], time.time(), local()), 200
         if route == PREFIX + "settings":
             return settings_view(), 200
-        if route == PREFIX + "sections":
-            return sections_view(channels(), time.time()), 200
         if route == PREFIX + "shows":
             return shows_api_view(channels(), time.time(), local(), _favs(), _quality()), 200
         if route == PREFIX + "show":
@@ -708,8 +653,6 @@ def get(path, rpc):
             return catalog_view("series", args, local(), _favs(), _quality()), 200
         if route == PREFIX + "vod":
             return vod_view((args.get("id") or [""])[0], local(), _favs()), 200
-        if route == PREFIX + "films":
-            return films_view(channels(), time.time()), 200
         if route == PREFIX + "top":
             return top_view(channels(), time.time(), _quality()), 200
         if route == PREFIX + "search":
