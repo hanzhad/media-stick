@@ -2330,5 +2330,21 @@ class EntryPoints(unittest.TestCase):
         self.assertEqual(Fake.builtins, ["RunAddon(plugin.video.other)", "RunScript(script.media-stick.webapp,netflix)"])
 
 
+
+class SysPathRegressionTest(unittest.TestCase):
+    def test_home_addon_and_sweettv_app_prepend_mediastick_lib_dir(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for rel in (
+            "device/kodi-addons/script.media-stick.home/default.py",
+            "device/kodi-addons/script.media-stick.home/resources/lib/sweettv_app.py",
+        ):
+            with open(os.path.join(root, rel), encoding="utf-8") as f:
+                text = f.read()
+            self.assertIn("/usr/local/lib/media-stick", text, rel)
+            self.assertIn("sys.path.insert(0,", text, rel)
+        with open(os.path.join(root, "device/kodi-addons/script.media-stick.home/resources/lib/sweettv_app.py"), encoding="utf-8") as f:
+            app_text = f.read()
+        self.assertLess(app_text.index("sys.path.insert(0,"), app_text.index("import mediastick_resume"))
+
 if __name__ == "__main__":
     unittest.main()
