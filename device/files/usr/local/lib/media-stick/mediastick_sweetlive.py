@@ -70,9 +70,9 @@ START_RE = re.compile(r"ms_start=([0-9]{1,12})")
 ITEM_RE = re.compile(r"\s*([0-9]{1,12})\|(null|[0-9]{1,12})(?=$|[?&|#/%\s])")   # `<channel>|<programme or null>` and what Kodi may leave after it
 
 
-def text(msgid):
-    """What a person reads for a msgid: the add-on's own dictionary (sweettv_text.tr), loaded as a module of its own
-    because this library also runs inside another add-on; the msgid itself (English) when there is none."""
+def _dictionary():
+    """The add-on's own dictionary (sweettv_text), loaded as a module of its own because this library also runs inside
+    another add-on; None when there is none."""
     if not _words:
         found = None
         for folder in TEXT_DIRS:
@@ -86,10 +86,25 @@ def text(msgid):
                     found = None
                 break
         _words.append(found)
+    return _words[0]
+
+
+def text(msgid):
+    """What a person reads for a msgid: the add-on's dictionary (sweettv_text.tr); the msgid itself (English) when there is none."""
     try:
-        return _words[0].tr(msgid) if _words[0] else msgid
+        words = _dictionary()
+        return words.tr(msgid) if words else msgid
     except Exception:
         return msgid
+
+
+def text_n(n, one, other):
+    """"1 airing" / "5 airings" in the dictionary's language (sweettv_text.tr_n); English when there is no dictionary."""
+    try:
+        words = _dictionary()
+        return words.tr_n(n, one, other) if words else (one if n == 1 else other).format(n=n)
+    except Exception:
+        return (one if n == 1 else other).format(n=n)
 
 
 def url(cid, epg=None, start=0):
@@ -123,7 +138,7 @@ def _channel(raw, cid):
     return None
 
 
-LIST_KEEP = ("id", "name", "catchup", "catchup_duration", "available", "category", "icon_v2_url", "icon_url")
+LIST_KEEP = ("id", "name", "catchup", "catchup_duration", "epg_days_future", "available", "category", "icon_v2_url", "icon_url")
 EPG_KEEP = ("id", "text", "time_start", "time_stop", "available", "tv_show_id", "season_number", "episode_number")
 
 

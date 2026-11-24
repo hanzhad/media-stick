@@ -5,7 +5,7 @@ A mixin of the window (sweettv_app.SweetTV), kept apart to keep that file small.
 _stop, _prop, _later, _cancel, _in_worker, _focus_on, _update_menu, _hint, _start, _demo_raw, _now, _playing, getControl, the
 attributes catalog, shown, cat_key, demo and GRID_ID (the row). The rows are sweettv_sections', the cards sweettv_items'.
 
-What the row holds (row_kind) is CHANNELS or one of sweettv_sections.SECTIONS. A list is made lazily on a worker thread (the
+What the row holds (row_kind) is CHANNELS, SEARCH (the cards of sweettv_find, made by the window) or one of sweettv_sections.SECTIONS. A list is made lazily on a worker thread (the
 index reads the file) and "Loading..." is said in the empty row meanwhile; it is let go two minutes after the row is back on
 channels. The lists that were made are also kept on disk (page_cache, namespace "sweettv:main", see sweettv_pages): a list
 seen before shows at once, even in the next launch; one older than five minutes is made again in the background and swapped
@@ -20,7 +20,7 @@ import xbmc
 from resources.lib import page_cache, prefetch, sweettv_files as files, sweettv_items as items, sweettv_pages as pages, \
     sweettv_sections as sections, sweettv_text as words, sweettv_view as view, ui
 
-CHANNELS, SHOWS, FILMS, EPISODES = sections.CHANNELS, sections.SHOWS, sections.FILMS, sections.EPISODES
+CHANNELS, SHOWS, FILMS, EPISODES, SEARCH = sections.CHANNELS, sections.SHOWS, sections.FILMS, sections.EPISODES, sections.SEARCH
 LIBRARY_KEEP = 120               # s the index of the shows and films is kept after the row is back on channels
 PAGES = True                     # the lists are kept on disk (page_cache) and the shows and films are made at start-up (prefetch)
 LOAD_FAILED = "The list could not be loaded. Try again in a minute."
@@ -108,6 +108,8 @@ class Shelf:
         if self.row_kind == SHOWS:
             self.trail.append((SHOWS, "", position))
             self._open_section(EPISODES, row.key)
+        elif self.row_kind == SEARCH:
+            self._ok_result(row)
         elif row.playable:
             self._start(row.cid, view.GuideRow(row.epg, row.name or row.title, "", "archive", row.start, row.stop))
         else:

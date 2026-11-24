@@ -529,16 +529,22 @@ def youtube_accounts():
     return out
 
 
-def sweettv_signed_in():
-    """SWEET.TV has one account; it is signed in when the add-on says `logged`."""
+def sweettv_setting(name):
+    """A setting of the SWEET.TV add-on as its settings.xml holds it ("" when it is empty, None when the file cannot be read or
+    has no such setting). The one reader of that file; what is read may be a token: never log it."""
     try:
         root = ET.parse(_addon_file("plugin.video.sweettv", "settings.xml")).getroot()
     except (OSError, ET.ParseError):
-        return False
+        return None
     for node in root.iter("setting"):
-        if node.get("id") == "logged":
-            return (node.text or "").strip().lower() == "true"
-    return False
+        if node.get("id") == name:
+            return (node.text or "").strip()
+    return None
+
+
+def sweettv_signed_in():
+    """SWEET.TV has one account; it is signed in when the add-on says `logged`."""
+    return (sweettv_setting("logged") or "").lower() == "true"
 
 
 def accounts():

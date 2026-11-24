@@ -8,13 +8,15 @@ error) with a retry button.
   RunScript(script.media-stick.home,sweettv,open)    the app, from the plugin's channel list
   RunScript(script.media-stick.home,sweettv,demo)    the same screen on invented channels, shows and films; plays nothing
 
-One screen. The menu (100) lists Continue, Favourites, All, "Shows and series" and "Films" (the last two in the accent colour),
+One screen. The menu (100) lists Continue, Favourites, All, "Search", "Shows and series" and "Films" (the last two in the accent colour),
 then a small heading "Genres" and under it the genres of SWEET.TV (about 18, so the entries that matter come first). The
 heading is never focused: the cursor steps over it, key repeat too. The row (200) holds what the menu is on: that category's channel
 cards, or the cards of the shows, or of the films (sweettv_shelf). OK on a channel plays it live, on a film plays it from its
 start in the archive, on a show opens its episodes in the same row; OK on an episode plays it (one not on air yet, or not in
 the archive, says so). Back goes one step up: the episodes to the shows (the cursor on the same show), the row to the menu,
-the menu closes the app. The menu's up/down changes the row to that entry's cards a moment after the key rests; right goes
+the menu closes the app. OK on "Search" opens the on-screen keyboard (a worker thread, sweettv_find); the row then holds
+the cards of what api.sweet.tv found (sweettv_search, mediastick_sweetapi), the last query is kept while the window is open;
+OK plays a programme from the archive or a channel live, a card out of the archive is dimmed and says so. The menu's up/down changes the row to that entry's cards a moment after the key rests; right goes
 into the row, left from its first card back. The screen opens on "Continue" (the channels watched last, the last one first
 and focused) or, with nothing watched yet, on "All".
 
@@ -37,6 +39,7 @@ import xbmcgui
 
 from resources.lib import single_instance, sweettv_data as data, sweettv_demo, sweettv_files as files, sweettv_items as items, \
     sweettv_play as play, sweettv_state as saved, sweettv_text as words, sweettv_view as view, ui
+from resources.lib.sweettv_find import Find
 from resources.lib.sweettv_guide import GUIDE, GUIDE_BUTTON, Guide
 from resources.lib.sweettv_jump import DigitJump
 from resources.lib.sweettv_shelf import CHANNELS, EPISODES, Shelf
@@ -74,9 +77,10 @@ def playing():
 
 # ---- the window ------------------------------------------------------------------------------
 
-class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
+class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     """Set up with setup() after construction: the Kodi window constructors take no extra arguments."""
     GRID_ID = ROW                # the row of cards, for the number keys
+    MENU_ID = MENU               # the menu on the left
     instance = None              # the launch's single_instance flag; main() sets it
 
     def setup(self, demo=False):
@@ -112,6 +116,7 @@ class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
         self.session = None                      # the archived programme being played, if one is
         self.previewing = ""                     # PREVIEW_VIDEO: the channel in the preview window
         self._shelf_setup()
+        self._find_setup()
 
     def onInit(self):
         if self.instance is not None:
@@ -397,6 +402,9 @@ class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
             elif control_id == MENU:
                 self._cancel("menu")
                 self._apply_menu()
+                if self._menu_key() == data.SEARCH:
+                    self._search_ask()           # OK on Search asks for words; the row holds the last results meanwhile
+                    return
                 self.enter_row = not self._row_size()
                 if not self.enter_row:
                     self._focus_on(ROW)
@@ -464,6 +472,9 @@ class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
                 if key in (data.SHOWS, data.FILMS):
                     self.trail = []
                     self._open_section(key)
+                elif key == data.SEARCH:
+                    self.trail = []
+                    self._open_search()
                 else:
                     self._fill_row(key)
 

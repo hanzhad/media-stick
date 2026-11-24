@@ -26,7 +26,14 @@ try:
 except ImportError:   # a device without the library: the routes refuse, the rest of the panel works
     ml = None
 
+try:
+    import mediastick_sweetapi as api
+except ImportError:   # likewise: search and the days of a channel refuse, the rest works
+    api = None
+
 PREFIX = "/api/sweettv/"
+API_STATUS = {"auth": 409, "network": 502, "service": 502, "format": 502, "unknown": 404, "bad_date": 400, "too_old": 409,
+              "too_far": 409}      # what a failed call of mediastick_sweetapi is answered with
 SEEK_BACK_MAX = 86400
 LOCAL_LABEL = "Remember where I stopped, on the device"
 LOCAL_HINT = ("Places to continue from are taken only from what this device saved while you watched. The history of "
@@ -179,6 +186,13 @@ def rewind(raw, file, by, now):
     return {"switched": "", "note": ""}
 
 
+def _from_api(cid, epg, now):
+    """A programme outside the guide of the channel list that search or day returned lately (mediastick_sweetapi.recall): its
+    id and times as the API gave them; None for any other."""
+    found = api.recall(cid, epg, now) if api else None
+    return {"id": epg, "time_start": found["start"], "time_stop": found["stop"], "available": found["available"]} if found else None
+
+
 def play_request(raw, body, now, local=None):
     """POST play {cid, epg?, at?}, checked: (url, epg, offset). Without epg it is the live channel. With it, the
     programme must be one of the channel, started, and in the archive; at is "start" (default), "now" (the place the
@@ -195,7 +209,7 @@ def play_request(raw, body, now, local=None):
     if isinstance(epg, bool) or not isinstance(epg, (int, str)) or not ml.url(cid, epg):
         raise pw.Refused(_t("Wrong programme."))
     channel = _channel(raw, cid)
-    p = _programme(channel, epg)
+    p = _programme(channel, epg) or _from_api(cid, epg, now)
     if p is None:
         raise pw.Refused(_t("This programme is not in the channel's guide."), 404)
     if not archive_ok(channel, p, now):
@@ -297,6 +311,36 @@ def films_view(raw, now):
     return {"ok": True, "items": sections.films(_index(raw), _playable(now))}
 
 
+def _answered(result):
+    """What a call of mediastick_sweetapi gives, as the routes answer it: the dict when it is ok, else the refusal."""
+    if result.get("ok"):
+        return result
+    raise pw.Refused(str(result.get("message") or _t("SWEET.TV answered with an error. Try again in a minute.")),
+                     API_STATUS.get(result.get("error"), 502))
+
+
+def search_view(raw, needle, now, client=None):
+    """GET search?q=: programmes (a title once, with how many more airings), channels, films and people that match, from
+    SWEET.TV's own search; the programmes can be played with POST play {cid, epg}. A needle of under two characters asks
+    nothing (items: [], short: true)."""
+    if ml is None or api is None:
+        raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
+    return _answered(api.search(needle, api.channel_map(raw), now, client=client))
+
+
+def day_view(raw, cid, date_text, now, client=None):
+    """GET day?cid=&date=YYYY-MM-DD: the programmes of one channel on one local day, from SWEET.TV's own guide; the date may be
+    as far back as the channel's catchup_duration days and as far ahead as its epg_days_future."""
+    if ml is None or api is None:
+        raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
+    if not isinstance(cid, str) or not ml.url(cid):
+        raise pw.Refused(_t("Wrong channel."))
+    when = api.parse_date(date_text)
+    if when is None:
+        raise pw.Refused(_t("Wrong date."))
+    return _answered(api.day(cid, api.noon(when), api.channel_map(raw), now, client=client))
+
+
 def open_url(url, rpc):
     """Player.Open of a SWEET.TV path. Where an archive is to start is written down first (mediastick_sweetlive.ask): Kodi may not
     give the add-on the query of the path, and what is written here is what the add-on reads then."""
@@ -345,6 +389,11 @@ def get(path, rpc):
             return show_view(channels(), (parse_qs(query).get("id") or [""])[0], time.time()), 200
         if route == PREFIX + "films":
             return films_view(channels(), time.time()), 200
+        if route == PREFIX + "search":
+            return search_view(channels(), (parse_qs(query).get("q") or [""])[0], time.time()), 200
+        if route == PREFIX + "day":
+            args = parse_qs(query)
+            return day_view(channels(), (args.get("cid") or [""])[0], (args.get("date") or [""])[0], time.time()), 200
     except pw.Refused as e:
         return {"error": e.message}, e.code
     return {"error": "not found"}, 404

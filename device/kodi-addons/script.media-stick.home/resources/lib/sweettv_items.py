@@ -56,8 +56,8 @@ def _menu_props(item, entry, active_key):
     entry the row follows, `section` for Shows and series and Films (drawn in the accent colour) and `caption` for the heading
     of the genres (a small line the cursor does not rest on)."""
     item.setLabel2("" if entry.count is None else str(entry.count))
-    item.setProperty("heading", "" if not entry.focusable else view.section_heading(_name(entry), entry.count) if _section(entry)
-                     else view.category_heading(_name(entry), entry.count))
+    item.setProperty("heading", "" if not entry.focusable else view.section_heading(_name(entry), entry.count)
+                     if _section(entry) or entry.count is None else view.category_heading(_name(entry), entry.count))
     item.setProperty("active", "1" if entry.key == active_key else "")
     item.setProperty("section", "1" if _section(entry) else "")
     item.setProperty("caption", "" if entry.focusable else "1")

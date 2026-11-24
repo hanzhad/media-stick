@@ -1,0 +1,20 @@
+{
+  "result": [
+    {"type": "EpgRecord", "id": 9001, "sub_id": 15, "text": "Холостяк-15. В’ячеслав Кравцов Episode 6", "time_start": "1795194000", "time_stop": "1795199400", "slug": "15-stb-hd"},
+    {"type": "EpgRecord", "id": "9002", "sub_id": "15", "text": "Холостяк-15. В’ячеслав Кравцов Episode 6", "time_start": "1795255200", "time_stop": "1795260600", "slug": "15-stb-hd"},
+    {"type": "EpgRecord", "id": 9003, "sub_id": 16, "text": "Холостяк-15. В’ячеслав  кравцов  EPISODE 6", "time_start": "1795348800", "time_stop": "1795354200", "slug": "16-1plus1"},
+    {"type": "EpgRecord", "id": 9010, "sub_id": 15, "text": "Холостяк-15. В’ячеслав Кравцов Episode 7", "time_start": "1795798800", "time_stop": "1795804200", "slug": "15-stb-hd"},
+    {"type": "EpgRecord", "id": 9020, "sub_id": 15, "text": "Холостяк. Ранок", "time_start": "1795519800", "time_stop": "1795523400", "slug": "15-stb-hd"},
+    {"type": "EpgRecord", "id": 9030, "sub_id": 15, "text": "Холостяк. Архів", "time_start": "1793793600", "time_stop": "1793797200", "slug": "15-stb-hd"},
+    {"type": "EpgRecord", "id": 9040, "sub_id": 99, "text": "Холостяк. Чужий канал", "time_start": "1795300000", "time_stop": "1795303600"},
+    {"type": "Channel", "id": 15, "text": "СТБ HD", "subtext": "Новини, шоу", "slug": "15-stb-hd"},
+    {"type": "Channel", "id": 99, "text": "Чужий канал", "subtext": "", "slug": "99-other"},
+    {"type": "Movie", "id": 555, "text": "Divorce Club", "subtext": "2020, Comedy", "slug": "555-divorce-club", "availability_info": {"available": true}},
+    {"type": "Person", "id": 777, "text": "Іван Холостяк", "subtext": "Actor", "slug": "777-ivan"},
+    {"type": "Weird", "id": 1, "text": "not a kind we know"},
+    {"type": "EpgRecord", "id": "abc", "sub_id": 15, "text": "bad id", "time_start": "1795194000"},
+    {"type": "EpgRecord", "id": 9050, "sub_id": 15, "text": "", "time_start": "1795194000"},
+    {"type": "EpgRecord", "id": 9060, "sub_id": 15, "text": "No start"},
+    "a string", 5, null
+  ]
+}

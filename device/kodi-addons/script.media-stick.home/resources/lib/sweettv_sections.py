@@ -22,7 +22,7 @@ from typing import NamedTuple, Optional, Tuple
 
 from resources.lib import sweettv_data as data, sweettv_text as words, sweettv_view as view, textfit
 
-CHANNELS, SHOWS, FILMS, EPISODES = "channels", data.SHOWS, data.FILMS, "episodes"   # what the row of cards holds
+CHANNELS, SHOWS, FILMS, EPISODES, SEARCH = "channels", data.SHOWS, data.FILMS, "episodes", data.SEARCH   # what the row of cards holds
 SECTIONS = (SHOWS, FILMS, EPISODES)              # all of it that is not channels
 MAX_SHOWS, MAX_FILMS, MAX_EPISODES = 300, 300, 200
 CAPTION_PX, TITLE_PX, META_PX, LINE_PX = 236, 740, 740, 740    # room in the skin: the caption of a card (25 px high), the title over the

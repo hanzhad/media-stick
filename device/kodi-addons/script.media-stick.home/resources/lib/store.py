@@ -36,6 +36,11 @@ try:        # the shows and films the phone page makes from the channel list; th
 except ImportError:
     sweetsections = None
 
+try:        # SWEET.TV's own search and the guide of any day (api.sweet.tv); a device without it has no search
+    import mediastick_sweetapi as sweetapi  # noqa: E402
+except ImportError:
+    sweetapi = None
+
 SERVICES = lib.SERVICES
 
 

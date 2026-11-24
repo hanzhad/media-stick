@@ -25,10 +25,11 @@ PLAY_URL = "plugin://plugin.video.sweettv/playvid/{cid}|{epg}"    # live: epg is
 HIDDEN_CATEGORY = 1000          # the plugin's own playlist export leaves this one out too
 
 ALL, RECENT, FAVOURITES = "all", "recent", "fav"
+SEARCH = "search"               # the rail's entry that asks for words and shows what SWEET.TV finds (sweettv_find)
 SHOWS, FILMS, GENRES = "shows", "films", "genres"    # the rail's entries of what the carousel holds besides channels, and the heading of the genres
 MAIN_GROUP, SECTION_GROUP, HEADING_GROUP, GENRE_GROUP = "main", "sections", "heading", "genres"   # the rail's kinds of entries
 RECENT_NAME, FAVOURITES_NAME, ALL_NAME = "Continue", "Favourites", "All"    # msgids (sweettv_text): the menu's names of the channel lists
-SHOWS_NAME, FILMS_NAME, GENRES_NAME = "Shows and series", "Films", "Genres"
+SHOWS_NAME, FILMS_NAME, GENRES_NAME, SEARCH_NAME = "Shows and series", "Films", "Genres", "Search"
 DATA, SIGNIN, EMPTY = "data", "signin", "empty"      # what the window shows
 
 KEEP_PAST = 2 * 3600            # s of finished programmes kept on a channel without a catch-up archive
@@ -293,16 +294,16 @@ def recent_ids(state) -> list:
 
 def rail(catalog, state, counts=None) -> list:
     """The menu on the left, the entries that matter first so that nobody has to press down 25 times: Continue (what was
-    watched last), Favourites, All, then "Shows and series" and "Films" (whose cards the carousel shows instead of channels),
-    then a heading and under it the genres of the data (SWEET.TV has about 18). The heading is not focusable (see
+    watched last), Favourites, All, Search (OK asks for words, the carousel shows what SWEET.TV finds), then "Shows and series" and
+    "Films" (whose cards the carousel shows instead of channels), then a heading and under it the genres of the data (SWEET.TV has about 18). The heading is not focusable (see
     next_focusable) and is left out when there are no genres. `counts` is (shows, films) once known, None until then."""
     ids = {c.cid for c in catalog.channels}
     favourites = [c for c in state["favourites"] if c in ids]
     recent = [c for c in recent_ids(state) if c in ids]
     shows, films = counts if counts else (None, None)
     out = [RailEntry(RECENT, RECENT_NAME, len(recent), MAIN_GROUP), RailEntry(FAVOURITES, FAVOURITES_NAME, len(favourites), MAIN_GROUP),
-           RailEntry(ALL, ALL_NAME, len(catalog.channels), MAIN_GROUP), RailEntry(SHOWS, SHOWS_NAME, shows, SECTION_GROUP),
-           RailEntry(FILMS, FILMS_NAME, films, SECTION_GROUP)]
+           RailEntry(ALL, ALL_NAME, len(catalog.channels), MAIN_GROUP), RailEntry(SEARCH, SEARCH_NAME, None, MAIN_GROUP),
+           RailEntry(SHOWS, SHOWS_NAME, shows, SECTION_GROUP), RailEntry(FILMS, FILMS_NAME, films, SECTION_GROUP)]
     if catalog.categories:
         out.append(RailEntry(GENRES, GENRES_NAME, None, HEADING_GROUP))
     for key, name in catalog.categories:
