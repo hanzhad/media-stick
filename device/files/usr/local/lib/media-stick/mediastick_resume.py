@@ -1,25 +1,22 @@
-"""Where the person stopped, remembered on the stick and nowhere else. Standard library only; nothing happens on import.
+"""Where the person stopped, remembered on the stick, plus SWEET.TV local favourites and device quality cap.
+Standard library only; nothing happens on import.
 
-Every place that offers to continue (a red bar under a YouTube card, "Смотреть на ТВ с 12:30", SWEET.TV "Continue
-from 23:10", the programme sheet of the phone) can read its position from three kinds of source: what the stick saved
-itself while something played here, what Kodi keeps for the file (its video database: a bookmark and a play count for
-a plugin path), and what an add-on brings from outside (YouTube and SWEET.TV accounts, the add-on's own history).
-The choice «Помнить, где остановились, на приставке» (local resume) makes every one of those places read only the
-first kind: the positions this library keeps in /var/lib/media-stick/resume/positions.json. Off (the default), the
-places read what they always did. The positions are recorded either way, so switching on shows what has been
-watched since this version, not nothing.
+SWEET.TV (TV app and phone panel) reads the stick's local positions in /var/lib/media-stick/resume/positions.json
+and local favourites in sweettv-favourites.json directly. YouTube uses its own profile/account history.
 
-  enabled() / set_enabled(flag)       the choice: one line, 1 or 0, in prefs/local-resume (missing: DEFAULT)
   load() / save(data)                 the positions file, written whole and renamed into place
   record(data, file, pos, total, now) the new positions after `file` was seen at `pos` of `total` seconds
   lookup(data, file), seconds_for, progress_for     what the places read
   localize_reply(reply, data)         a YouTube Files.GetDirectory answer with only the local resume and play count
+  read_quality() / write_quality(val) device video quality cap ('720p', '1080p', 'unlimited') in prefs/max-quality
+  load_favs() / toggle_fav(key, meta) SWEET.TV local favourites in sweettv-favourites.json
 
 Positions (the same document for every app):
   {"v": 1, "items": {"yt:<video id>": {"pos", "total", "done", "at"},
-                     "sw:<channel>|<programme>": {"cid", "epg", "pos", "total", "done", "at", "title", "start", "stop"}},
+                     "sw:<channel>|<programme>": {"cid", "epg", "pos", "total", "done", "at", "title", "start", "stop"},
+                     "sw:vod:<movie_id>[|<episode_id>]": {"movie_id", "episode_id", "pos", "total", "done", "at", "title"}},
    "live": {"cid": "105", "at": <unix>}}                    the SWEET.TV channel that was on last
-A SWEET.TV live stream has no place in it, only the channel; an archived programme has the programme id and the
+A SWEET.TV live stream has no place in it, only the channel; an archived programme or VOD item has its id and the
 seconds; a video or programme watched to its end is kept as done (a full bar), not as a place.
 """
 import json
@@ -31,10 +28,9 @@ from urllib.parse import parse_qs, urlsplit
 
 PREFS = os.environ.get("MEDIASTICK_PREFS_DIR", "/var/lib/media-stick/prefs")
 DIR = os.environ.get("MEDIASTICK_RESUME_DIR", "/var/lib/media-stick/resume")
-FLAG_FILE, STORE_FILE = "local-resume", "positions.json"
+STORE_FILE = "positions.json"
 QUALITY_FILE, DEFAULT_QUALITY = "max-quality", "1080p"
 FAVS_FILE = "sweettv-favourites.json"
-DEFAULT = False                     # off: the places keep reading what they read before this setting existed
 MAX_ITEMS = 300                     # the newest ones are kept
 MIN_POS = 5                         # s: a place nearer the start than this is not worth coming back to
 END_MARGIN = 30                     # s: a place nearer the end than this (or past 97 %) means watched to the end
@@ -47,7 +43,7 @@ VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{6,20}")
 FAV_KEY_RE = re.compile(r"(show:vod:[0-9]{1,12}|show:epg:[0-9]{1,12}|show:tv:[0-9]{1,12}|vod:[0-9]{1,12}|ch:[0-9]{1,12})")
 
 
-# ---- the choice -------------------------------------------------------------------------------
+# ---- device preferences -----------------------------------------------------------------------
 
 def _write_atomic(folder, name, text):
     tmp = None
@@ -66,21 +62,6 @@ def _write_atomic(folder, name, text):
             except OSError:
                 pass
         return False
-
-
-def enabled() -> bool:
-    """Whether the places read only what the stick saved. Anything but a clear 1 or 0 in the file is DEFAULT."""
-    try:
-        with open(os.path.join(PREFS, FLAG_FILE), encoding="utf-8") as f:
-            line = f.readline().strip()
-    except (OSError, ValueError):
-        return DEFAULT
-    return True if line == "1" else False if line == "0" else DEFAULT
-
-
-def set_enabled(flag) -> bool:
-    """Make the choice; False when the disk refuses."""
-    return _write_atomic(PREFS, FLAG_FILE, "1\n" if flag else "0\n")
 
 
 def normalize_quality(value) -> str:

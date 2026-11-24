@@ -14,8 +14,8 @@ import zlib
 LOGOS = 12                      # logo-1.png .. logo-12.png
 SLOT = 300                      # s: schedules start on a five-minute mark
 
-FILM, KIDS = 4, 2               # SWEET.TV's "Film" category is 4 (mediastick_sweetsections.FILM_CATEGORY): a long programme on a
-                                # channel in it that is not a series is a film in the app's list of films
+FILM, KIDS = 4, 2               # SWEET.TV's "Film" category is 4: a long programme on a
+                                # channel in it that is not a series is a film in the demo guide
 CATEGORIES = [(1, "News"), (FILM, "Movies & Series"), (3, "Sport"), (KIDS, "Kids"), (5, "Music & Lifestyle"), (6, "Documentary")]
 HIDDEN = 1000                   # every real channel is in this one too; the app leaves it out
 
@@ -96,8 +96,8 @@ SHOWS = {
 }
 DURATIONS = {1: (30, 30, 60), FILM: (90, 105, 120), 3: (60, 90, 105, 120), KIDS: (20, 25, 30), 5: (30, 45, 60), 6: (45, 50, 60)}
 
-# The programmes that are episodes of a series: the service marks them with tv_show_id, season_number and episode_number
-# (mediastick_sweetsections makes the app's shows of them). The rest of the programmes of a film channel are its films.
+# The programmes that are episodes of a series: the service marks them with tv_show_id, season_number and episode_number.
+# The rest of the programmes of a film channel are its films.
 SERIES = {"Quiet Streets", "Second Chances", "Glass Houses", "Small Hours", "Bubble and Squeak", "Little Explorers",
           "Dino Detectives", "Robot Friends", "Deep Planet", "Wild Frontier", "Ancient Worlds", "Sunday Brunch"}
 EPISODES = 10                   # episodes a series has in the demo: its programmes are numbered 1..10 over the channels
