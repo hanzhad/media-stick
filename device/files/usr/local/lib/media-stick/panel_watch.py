@@ -374,9 +374,11 @@ def now_view(item, props, app, name_of=None):
     app = app if isinstance(app, dict) else {}
     kind = app_of(item.get("file"))
     channel = str(item.get("showtitle") or item.get("channel") or "") or (ref and (name_of or sweet_name)(ref[0])) or ""
+    is_vod = bool(ref and str(ref[0]).startswith("vod:"))
     return {"playing": True,
             "title": item_title(item, name_of)[:200],
-            "live": bool(ref and not ref[1]), "cid": ref[0] if ref else "", "epg": ref[1] if ref else "",
+            "live": bool(ref and not ref[1] and not is_vod), "cid": ref[0] if ref else "", "epg": ref[1] if ref else "",
+            "file": str(item.get("file") or ""),
             "channel": channel[:120],
             "thumb": thumb, "app": "sweettv" if ref and kind == "other" else kind,
             "time": kodi_seconds(props.get("time")), "total": kodi_seconds(props.get("totaltime")),

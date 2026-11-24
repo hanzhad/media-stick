@@ -29,6 +29,8 @@ os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, ".kodi", "userdata", "ad
 os.environ.pop("MEDIASTICK_ADDON_LIB", None)
 os.environ["MEDIASTICK_ADDONS_ROOT"] = os.path.join(TMP, ".kodi", "addons")
 os.environ["MEDIASTICK_SWEETNOW_DIR"] = os.path.join(TMP, "now")      # what the SWEET.TV add-on wrote down about its streams
+os.environ["MEDIASTICK_PREFS_DIR"] = os.path.join(TMP, "prefs")
+os.environ["MEDIASTICK_RESUME_DIR"] = os.path.join(TMP, "resume")
 os.environ.pop("MEDIASTICK_APP_ART", None)
 sys.dont_write_bytecode = True
 sys.path.insert(0, LIB)
@@ -819,52 +821,54 @@ class Page(unittest.TestCase):
         self.assertLess(p.index('data-sp="lang"'), row)
         self.assertLess(row, p.index('data-sp="info"'))
         self.assertGreater(row, p.index('id="t-setlist"'))
-        self.assertIn('<input id="wt-rs" type="checkbox" role="switch"', p)
-        self.assertIn('class="srow wt-sw hide"', p)                    # hidden until the API answers
+        for label in ("До 720p", "До 1080p (Pi 3)", "Без лимита / 4K (Pi 5)"):
+            self.assertIn(label, p)
         panel_text = open(PANEL, encoding="utf-8").read()
         self.assertIn("@@LANG_ROW@@@@RESUME_ROW@@", panel_text)
         import panel_watch_ui as ui
         self.assertIn("sg('settings')", ui.JS)
-        self.assertIn("spst('settings',{local_resume:want})", ui.JS)
-        self.assertIn("set(!want);toast(errText(e))", ui.JS)           # an error reverts the switch
-        self.assertIn("show(false)", ui.JS)                            # no answer: no row, no card
-        # the wide layout has no settings list: the same switch is a card of its own there, one state with the row
-        self.assertIn('<section id="wt-rcard" class="wt-rcoff" data-tab="settings">', p)
-        self.assertIn('id="wt-rs2" type="checkbox" role="switch"', p)
+        self.assertIn("spst('settings',{quality:", ui.JS)
+        self.assertIn("toast(errText(e))", ui.JS)
+        # the wide layout has no settings list: the same quality selector is a card of its own there
+        self.assertIn('<section id="wt-rcard"', p)
         self.assertIn("#wt-rcard{display:none!important}", ui.CSS)
         self.assertIn("#wt-rcard{display:block!important;grid-column:1/-1}", ui.CSS)
-        self.assertIn("min-height:31px;max-height:31px", ui.CSS)       # the page's input{min-height:52px} must not stretch the track
 
     def test_the_play_button_and_the_sections_look_right(self):
         import panel_watch_ui as ui
-        self.assertIn(".wt .wt-go{", ui.CSS)                            # `.wt button{color:inherit}` is more specific than `.wt-go`
-        self.assertNotRegex(ui.CSS, r"(?m)^\.wt-go\{")
+        import panel_watch_sweet_ui as sweet
+        both = ui.CSS + sweet.CSS
+        # SWEET.TV official dark midnight-navy & turquoise brand palette (no Netflix red)
+        self.assertIn("#0c111b", both.lower())
+        self.assertIn("#121927", both.lower())
+        self.assertTrue("#00d2c6" in both.lower() or "#14e0c8" in both.lower())
+        self.assertIn("#ffc857", both.lower())
+        self.assertNotIn("#e50914", both.lower())
         self.assertIn("class:'wt-seg'", ui.JS)
-        self.assertIn(".wt .wt-seg button.on{background:#fff;color:var(--bg)", ui.CSS)
-        self.assertIn("class:'wt-upr'", ui.JS)                          # what is to come: plain rows, not cards
+        self.assertIn("class:'wt-upr'", ui.JS)
         self.assertIn("'Завтра'", ui.JS)
-        self.assertIn("'Выйдет '+(REL.includes(n)?n.toLowerCase():n)+' в '+hm(s)", ui.JS)
-        self.assertIn("icons[String(it.cid)]", ui.JS)                   # the films have the picture of their channel
 
     def test_the_sweettv_pages_ask_the_routes_of_the_api(self):
         import panel_watch_ui as ui
         js = ui.JS
         self.assertIn("api('/api/sweettv/'+p)", js)
         self.assertIn("api('/api/sweettv/'+p,b)", js)
-        for call in ("sg('sections')", "sg('guide?cid='", "sg('shows')", "sg('show?id='", "sg('films')", "spst('play',b)",
-                     "spst('golive',{})", "sg('settings')", "spst('settings'"):
+        # Netflix-style navigation pills, sticky search, detail & guide views
+        for pill in ("Продолжить", "Избранное", "Шоу", "Сериалы", "Фильмы", "ТВ-каналы"):
+            self.assertIn(pill, js)
+        for call in ("sg('home')", "sg('shows')", "sg('show?id='", "sg('movies", "sg('series", "sg('vod?id='",
+                     "sg('channels')", "sg('guide?cid='", "sg('day?cid='", "sg('top')", "sg('search?q='",
+                     "spst('favourite'", "spst('play'", "spst('ctl'", "sg('settings')", "spst('settings'"):
             self.assertIn(call, js)
-        for page in ("t:'swguide'", "t:'swshow'", "d.t==='swguide'", "d.t==='swshow'"):
+        for page in ("swguide", "swshow", "swvod"):
             self.assertIn(page, js)
-        # the channel's own ▶ still plays live through the old route, and does not open the guide
-        self.assertIn("pst('play',{file:c.play})", js)
-        self.assertIn("e.stopPropagation();play(c)", js)
-        self.assertIn("at:'start'", js)
-        self.assertIn("at:'resume'", js)
-        # what the player does with the new fields of /api/watch/now and of the seek
-        for text in ("st.programme", "st.go_live", "text:'К эфиру'", "if(r&&r.note)toast(r.note)", "r&&r.switched==='archive'",
-                     "Перешёл в архив передачи"):
-            self.assertIn(text, js)
+        for day_lbl in ("Сегодня", "Вчера"):
+            self.assertIn(day_lbl, js)
+        # upgraded Live/DVR/VOD player sheet controls
+        for ctl_text in ("С начала", "−15с", "+30с", "+2м", "В эфир", "В эфире", "от эфира"):
+            self.assertIn(ctl_text, js)
+        for ctl_op in ("op:'from_start'", "op:'seek_by'", "op:'live'", "st.prog_start", "st.prog_stop", "st.lag_seconds"):
+            self.assertIn(ctl_op, js)
         # no markup from the API, no image that is not a picture() one
         self.assertNotIn("innerHTML", js)
         self.assertNotRegex(js, r"style:'background-image:'\s*\+\s*(?!picture)")
@@ -876,7 +880,6 @@ class Page(unittest.TestCase):
         self.assertNotIn("SWEET_CSS", ui.CSS)
         self.assertEqual(ui.JS.count("async function renderSweet("), 1)
         self.assertEqual(ui.JS.count("const plural="), 1)
-        self.assertIn(".wt-sw input[type=checkbox]:checked", ui.CSS)
 
     def test_the_script_passes_node_check(self):
         import subprocess
@@ -901,6 +904,180 @@ class Page(unittest.TestCase):
         for gone in ("--wb", "--wc", "--wl", "wt-on", "#0f1115", "#1b1d28"):
             self.assertNotIn(gone, ui.CSS + ui.JS)
         self.assertIn("var(--card2)", ui.CSS)
+
+
+class SweetRoutes(unittest.TestCase):
+    def setUp(self):
+        import mediastick_resume as mr
+        import panel_sweettv as ps
+        self.ps = ps
+        self.mr = mr
+        shutil.rmtree(os.environ["MEDIASTICK_RESUME_DIR"], ignore_errors=True)
+        shutil.rmtree(os.environ["MEDIASTICK_PREFS_DIR"], ignore_errors=True)
+        shutil.rmtree(os.environ["MEDIASTICK_SWEETNOW_DIR"], ignore_errors=True)
+        put(os.path.join(TMP, ".kodi", "temp", "channelList.json"), json.dumps(FIXTURE))
+        self.calls = []
+        self.players = [{"playerid": 1, "type": "video"}]
+        self.item = {"file": "plugin://plugin.video.sweettv/playvid/5|null", "title": "", "label": "5"}
+        self.props = {"time": {"hours": 0, "minutes": 0, "seconds": 10}, "totaltime": {"hours": 0, "minutes": 1, "seconds": 0}}
+
+    def rpc(self, method, params=None, timeout=3):
+        self.calls.append((method, params))
+        if method == "Player.GetActivePlayers":
+            return self.players
+        if method == "Player.GetItem":
+            return {"item": self.item}
+        if method == "Player.GetProperties":
+            return self.props
+        return {}
+
+    def test_home_returns_continue_favourites_and_quality(self):
+        data = self.mr.empty()
+        data = self.mr.record(data, "plugin://plugin.video.sweettv/playvid/5|50", 600, 3600, NOW,
+                              meta={"title": "Вчерашнее", "cid": "5", "epg": "50", "start": NOW - 7200, "stop": NOW - 3600})
+        data = self.mr.record(data, "plugin://plugin.video.sweettv/playvod/9558|101|69", 300, 2400, NOW + 1,
+                              meta={"title": "Серия 1", "movie_id": "9558"})
+        self.mr.save(data)
+        self.mr.toggle_fav("vod:9558", {"title": "Фильм", "thumb": "https://cdn.sweet.tv/f.jpg"}, now=NOW)
+        self.mr.write_quality("720p")
+        with mock.patch("time.time", return_value=NOW):
+            body, code = self.ps.get(self.ps.PREFIX + "home", self.rpc)
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["quality"], "720p")
+        self.assertGreaterEqual(len(body["continue"]), 2)
+        self.assertEqual(len(body["favourites"]), 1)
+        self.assertEqual(body["favourites"][0]["key"], "vod:9558")
+        self.assertIn("counts", body)
+        self.assertIn("labels", body)
+
+    def test_shows_and_show_detail_and_invalid_id(self):
+        self.mr.toggle_fav("show:vod:10", {"title": "Шоу 10"}, now=NOW)
+        sample_shows = {"ok": True, "items": [{"id": "vod:10", "title": "Шоу 10", "thumb": "https://cdn.sweet.tv/s.jpg"}]}
+        sample_detail = {"ok": True, "id": "vod:10", "title": "Шоу 10", "seasons": [{"id": 1, "episodes": []}]}
+        with mock.patch.object(self.ps.api, "shows", return_value=sample_shows), \
+             mock.patch.object(self.ps.api, "show_detail", return_value=sample_detail):
+            body, code = self.ps.get(self.ps.PREFIX + "shows", self.rpc)
+            self.assertEqual(code, 200)
+            self.assertTrue(body["items"][0]["favourite"])
+            body, code = self.ps.get(self.ps.PREFIX + "show?id=vod:10", self.rpc)
+            self.assertEqual(code, 200)
+            self.assertEqual(body["id"], "vod:10")
+        for bad in ("", "bogus", "vod:abc", "epg:", "tv:x"):
+            _, code = self.ps.get(self.ps.PREFIX + "show?id=" + bad, self.rpc)
+            self.assertEqual(code, 400, bad)
+
+    def test_movies_series_and_vod_detail(self):
+        cfg = {"ok": True, "genres": [{"id": 10, "caption": "Комедия"}], "sort_modes": [{"id": 1, "caption": "Популярные"}]}
+        page = {"ok": True, "items": [{"id": 9558, "title": "Фильм"}], "total": 1, "offset": 0, "limit": 30, "has_more": False}
+        vod = {"ok": True, "id": "9558", "title": "Фильм", "seasons": [], "episodes": [], "imdb": 7.5, "year": 2024,
+               "duration": 120, "description": "Desc", "resume": 0, "favourite": False}
+        with mock.patch.object(self.ps.api, "configuration", return_value=cfg), \
+             mock.patch.object(self.ps.api, "catalog_page", return_value=page) as cat_mock, \
+             mock.patch.object(self.ps.api, "vod_detail", return_value=vod):
+            b1, c1 = self.ps.get(self.ps.PREFIX + "movies?genre=10&sort=1&offset=0&limit=30", self.rpc)
+            self.assertEqual(c1, 200)
+            self.assertEqual(b1["genres"], cfg["genres"])
+            self.assertEqual(b1["sort_modes"], cfg["sort_modes"])
+            b2, c2 = self.ps.get(self.ps.PREFIX + "series?offset=30&limit=20", self.rpc)
+            self.assertEqual(c2, 200)
+            self.assertEqual(cat_mock.call_args[0][0], "series")
+            b3, c3 = self.ps.get(self.ps.PREFIX + "vod?id=9558", self.rpc)
+            self.assertEqual((c3, b3["id"]), (200, "9558"))
+        for bad in ("", "abc", "-1"):
+            self.assertEqual(self.ps.get(self.ps.PREFIX + "vod?id=" + bad, self.rpc)[1], 400, bad)
+
+    def test_channels_guide_day_top_and_search(self):
+        self.mr.toggle_fav("ch:5", {"title": "Первый"}, now=NOW)
+        with mock.patch("time.time", return_value=NOW):
+            body, code = self.ps.get(self.ps.PREFIX + "channels", self.rpc)
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"])
+        self.assertTrue(any(c["id"] == "5" and c["favourite"] for c in body["channels"]))
+        self.assertIn("categories", body)
+        with mock.patch.object(self.ps.api, "top_search", return_value={"ok": True, "items": []}):
+            self.assertEqual(self.ps.get(self.ps.PREFIX + "top", self.rpc)[1], 200)
+        with mock.patch.object(self.ps.api, "search", return_value={"ok": True, "items": []}):
+            self.assertEqual(self.ps.get(self.ps.PREFIX + "search?q=news", self.rpc)[1], 200)
+
+    def test_favourite_toggle_and_invalid_key(self):
+        body, code = self.ps.post(self.ps.PREFIX + "favourite",
+                                  {"key": "ch:5", "title": "Первый", "thumb": "https://cdn.sweet.tv/c.png"}, self.rpc)
+        self.assertEqual((code, body["ok"], body["favourite"]), (200, True, True))
+        body, code = self.ps.post(self.ps.PREFIX + "favourite", {"key": "ch:5"}, self.rpc)
+        self.assertEqual((code, body["ok"], body["favourite"]), (200, True, False))
+        for bad in ({}, None, [], {"key": ""}, {"key": "bad:5"}):
+            self.assertEqual(self.ps.post(self.ps.PREFIX + "favourite", bad, self.rpc)[1], 400, bad)
+
+    def test_play_live_archive_from_start_and_vod(self):
+        with mock.patch("time.time", return_value=NOW):
+            # live channel
+            b, c = self.ps.post(self.ps.PREFIX + "play", {"cid": 5}, self.rpc)
+            self.assertEqual((c, b["ok"]), (200, True))
+            self.assertEqual(self.calls[-1][1]["item"]["file"], "plugin://plugin.video.sweettv/playvid/5|null")
+            # in-progress EPG programme from_start=True -> offset 0
+            b, c = self.ps.post(self.ps.PREFIX + "play", {"cid": 5, "epg": 50, "from_start": True}, self.rpc)
+            self.assertEqual((c, b["ok"], b["epg"], b["offset"]), (200, True, "50", 0))
+            # VOD movie/episode -> playvod/...
+            b, c = self.ps.post(self.ps.PREFIX + "play", {"movie_id": 9558, "episode_id": 101, "owner_id": 69, "start": 120}, self.rpc)
+            self.assertEqual((c, b["ok"]), (200, True))
+            self.assertEqual(self.calls[-1][1]["item"]["file"], "plugin://plugin.video.sweettv/playvod/9558|101|69?start=120")
+            # invalid
+            self.assertEqual(self.ps.post(self.ps.PREFIX + "play", {"cid": "bad"}, self.rpc)[1], 400)
+            self.assertEqual(self.ps.post(self.ps.PREFIX + "play", {"movie_id": "bad"}, self.rpc)[1], 400)
+
+    def test_ctl_from_start_seek_by_live_handoff_and_go_live(self):
+        with mock.patch("time.time", return_value=NOW):
+            # from_start on live catchup channel -> switches to current programme at 0:00
+            b, c = self.ps.post(self.ps.PREFIX + "ctl", {"op": "from_start"}, self.rpc)
+            self.assertEqual((c, b["ok"]), (200, True))
+            self.assertEqual(self.calls[-1][1]["item"]["file"], "plugin://plugin.video.sweettv/playvid/5|50")
+            # seek_by -15 on live catchup channel -> rewinds into archive
+            b, c = self.ps.post(self.ps.PREFIX + "ctl", {"op": "seek_by", "seconds": -15}, self.rpc)
+            self.assertEqual((c, b["ok"], b["switched"]), (200, True, "archive"))
+            # seek_by on in-progress archive within <= 15s of live edge -> forward_handoff to live
+            self.item = {"file": "plugin://plugin.video.sweettv/playvid/5|50", "title": "Сейчас Первый"}
+            self.props = {"time": {"hours": 0, "minutes": 29, "seconds": 50}, "totaltime": {"hours": 1, "minutes": 0, "seconds": 0}}
+            # NOW - (NOW - 1800) = 1800s is live edge; 1790 + 30 = 1820 >= 1800 - 15 -> handoff to live
+            b, c = self.ps.post(self.ps.PREFIX + "ctl", {"op": "seek_by", "seconds": 30}, self.rpc)
+            self.assertEqual((c, b["ok"]), (200, True))
+            self.assertEqual(self.calls[-1][1]["item"]["file"], "plugin://plugin.video.sweettv/playvid/5|null")
+            # seek_by on in-progress archive staying > 15s behind live edge -> Player.Seek, no handoff
+            self.props = {"time": {"hours": 0, "minutes": 10, "seconds": 0}, "totaltime": {"hours": 1, "minutes": 0, "seconds": 0}}
+            b, c = self.ps.post(self.ps.PREFIX + "ctl", {"op": "seek_by", "seconds": 120}, self.rpc)
+            self.assertEqual((c, b["ok"]), (200, True))
+            self.assertEqual(self.calls[-1][0], "Player.Seek")
+            # live op on archive -> returns to live
+            b, c = self.ps.post(self.ps.PREFIX + "ctl", {"op": "live"}, self.rpc)
+            self.assertEqual((c, b["ok"]), (200, True))
+            self.assertEqual(self.calls[-1][1]["item"]["file"], "plugin://plugin.video.sweettv/playvid/5|null")
+        # invalid ops and no player
+        for bad in ({}, None, {"op": "bogus"}, {"op": "seek_by", "seconds": "10"}, {"op": "seek_by", "seconds": True}):
+            self.assertEqual(self.ps.post(self.ps.PREFIX + "ctl", bad, self.rpc)[1], 400, bad)
+        self.players = []
+        self.assertEqual(self.ps.post(self.ps.PREFIX + "ctl", {"op": "from_start"}, self.rpc)[1], 409)
+
+    def test_decorate_exposes_unified_live_catchup_timeline(self):
+        live_view = {"playing": True, "app": "sweettv", "cid": "5", "epg": "", "live": True, "time": 10, "total": 60}
+        d = self.ps.decorate(live_view, FIXTURE, NOW)
+        self.assertEqual(d["programme"], "Сейчас Первый")
+        self.assertEqual((d["prog_start"], d["prog_stop"]), (NOW - 1800, NOW + 1800))
+        self.assertTrue(d["in_progress"])
+        self.assertTrue(d["can_rewind"])
+        self.assertFalse(d["go_live"])
+        self.assertFalse(d["is_vod"])
+        self.assertGreaterEqual(d["lag_seconds"], 0)
+        vod_view = {"playing": True, "app": "sweettv", "cid": "", "epg": "", "live": False,
+                    "file": "plugin://plugin.video.sweettv/playvod/9558|101|69", "time": 100, "total": 2400}
+        dv = self.ps.decorate(vod_view, FIXTURE, NOW)
+        self.assertTrue(dv["is_vod"])
+        self.assertFalse(dv["can_rewind"])
+        self.assertFalse(dv["go_live"])
+
+    def test_legacy_compat_signatures_still_work(self):
+        self.assertTrue(self.ps.sections_view(FIXTURE, NOW)["ok"])
+        self.assertTrue(self.ps.shows_view(FIXTURE, NOW)["ok"])
+        self.assertTrue(self.ps.films_view(FIXTURE, NOW)["ok"])
 
 
 if __name__ == "__main__":

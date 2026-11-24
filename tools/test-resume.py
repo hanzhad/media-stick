@@ -310,6 +310,23 @@ class Quality(Base):
         self.assertEqual(mr.read_quality(), "unlimited")
 
 
+class Favourites(Base):
+    def test_toggle_fav_adds_removes_and_rejects_invalid_keys(self):
+        self.assertEqual(mr.fav_keys(), set())
+        for valid in ("show:vod:9558", "show:epg:12", "show:tv:5", "vod:9558", "ch:5"):
+            now_fav, saved_ok = mr.toggle_fav(valid, {"title": "Item " + valid, "thumb": "https://cdn.sweet.tv/a.jpg"}, now=NOW)
+            self.assertTrue((now_fav, saved_ok), valid)
+            self.assertIn(valid, mr.fav_keys())
+        self.assertEqual(len(mr.load_favs()["items"]), 5)
+        now_fav, saved_ok = mr.toggle_fav("vod:9558", now=NOW + 1)
+        self.assertEqual((now_fav, saved_ok), (False, True))
+        self.assertNotIn("vod:9558", mr.fav_keys())
+        for bad in ("", None, "bad", "show:bad:1", "vod:abc", "ch:", 123):
+            now_fav, saved_ok = mr.toggle_fav(bad, now=NOW)
+            self.assertEqual((now_fav, saved_ok), (False, False), bad)
+        self.assertEqual(len(mr.load_favs()["items"]), 4)
+
+
 class Listings(Base):
     def reply(self, *files):
         return {"jsonrpc": "2.0", "id": 1, "result": {"files": list(files)}}
@@ -675,39 +692,34 @@ class PhoneSweet(Base):
         self.assertEqual(ps.play_request(LIST, {"cid": 5, "epg": 51, "at": "resume"}, NOW, ps.local())[2], 0)
         self.assertEqual(ps.play_request(LIST, dict(body, at=30), NOW, ps.local())[2], 30)
 
-    def test_the_choice_over_the_phone_api(self):
+    def test_the_quality_choice_over_the_phone_api(self):
         body, code = ps.get(ps.PREFIX + "settings", None)
-        self.assertEqual((code, body["local_resume"], body["default"], body["saved"]), (200, False, False, 0))
-        body, code = ps.post(ps.PREFIX + "settings", {"local_resume": True}, None)
-        self.assertEqual((code, body["local_resume"]), (200, True))
-        self.assertTrue(mr.enabled())
-        self.assertEqual(ps.get(ps.PREFIX + "settings", None)[0]["local_resume"], True)
-        body, code = ps.post(ps.PREFIX + "settings", {"local_resume": False}, None)
-        self.assertEqual((code, body["local_resume"], mr.enabled()), (200, False, False))
+        self.assertEqual((code, body["ok"], body["quality"]), (200, True, "1080p"))
+        for q in ("720p", "unlimited", "1080p"):
+            body, code = ps.post(ps.PREFIX + "settings", {"quality": q}, None)
+            self.assertEqual((code, body["ok"], body["quality"]), (200, True, q))
+            self.assertEqual(mr.read_quality(), q)
+            self.assertEqual(ps.get(ps.PREFIX + "settings", None)[0]["quality"], q)
 
-    def test_the_saved_count_is_what_the_stick_holds(self):
-        self.assertTrue(mr.save(self.placed((VID, 150, 600), (VID2, 100, 600), (ARCHIVE, 1500, 3600))))
-        self.assertEqual(ps.get(ps.PREFIX + "settings", None)[0]["saved"], 3)
-
-    def test_anything_but_a_boolean_is_refused_and_nothing_changes(self):
-        for value in ("1", 1, None, "true", [True]):
-            body, code = ps.post(ps.PREFIX + "settings", {"local_resume": value}, None)
+    def test_invalid_quality_is_refused_and_nothing_changes(self):
+        for value in ("480p", "2160p", 1080, None, True, ["1080p"], ""):
+            body, code = ps.post(ps.PREFIX + "settings", {"quality": value}, None)
             self.assertEqual(code, 400, value)
             self.assertIn("error", body)
         for body in (None, {}, [], "x"):
             self.assertEqual(ps.post(ps.PREFIX + "settings", body, None)[1], 400)
-        self.assertFalse(os.path.exists(os.path.join(mr.PREFS, "local-resume")))
+        self.assertFalse(os.path.exists(os.path.join(mr.PREFS, "max-quality")))
 
     def test_a_disk_that_refuses_is_said_so(self):
-        with mock.patch.object(mr, "set_enabled", lambda value: False):
-            body, code = ps.post(ps.PREFIX + "settings", {"local_resume": True}, None)
+        with mock.patch.object(mr, "write_quality", lambda value: False):
+            body, code = ps.post(ps.PREFIX + "settings", {"quality": "720p"}, None)
         self.assertEqual(code, 500)
         self.assertIn("error", body)
 
     def test_a_device_without_the_library_says_so(self):
         with mock.patch.object(ps, "mr", None):
             self.assertEqual(ps.get(ps.PREFIX + "settings", None)[1], 503)
-            self.assertEqual(ps.post(ps.PREFIX + "settings", {"local_resume": True}, None)[1], 503)
+            self.assertEqual(ps.post(ps.PREFIX + "settings", {"quality": "720p"}, None)[1], 503)
             self.assertIsNone(ps.local())
 
 
@@ -719,11 +731,6 @@ class Texts(Base):
             self.assertIn(msgid, sweettv_text.TEXT, msgid)
             self.assertTrue(sweettv_text.TEXT[msgid].get("ru") and sweettv_text.TEXT[msgid].get("uk"), msgid)
             self.assertNotEqual(sweettv_text.TEXT[msgid]["ru"], msgid)
-
-    def test_the_switch_is_labelled_in_the_dictionary(self):
-        body, _ = ps.get(ps.PREFIX + "settings", None)
-        self.assertEqual(body["label"], "Помнить, где остановились, на приставке")
-        self.assertIn("Kodi", body["hint"])
 
 
 def ml_url(cid, epg, offset):

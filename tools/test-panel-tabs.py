@@ -266,10 +266,12 @@ class Page(unittest.TestCase):
         self.assertEqual(re.findall(r'class="sname">([^<]+)<', lst),
                          ["Аккаунты", "Wi-Fi", "Пульт как приложение", "Язык", "О приставке", "Обслуживание"])
         self.assertEqual(lst.count('class="chev" aria-hidden="true">›<'), 6)
-        # the switch «remember where I stopped» is a row of the list, after the language, and not a link to a page
+        # the video quality selector sits in the list, after the language, and is not a link to a page
         self.assertLess(lst.index('data-sp="lang"'), lst.index('id="wt-resume"'))
         self.assertLess(lst.index('id="wt-resume"'), lst.index('data-sp="info"'))
-        self.assertIn('<input id="wt-rs" type="checkbox" role="switch"', lst)
+        self.assertIn("До 720p", lst)
+        self.assertIn("До 1080p (Pi 3)", lst)
+        self.assertIn("Без лимита / 4K (Pi 5)", lst)
         for i in ("sv-acc", "sv-wifi", "sv-https", "sv-info"):
             self.assertIn('id="%s"' % i, lst)
         for page, sec in (("acc", "t-acc"), ("wifi", "t-wifi"), ("https", "t-https"), ("info", "t-info"), ("act", "t-act")):
@@ -532,6 +534,28 @@ class Served(unittest.TestCase):
         status, raw = self.get("/")
         self.assertEqual(status, 200)
         self.assertEqual(re.findall(r'<button data-go="(\w+)"', raw), ["watch", "remote", "settings"])
+
+    def test_sweettv_post_routes_require_x_panel_and_valid_host(self):
+        def post(path, body, headers):
+            c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+            c.request("POST", path, body=json.dumps(body).encode("utf-8"), headers=headers)
+            r = c.getresponse()
+            r.read()
+            c.close()
+            return r.status
+
+        host = "localhost:%d" % self.port
+        for route in ("play", "ctl", "favourite", "settings"):
+            # missing X-Panel -> 403
+            self.assertEqual(post("/api/sweettv/" + route, {}, {"Host": host, "Content-Type": "application/json"}), 403, route)
+            # bad Host -> 403
+            self.assertEqual(post("/api/sweettv/" + route, {}, {"Host": "evil.example", "X-Panel": "1",
+                                                                "Content-Type": "application/json"}), 403, route)
+        # delegation counts in bin/panel remain intact
+        with open(PANEL, encoding="utf-8") as f:
+            src = f.read()
+        self.assertEqual(src.count("panel_sweettv.PREFIX"), 2)
+        self.assertEqual(src.count("panel_sweettv.get(") + src.count("panel_sweettv.post("), 2)
 
 
 if __name__ == "__main__":
