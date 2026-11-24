@@ -77,6 +77,10 @@ class Playing(unittest.TestCase):
                          "plugin://plugin.video.sweettv/playvid/12|null")
         self.assertEqual(pw.play_target("plugin://plugin.video.sweettv/playvid/12|345"),
                          "plugin://plugin.video.sweettv/playvid/12|345")
+        self.assertEqual(pw.play_target("plugin://plugin.video.sweettv/playvod/9558|null|69"),
+                         "plugin://plugin.video.sweettv/playvod/9558|null|69")
+        self.assertEqual(pw.play_target("plugin://plugin.video.sweettv/playvod/1234|5678|69?start=120"),
+                         "plugin://plugin.video.sweettv/playvod/1234|5678|69?start=120")
 
     def test_rejects(self):
         for f in (YT, YT + "special/my_subscriptions", YT + "kodion/search/query/?q=x", YT + "play/../x",
@@ -85,6 +89,10 @@ class Playing(unittest.TestCase):
                   "/home/media/x.mp4", "smb://nas/film.mkv", "plugin://plugin.video.sweettv/playvid/12",
                   "plugin://plugin.video.sweettv/playvid/ab|null", "plugin://plugin.video.sweettv/playvid/12|x",
                   "plugin://plugin.video.sweettv/playvid/12|null|rm", "plugin://plugin.video.sweettv/other/12|null",
+                  "plugin://plugin.video.sweettv/playvod/9558",
+                  "plugin://plugin.video.sweettv/playvod/ab|null|0",
+                  "plugin://plugin.video.sweettv/playvod/9558|bad|0",
+                  "plugin://plugin.video.sweettv/playvod/9558|null|bad",
                   VID + "\nx", VID + " x", VID + '"', "", None, 7, [VID]):
             self.assertEqual(pw.play_target(f), "", f)
 
@@ -97,7 +105,11 @@ class Playing(unittest.TestCase):
     def test_app_of(self):
         self.assertEqual(pw.app_of(VID), "youtube")
         self.assertEqual(pw.app_of("plugin://plugin.video.sweettv/playvid/1|null"), "sweettv")
+        self.assertEqual(pw.app_of("plugin://plugin.video.sweettv/playvod/9558|null|69"), "sweettv")
         self.assertEqual(pw.app_of("/x.mkv"), "other")
+
+    def test_sweet_ref_vod(self):
+        self.assertIsNotNone(pw.sweet_ref("plugin://plugin.video.sweettv/playvod/9558|101|69?start=120"))
 
 
 def channel(cid, name, now, start_now, stop_now, nxt, cats=(3,), icon="https://cdn.sweet.tv/c.png", number=1):

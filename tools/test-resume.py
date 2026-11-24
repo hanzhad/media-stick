@@ -252,6 +252,63 @@ class Library(Base):
         for raw, cid, epg in (({}, "5", "50"), (None, "5", "50"), (LIST, "6", "50"), (LIST, "5", "99"), ({"list": [3, None]}, "5", "50")):
             self.assertEqual(mr.programme_meta(raw, cid, epg), {})
 
+    def test_vod_paths_and_keys(self):
+        movie = "plugin://plugin.video.sweettv/playvod/9558|null|69"
+        episode = "plugin://plugin.video.sweettv/playvod/1234|5678|69?start=120"
+        self.assertEqual(mr.key_of(mr.parse(movie)), "sw:vod:9558")
+        self.assertEqual(mr.key_of(mr.parse(episode)), "sw:vod:1234|5678")
+        for bad in ("plugin://plugin.video.sweettv/playvod/9558",
+                    "plugin://plugin.video.sweettv/playvod/abc|null|0",
+                    "plugin://plugin.video.sweettv/playvod/9558|bad|0",
+                    "plugin://plugin.video.sweettv/playvod/9558|null|bad"):
+            self.assertIsNone(mr.parse(bad), bad)
+
+    def test_vod_movie_and_episode_are_recorded_and_roundtripped(self):
+        movie = "plugin://plugin.video.sweettv/playvod/9558|null|69"
+        episode = "plugin://plugin.video.sweettv/playvod/1234|5678|69"
+        data = mr.record(mr.empty(), movie, 420, 3600, 1000, {"title": "Зрадники"})
+        data = mr.record(data, episode, 900, 2400, 1005, {"title": "S1E2"})
+        self.assertEqual(mr.seconds_for(data, movie), 420)
+        self.assertEqual(mr.seconds_for(data, episode), 900)
+        self.assertAlmostEqual(mr.progress_for(data, movie), 420 / 3600)
+        self.assertTrue(mr.save(data))
+        loaded = mr.load()
+        self.assertEqual(mr.seconds_for(loaded, movie), 420)
+        self.assertEqual(mr.seconds_for(loaded, episode), 900)
+
+    def test_epg_optional_metadata_is_preserved(self):
+        meta = {"title": "Утро", "start": NOW - 7200, "stop": NOW - 3600,
+                "show_id": "321", "season": 2, "episode": 7, "thumb": "https://img.example/ep.jpg"}
+        data = mr.record(mr.empty(), ARCHIVE, 1200, 3600, 1000, meta)
+        entry = data["items"]["sw:5|50"]
+        self.assertEqual((entry.get("show_id"), entry.get("season"), entry.get("episode"), entry.get("thumb")),
+                         ("321", 2, 7, "https://img.example/ep.jpg"))
+        self.assertTrue(mr.save(data))
+        loaded = mr.load()["items"]["sw:5|50"]
+        self.assertEqual((loaded.get("show_id"), loaded.get("season"), loaded.get("episode"), loaded.get("thumb")),
+                         ("321", 2, 7, "https://img.example/ep.jpg"))
+
+
+class Quality(Base):
+    def test_normalize_quality(self):
+        for raw, expected in (("720p", "720p"), ("1080p", "1080p"), ("unlimited", "unlimited"),
+                              ("4k", "unlimited"), ("4K", "unlimited"),
+                              (None, "1080p"), ("", "1080p"), ("480p", "1080p"), ("garbage", "1080p"), (1080, "1080p")):
+            self.assertEqual(mr.normalize_quality(raw), expected, raw)
+
+    def test_read_and_write_quality(self):
+        self.assertEqual(mr.read_quality(), "1080p")
+        os.makedirs(mr.PREFS, exist_ok=True)
+        with open(os.path.join(mr.PREFS, "max-quality"), "w", encoding="utf-8") as f:
+            f.write("bogus\n")
+        self.assertEqual(mr.read_quality(), "1080p")
+        self.assertTrue(mr.write_quality("720p"))
+        self.assertEqual(mr.read_quality(), "720p")
+        self.assertEqual(oct(os.stat(os.path.join(mr.PREFS, "max-quality")).st_mode & 0o777), "0o644")
+        self.assertEqual([n for n in os.listdir(mr.PREFS) if n.endswith(".tmp")], [])
+        self.assertTrue(mr.write_quality("4k"))
+        self.assertEqual(mr.read_quality(), "unlimited")
+
 
 class Listings(Base):
     def reply(self, *files):
@@ -275,55 +332,41 @@ class Listings(Base):
         for reply in ({"error": {"code": -32602}}, {"result": None}, {"result": {"files": 3}}, None, [], {"result": {}}):
             self.assertEqual(mr.localize_reply(reply, mr.empty()), reply)
 
-    def test_the_phone_gets_the_bars_from_the_stick_when_it_is_on(self):
+    def test_the_phone_ignores_local_resume_even_when_enabled(self):
         theirs = {"file": VID, "filetype": "file", "title": "t", "duration": 600, "resume": {"position": 430, "total": 600}}
         rpc = lambda method, params, timeout=0: {"files": [dict(theirs)]}    # noqa: E731
         data = pw.yt()
-        entry = pw._directory(data, rpc, YT).entries[0]
-        self.assertEqual(pw.map_entry(entry)["resume"], 430)                 # off: what Kodi says
         self.on(self.placed((VID, 150, 600)))
         entry = pw._directory(data, rpc, YT).entries[0]
-        self.assertEqual((pw.map_entry(entry)["resume"], pw.map_entry(entry)["progress"]), (150, 0.25))
-        self.on(mr.empty())
-        entry = pw._directory(data, rpc, YT).entries[0]
-        self.assertEqual((pw.map_entry(entry)["resume"], pw.map_entry(entry)["progress"]), (0, 0))   # nothing saved: no bar
+        self.assertEqual(pw.map_entry(entry)["resume"], 430)
 
-    def test_the_tv_app_gets_the_bars_from_the_stick_when_it_is_on(self):
+    def test_the_tv_app_ignores_local_resume_even_when_enabled(self):
         State.answers["Files.GetDirectory"] = {"files": [{"file": VID, "title": "t", "resume": {"position": 430, "total": 600},
                                                           "playcount": 2}]}
-        self.assertEqual(youtube_files.get_directory(YT)["result"]["files"][0]["resume"]["position"], 430)
         self.on(self.placed((VID, 150, 600)))
         item = youtube_files.get_directory(YT)["result"]["files"][0]
-        self.assertEqual((item["resume"], item["playcount"]), ({"position": 150, "total": 600}, 0))
+        self.assertEqual((item["resume"]["position"], item["playcount"]), (430, 2))
         self.assertEqual(State.rpc[-1]["method"], "Files.GetDirectory")
 
 
 class Playing(Base):
-    def test_the_phone_starts_a_video_from_the_number_it_sends_when_off_and_from_the_stick_when_on(self):
+    def test_the_phone_starts_youtube_from_its_own_resume_even_when_local_enabled(self):
         calls, seeks = [], []
         rpc = lambda method, params, timeout=0: calls.append((method, params)) or {}     # noqa: E731
         with mock.patch.object(pw, "_seek_when_started", lambda r, s: seeks.append(s)):
+            self.on(self.placed((VID, 150, 600)))
             pw.play({"file": VID, "resume": 430}, rpc)
             self.assertEqual(calls[-1], ("Player.Open", {"item": {"file": VID}}))
-            self.on(self.placed((VID, 150, 600)))
-            pw.play({"file": VID, "resume": 430}, rpc)
-            self.assertEqual(calls[-1], ("Player.Open", {"item": {"file": VID}, "options": {"resume": False}}))
-            pw.play({"file": VID2, "resume": 430}, rpc)                  # nothing saved for this one: from the start
-            self.assertEqual(calls[-1][1]["options"], {"resume": False})
             time.sleep(0.2)
-        self.assertEqual(sorted(seeks), [150, 430])
+        self.assertEqual(seeks, [430])
 
-    def test_the_tv_app_starts_a_video_where_the_stick_says(self):
+    def test_the_tv_app_starts_youtube_normally_even_when_local_enabled(self):
         threads = []
         with mock.patch.object(youtube_files.threading, "Thread", lambda target, args, daemon: threads.append(args) or mock.Mock()):
-            youtube_files.play(VID)
-            self.assertEqual(State.rpc[-1]["params"], {"item": {"file": VID}})
-            self.assertEqual(threads, [])
             self.on(self.placed((VID, 150, 600)))
             youtube_files.play(VID)
-            self.assertEqual(State.rpc[-1]["params"], {"item": {"file": VID}, "options": {"resume": False}})
-            youtube_files.play(VID2)
-        self.assertEqual(threads, [(150,)])
+            self.assertEqual(State.rpc[-1]["params"], {"item": {"file": VID}})
+        self.assertEqual(threads, [])
 
     def test_the_seek_waits_for_the_video_and_goes_once(self):
         State.total, State.time = 600, 0
@@ -542,6 +585,16 @@ class Watching(Base):
         with mock.patch.object(store, "resume", None):
             self.assertIsNone(resume_recorder.start())
 
+    def test_a_vod_stream_is_recorded_via_sweetlive(self):
+        stream = "https://vod.sweet.tv/vod/9558/5678/index.m3u8?token=x"
+        store.sweetlive.remember("vod:9558", "5678", stream, 0, now=NOW)
+        w = self.make()
+        State.file, State.label, State.time, State.total = stream, "", 400.0, 1800.0
+        w.tick()
+        w.onPlayBackStopped()
+        item = mr.load()["items"]["sw:vod:9558|5678"]
+        self.assertEqual((item["pos"], item["total"], item["done"]), (400, 1800, False))
+
 
 class SweetState(Base):
     def state(self, **resume):
@@ -588,15 +641,16 @@ class SweetState(Base):
         local["live"]["at"] = NOW - 9000
         self.assertEqual(saved.merge_local(self.state(), local)["last"], "9")
 
-    def test_the_app_asks_for_the_positions_only_when_the_choice_is_on(self):
-        self.assertIsNone(sweettv_files.local_positions())
-        self.on(self.placed((ARCHIVE, 1500, 3600)))
+    def test_the_app_always_reads_local_positions_even_when_local_resume_off(self):
+        mr.save(self.placed((ARCHIVE, 1500, 3600)))
+        self.assertFalse(mr.enabled())
         self.assertIn("sw:5|50", sweettv_files.local_positions()["items"])
         with open(os.path.join(ADDON_LIB, "sweettv_app.py"), encoding="utf-8") as f:
             self.assertIn("saved.merge_local(saved.load_state(files.state_path()), files.local_positions())", f.read())
 
-    def test_a_device_without_the_library_keeps_the_places_as_they_were(self):
+    def test_store_local_resume_is_none_for_youtube(self):
         self.on(self.placed((VID, 150, 600)))
+        self.assertIsNone(store.local_resume())
         with mock.patch.object(store, "resume", None):
             self.assertIsNone(store.local_resume())
             self.assertIsNone(sweettv_files.local_positions())
@@ -604,9 +658,9 @@ class SweetState(Base):
 
 
 class PhoneSweet(Base):
-    def test_the_programme_sheet_has_the_stick_places_only_when_it_is_on(self):
-        self.assertNotIn("resume", ps.guide_view(LIST, "5", NOW, None)["past"][0])
-        self.on(self.placed((ARCHIVE, 1500, 3600), ("plugin://plugin.video.sweettv/playvid/5|51", 3590, 3600)))
+    def test_the_programme_sheet_always_has_the_stick_places_even_when_local_resume_off(self):
+        mr.save(self.placed((ARCHIVE, 1500, 3600), ("plugin://plugin.video.sweettv/playvid/5|51", 3590, 3600)))
+        self.assertFalse(mr.enabled())
         view = ps.guide_view(LIST, "5", NOW, ps.local())
         self.assertEqual((view["past"][0]["resume"], view["past"][0]["watched"]), (1500, False))
         self.assertEqual((view["current"]["resume"], view["current"]["watched"]), (0, True))
@@ -614,8 +668,8 @@ class PhoneSweet(Base):
 
     def test_play_from_the_place_the_stick_saved(self):
         body = {"cid": 5, "epg": 50, "at": "resume"}
-        self.assertEqual(ps.play_request(LIST, body, NOW, None)[2], 0)                   # off: the start
-        self.on(self.placed((ARCHIVE, 1500, 3600)))
+        self.assertEqual(ps.play_request(LIST, body, NOW, None)[2], 0)
+        mr.save(self.placed((ARCHIVE, 1500, 3600)))
         url, epg, offset = ps.play_request(LIST, body, NOW, ps.local())
         self.assertEqual((url, epg, offset), (ml_url(5, 50, 1500), "50", 1500))
         self.assertEqual(ps.play_request(LIST, {"cid": 5, "epg": 51, "at": "resume"}, NOW, ps.local())[2], 0)

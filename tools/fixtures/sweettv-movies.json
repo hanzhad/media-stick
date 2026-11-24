@@ -1,0 +1,44 @@
+{
+  "status": "OK",
+  "movies": [
+    {
+      "id": 9558,
+      "title": "Зрадники",
+      "year": 2024,
+      "duration": 3600,
+      "rating_imdb": 8.2,
+      "genres": [3, 12],
+      "poster_url": "https://img.example/9558-p.jpg",
+      "horizontal_poster_url": "https://img.example/9558-b.jpg",
+      "external_id_pairs": [
+        {"owner_id": 12, "preferred": false},
+        {"owner_id": 69, "preferred": true}
+      ],
+      "owners": null,
+      "availability_info": {"available": true},
+      "watch_info": {"position": 999}
+    },
+    {
+      "id": 9559,
+      "title": "Платний фільм TVOD",
+      "year": 2025,
+      "duration": 5400,
+      "rating_imdb": 7.1,
+      "genres": [61],
+      "poster_url": "https://img.example/9559-p.jpg",
+      "external_id_pairs": [{"owner_id": 15}],
+      "availability_info": {"available": false}
+    },
+    {
+      "id": 9560,
+      "title": "Космос 4K",
+      "year": 2024,
+      "duration": 4200,
+      "rating_imdb": 8.5,
+      "genres": [61, 57],
+      "poster_url": "https://img.example/9560-p.jpg",
+      "owners": [42],
+      "availability_info": {"available": true}
+    }
+  ]
+}
