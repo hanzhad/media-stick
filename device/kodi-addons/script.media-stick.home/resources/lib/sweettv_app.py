@@ -1,10 +1,15 @@
 """SWEET.TV app window: Netflix-style TV UI with 7-section left rail, hero banner, 4x2 card grid, and modals."""
 import os
+import sys
 import threading
 import time
 
 import xbmc
 import xbmcgui
+
+LIB_DIR = "/usr/local/lib/media-stick"
+if LIB_DIR not in sys.path:
+    sys.path.insert(0, LIB_DIR)
 
 import mediastick_resume as mr
 from resources.lib import page_cache, single_instance, sweettv_data as data, sweettv_demo, \

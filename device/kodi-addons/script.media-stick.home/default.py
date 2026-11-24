@@ -15,6 +15,10 @@
 # Without arguments: go to the (skin) Home window, where the service shows the launcher.
 import sys
 
+LIB_DIR = "/usr/local/lib/media-stick"
+if LIB_DIR not in sys.path:
+    sys.path.insert(0, LIB_DIR)
+
 import xbmc
 
 from resources.lib import apps
