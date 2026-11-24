@@ -64,6 +64,7 @@ class _MsPlayer(xbmc.Player):
             xbmc.log('media-stick: SWEET.TV rewind not planned: ' + repr(e)[:120], xbmc.LOGWARNING)
             return
         if plan['ok']:
+            _ml.ask_url(plan['url'])   # the add-on that resolves it is told the place here too: the path may lose its query
             xbmc.executebuiltin('PlayMedia(%s)' % plan['url'])
         elif plan['reason'] == 'no_archive':
             _ms_gui.Dialog().notification('SWEET.TV', _ml.text(_ml.NO_ARCHIVE), _ms_gui.NOTIFICATION_INFO)

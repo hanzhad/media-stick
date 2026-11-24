@@ -738,13 +738,28 @@ def _ms_remember(cid, epg, url, offset):
         xbmc.log('media-stick: SWEET.TV stream not written down: ' + repr(e)[:120], xbmc.LOGWARNING)
 
 
-def _ms_start():
-    # where to start an archived programme, seconds in: the add-on's own service and the phone ask for a place in the query
-    try:
-        from urllib.parse import parse_qs
-        return max(0, min(int(parse_qs(sys.argv[2].lstrip('?')).get('ms_start', ['0'])[0]), 3 * 86400))
-    except Exception:
+def _ms_ids(videoid):
+    # '<channel>|<programme id or null>': a query or protocol options that Kodi left behind it are not part of the id
+    found = _ms_live.split_id(videoid) if _ms_live else None
+    return found if found else tuple(videoid.split('|'))
+
+
+def _ms_start(cid, epg, videoid):
+    # where to start an archived programme, seconds in. Kodi may not hand the query over (the '|' of the path makes it read
+    # what follows as protocol options), so every place it may be in is looked at, then what the opener wrote down
+    # (mediastick_sweetlive.start_of); the one line in the log says where it came from
+    if not _ms_live or not epg:
         return 0
+    try:
+        offset, source = _ms_live.start_of(sys.argv, videoid, cid, epg, now=time.time())
+    except Exception as e:
+        xbmc.log('media-stick: SWEET.TV start place not read: ' + repr(e)[:120], xbmc.LOGWARNING)
+        return 0
+    try:
+        xbmc.log('media-stick: SWEET.TV archive %s|%s asked to start at %ss (%s)' % (cid, epg, offset, source), xbmc.LOGINFO)
+    except Exception:
+        pass
+    return offset
 
 
 def _ms_names(cid, epg):
@@ -826,7 +841,7 @@ def playvid(videoid):
         xbmcgui.Dialog().notification('Sweet.tv', 'Log in to the plugin', xbmcgui.NOTIFICATION_INFO)
         xbmcplugin.setResolvedUrl(helper.handle, False, xbmcgui.ListItem())
     else:
-        idx, pid = videoid.split('|')
+        idx, pid = _ms_ids(videoid)   # media-stick: a query that Kodi left in the id is not the programme
         json_data = {
             'without_auth': True,
             'channel_id': int(idx),
@@ -875,8 +890,10 @@ def playvid(videoid):
                 subs = None
 
             # media-stick begin
-            ms_undo = _ms_name_the_item(idx, pid if pid != 'null' else None, _ms_start())
-            _ms_remember(idx, pid if pid != 'null' else None, stream_url, _ms_start())
+            ms_epg = pid if pid != 'null' else None
+            ms_offset = _ms_start(idx, ms_epg, videoid)
+            ms_undo = _ms_name_the_item(idx, ms_epg, ms_offset)
+            _ms_remember(idx, ms_epg, stream_url, ms_offset)
             # media-stick end
             if helper.get_setting('playerType') == 'ffmpeg' and DRM is None:
                 helper.ffmpeg_player(stream_url)

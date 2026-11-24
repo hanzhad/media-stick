@@ -10,6 +10,7 @@ phone's -10 and the way back to the live stream - so they cannot disagree.
   ref(file)                   a played item's path -> (channel id, programme id or "", start seconds), or None
   remember / recall / identify   what an address of a stream is (see "Identity" below)
   seek_step / follow          the start place of an archive that has begun (see "Start place" below)
+  ask / ask_url / start_of    how the add-on learns the place it was asked to start at (see "The ask" below)
 
 Identity. Kodi tells the player the address of the stream the add-on resolved (https://hls-dvr2.sweet.tv/dvr/...), not the
 plugin path that was asked for - at least for an archive - so nobody who asks the player "what is playing" can tell which
@@ -23,6 +24,14 @@ Start place. Kodi ignores the item property StartOffset of a plugin-resolved ite
 may begin at 0. `seek_step` decides, from where the player is and how long it says the stream is, whether to seek, and
 `follow` is the loop that does it after the playback has begun (the add-on's service runs it in a thread).
 
+The ask. Where the place of an archive travels is Kodi's business: on the device the add-on saw no `?ms_start=N` where it looked
+(sys.argv[2]) although the path it was opened with had one (the "|" of `playvid/<channel>|<programme>` may make Kodi read what
+follows as protocol options), so the add-on reads the place from every spot it may be in (argv[2], argv[0], the id itself) and, failing that, from the ask:
+whoever opens an archive from a place (the phone's play and -10, the TV remote's seek back) knows channel, programme and
+place before it opens, writes them in /run/media-stick/sweettv-ask.json (`ask`, `ask_url`) and opens. The add-on's `start_of`
+takes the ask when it is for that channel and programme and no older than ASK_FRESH s, and takes it for good: a later play of
+the programme, from the TV, is not put at a stale place.
+
 Assumed, to be checked on a device: the time of the picture is the wall clock (LIVE_LAG seconds behind it).
 """
 import hashlib
@@ -32,7 +41,7 @@ import os
 import re
 import tempfile
 import time
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 ADDON_LIB = os.path.join("script.media-stick.home", "resources", "lib")
 TEXT_DIRS = (os.environ.get("MEDIASTICK_ADDON_LIB", ""), "/home/media/.kodi/addons/" + ADDON_LIB,
@@ -55,6 +64,10 @@ SEEK_RETRY = 3             # s between two seeks of one start
 SEEK_ATTEMPTS = 3
 MIN_TOTAL = 30             # s: a length shorter than this is the player not knowing yet, not a programme
 ID_RE = re.compile(r"[0-9]{1,12}")
+ASK_FILE = "sweettv-ask.json"
+ASK_FRESH = 30             # s an ask is good for: the add-on is asked to resolve the item a moment after it is written
+START_RE = re.compile(r"ms_start=([0-9]{1,12})")
+ITEM_RE = re.compile(r"\s*([0-9]{1,12})\|(null|[0-9]{1,12})(?=$|[?&|#/%\s])")   # `<channel>|<programme or null>` and what Kodi may leave after it
 
 
 def text(msgid):
@@ -293,3 +306,98 @@ def follow(player, entry, file, sleep=None, clock=None, step=0.5):
             return "gone"
         sleep(step)
     return "gave_up"
+
+
+# ---- the ask: where the opener of an archive says it should start -------------------------------------
+
+def split_id(videoid):
+    """(channel id, programme id or "null") of the add-on's `videoid`, whatever Kodi has left after it (a query, protocol
+    options): None when it does not begin with `<channel>|<programme or null>`."""
+    m = ITEM_RE.match(videoid) if isinstance(videoid, str) else None
+    return (m.group(1), m.group(2)) if m else None
+
+
+def ask(cid, epg, offset, now=None, folder=None):
+    """The opener of programme `epg` of channel `cid` starts it `offset` s in: written down for the add-on, which may not be told
+    in the path (see "The ask"). Nothing for live, for the beginning, or for what is not an id. True when written."""
+    cid, epg = str(cid), "" if epg in (None, "", "null") else str(epg)
+    offset = _number(offset)
+    if not epg or not offset or offset <= 0 or not ID_RE.fullmatch(cid) or not ID_RE.fullmatch(epg):
+        return False
+    record = {"cid": cid, "epg": epg, "offset": min(offset, START_MAX), "at": int(time.time() if now is None else now)}
+    return _write(folder or NOW_DIR, ASK_FILE, json.dumps({"v": 1, "ask": record}))
+
+
+def ask_url(url, now=None, folder=None):
+    """`ask` for the plugin path `url` (what `url()` made), just before it is opened. Never raises: an ask that is not
+    written leaves the add-on to what the path says."""
+    try:
+        found = ref(url)
+        return bool(found and ask(found[0], found[1], found[2], now, folder))
+    except Exception:
+        return False
+
+
+def _read_ask(folder=None):
+    try:
+        with open(os.path.join(folder or NOW_DIR, ASK_FILE), encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError, MemoryError):
+        return None
+    e = raw.get("ask") if isinstance(raw, dict) else None
+    if not isinstance(e, dict):
+        return None
+    cid, epg, at, offset = e.get("cid"), e.get("epg"), _number(e.get("at")), _number(e.get("offset"))
+    if not (isinstance(cid, str) and ID_RE.fullmatch(cid) and isinstance(epg, str) and ID_RE.fullmatch(epg)
+            and at is not None and offset is not None and offset > 0):
+        return None
+    return {"cid": cid, "epg": epg, "offset": min(offset, START_MAX), "at": at}
+
+
+def _forget_ask(folder=None):
+    path = os.path.join(folder or NOW_DIR, ASK_FILE)
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError:                    # not ours to remove: an empty ask says the same
+        _write(folder or NOW_DIR, ASK_FILE, json.dumps({"v": 1, "ask": None}))
+
+
+def take_ask(cid, epg, now=None, folder=None):
+    """(offset, state) the ask has for this item: state "used" with the offset when there is one for exactly this channel and
+    programme and it is no older than ASK_FRESH s, else offset 0 and state "none" (no ask), "other" (an ask for another item,
+    left alone) or "stale". An ask for this item is taken whatever its age: it is not asked again."""
+    e = _read_ask(folder)
+    if e is None:
+        return 0, "none"
+    if e["cid"] != str(cid) or e["epg"] != str(epg):
+        return 0, "other"
+    _forget_ask(folder)
+    age = (time.time() if now is None else now) - e["at"]
+    return (e["offset"], "used") if -5 <= age <= ASK_FRESH else (0, "stale")
+
+
+def _positive(match):
+    return min(int(match.group(1)), START_MAX) if match and int(match.group(1)) > 0 else 0
+
+
+def start_of(argv, videoid, cid, epg, now=None, folder=None):
+    """(offset in s, source) where the add-on is asked to start programme `epg` of channel `cid` (resolving `videoid`, with
+    the process's `argv`). The first that says a place above 0 wins: "query" (argv[2], the query as Kodi should give it),
+    "path" (argv[0]), "videoid" (the id string itself), "argv" (any other argument), "ask" (what the opener wrote down).
+    No place: (0, "none, ask <none|other|stale>"). The ask for this item is consumed whichever source wins."""
+    asked, state = take_ask(cid, epg, now, folder)
+    args = [a if isinstance(a, str) else "" for a in (argv if isinstance(argv, (list, tuple)) else ())]
+    where = []
+    if len(args) > 2:
+        where.append(("query", args[2]))
+    if args:
+        where.append(("path", args[0]))
+    where.append(("videoid", videoid if isinstance(videoid, str) else ""))
+    where += [("argv", a) for a in args[3:]]
+    for source, text_ in where:
+        found = _positive(START_RE.search(unquote(text_)))
+        if found:
+            return found, source
+    return (asked, "ask") if asked else (0, "none, ask " + state)

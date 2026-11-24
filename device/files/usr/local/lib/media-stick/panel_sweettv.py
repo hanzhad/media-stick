@@ -315,9 +315,17 @@ def films_view(raw, now):
     return {"ok": True, "items": sections.films(_index(raw), _playable(now))}
 
 
+def open_url(url, rpc):
+    """Player.Open of a SWEET.TV path. Where an archive is to start is written down first (mediastick_sweetlive.ask): Kodi may not
+    give the add-on the query of the path, and what is written here is what the add-on reads then."""
+    if ml is not None:
+        ml.ask_url(url)
+    pw._rpc(rpc, "Player.Open", {"item": {"file": url}})
+
+
 def play(body, rpc):
     url, epg, offset = play_request(channels(), body, time.time(), local())
-    pw._rpc(rpc, "Player.Open", {"item": {"file": url}})
+    open_url(url, rpc)
     return {"ok": True, "epg": epg, "offset": offset}
 
 
@@ -332,7 +340,7 @@ def golive(rpc):
     ref = pw.sweet_ref((item or {}).get("file"))
     if not ref or not ref[1]:
         raise pw.Refused(_t("An archived programme is not playing."), 409)
-    pw._rpc(rpc, "Player.Open", {"item": {"file": ml.url(ref[0])}})
+    open_url(ml.url(ref[0]), rpc)
     return {"ok": True}
 
 

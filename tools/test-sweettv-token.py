@@ -31,7 +31,7 @@ sys.path.insert(0, LIB)
 
 import mediastick_signin as ms  # noqa: E402
 
-WARNING, ERROR, DEBUG = 2, 1, 0
+WARNING, ERROR, DEBUG, INFO = 2, 1, 0, 3
 TOKEN = "TOKEN-VALUE-NEVER-LOGGED"
 BODY = "BODY-TEXT-NEVER-LOGGED"
 CHANNELS = {"status": "OK", "categories": [{"id": 1, "caption": "News"}],
@@ -132,7 +132,7 @@ def load_sweettv(with_library=True, bearer_at_import="", helper_class=None, xbmc
         "routing": types.SimpleNamespace(Plugin=Plugin),
         "urllib3": types.SimpleNamespace(disable_warnings=lambda: None),
         "xbmc": types.SimpleNamespace(log=lambda msg, level=0: logs.append((level, msg)), LOGDEBUG=DEBUG,
-                                      LOGERROR=ERROR, LOGWARNING=WARNING),
+                                      LOGERROR=ERROR, LOGWARNING=WARNING, LOGINFO=INFO),
         "xbmcgui": types.SimpleNamespace(WindowDialog=object, ListItem=object, Dialog=object),
         "xbmcplugin": xbmcplugin or types.SimpleNamespace(), "xbmcvfs": vfs,
         "six": types.ModuleType("six"), "six.moves": types.ModuleType("six.moves"),

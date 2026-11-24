@@ -754,7 +754,7 @@ def _live_rewind(by, pid, rpc):
     found = panel_sweettv.rewind(panel_sweettv.channels(), (item or {}).get("file") if isinstance(item, dict) else None,
                                  by, time.time())
     if found and found["switched"]:
-        _rpc(rpc, "Player.Open", {"item": {"file": found["url"]}})
+        panel_sweettv.open_url(found["url"], rpc)   # writes down where the archive is to start, then Player.Open
     return found
 
 
