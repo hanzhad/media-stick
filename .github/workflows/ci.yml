@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Offline Python tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Python test dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-pil python3-numpy
+
+      - name: Run offline Python test suites
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures
+          import glob
+          import subprocess
+          import sys
+          import time
+
+          tests = sorted(glob.glob("tools/test-*.py"))
+          assert tests, "no tools/test-*.py found"
+          t0 = time.monotonic()
+
+          def run_one(path: str):
+              start = time.monotonic()
+              res = subprocess.run([sys.executable, path], capture_output=True, text=True)
+              return path, res.returncode, time.monotonic() - start, res.stdout, res.stderr
+
+          failed = []
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+              for path, rc, dt, out, err in ex.map(run_one, tests):
+                  status = "PASS" if rc == 0 else f"FAIL({rc})"
+                  print(f"{status:8s} {dt:5.2f}s  {path}", flush=True)
+                  if rc != 0:
+                      failed.append((path, rc, out, err))
+
+          print(f"\nTotal: {len(tests)} suites, {len(failed)} failed in {time.monotonic() - t0:.2f}s")
+          for path, rc, out, err in failed:
+              print(f"\n=== {path} (exit {rc}) ===")
+              if out:
+                  print(out)
+              if err:
+                  print(err, file=sys.stderr)
+          sys.exit(1 if failed else 0)
+          PY
