@@ -19,7 +19,9 @@ import sys
 import threading
 import time
 import types
-from urllib.parse import parse_qs, unquote, urlsplit
+import xml.etree.ElementTree as ET
+from email.utils import formatdate
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import mediastick_signin as signin
 import mediastick_screen as screen   # a cast or a web app has the TV: say so, not "Kodi не отвечает"
@@ -34,6 +36,20 @@ LIB_DIRS = (os.environ.get("MEDIASTICK_ADDON_LIB", ""),
             "/home/media/.kodi/addons/" + ADDON_LIB,
             "/opt/media-stick/device/kodi-addons/" + ADDON_LIB,
             os.path.join(HERE, "..", "..", "..", "..", "..", "kodi-addons", ADDON_LIB))
+
+# The tiles of the apps: the icon files the device already has (the add-on's own, the launcher's art for web apps).
+# A client only ever names an app of the current list; the path is built here and must stay inside these folders.
+ADDONS_ROOT = os.environ.get("MEDIASTICK_ADDONS_ROOT", "/home/media/.kodi/addons")
+APP_ART_DIRS = (os.environ.get("MEDIASTICK_APP_ART", ""),
+                os.path.join(ADDONS_ROOT, LAUNCHER, "resources", "media", "apps"),
+                "/opt/media-stick/device/kodi-addons/" + LAUNCHER + "/resources/media/apps",
+                os.path.join(HERE, "..", "..", "..", "..", "..", "kodi-addons", LAUNCHER, "resources", "media", "apps"))
+ART_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+ART_MAX = 2 * 1024 * 1024
+ART_AGE = 86400
+ADDON_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+ICON_RE = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+){0,4}$")
+ART_ID_RE = re.compile(r"^[a-z0-9-]{1,30}$")
 
 # Pictures are passed through only from the image CDNs the add-ons' art comes from; the page never loads
 # anything else and the panel proxies nothing.
@@ -412,8 +428,101 @@ def apps_view(rpc):
                 r = None
             found += (r or {}).get("addons") or [] if isinstance(r, dict) else []
         recent, _ = _read_json(os.path.join(signin.USERDATA, LAUNCHER, "recent.json"))
-        return build_apps(mod, found, recent)
+        apps = build_apps(mod, found, recent)
+        for a in apps:       # the tile's picture, when the device has one: the page falls back to the letter
+            a["art"] = art_url(a["id"]) if icon_file(a["id"], mod) else ""
+        return apps
     return {"apps": _cached("apps", APPS_TTL, make) or []}
+
+
+# ---- the tiles' pictures ---------------------------------------------------------------------
+
+def addon_icon_rel(xml_text):
+    """The icon's path inside an add-on, as its addon.xml names it (<icon>, also under <assets>); icon.png when it names none."""
+    try:
+        root = ET.fromstring(xml_text)
+    except (ET.ParseError, ValueError, TypeError):
+        return "icon.png"
+    for e in root.iter("icon"):
+        text = (e.text or "").strip()
+        if text:
+            return text
+    return "icon.png"
+
+
+def _image(path, root):
+    """The real path of `path` when it is a small image file of a known type that really lies inside `root`
+    (links are resolved first, so a link out of it is refused); else ''."""
+    try:
+        real, top = os.path.realpath(path), os.path.realpath(root)
+        if os.path.splitext(real)[1].lower() not in ART_TYPES or not (real == top or real.startswith(top + os.sep)):
+            return ""
+        if not os.path.isfile(real) or os.path.getsize(real) > ART_MAX:
+            return ""
+        return real
+    except (OSError, ValueError):
+        return ""
+
+
+def icon_file(app_id, mod):
+    """The icon file of an app of the list (a real path inside the add-ons folder or the launcher's art folder), or ''."""
+    web = {a: art for a, _name, art in getattr(mod, "WEB_APPS", ())}
+    if app_id in web:
+        if not ART_ID_RE.match(web[app_id]):
+            return ""
+        for folder in APP_ART_DIRS:
+            found = _image(os.path.join(folder, web[app_id] + ".png"), folder) if folder else ""
+            if found:
+                return found
+        return ""
+    if not isinstance(app_id, str) or not ADDON_ID_RE.match(app_id) or app_id in (".", ".."):
+        return ""
+    folder = os.path.join(ADDONS_ROOT, app_id)
+    try:
+        with open(os.path.join(folder, "addon.xml"), encoding="utf-8") as f:
+            rel = addon_icon_rel(f.read(200000))
+    except (OSError, ValueError):
+        rel = "icon.png"
+    if not ICON_RE.match(rel) or ".." in rel.split("/"):
+        rel = "icon.png"
+    return _image(os.path.join(folder, rel), ADDONS_ROOT) or _image(os.path.join(folder, "icon.png"), ADDONS_ROOT)
+
+
+def art_url(app_id):
+    return PREFIX + "art?id=" + quote(app_id, safe="")
+
+
+def art(path, rpc):
+    """GET /api/watch/art?id=<app id>: the icon of an app of the current list as {data, type, etag, mtime}, or None
+    (an id that is not in the list, an app without an icon, anything wrong)."""
+    ids = parse_qs(urlsplit(path).query).get("id", [])
+    try:
+        mod = launcher_apps()
+        if mod is None or len(ids) != 1 or ids[0] not in [a["id"] for a in apps_view(rpc)["apps"]]:
+            return None
+        file = icon_file(ids[0], mod)
+        if not file:
+            return None
+        info = os.stat(file)
+        with open(file, "rb") as f:
+            data = f.read(ART_MAX + 1)
+    except (Refused, OSError, ValueError):
+        return None
+    if len(data) > ART_MAX:
+        return None
+    return {"data": data, "type": ART_TYPES[os.path.splitext(file)[1].lower()],
+            "etag": '"%x-%x"' % (info.st_size, int(info.st_mtime)), "mtime": info.st_mtime}
+
+
+def art_response(found, if_none_match=""):
+    """(status, headers, body) for an icon from art(): a day's cache, an ETag and a Last-Modified; 304 for a repeat."""
+    if found is None:
+        return 404, [("Content-Type", "application/json"), ("Cache-Control", "no-store")], b'{"error": "not found"}'
+    headers = [("Cache-Control", "public, max-age=%d" % ART_AGE), ("ETag", found["etag"]),
+               ("Last-Modified", formatdate(found["mtime"], usegmt=True))]
+    if if_none_match and found["etag"] in [t.strip() for t in if_none_match.split(",")]:
+        return 304, headers, b""
+    return 200, headers + [("Content-Type", found["type"])], found["data"]
 
 
 def launch(body, rpc):

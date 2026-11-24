@@ -1884,6 +1884,17 @@ class H(BaseHTTPRequestHandler):
             return self.send(panel_accounts.with_signin(status()))
         if p == "/api/accounts":
             return self.send(panel_accounts.view())
+        if p == panel_watch.PREFIX + "art":      # an app's icon: bytes with a day's cache, not JSON
+            code, headers, body = panel_watch.art_response(panel_watch.art(self.path, kodi),
+                                                           self.headers.get("If-None-Match", ""))
+            self.send_response(code)
+            for name, value in headers:
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if code != 304:
+                self.wfile.write(body)
+            return
         if p.startswith(panel_watch.PREFIX):
             body, code = panel_watch.get(self.path, kodi)
             return self.send(body, code=code)

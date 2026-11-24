@@ -506,6 +506,24 @@ class Served(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(raw)["screen"], who)
 
+    def test_an_app_icon_is_served_as_bytes_with_a_day_of_cache(self):
+        def fetch(path, headers=None):
+            c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+            c.request("GET", path, headers=dict({"Host": "localhost:%d" % self.port}, **(headers or {})))
+            r = c.getresponse()
+            body = r.read()
+            out = (r.status, dict(r.getheaders()), body)
+            c.close()
+            return out
+        status, h, body = fetch("/api/watch/art?id=webapp%3Anetflix")
+        self.assertEqual((status, h["Content-Type"], h["Cache-Control"]), (200, "image/png", "public, max-age=86400"))
+        self.assertTrue(body.startswith(b"\x89PNG"))
+        self.assertEqual(int(h["Content-Length"]), len(body))
+        status, h2, body = fetch("/api/watch/art?id=webapp%3Anetflix", {"If-None-Match": h["ETag"]})
+        self.assertEqual((status, body), (304, b""))
+        for bad in ("/api/watch/art?id=../../etc/passwd", "/api/watch/art?id=webapp:nothere", "/api/watch/art"):
+            self.assertEqual(fetch(bad)[0], 404, bad)
+
     def test_the_served_page_has_the_tabs(self):
         status, raw = self.get("/")
         self.assertEqual(status, 200)

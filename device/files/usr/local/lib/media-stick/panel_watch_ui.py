@@ -41,7 +41,8 @@ CSS = r"""
 .wt-tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .wt-tile{display:flex;flex-direction:column;align-items:flex-start;gap:12px;min-height:112px;padding:16px;border:1px solid var(--line);border-radius:22px;background:var(--card);text-align:left;touch-action:manipulation}
 .wt-tile:active{background:var(--card2)}
-.wt-logo{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;font-weight:700;font-size:20px;color:#fff;flex:none}
+.wt-logo{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;font-weight:700;font-size:20px;color:#fff;flex:none;position:relative;overflow:hidden}
+.wt-logo img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit}
 .wt-tile b{font-weight:600;font-size:16px}
 .wt-tile small,.wt-sub{color:var(--dim);font-size:13px}
 .wt-chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 12px;scrollbar-width:none}
@@ -217,6 +218,12 @@ function render(){
   if(d.t==='sweet')return renderSweet(b,d);
 }
 function openOnTv(id){return pst('launch',{app:id}).then(()=>toast('Открываю на ТВ…')).catch(e=>toast(errText(e)))}
+// the app's own picture in the square; a letter on a colour when it has none or it does not load
+function appLogo(a){
+  const letter=(a.name||'?').charAt(0).toUpperCase(), box=h('span',{class:'wt-logo',style:'background:'+colorOf(a.id)});
+  if(!a.art){box.textContent=letter;return box}
+  box.append(h('img',{src:a.art,alt:'',loading:'lazy',onload:()=>{box.style.background='none'},onerror:e=>{e.target.remove();box.textContent=letter}}));
+  return box}
 async function renderApps(b){
   header('');
   if(!W.apps){b.append(h('div',{class:'wt-msg',text:'Загружаю…'}));
@@ -227,7 +234,7 @@ async function renderApps(b){
       if(a.id==='plugin.video.youtube')go({t:'yt',section:'home',q:'',path:'',title:'YouTube',app:a});
       else if(a.id==='plugin.video.sweettv')go({t:'sweet',cat:'all',title:'SWEET.TV',app:a});
       else openOnTv(a.id)}},
-    h('span',{class:'wt-logo',style:'background:'+colorOf(a.id),text:(a.name||'?').charAt(0).toUpperCase()}),
+    appLogo(a),
     h('b',{text:a.name}),h('small',{text:a.kind==='catalog'?'Выбрать на телефоне':'Откроется на ТВ'}));tiles.append(t)});
   b.append(tiles)}
 

@@ -20,6 +20,8 @@ TMP = tempfile.mkdtemp()
 os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, ".kodi", "userdata", "addon_data")
 os.environ.pop("MEDIASTICK_ADDON_LIB", None)
+os.environ["MEDIASTICK_ADDONS_ROOT"] = os.path.join(TMP, ".kodi", "addons")
+os.environ.pop("MEDIASTICK_APP_ART", None)
 sys.dont_write_bytecode = True
 sys.path.insert(0, LIB)
 
@@ -273,6 +275,123 @@ class Apps(unittest.TestCase):
         self.assertEqual(ids[0], "plugin.video.sweettv")
         self.assertEqual(pw.build_apps(mod, found, {"plugin.video.other": 5})[0]["id"], "plugin.video.other")
         self.assertNotIn("xbmc", sys.modules)      # the stand-ins are gone after the load
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"icon" * 20
+
+
+class Art(unittest.TestCase):
+    """The tiles' pictures: the icon files of the apps in the list, served by id, never by a path from the client."""
+    ROOT = os.environ["MEDIASTICK_ADDONS_ROOT"]
+    ADDONS = ("plugin.video.youtube", "plugin.video.sweettv", "plugin.video.noicon", "plugin.video.link", "plugin.video.sneaky")
+
+    def setUp(self):
+        pw._cache.clear()
+        shutil.rmtree(os.path.join(TMP, ".kodi"), ignore_errors=True)
+        shutil.rmtree(os.path.join(TMP, "outside"), ignore_errors=True)
+        self.put_bytes("plugin.video.youtube/resources/media/icon.png", PNG + b"yt")
+        put(os.path.join(self.ROOT, "plugin.video.youtube", "addon.xml"),
+            "<addon id='plugin.video.youtube'><extension point='kodi.addon.metadata'><assets>"
+            "<icon>resources/media/icon.png</icon></assets></extension></addon>")
+        self.put_bytes("plugin.video.sweettv/icon.png", PNG + b"sw")      # no <icon> in its addon.xml: icon.png
+        put(os.path.join(self.ROOT, "plugin.video.sweettv", "addon.xml"), "<addon id='plugin.video.sweettv'/>")
+        put(os.path.join(self.ROOT, "plugin.video.noicon", "addon.xml"), "<addon id='plugin.video.noicon'/>")
+        os.makedirs(os.path.join(TMP, "outside"))
+        with open(os.path.join(TMP, "outside", "secret.png"), "wb") as f:
+            f.write(PNG + b"secret")
+        os.makedirs(os.path.join(self.ROOT, "plugin.video.link"))
+        os.symlink(os.path.join(TMP, "outside", "secret.png"), os.path.join(self.ROOT, "plugin.video.link", "icon.png"))
+        put(os.path.join(self.ROOT, "plugin.video.sneaky", "addon.xml"),
+            "<addon id='plugin.video.sneaky'><icon>../../../outside/secret.png</icon></addon>")
+
+    def put_bytes(self, rel, data):
+        path = os.path.join(self.ROOT, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+
+    def rpc(self, method, params=None, timeout=3):
+        if method == "Addons.GetAddons":
+            return {"addons": [{"addonid": a, "name": a} for a in self.ADDONS]}
+        return {}
+
+    def apps(self):
+        pw._cache.clear()
+        return {a["id"]: a for a in pw.get("/api/watch/apps", self.rpc)[0]["apps"]}
+
+    def test_the_icon_path_comes_from_addon_xml(self):
+        self.assertEqual(pw.addon_icon_rel("<addon><assets><icon>resources/media/icon.png</icon></assets></addon>"), "resources/media/icon.png")
+        self.assertEqual(pw.addon_icon_rel("<addon><icon>a.png</icon></addon>"), "a.png")
+        for bad in ("<addon/>", "<addon><icon> </icon></addon>", "not xml", "", None):
+            self.assertEqual(pw.addon_icon_rel(bad), "icon.png")
+
+    def test_the_apps_payload_carries_an_art_address_only_for_an_icon_that_exists(self):
+        apps = self.apps()
+        self.assertEqual(apps["plugin.video.youtube"]["art"], "/api/watch/art?id=plugin.video.youtube")
+        self.assertEqual(apps["plugin.video.sweettv"]["art"], "/api/watch/art?id=plugin.video.sweettv")
+        self.assertEqual(apps["webapp:netflix"]["art"], "/api/watch/art?id=webapp%3Anetflix")
+        for webapp in ("netflix", "disney", "prime", "max"):
+            self.assertTrue(apps["webapp:" + webapp]["art"])
+        self.assertEqual(apps["plugin.video.noicon"]["art"], "")
+        self.assertEqual(apps["plugin.video.link"]["art"], "")        # a link out of the add-ons folder
+        self.assertEqual(apps["plugin.video.sneaky"]["art"], "")      # addon.xml pointing out of its folder
+
+    def test_a_valid_id_gives_the_bytes_and_the_cache_headers(self):
+        yt = pw.art("/api/watch/art?id=plugin.video.youtube", self.rpc)
+        status, headers, body = pw.art_response(yt)
+        h = dict(headers)
+        self.assertEqual((status, body, h["Content-Type"]), (200, PNG + b"yt", "image/png"))
+        self.assertEqual(h["Cache-Control"], "public, max-age=86400")
+        self.assertRegex(h["ETag"], r'^"[0-9a-f]+-[0-9a-f]+"$')
+        self.assertRegex(h["Last-Modified"], r"GMT$")
+        status, headers, body = pw.art_response(yt, h["ETag"])        # the phone asks again with the ETag
+        self.assertEqual((status, body), (304, b""))
+        self.assertEqual(pw.art_response(yt, '"other"')[0], 200)
+        sw = pw.art("/api/watch/art?id=plugin.video.sweettv", self.rpc)
+        self.assertEqual(pw.art_response(sw)[2], PNG + b"sw")
+
+    def test_the_web_apps_use_the_launchers_own_art(self):
+        found = pw.art("/api/watch/art?id=webapp%3Anetflix", self.rpc)
+        want = open(os.path.join(ROOT, "device", "kodi-addons", "script.media-stick.home", "resources", "media", "apps",
+                                 "netflix.png"), "rb").read()
+        self.assertEqual((found["data"], found["type"]), (want, "image/png"))
+
+    def test_everything_else_is_not_found(self):
+        for query in ("", "id=", "id=plugin.video.nothere", "id=../../etc/passwd", "id=plugin.video.youtube/../../x",
+                      "id=..", "id=.", "id=%2e%2e%2f%2e%2e%2fetc%2fpasswd", "id=/etc/passwd", "id=webapp%3A..%2Fx",
+                      "id=webapp:nothere", "id=plugin.video.noicon", "id=plugin.video.link", "id=plugin.video.sneaky",
+                      "id=plugin.video.youtube&id=plugin.video.sweettv", "id=plugin.video.youtube%00",
+                      "path=/etc/passwd", "id=script.module.x"):
+            self.assertIsNone(pw.art("/api/watch/art?" + query, self.rpc), query)
+        status, headers, body = pw.art_response(None)
+        self.assertEqual(status, 404)
+        self.assertEqual(dict(headers)["Cache-Control"], "no-store")
+
+    def test_a_huge_or_unknown_type_is_refused(self):
+        self.put_bytes("plugin.video.noicon/icon.png", b"x" * (pw.ART_MAX + 1))
+        self.assertIsNone(pw.art("/api/watch/art?id=plugin.video.noicon", self.rpc))
+        os.unlink(os.path.join(self.ROOT, "plugin.video.noicon", "icon.png"))
+        put(os.path.join(self.ROOT, "plugin.video.noicon", "addon.xml"), "<addon><icon>x.svg</icon></addon>")
+        self.put_bytes("plugin.video.noicon/x.svg", b"<svg/>")
+        self.assertIsNone(pw.art("/api/watch/art?id=plugin.video.noicon", self.rpc))
+
+    def test_kodi_down_is_not_found(self):
+        def down(*a, **k):
+            raise ConnectionRefusedError()
+        self.assertIsNone(pw.art("/api/watch/art?id=plugin.video.youtube", down))
+
+    def test_the_panel_serves_it_as_bytes_and_the_tile_falls_back_to_the_letter(self):
+        source = open(PANEL, encoding="utf-8").read()
+        self.assertIn('if p == panel_watch.PREFIX + "art":', source)
+        self.assertIn("panel_watch.art_response(panel_watch.art(self.path, kodi)", source)
+        self.assertNotIn("status, headers, body = panel_watch.art_response", source)   # `status` is the panel's own function
+        self.assertLess(source.index('p == panel_watch.PREFIX + "art"'), source.index("body, code = panel_watch.get(self.path, kodi)"))
+        ui = open(os.path.join(LIB, "panel_watch_ui.py"), encoding="utf-8").read()
+        self.assertIn("h('img',{src:a.art,alt:'',loading:'lazy'", ui)
+        self.assertIn("onerror:e=>{e.target.remove();box.textContent=letter}", ui)
+        self.assertIn("if(!a.art){box.textContent=letter;return box}", ui)
+        self.assertIn(".wt-logo img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit}", ui)
+        self.assertIn("width:44px;height:44px;border-radius:14px", ui)        # the tile keeps its size
 
 
 class Routes(unittest.TestCase):
