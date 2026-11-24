@@ -1104,6 +1104,26 @@ class SweetRoutes(unittest.TestCase):
                       "/api/sweettv/search", "/api/sweettv/day", "/api/sweettv/settings", "tools/emulator/"):
             self.assertTrue(token in readme, f"{token} not found in README.md")
 
+    def test_shows_api_view_and_show_api_view_pass_raw_channels(self):
+        with mock.patch.object(self.ps.api, "shows", return_value={"ok": True, "items": []}) as shows_mock, \
+             mock.patch.object(self.ps.api, "show_detail", return_value={"ok": True, "id": "epg:8838", "episodes": []}) as detail_mock:
+            self.ps.shows_api_view(FIXTURE, NOW)
+            self.assertIs(shows_mock.call_args[0][0], FIXTURE)
+            self.ps.show_api_view(FIXTURE, "epg:8838", NOW)
+            self.assertIs(detail_mock.call_args[0][1], FIXTURE)
+
+    def test_emulator_run_sh_configures_panel_port_symlinks_channels_and_disables_webserver(self):
+        with open(os.path.join(ROOT, "tools", "emulator", "run.sh"), encoding="utf-8") as f:
+            script = f.read()
+        self.assertIn("PANEL_PORT=${PANEL_PORT:-18080}", script)
+        self.assertIn("chmod +x /usr/local/bin/*", script)
+        self.assertIn("python3 /usr/local/bin/panel", script)
+        self.assertIn("/home/media/.kodi", script)
+        self.assertIn("SWEETTV_CHANNELS", script)
+        self.assertIn("channelList.json", script)
+        self.assertIn("<webserver>false</webserver>", script)
+        self.assertIn("<tcpport>9090</tcpport>", script)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

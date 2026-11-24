@@ -823,6 +823,194 @@ class VodAndCatalog(unittest.TestCase):
         self.assertIn("Космос 4K", [r["title"] for r in res_4k["items"]])
         self.assertIn("UHD 4K", [r["title"] for r in res_4k["items"]])
 
+    def test_live_singular_collection_and_epg_collections_use_col_id_and_epg_records(self):
+        def by_series(call):
+            url = call["url"]
+            if url.endswith("GetGenreMovies.json"):
+                return reply({"status": "OK", "movies": [9558]})
+            if url.endswith("GetCollections.json"):
+                return reply({"status": "OK", "collection": [{"id": 301, "id_list": [9559, 9560]}]})
+            if url.endswith("GetMovieInfo.json"):
+                return reply(MOVIES)
+            return reply({"status": "OK"})
+
+        c, _ = client(by=by_series)
+        series_res = api.catalog_page("series", quality="unlimited", client=c)
+        self.assertTrue(series_res["ok"])
+        self.assertEqual([x["id"] for x in series_res["items"]], [9558, 9560])
+
+        c_empty, _ = client(by=lambda call: (
+            reply({"status": "OK", "movies": [9558]}) if call["url"].endswith("GetGenreMovies.json")
+            else reply(MOVIES) if call["url"].endswith("GetMovieInfo.json")
+            else reply({"status": "OK"})
+        ))
+        self.assertEqual([x["id"] for x in api.catalog_page("series", quality="1080p", client=c_empty)["items"]], [9558])
+
+        col_info_calls = []
+
+        def by_shows(call):
+            url = call["url"]
+            if url.endswith("GetCollections.json"):
+                if call["body"] == {"type": 3}:
+                    return reply({"status": "OK", "collection": [{"id": 301, "id_list": [9558]}]})
+                if call["body"] == {"type": 7}:
+                    return reply({"status": "OK", "collection": [
+                        {"id": 8838, "type": "Epg", "id_list": [15]},
+                        {"id": 8839, "type": "Channel", "id_list": [16]},
+                    ]})
+            if url.endswith("GetMovieInfo.json"):
+                return reply(MOVIES)
+            if url.endswith("GetCollectionInfo.json"):
+                col_info_calls.append(call["body"])
+                return reply({"status": "OK", "collections": [
+                    {"id": 8838, "title": "Холостяк", "poster_url": "https://img.example/8838.jpg",
+                     "secondary_id_list": [931394511]},
+                ]})
+            if url.endswith("GetEpgRecords.json"):
+                return reply({"status": "OK", "epg_records": [
+                    {"id": 931394511, "channel_id": 15, "text": "Холостяк. Випуск 6",
+                     "time_start": NOW - 20000, "time_stop": NOW - 2480,
+                     "tv_show_id": 111, "image_url": "https://img.example/931.jpg", "available": True},
+                ]})
+            return reply({"status": "OK"})
+
+        c2, _ = client(by=by_shows)
+        res = api.shows(CHANNELS, now=NOW, quality="1080p", client=c2, tr=ENGLISH)
+        self.assertTrue(res["ok"])
+        self.assertEqual(len(col_info_calls), 1)
+        self.assertEqual(col_info_calls[0]["collections"], [8838])
+        ids = [x["id"] for x in res["items"]]
+        self.assertIn("vod:9558", ids)
+        self.assertIn("epg:8838", ids)
+
+    def test_shows_and_show_detail_accept_both_raw_and_channel_map(self):
+        self.assertEqual(api.channel_map(MAP), MAP)
+        self.assertEqual(api.channel_map(None), {})
+        self.assertEqual(api.channel_map({"list": []}), {})
+
+        def by(call):
+            url = call["url"]
+            if url.endswith("GetCollections.json"):
+                return reply({"status": "OK", "collection": (
+                    [{"id": 8838, "type": "Epg", "id_list": [15]}] if call["body"] == {"type": 7} else []
+                )})
+            if url.endswith("GetCollectionInfo.json"):
+                return reply({"status": "OK", "collections": [
+                    {"id": 8838, "title": "Холостяк", "secondary_id_list": [931394511]},
+                ]})
+            if url.endswith("GetEpgRecords.json"):
+                return reply({"status": "OK", "epg_records": [
+                    {"id": 931394511, "channel_id": 15, "text": "Холостяк. Випуск 6",
+                     "time_start": NOW - 20000, "time_stop": NOW - 2480,
+                     "tv_show_id": 111, "available": True},
+                ]})
+            return reply({"status": "OK"})
+
+        raw = {"list": [{**CHANNELS["list"][0], "epg": [
+            {"id": 700, "text": "Destination X", "time_start": NOW - 3600, "time_stop": NOW - 1800,
+             "tv_show_id": 444, "available": True},
+        ]}]}
+        mapped = api.channel_map(raw)
+        c1, _ = client(by=by)
+        c2, _ = client(by=by)
+        s_raw = api.shows(raw, now=NOW, client=c1, tr=ENGLISH)
+        s_map = api.shows(mapped, now=NOW, client=c2, tr=ENGLISH)
+        self.assertEqual([x["id"] for x in s_raw["items"]], [x["id"] for x in s_map["items"]])
+        self.assertIn("tv:444", [x["id"] for x in s_raw["items"]])
+        self.assertIn("epg:8838", [x["id"] for x in s_raw["items"]])
+
+        for show_key in ("epg:8838", "tv:444"):
+            d_raw = api.show_detail(show_key, raw, now=NOW, client=client(by=by)[0], tr=ENGLISH)
+            d_map = api.show_detail(show_key, mapped, now=NOW, client=client(by=by)[0], tr=ENGLISH)
+            self.assertTrue(d_raw["ok"], show_key)
+            self.assertEqual(len(d_raw["episodes"]), len(d_map["episodes"]), show_key)
+
+    def test_show_detail_epg_remembers_episodes_for_recall_and_play_and_exposes_fields(self):
+        api._known.clear()
+
+        def by(call):
+            url = call["url"]
+            if url.endswith("GetCollectionInfo.json"):
+                return reply({"status": "OK", "collections": [
+                    {"id": 8838, "title": "Холостяк", "poster_url": "https://img.example/8838.jpg",
+                     "secondary_id_list": [931394511, 931394512]},
+                ]})
+            if url.endswith("GetEpgRecords.json"):
+                return reply({"status": "OK", "epg_records": [
+                    {"id": 931394511, "channel_id": 15, "text": "Холостяк. Випуск 6",
+                     "time_start": NOW - 20000, "time_stop": NOW - 2480,
+                     "image_url": "https://img.example/931.jpg", "available": True},
+                    {"id": 931394512, "channel_id": 15, "text": "Холостяк. Випуск 7",
+                     "time_start": NOW + 3600, "time_stop": NOW + 7200,
+                     "available": False},
+                ]})
+            return reply({"status": "OK"})
+
+        local = {"v": 1, "items": {
+            "sw:15|931394511": {"pos": 420, "total": 17520, "done": False, "at": NOW},
+        }, "live": {}}
+        c, _ = client(by=by)
+        detail = api.show_detail("epg:8838", CHANNELS, now=NOW, local=local, client=c, tr=ENGLISH)
+        self.assertTrue(detail["ok"])
+        self.assertEqual(len(detail["episodes"]), 2)
+        ep6 = next(e for e in detail["episodes"] if e["epg"] == "931394511")
+        ep7 = next(e for e in detail["episodes"] if e["epg"] == "931394512")
+        self.assertEqual((ep6["preview"], ep6["duration"], ep6["channel_name"], ep6["resume"], ep6["watched"], ep6["available"]),
+                         ("https://img.example/931.jpg", 17520, "СТБ", 420, False, True))
+        self.assertTrue(ep6["when"])
+        self.assertEqual((ep7["available"], ep7["resume"], ep7["watched"]), (False, 0, False))
+        self.assertEqual(api.recall("15", "931394511", NOW),
+                         {"start": NOW - 20000, "stop": NOW - 2480, "available": True})
+        self.assertEqual(ps.play_request(CHANNELS, {"cid": 15, "epg": 931394511}, NOW),
+                         (ml.url(15, 931394511, 0), "931394511", 0))
+        with self.assertRaises(pw.Refused) as why:
+            ps.play_request(CHANNELS, {"cid": 15, "epg": 931394512}, NOW)
+        self.assertEqual(why.exception.code, 409)
+
+    def test_base_show_title_strips_season_episode_markers_and_deduplicates_tv_shows(self):
+        cases = (
+            ("Холостяк Сезон 14 Випуск 1", "Холостяк"),
+            ("Холостяк. Випуск 6", "Холостяк"),
+            ("Шоу Season 2 Episode 5", "Шоу"),
+            ("Шоу Сезон 1 Серія 3", "Шоу"),
+            ("Шоу Сезон 1 Серия 3", "Шоу"),
+            ("Шоу Епізод 4", "Шоу"),
+            ("Шоу Эпизод 4", "Шоу"),
+            ("Холостяк - Сезон 14 - Випуск 1", "Холостяк"),
+            ("Destination X", "Destination X"),
+            ("Seasoned Chef", "Seasoned Chef"),
+        )
+        for raw_title, expected in cases:
+            self.assertEqual(api._base_show_title(raw_title), expected, raw_title)
+
+        channels = {"list": [{**CHANNELS["list"][0], "epg": [
+            {"id": 701, "text": "МастерШеф Сезон 14 Серія 1", "time_start": NOW - 7200, "time_stop": NOW - 3600,
+             "tv_show_id": 222, "available": True},
+            {"id": 702, "text": "МастерШеф Сезон 14 Серія 2", "time_start": NOW - 3600, "time_stop": NOW - 1800,
+             "tv_show_id": 222, "available": True},
+        ]}]}
+        c, _ = client(by=lambda call: reply({"status": "OK"}))
+        res = api.shows(channels, now=NOW, client=c, tr=ENGLISH)
+        tv_shows = [x for x in res["items"] if x["id"] == "tv:222"]
+        self.assertEqual(len(tv_shows), 1)
+        self.assertEqual(tv_shows[0]["title"], "МастерШеф")
+
+    def test_vod_detail_accepts_plain_and_prefixed_ids_and_rejects_invalid(self):
+        extended = {
+            "status": "OK",
+            "movies": [{"id": 37475, "title": "Фільм", "availability_info": {"available": True}, "seasons": []}],
+        }
+        for mid in ("37475", "vod:37475", 37475):
+            c, sender = client(reply(extended))
+            res = api.vod_detail(mid, client=c, tr=ENGLISH)
+            self.assertTrue(res["ok"], mid)
+            self.assertEqual(sender.calls[0]["body"]["movies"], [37475], mid)
+        for bad in ("", "vod:", "vod:abc", "abc", 0, -1, None):
+            c, sender = client(reply(extended))
+            res = api.vod_detail(bad, client=c, tr=ENGLISH)
+            self.assertFalse(res["ok"], bad)
+            self.assertEqual(sender.calls, [], bad)
+
 
 if __name__ == "__main__":
     unittest.main()
