@@ -955,7 +955,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
     <div class="card"><h2>Обслуживание</h2>
       <p class="dsub" id="act-last"></p>
       <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
-      <button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз, чтобы перезагрузить'))act('reboot')">Перезагрузить</button></div>
+      <button id="rk-btn" class="btn" onclick="if(armed('rk-btn','Нажмите ещё раз, чтобы перезапустить плеер'))act('restart-kodi')">Перезапустить плеер</button><button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз, чтобы перезагрузить'))act('reboot')">Перезагрузить</button></div>
       <div class="slist" style="margin:14px -18px -18px;border-top:1px solid var(--line)"><button id="keys-row" class="srow" onclick="ykOpen()"><span class="sname">Ключи Google</span><span class="sval">для входа в YouTube</span><span class="chev" aria-hidden="true">›</span></button></div>
     </div>
   </section>
@@ -1121,7 +1121,7 @@ function keyFailed(e){const now=Date.now();if(now-failAt<2000)return;failAt=now;
 const KEYS={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Enter:'select',Backspace:'back',Escape:'back',' ':'playpause',c:'contextmenu',i:'info',h:'home','+':'volumeup','-':'volumedown',m:'mute'};
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;const a=KEYS[e.key];if(a){e.preventDefault();api('/api/key',{action:a}).catch(()=>{})}});
 
-function act(what){api('/api/'+what,{}).then(()=>toast(what==='reboot'?'Перезагружаю…':'Обновление запущено')).catch(e=>toast(tvErr(e)))}
+function act(what){api('/api/'+what,{}).then(()=>toast(what==='reboot'?'Перезагружаю…':what==='restart-kodi'?'Перезапускаю плеер…':'Обновление запущено')).catch(e=>toast(tvErr(e)))}
 // Two taps instead of confirm(): embedded browsers (the Claude app's included) refuse
 // dialogs silently, and a button that asks first would then do nothing.
 const armedAt={};
@@ -2012,6 +2012,10 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/reboot":
             self.send({"ok": True, "message": "Перезагружаюсь, вернусь через минуту."})
             subprocess.Popen(["sudo", "-n", "systemctl", "reboot"])
+            return
+        if p == "/api/restart-kodi":
+            self.send({"ok": True, "message": "Перезапускаю плеер, вернусь через несколько секунд."})
+            subprocess.Popen(["sudo", "-n", "systemctl", "restart", "kodi.service"])
             return
         self.send("not found", "text/plain", 404)
 

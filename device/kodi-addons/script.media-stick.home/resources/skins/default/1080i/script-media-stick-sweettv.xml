@@ -310,7 +310,7 @@
                     <ondown condition="!String.IsEmpty(Window.Property(filters))">409</ondown>
                     <ondown>200</ondown>
                     <control type="button" id="210">
-                        <width>270</width>
+                        <width>304</width>
                         <height>60</height>
                         <textoffsetx>24</textoffsetx>
                         <font>Bold25</font>
@@ -338,7 +338,7 @@
                         <visible>!String.IsEmpty(Window.Property(has_alt))</visible>
                     </control>
                     <control type="button" id="212">
-                        <width>250</width>
+                        <width>284</width>
                         <height>60</height>
                         <textoffsetx>24</textoffsetx>
                         <font>Reg25</font>
