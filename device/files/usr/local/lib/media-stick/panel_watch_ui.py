@@ -23,13 +23,13 @@ SECTION = """<section id="t-watch" data-tab="watch">
       <div id="wt-body"></div>
     </div>
   </section>
-  <section id="wt-rcard" class="wt-rcoff" data-tab="settings"><label class="card wt-sw"><span class="wt-swt"><b id="wt-rl2"></b><small id="wt-rh2"></small></span><input id="wt-rs2" type="checkbox" role="switch" aria-labelledby="wt-rl2" aria-describedby="wt-rh2"></label></section>
+  <section id="wt-rcard" class="wt-rcoff" data-tab="settings"><div class="card wt-sw wt-qrow"><span class="wt-swt"><b id="wt-rl2">Качество видео</b><small id="wt-rh2">Ограничение разрешения для SWEET.TV</small></span><div class="wt-qseg" id="wt-qseg2" role="radiogroup" aria-label="Качество видео"><button type="button" class="wt-qbtn" data-q="720p">До 720p</button><button type="button" class="wt-qbtn" data-q="1080p">До 1080p (Pi 3)</button><button type="button" class="wt-qbtn" data-q="unlimited">Без лимита / 4K (Pi 5)</button></div></div></section>
   """
 
 BAR = """<div data-wtbar class="hide"></div>"""
 
-# a row of the settings list: hidden until /api/sweettv/settings answers, then its label and hint are the API's
-RESUME_ROW = """<label id="wt-resume" class="srow wt-sw hide"><span class="wt-swt"><b id="wt-rl"></b><small id="wt-rh"></small></span><input id="wt-rs" type="checkbox" role="switch" aria-labelledby="wt-rl" aria-describedby="wt-rh"></label>
+# a row of the settings list: video quality cap for SWEET.TV
+RESUME_ROW = """<div id="wt-resume" class="srow wt-sw wt-qrow"><span class="wt-swt"><b id="wt-rl">Качество видео</b><small id="wt-rh">Ограничение разрешения для SWEET.TV</small></span><div class="wt-qseg" id="wt-qseg1" role="radiogroup" aria-label="Качество видео"><button type="button" class="wt-qbtn" data-q="720p">До 720p</button><button type="button" class="wt-qbtn" data-q="1080p">До 1080p (Pi 3)</button><button type="button" class="wt-qbtn" data-q="unlimited">Без лимита / 4K (Pi 5)</button></div></div>
       """
 
 CSS = r"""
@@ -104,6 +104,13 @@ CSS = r"""
 .wt-nb .wt-btn .i{fill:currentColor}
 /* the player sheet */
 .wt-pbox .wt-p{gap:12px}
+.wt-dvr{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.wt-dvr .wt-btn{min-width:56px;min-height:42px;padding:0 12px;font-size:13px}
+.wt-qrow{flex-direction:column;align-items:stretch;gap:8px;cursor:default}
+.wt-qseg{display:flex;flex-wrap:wrap;gap:6px}
+.wt-qbtn{flex:1 1 auto;min-height:38px;padding:6px 10px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:#fff;font-size:13px;font-weight:500;touch-action:manipulation}
+.wt-qbtn.on{background:#00D2C6;color:#0C111B;border-color:#00D2C6;font-weight:700}
+.wt-qbtn:disabled{opacity:.5}
 /*@@SWEET_CSS@@*/
 /* the switch «remember where I stopped» in the settings list */
 .wt-sw{display:flex;align-items:center;gap:12px;cursor:pointer}
@@ -179,10 +186,22 @@ function mkPlayer(){
   const seek=h('input',{type:'range',min:0,max:1,step:1,value:0,'aria-label':'Перемотка'});
   const seekRow=h('div',{class:'wt-seek'},t1,seek,t2);
   seek.addEventListener('input',()=>{P.drag=true;t1.textContent=tm(+seek.value)});
-  seek.addEventListener('change',()=>{P.drag=false;P.hold=Date.now()+1500;ctl({op:'seek',to:+seek.value})});
+  seek.addEventListener('change',()=>{P.drag=false;P.hold=Date.now()+1500;
+    const st=P.st;
+    if(st&&st.app==='sweettv'&&!st.is_vod&&st.live&&st.prog_stop>st.prog_start){
+      const curPos=Math.max(0,Math.floor(Date.now()/1000)-st.prog_start);
+      const delta=Math.round(+seek.value-curPos);
+      if(delta<0)sctl({op:'seek_by',seconds:delta});
+    }else ctl({op:'seek',to:+seek.value})});
   const pp=h('button',{class:'wt-btn pri','aria-label':'Пауза или воспроизведение',onclick:()=>{buzz();ctl({op:'playpause'})}});
   const rw=h('button',{class:'wt-btn','aria-label':'Назад на 10 секунд',text:'−10',onclick:()=>{buzz();ctl({op:'seek',by:-10})}});
   const ff=h('button',{class:'wt-btn','aria-label':'Вперёд на 10 секунд',text:'+10',onclick:()=>{buzz();ctl({op:'seek',by:10})}});
+  const bStart=h('button',{class:'wt-btn',text:'С начала',onclick:()=>{buzz();sctl({op:'from_start'})}});
+  const bBack15=h('button',{class:'wt-btn',text:'−15с',onclick:()=>{buzz();sctl({op:'seek_by',seconds:-15})}});
+  const bFwd30=h('button',{class:'wt-btn',text:'+30с',onclick:()=>{buzz();sctl({op:'seek_by',seconds:30})}});
+  const bFwd2m=h('button',{class:'wt-btn',text:'+2м',onclick:()=>{buzz();sctl({op:'seek_by',seconds:120})}});
+  const bLive=h('button',{class:'wt-btn pri',text:'В эфир',onclick:()=>{buzz();sctl({op:'live'})}});
+  const dvrRow=h('div',{class:'wt-dvr hide'},bStart,bBack15,bFwd30,bFwd2m,bLive);
   const bSub=h('button',{class:'wt-chip',text:'Субтитры',onclick:()=>pick('sub')});
   const bAud=h('button',{class:'wt-chip',text:'Аудио',onclick:()=>pick('aud')});
   const optBox=h('div',{class:'wt-opts hide'});
@@ -191,12 +210,11 @@ function mkPlayer(){
   vol.addEventListener('change',()=>{P.vdrag=false;P.vhold=Date.now()+1500;ctl({op:'volume',level:+vol.value})});
   const vm=h('button',{class:'wt-btn ico','aria-label':'Тише',onclick:()=>ctl({op:'volume',by:-5})},ico('i-vdn'));
   const vp=h('button',{class:'wt-btn ico','aria-label':'Громче',onclick:()=>ctl({op:'volume',by:5})},ico('i-vup'));
-  const goLive=h('button',{class:'wt-btn wide hide',text:'К эфиру',onclick:()=>{buzz();spst('golive',{}).then(()=>setTimeout(tick,250)).catch(e=>toast(errText(e)))}});
   const stop=h('button',{class:'wt-btn wide',text:'Остановить',onclick:()=>{buzz();ctl({op:'stop'});toast('Останавливаю…')}});
   const osd=h('button',{class:'wt-btn','data-a':'osd',text:'Меню плеера',onclick:()=>pressKey('osd')});
   const inf=h('button',{class:'wt-btn','data-a':'info',text:'Описание',onclick:()=>pressKey('info')});
   const root=h('div',{class:'wt-p'},art,title,subl,seekRow,
-    h('div',{class:'wt-tr'},rw,pp,ff),goLive,h('div',{class:'wt-opts'},bSub,bAud),optBox,
+    h('div',{class:'wt-tr'},rw,pp,ff),dvrRow,h('div',{class:'wt-opts'},bSub,bAud),optBox,
     h('div',{class:'wt-vol'},vm,vol,vp),h('div',{class:'wt-two'},osd,inf),stop);
   function pick(kind){
     P.open=P.open===kind?null:kind;draw()}
@@ -214,13 +232,22 @@ function mkPlayer(){
   P.update=function(st){
     P.st=st;
     title.textContent=st.title||'Без названия';
-    subl.textContent=[st.programme,st.channel&&st.channel!==st.title?st.channel:'',st.live?'В эфире':'',({youtube:'YouTube',sweettv:'SWEET.TV'})[st.app]].filter(Boolean).join(' · ');
-    goLive.classList.toggle('hide',!st.go_live);
+    const isSw=st.app==='sweettv';
+    const liveBadge=isSw&&!st.is_vod?(st.live||(st.in_progress&&(st.lag_seconds||0)<=15)?'В эфире':(st.lag_seconds>0?'−'+tm(st.lag_seconds)+' от эфира':'')):(st.live?'В эфире':'');
+    subl.textContent=[st.programme,st.channel&&st.channel!==st.title?st.channel:'',liveBadge,({youtube:'YouTube',sweettv:'SWEET.TV'})[st.app]].filter(Boolean).join(' · ');
+    dvrRow.classList.toggle('hide',!isSw);
+    if(isSw){
+      bStart.classList.toggle('hide',!st.can_rewind&&st.live);
+      bLive.classList.toggle('hide',!st.go_live);
+    }
     art.style.backgroundImage=picture(st.thumb);art.classList.toggle('hide',!picture(st.thumb));   // no picture: no grey box
     pp.replaceChildren(ico(st.speed===0?'i-play':'wt-i-pause'));
-    const total=st.total>0&&!st.live;seekRow.classList.toggle('hide',!total);   // live: the player's ~1 minute is not a length
-    if(total&&!P.drag&&Date.now()>P.hold){seek.max=Math.floor(st.total);seek.value=Math.floor(st.time);t1.textContent=tm(st.time)}
-    t2.textContent=total?tm(st.total):'';
+    const hasProg=isSw&&!st.is_vod&&st.prog_stop>st.prog_start;
+    const total=hasProg?(st.prog_stop-st.prog_start):(st.total>0&&!st.live?st.total:0);
+    const curPos=hasProg&&st.live?Math.max(0,Math.min(total,Math.floor(Date.now()/1000)-st.prog_start)):st.time;
+    seekRow.classList.toggle('hide',!(total>0));
+    if(total>0&&!P.drag&&Date.now()>P.hold){seek.max=Math.floor(total);seek.value=Math.floor(curPos);t1.textContent=tm(curPos)}
+    t2.textContent=total>0?tm(total):'';
     bSub.classList.toggle('hide',!st.subtitles.length);bAud.classList.toggle('hide',st.audio.length<2);
     if(typeof st.volume==='number'&&!P.vdrag&&Date.now()>(P.vhold||0))vol.value=st.volume;
     draw()};
@@ -229,6 +256,11 @@ function mkPlayer(){
 function ctl(b){return pst('ctl',b).then(r=>{
   if(r&&r.note)toast(r.note);
   if(r&&r.switched==='archive')toast('Перешёл в архив передачи');
+  setTimeout(tick,250)}).catch(e=>toast(errText(e)))}
+function sctl(b){return spst('ctl',b).then(r=>{
+  if(r&&r.note)toast(r.note);
+  if(r&&r.switched==='archive')toast('Перешёл в архив передачи');
+  if(r&&r.switched==='live')toast('В эфире');
   setTimeout(tick,250)}).catch(e=>toast(errText(e)))}
 
 // ---- navigation ----
@@ -263,6 +295,7 @@ function render(){
   if(d.t==='sweet')return renderSweet(b,d);
   if(d.t==='swguide')return renderGuide(b,d);
   if(d.t==='swshow')return renderShow(b,d);
+  if(d.t==='swvod')return renderVod(b,d);
 }
 function openOnTv(id){return pst('launch',{app:id}).then(()=>toast('Открываю на ТВ…')).catch(e=>toast(errText(e)))}
 // the app's own picture in the square; a letter on a colour when it has none or it does not load
@@ -378,25 +411,23 @@ W.bars=[...document.querySelectorAll('[data-wtbar]')].map(mkBar);
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>setTimeout(tick,0)));
 setInterval(tick,1500);
 
-// ---- the switch «remember where I stopped»: a row of the settings list (phone) and a card of its own (wide), one state;
-// the texts are the API's; no answer: no row, no card ----
-async function loadResume(){
-  const row=$('wt-resume'),card=$('wt-rcard'),boxes=[$('wt-rs'),$('wt-rs2')].filter(Boolean);
-  if(!row||!boxes.length)return;
-  const show=on=>{row.classList.toggle('hide',!on);if(card)card.classList.toggle('wt-rcoff',!on)};
-  let r;try{r=await sg('settings')}catch(e){show(false);return}
-  if(!r||typeof r.local_resume!=='boolean'){show(false);return}
-  ['wt-rl','wt-rl2'].forEach(i=>{const e=$(i);if(e)e.textContent=r.label||''});
-  ['wt-rh','wt-rh2'].forEach(i=>{const e=$(i);if(e)e.textContent=r.hint||''});
-  const set=v=>boxes.forEach(b=>{b.checked=v});
-  set(r.local_resume);show(true);
-  boxes.forEach(box=>{box.onchange=async()=>{
-    const want=box.checked;boxes.forEach(b=>{b.disabled=true});buzz();
-    try{const a=await spst('settings',{local_resume:want});set(!!a.local_resume)}
-    catch(e){set(!want);toast(errText(e))}
-    boxes.forEach(b=>{b.disabled=false})}})}
-loadResume();
-document.querySelectorAll('[data-go=settings]').forEach(b=>b.addEventListener('click',loadResume));
+// ---- video quality cap: a row of the settings list (phone) and a card of its own (wide), one state ----
+async function loadQuality(){
+  const row=$('wt-resume'),card=$('wt-rcard'),btns=[...document.querySelectorAll('.wt-qbtn[data-q]')];
+  if(!row||!btns.length)return;
+  const set=q=>btns.forEach(b=>b.classList.toggle('on',b.dataset.q===q));
+  set('1080p');
+  if(card)card.classList.remove('wt-rcoff');
+  let curQ='1080p';
+  try{const r=await sg('settings');if(r&&r.quality){curQ=r.quality;set(curQ)}}catch(e){}
+  btns.forEach(btn=>{btn.onclick=async()=>{
+    const want=btn.dataset.q;if(want===curQ)return;
+    btns.forEach(b=>{b.disabled=true});buzz();set(want);
+    try{const a=await spst('settings',{quality:want});curQ=a.quality||want;set(curQ)}
+    catch(e){set(curQ);toast(errText(e))}
+    btns.forEach(b=>{b.disabled=false})}})}
+loadQuality();
+document.querySelectorAll('[data-go=settings]').forEach(b=>b.addEventListener('click',loadQuality));
 render();tick();
 })();
 </script>"""
