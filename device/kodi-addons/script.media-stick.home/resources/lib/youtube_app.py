@@ -7,7 +7,10 @@ everything that is not a list of videos (not signed in, no Google key, nothing h
 
 A section is asked for with JSON-RPC Files.GetDirectory in a worker thread (youtube_files); the answer is parsed
 (youtube_data) and shown, the UI is never held. Pictures are loaded by Kodi in the background. A listing is kept
-for a few minutes so that going back to a section is instant. A long list loads its next page by itself, in a worker,
+for a few minutes so that going back to a section is instant. The first page of a section, a search or a playlist is also kept
+on disk (page_cache, one namespace per profile, see youtube_pages): a page seen before shows at once even in the next launch,
+a stale one is asked for again in the background and swapped in only if it changed, and right after the window opens the other
+sections are fetched into it one at a time (prefetch). A long list loads its next page by itself, in a worker,
 when the cursor comes within two rows of the last card. The thin Kodi part is here; the choices are in youtube_data
 and what a card says is in youtube_cards.
 """
@@ -21,6 +24,7 @@ import xbmcgui
 
 from resources.lib import (onboarding_view, profiles, single_instance, sweettv_text, ui, youtube_cards as cards, youtube_data as data,
                            youtube_demo, youtube_files as files, youtube_state as saved)
+from resources.lib import page_cache, prefetch, youtube_pages as pages
 
 XML = "script-media-stick-youtube.xml"
 RAIL, AVATAR, GRID, ACTION = 100, 150, 200, 300
@@ -41,6 +45,7 @@ RETURN_GRACE = 2                 # s: the window coming back sooner than this af
 RUNNING = "media-stick.youtube"  # Home window property while the app is open (single_instance): a live one blocks a second launch
 FOCUS_POLL = 0.05                # s between looks at whether Kodi shows a control yet
 FOCUS_WAIT = 2.0                 # s a worker waits for the control to be shown before it gives up
+PAGES = True                     # the first pages are kept on disk (page_cache) and the sections are fetched at start-up (prefetch)
 NO_THUMB = os.path.join(ui.MEDIA, data.NO_THUMB)
 DEMO_ART = f"{ui.ADDON_PATH}/resources/media/demo"
 DEMO_NOTICE = "Demo: nothing is played."
@@ -91,6 +96,9 @@ class YouTube(xbmcgui.WindowXML):
         self._card = None                        # (mode, keys, detail) of the card shown, to say it again
         self._watching = False                   # a worker is looking at the key wizard's progress
         self._guide_up = False                   # the onboarding window was opened for the keys document now there
+        self.refreshing = 0                      # shown pages from the disk cache that are being asked for again
+        self.refresh_token = 0                   # the token of the view whose page was shown from the disk cache and is asked for again
+        self.warming = None                      # the prefetch run (prefetch.Handle) of this profile
 
     def onInit(self):
         if self.instance is not None:
@@ -102,11 +110,13 @@ class YouTube(xbmcgui.WindowXML):
         self.started = True
         if not self.demo:
             self.state = saved.load_state(files.state_path())
+            self.profile, self.profile_known = files.profile_id(), True    # the disk cache is the profile's: know it before the first look
         self._set_avatar(None, "")
         self._fill_rail()
         self._navigate(data.section_view(self.state["section"], query=self.state["query"], kind=self.state["kind"]), focus=True)
         if not self.demo:
             self._later("profile", PROFILE_POLL, self._profile_tick)
+            self._start_warm()
 
     def _profile_tick(self):
         """On a timer: the window follows the add-on's current profile, as the phone does. A switch from the phone (or
@@ -126,14 +136,17 @@ class YouTube(xbmcgui.WindowXML):
                     self._set_avatar(None, "")
                     view = self.stack[0][0] if self.stack else self.view
                     self.stack = []
+                    self._cancel_warm()
                 if view is not None:
                     self._navigate(view)
+                    self._start_warm()
         finally:
             if not self._stop.is_set():
                 self._later("profile", PROFILE_POLL, self._profile_tick)
 
     def stop(self):
         self._stop.set()
+        self._cancel_warm()
         for timer in list(self._timers.values()):
             timer.cancel()
         if not self.demo and self.started:
@@ -142,9 +155,11 @@ class YouTube(xbmcgui.WindowXML):
     # -- asking for a list (worker thread) --
 
     def _navigate(self, view, focus=False, select=0):
-        """Show `view`: from the cache at once, else a card says Loading and a worker asks the add-on."""
+        """Show `view`: from the cache at once (the one in memory, else the first page kept on disk, even a stale one, which
+        is then asked for again in the background), else a card says Loading and a worker asks the add-on."""
         self._cancel("rail")
         self._cancel("focus")
+        stored = None
         with self._lock:
             self.token += 1
             token, self.view = self.token, view
@@ -160,22 +175,34 @@ class YouTube(xbmcgui.WindowXML):
             elif cached and data.fresh(cached[0], clock()):
                 self._install(view, cached[1], self._prepare(cached[1]), select)
                 shown = True
+            elif (stored := self._stored(view)) is not None:
+                self._install(view, stored[0], self._prepare(stored[0]), select)
+                if stored[1]:
+                    self.refreshing += 1
+                    self.refresh_token = token
+                shown = True
             else:
                 self._show_card(data.LOADING)
                 shown = False
         if shown:
             if focus:
                 self._focus_content()
-            self._more_when_near()
+            if stored is not None and stored[1]:
+                threading.Thread(target=self._load, args=(token, view, False, select, stored[0]), daemon=True).start()
+            else:
+                self._more_when_near()
             return
         threading.Thread(target=self._load, args=(token, view, focus, select), daemon=True).start()
 
-    def _load(self, token, view, focus, select):
-        signed = keys = gated = None
+    def _load(self, token, view, focus, select, shown=None):
+        """Ask the add-on for `view` and show the answer. `shown` is the page from the disk cache that is on screen while this
+        asks again: a better answer replaces it, a failure leaves it."""
+        signed = keys = gated = pid = None
         name = ""
         listing = data.NO_LISTING
         try:
             signed, keys, name = self._situation()
+            pid = self.profile
             self.channel = "unknown" if self.demo or not signed else files.channel_state()
             gated = data.gate(signed, view.needs_login, keys)
             if gated is None:
@@ -184,9 +211,16 @@ class YouTube(xbmcgui.WindowXML):
             ui.log(f"YouTube load failed: {e!r}", xbmc.LOGERROR)
             listing = data.Listing((), "", "Something went wrong.")
         try:
-            self._apply(token, view, (signed, name), keys, gated, listing, focus, select)
+            self._apply(token, view, (signed, name), keys, gated, listing, focus, select, shown)
+            self._keep(view, listing, gated, pid)
         finally:
             self.loads += 1
+            if shown is not None:
+                with self._lock:
+                    self.refreshing -= 1
+                    if self.refresh_token == token:
+                        self.refresh_token = 0
+                self._more_when_near()           # held back while the page of the disk cache was being asked for again
 
     def _situation(self):
         """(signed in, Google key, the profile's name) as the add-on has them; the demo pretends."""
@@ -213,25 +247,51 @@ class YouTube(xbmcgui.WindowXML):
             return (self.routes or {}).get(view.key) or view.route
         return view.route
 
-    def _apply(self, token, view, account, keys, gated, listing, focus, select):
+    def _apply(self, token, view, account, keys, gated, listing, focus, select, shown=None):
+        """Show the answer. With `shown` (the page of the disk cache on screen) a failed look changes nothing, an answer
+        that is the same page changes nothing, a changed page replaces it with the cursor where it was, and a card (the
+        section is empty now, or needs the sign-in) replaces it and drops the page from the cache."""
         prepared = None
         mode = gated or data.mode_for(listing, keys)
+        if shown is not None and mode in (data.ERROR, data.UNAVAILABLE):
+            return
         if mode == data.DATA:
             prepared = self._prepare(listing)    # the slow part: no lock held
         with self._lock:
             if self._stop.is_set() or token != self.token:
                 return
             self._set_avatar(*account)
-            if prepared is not None:
+            if shown is not None and prepared is not None:
+                self._swap(view, shown, listing, prepared)
+            elif prepared is not None:
                 self._remember(view.route, listing)
                 self._install(view, listing, prepared, select)
             else:
+                if shown is not None:
+                    self._forget(view)
                 self._show_card(mode, keys, listing.error)
                 self._watch_channel(view, token, mode)
         if focus:
             self._focus_content(FOCUS_WAIT)
         if prepared is not None:
             self._more_when_near()
+
+    def _swap(self, view, shown, listing, prepared):
+        """The fresh first page where the one from the disk cache is on screen: only when the window still shows that very
+        page (no next page was added to it) and the new one differs. The cursor stays on its position, the focus on the grid."""
+        if self.listing is not shown:
+            return
+        self._remember(view.route, listing)
+        if (listing.entries, listing.more) == (shown.entries, shown.more):
+            return
+        try:
+            position = self.getControl(GRID).getSelectedPosition()
+        except RuntimeError:
+            position = 0
+        grid_focused = self._focus() == GRID
+        self._install(view, listing, prepared, max(0, min(position, len(prepared[0]) - 1)))
+        if grid_focused:
+            self._focus_on(GRID)
 
     def _set_avatar(self, signed, name):
         """The account's circle at the top right: the first letter of the profile's name on a colour taken from the
@@ -247,6 +307,67 @@ class YouTube(xbmcgui.WindowXML):
         self._prop("signed", "" if signed is None else "1" if signed else "0")
         self._prop("avatar", letter)
         self._prop("avatar_color", color)
+
+    # -- the first pages kept on disk (page_cache), fetched at start-up (prefetch) --
+
+    def _ns(self, profile):
+        """The namespace the disk cache keeps a profile's pages in; None when nothing is kept (the demo, the cache switched
+        off, a profile that is not known)."""
+        return pages.namespace(profile) if PAGES and not self.demo else None
+
+    def _stored(self, view):
+        """(Listing, stale) of the first page of `view` on disk; None for no page, an old one or a damaged one."""
+        ns = self._ns(self.profile)
+        if ns is None or not view.route:
+            return None
+        hit = page_cache.get(ns, pages.key_of(view), pages.ttl_of(view), pages.max_age_of(view), now=clock())
+        listing = pages.from_value(hit.value) if hit else None
+        return (listing, hit.stale) if listing else None
+
+    def _keep(self, view, listing, gated, pid):
+        """A first page the add-on answered with cards goes to the disk cache, under the profile it was asked for: not an
+        error, an empty list, the sign-in or the key card."""
+        ns = self._ns(pid)
+        if ns is None or gated or not view.route or listing.error or not listing.entries:
+            return
+        if files.profile_id(log=False) not in (None, pid):       # the profile was switched while this was asked for
+            return
+        page_cache.put(ns, pages.key_of(view), pages.to_value(listing), now=clock())
+
+    def _forget(self, view):
+        ns = self._ns(self.profile)
+        if ns is not None:
+            page_cache.remove(ns, pages.key_of(view))
+
+    def _start_warm(self):
+        """Right after the window opens: the first pages of the other sections are fetched in the background and kept on disk
+        (prefetch: one at a time, at a low priority, only while the window asks for nothing itself), so that the section
+        the user goes to next is there already."""
+        pid = self.profile
+        ns = self._ns(pid)
+        if ns is None or self.view is None:
+            return
+        views = [data.section_view(key, self.routes) for key in pages.warm_keys(self.view.key)]
+        jobs = [(pages.key_of(v), lambda v=v: self._warm_page(v, pid)) for v in views]
+        self.warming = prefetch.warm(ns, jobs, ttl=pages.PAGE_TTL, idle=self._idle)
+
+    def _cancel_warm(self):
+        warming, self.warming = self.warming, None
+        if warming is not None:
+            warming.cancel()
+
+    def _idle(self):
+        """Whether the window is waiting for nothing: no Loading card, no page being asked for again, no next page."""
+        return not self._stop.is_set() and self.mode not in ("", data.LOADING) and not self.refreshing and not self.loading_more
+
+    def _warm_page(self, view, pid):
+        """The job of one section: its first page as page_cache keeps it, None when there is nothing worth keeping."""
+        if files.profile_id(log=False) != pid or data.gate(files.signed_in(), view.needs_login, files.keys_configured()):
+            return None
+        listing = data.parse_reply(self._reply(self._resolve(view)))
+        if listing.error or not listing.entries or files.profile_id(log=False) != pid:
+            return None
+        return pages.to_value(listing)
 
     def _remember(self, route, listing):
         self.cache[route] = (clock(), listing)
@@ -563,6 +684,8 @@ class YouTube(xbmcgui.WindowXML):
         with self._lock:
             if self._stop.is_set() or self.mode != data.DATA or not self.listing.more or self.loading_more == self.token:
                 return
+            if self.refresh_token == self.token:     # the first page is from the disk cache: its next page may be old too
+                return
             if clock() < self.more_retry:
                 return
             try:
@@ -684,6 +807,7 @@ class YouTube(xbmcgui.WindowXML):
         elif view is not None:
             with self._lock:
                 self.cache.pop(view.route, None)
+                self._forget(view)
                 self.routes = None               # the main page is read again too
             self._navigate(view, focus=True)
 

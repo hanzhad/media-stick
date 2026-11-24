@@ -183,8 +183,9 @@ sys.modules.update(xbmc=xbmc, xbmcvfs=xbmcvfs, xbmcgui=xbmcgui, xbmcaddon=xbmcad
 sys.path.insert(0, ADDON)
 sys.path.insert(0, LIB)
 
-from resources.lib import (accounts, apps, profiles, store, youtube_app, youtube_cards as C,  # noqa: E402
-                           youtube_data as D, youtube_demo as demo, youtube_files as files, youtube_state as S)
+from resources.lib import (accounts, apps, page_cache, prefetch, profiles, store, youtube_app, youtube_cards as C,  # noqa: E402
+                           youtube_data as D, youtube_demo as demo, youtube_files as files, youtube_pages as P,
+                           youtube_state as S)
 
 R = D.ROOT
 REAL_KEYS_POLL = youtube_app.KEYS_POLL            # the window tests make it short
@@ -973,6 +974,7 @@ class WindowCase(unittest.TestCase):
         self.site = Site()
         self.site.routes[R] = main_page()
         for patch in (mock.patch.object(youtube_app, "clock", lambda: Fake.now or time.time()),
+                      mock.patch.object(youtube_app, "PAGES", False),             # DiskCache turns the disk cache on
                       mock.patch.object(youtube_app, "KEYS_POLL", 0.02),
                       mock.patch.object(youtube_app, "PROFILE_POLL", 0.02),
                       mock.patch.object(files, "profile_id", side_effect=lambda log=True: Fake.profile),
@@ -2227,6 +2229,397 @@ class PickProfile(WindowCase):
         with mock.patch.object(accounts, "choose_profile", side_effect=RuntimeError("boom")):
             window.onClick(AVATAR)
         self.assertEqual(window.mode, D.DATA)
+
+
+class PagesPure(unittest.TestCase):
+    """youtube_pages: what a view is kept under and a listing as a JSON value."""
+
+    def listing(self):
+        return D.parse_reply(answer(vid(1, "One", seconds=61, views="1,234", dateadded="2026-11-20 10:00:00", live=True,
+                                        resume={"position": 30, "total": 120}),
+                                    folder(R + "playlist/P/", "Mix", videos=7), folder(R + "?page_token=abc", "Next")))
+
+    def test_a_listing_goes_through_json_and_comes_back_equal(self):
+        listing = self.listing()
+        self.assertEqual((len(listing.entries), bool(listing.more)), (2, True))
+        self.assertEqual(P.from_value(json.loads(json.dumps(P.to_value(listing)))), listing)
+
+    def test_a_page_that_is_not_what_this_screen_wrote_is_no_page(self):
+        good = P.to_value(self.listing())
+        row = good["entries"][0]
+        with_row = lambda *new: {**good, "entries": [list(new)]}      # noqa: E731
+        for bad in (None, [], {}, "x", {"entries": [], "more": ""}, {"entries": "x", "more": ""}, {"entries": good["entries"]},
+                    {**good, "more": 5}, {**good, "more": "http://evil/"}, {**good, "entries": [None]},
+                    with_row(*row[:-1]), with_row(*row, 1), with_row("audio", *row[1:]), with_row(row[0], "file:///etc/passwd", *row[2:]),
+                    with_row(*row[:4], "61", *row[5:]), with_row(*row[:4], True, *row[5:]), with_row(*row[:9], 1, *row[10:]),
+                    with_row(*row[:11], "x"), {**good, "entries": good["entries"] * 150}):
+            self.assertIsNone(P.from_value(bad), bad)
+
+    def test_namespaces_keys_and_times(self):
+        self.assertEqual((P.namespace("7"), P.namespace(""), P.namespace(None)), ("youtube:7", "youtube:anon", None))
+        self.assertEqual(P.key_of(D.section_view("subs", {"subs": R + "other/"})), "s:subs")           # the route found at run time is no key
+        cats, owls = (D.section_view(D.SEARCH, query="cats", kind=k) for k in (D.KIND_VIDEO, D.KIND_CHANNEL))
+        self.assertNotEqual(P.key_of(cats), P.key_of(owls))
+        self.assertEqual(P.key_of(D.folder_view(D.Entry(D.FOLDER, R + "playlist/P/", "Mix", "", 0, "", ""))), "r:" + R + "playlist/P/")
+        self.assertLess(P.ttl_of(cats), P.ttl_of(D.section_view("rec")))
+        self.assertLess(P.max_age_of(cats), P.max_age_of(D.section_view("rec")))
+
+    def test_the_sections_to_fetch_follow_the_one_on_screen(self):
+        self.assertEqual(P.warm_keys("rec"), ["subs", "later", "history", "lists", "trend"])
+        self.assertEqual(P.warm_keys("history"), ["lists", "trend", "rec", "subs", "later"])
+        self.assertEqual(P.warm_keys("trend"), ["rec", "subs", "later", "history", "lists"])
+        for other in (D.SEARCH, D.FOLDER_KEY, ""):
+            self.assertEqual(P.warm_keys(other), ["rec", "subs", "later", "history", "lists", "trend"], other)
+
+
+class DiskCache(WindowCase):
+    """The first pages kept on disk (page_cache) under the profile's namespace, and the sections fetched at start-up (prefetch)."""
+    T0 = 1_800_000_000.0
+    REC = D.SECTIONS[0].route
+
+    def setUp(self):
+        super().setUp()
+        self.real_warm = prefetch.warm
+        self.no_warm = mock.patch.object(prefetch, "warm", side_effect=lambda *a, **k: None)     # most tests are not about it
+        for patch in (mock.patch.object(youtube_app, "PAGES", True), self.no_warm):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def warming(self):
+        """Turn the start-up fetch on, without its pauses."""
+        self.no_warm.stop()
+        patch = mock.patch.object(prefetch, "warm", side_effect=lambda ns, jobs, **k: self.real_warm(ns, jobs, **{**k, "pause": 0, "nice": 0}))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def kept(self, key, profile="p1"):
+        return page_cache.get(P.namespace(profile), key, now=Fake.now or time.time())
+
+    def titles(self, hit):
+        return [row[2] for row in hit.value["entries"]]
+
+    def stale_open(self, *first, more=None, then=None):
+        """A window opened when the page of the first launch is older than its ttl; `then` changes the world before that."""
+        page_cache.drop(P.namespace("p1"))
+        Fake.now = self.T0
+        self.rec(*(first or (vid(1, "One"), vid(2, "Two"))), more=more)
+        self.open().stop()
+        Fake.now = self.T0 + P.PAGE_TTL + 1
+        if then:
+            then()
+        return self.open(wait=False)
+
+    def test_a_page_seen_before_shows_at_once_in_the_next_launch_without_asking(self):
+        self.rec(vid(1, "One"), vid(2, "Two"))
+        self.open().stop()
+        self.assertEqual(self.titles(self.kept("s:rec")), ["One", "Two"])
+        self.site.calls.clear()
+        again = self.open(wait=False)
+        self.assertEqual((self.shown(again), again.mode, again.focus), (["One", "Two"], D.DATA, GRID))      # before onInit returned
+        self.assertEqual(again.controls[GRID].items[0].art, {"thumb": "https://i.ytimg.com/vi/v1/hq.jpg"})
+        time.sleep(0.1)
+        self.assertEqual((self.site.asked(), again.loads), ([], 0))
+
+    def test_a_page_never_seen_is_a_miss_and_says_loading_as_before(self):
+        self.rec(vid(1, "One"))
+        self.site.held[self.REC] = hold = threading.Event()
+        window = self.open(wait=False)
+        self.assertEqual((window.mode, self.shown(window), window.getProperty("msg_title")), (D.LOADING, [], "Loading…"))
+        hold.set()
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["One"]))
+
+    def test_a_stale_page_shows_at_once_then_is_swapped_when_it_changed_and_the_cursor_stays(self):
+        window = self.stale_open(vid(1, "One"), vid(2, "Two"), vid(3, "Three"),
+                                 then=lambda: (self.rec(vid(1, "One"), vid(9, "New"), vid(3, "Three"), vid(4, "Four")),
+                                               self.site.held.update({self.REC: threading.Event()})))
+        hold = self.site.held[self.REC]
+        self.assertEqual((self.shown(window), window.mode), (["One", "Two", "Three"], D.DATA))
+        window.controls[GRID].selected = 2
+        self.assertTrue(wait_for(lambda: self.site.asked().count(self.REC) == 2), "asked again in the background")
+        self.assertEqual(self.shown(window), ["One", "Two", "Three"])
+        hold.set()
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["One", "New", "Three", "Four"]))
+        self.assertEqual((window.controls[GRID].selected, window.focus, window.mode), (2, GRID, D.DATA))
+        self.assertEqual(self.titles(self.kept("s:rec")), ["One", "New", "Three", "Four"])
+        self.assertFalse(self.kept("s:rec").stale)
+
+    def test_a_stale_page_that_did_not_change_stays_as_it_is_and_is_young_again(self):
+        window = self.stale_open()
+        before = list(window.controls[GRID].items)
+        self.assertTrue(wait_for(lambda: window.loads >= 1))
+        self.assertTrue(all(a is b for a, b in zip(before, window.controls[GRID].items)), "no card was rebuilt")
+        self.assertEqual(self.shown(window), ["One", "Two"])
+        self.assertFalse(self.kept("s:rec").stale)
+
+    def test_the_refresh_does_not_touch_a_screen_the_user_has_left(self):
+        window = self.stale_open(then=lambda: (self.rec(vid(7, "Newer")), self.site.held.update({self.REC: threading.Event()})))
+        hold = self.site.held[self.REC]
+        self.site.routes[D.SECTIONS[1].route] = answer(vid(5, "Subs"))
+        self.assertTrue(wait_for(lambda: self.site.asked().count(self.REC) == 2))
+        self.go(window, "subs")
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Subs"]))
+        hold.set()
+        self.assertTrue(wait_for(lambda: window.loads >= 2))
+        time.sleep(0.05)
+        self.assertEqual((self.shown(window), window.view.key), (["Subs"], "subs"))
+        self.assertEqual(self.titles(self.kept("s:rec")), ["Newer"])                  # but the disk has it for next time
+
+    def test_a_failed_refresh_leaves_the_page_and_an_empty_or_signed_out_answer_replaces_and_drops_it(self):
+        window = self.stale_open(then=lambda: self.site.routes.update({self.REC: {"id": 1, "error": {"code": 1, "message": "boom"}}}))
+        self.assertTrue(wait_for(lambda: window.loads >= 1))
+        self.assertEqual((self.shown(window), window.mode), (["One", "Two"], D.DATA))
+        self.assertIsNotNone(self.kept("s:rec"))
+        window = self.stale_open(then=lambda: self.site.routes.update({self.REC: INVALID}))
+        self.assertTrue(wait_for(lambda: window.loads >= 1))
+        self.assertEqual((self.shown(window), window.mode), (["One", "Two"], D.DATA))
+        window = self.stale_open(then=lambda: self.site.routes.update({self.REC: answer()}))
+        self.assertTrue(wait_for(lambda: window.mode == D.EMPTY))
+        self.assertIsNone(self.kept("s:rec"))
+        self.rec(vid(1, "One"))
+        window = self.stale_open(then=lambda: setattr(Fake, "signed", False))
+        self.assertTrue(wait_for(lambda: window.mode == D.SIGNIN))
+        self.assertIsNone(self.kept("s:rec"))
+
+    def test_nothing_that_is_not_a_list_of_cards_is_kept(self):
+        error = {"id": 1, "error": {"code": 1, "message": "boom"}}
+        for name, mode, world in (("error", D.ERROR, lambda: self.site.routes.update({self.REC: error})),
+                                  ("refused", D.UNAVAILABLE, lambda: self.site.routes.update({self.REC: INVALID})),
+                                  ("empty", D.EMPTY, lambda: self.site.routes.update({self.REC: answer()})),
+                                  ("signin", D.SIGNIN, lambda: setattr(Fake, "signed", False)),
+                                  ("needkey", D.NEEDKEY, lambda: (setattr(Fake, "signed", False), setattr(Fake, "keys", False)))):
+            Fake.signed, Fake.keys = True, True
+            self.site.routes.pop(self.REC, None)
+            world()
+            window = self.open()
+            self.assertEqual(window.mode, mode, name)
+            self.assertIsNone(self.kept("s:rec"), name)
+            window.stop()
+        page_dir = page_cache.directory()
+        self.assertEqual([name for name in os.listdir(page_dir) if name.endswith(".json")] if os.path.isdir(page_dir) else [], [])
+
+    def test_a_card_that_asks_again_forgets_the_page_it_shows(self):
+        self.rec(vid(1, "One"))
+        window = self.open()
+        self.assertIsNotNone(self.kept("s:rec"))
+        self.rec()
+        window.mode = D.EMPTY                                                          # the screen's button is the card's
+        window.onClick(ACTION)
+        self.assertTrue(wait_for(lambda: window.loads >= 2))
+        self.assertIsNone(self.kept("s:rec"))
+
+    def test_a_profile_has_its_own_pages_and_the_other_ones_never_show(self):
+        self.rec(vid(1, "Anna's"))
+        self.open().stop()
+        Fake.profile, Fake.name = "p2", "Boris"
+        self.rec(vid(2, "Boris's"))
+        self.site.held[self.REC] = hold = threading.Event()
+        boris = self.open(wait=False)
+        self.assertEqual((boris.mode, self.shown(boris)), (D.LOADING, []))                  # not Anna's
+        hold.set()
+        self.assertTrue(wait_for(lambda: self.shown(boris) == ["Boris's"]))
+        boris.stop()
+        self.assertEqual((self.titles(self.kept("s:rec", "p1")), self.titles(self.kept("s:rec", "p2"))), (["Anna's"], ["Boris's"]))
+        Fake.profile = "p1"
+        self.site.calls.clear()
+        window = self.open(wait=False)
+        self.assertEqual(self.shown(window), ["Anna's"])
+        Fake.profile = "p2"                                                          # the phone switches the profile
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Boris's"]))
+        self.assertEqual(self.site.asked().count(self.REC), 0, "both from the disk")
+        self.assertEqual(self.shown(window), ["Boris's"])
+
+    def test_a_profile_that_cannot_be_told_keeps_and_shows_nothing_and_the_demo_has_no_disk_cache(self):
+        self.rec(vid(1, "One"))
+        Fake.profile = None
+        self.open().stop()
+        page_dir = page_cache.directory()
+        self.assertEqual(os.listdir(page_dir) if os.path.isdir(page_dir) else [], [])
+        self.open(demo=True).stop()
+        self.assertEqual(os.listdir(page_dir) if os.path.isdir(page_dir) else [], [])
+
+    def test_no_profile_has_a_namespace_of_its_own(self):
+        Fake.profile = ""
+        self.rec(vid(1, "One"))
+        self.open().stop()
+        self.assertEqual(self.titles(page_cache.get("youtube:anon", "s:rec")), ["One"])
+
+    def test_a_search_is_kept_by_its_words_and_its_type_for_a_short_time(self):
+        Fake.now = self.T0
+        self.rec(vid(1))
+        for kind, title in ((D.KIND_VIDEO, "Cat video"), (D.KIND_CHANNEL, "Cat channel")):
+            self.site.routes[D.search_route("cats", kind)] = answer(vid(5, title))
+        window = self.open()
+        Fake.typed.append("cats")
+        self.go(window, D.SEARCH)
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Cat video"]))
+        window.focus = KIND_IDS[1]
+        window.onClick(KIND_IDS[1])
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Cat channel"]))
+        window.stop()
+        state = {"section": "search", "query": "cats"}
+        self.site.calls.clear()
+        again = self.open(wait=False, state=state)                                   # the app starts on Videos
+        self.assertEqual(self.shown(again), ["Cat video"])
+        again.onClick(KIND_IDS[1])
+        self.assertEqual(self.shown(again), ["Cat channel"])
+        self.assertEqual(self.site.asked(), [])
+        self.assertEqual(self.titles(self.kept("r:" + D.search_route("cats", D.KIND_CHANNEL))), ["Cat channel"])
+        self.assertIsNone(self.kept("r:" + D.search_route("dogs", D.KIND_VIDEO)))
+        again.stop()
+        Fake.now = self.T0 + P.SEARCH_TTL + 1                                        # short: asked again, shown meanwhile
+        self.site.routes[D.search_route("cats", D.KIND_VIDEO)] = answer(vid(5, "Cat video"), vid(6, "Cat video 2"))
+        stale = self.open(wait=False, state=state)
+        self.assertEqual(self.shown(stale)[:1], ["Cat video"])
+        self.assertTrue(wait_for(lambda: self.shown(stale) == ["Cat video", "Cat video 2"]))
+        stale.stop()
+        Fake.now = self.T0 + P.SEARCH_MAX_AGE + P.SEARCH_TTL + 2                     # too old: not shown at all
+        self.site.held[D.search_route("cats", D.KIND_VIDEO)] = hold = threading.Event()
+        old = self.open(wait=False, state=state)
+        self.assertEqual((old.mode, self.shown(old)), (D.LOADING, []))
+        hold.set()
+
+    def test_only_the_first_page_is_kept_and_the_next_page_is_asked_live_every_time(self):
+        more = R + "special/recommendations/?page_token=2"
+        self.rec(vid(1, "One"), more=more)
+        self.site.routes[more] = answer(vid(2, "Two"))
+        window = self.open()
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["One", "Two"]))
+        window.stop()
+        hit = self.kept("s:rec")
+        self.assertEqual((self.titles(hit), hit.value["more"]), (["One"], more))
+        again = self.open(wait=False)
+        self.assertEqual(self.shown(again)[:1], ["One"])
+        self.assertTrue(wait_for(lambda: self.shown(again) == ["One", "Two"]))
+        self.assertEqual(self.site.asked().count(more), 2)
+        self.assertEqual(self.titles(self.kept("s:rec")), ["One"])
+
+    def test_a_next_page_is_not_asked_from_a_stale_first_page_until_that_was_asked_again(self):
+        more1, more2 = (R + f"special/recommendations/?page_token={n}" for n in (2, 3))
+        self.site.routes[more1] = answer(vid(8, "Old next"))
+        self.site.routes[more2] = answer(vid(3, "Three"))
+        window = self.stale_open(vid(1, "One"), more=more1,
+                                 then=lambda: (self.rec(vid(1, "One"), more=more2), self.site.held.update({self.REC: threading.Event()})))
+        self.assertTrue(wait_for(lambda: self.site.asked().count(self.REC) == 2))
+        window._more_when_near()
+        time.sleep(0.1)
+        self.assertEqual(self.site.asked().count(more1), 1, "only the first launch asked for it")
+        self.site.held[self.REC].set()
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["One", "Three"]))
+        self.assertEqual((self.site.asked().count(more1), self.site.asked().count(more2)), (1, 1))
+
+    def test_a_damaged_file_or_a_page_of_another_shape_is_a_miss(self):
+        self.rec(vid(1, "One"))
+        self.open().stop()
+        folder_ = page_cache.directory()
+        for name in os.listdir(folder_):
+            put(os.path.join(folder_, name), "{not json")
+        window = self.open()
+        self.assertEqual(self.shown(window), ["One"])
+        self.assertEqual(window.loads, 1)
+        window.stop()
+        page_cache.put(P.namespace("p1"), "s:rec", {"entries": [["x"]], "more": ""})
+        window = self.open()
+        self.assertEqual((self.shown(window), window.loads), (["One"], 1))
+
+    def test_signing_out_drops_the_accounts_pages_and_leaves_other_apps(self):
+        self.rec(vid(1, "One"))
+        self.open().stop()
+        page_cache.put("sweettv:me", "channels", {"x": 1})
+        accounts.sign_out("youtube")
+        self.assertIsNone(self.kept("s:rec"))
+        self.assertEqual(page_cache.get("sweettv:me", "channels").value, {"x": 1})
+        self.assertIn(accounts.SIGNOUT["youtube"], Fake.builtins[-1])
+
+    # -- the fetch at start-up --
+
+    def sections(self):
+        for i, name in ((1, "S1"), (3, "S3"), (4, "S4"), (5, "S5")):
+            self.site.routes[D.SECTIONS[i].route] = answer(vid(10 + i, name))
+        self.site.routes[LATER] = answer(vid(20, "Later one"))
+        self.rec(vid(1, "R"))
+
+    def test_the_other_sections_are_fetched_right_after_the_window_opens_one_by_one(self):
+        self.warming()
+        self.sections()
+        window = self.open()
+        self.assertTrue(window.warming.wait(5))
+        self.assertEqual(self.site.asked(), [R, self.REC, D.SECTIONS[1].route, LATER, D.SECTIONS[3].route,
+                                              D.SECTIONS[4].route, D.SECTIONS[5].route])
+        self.assertTrue(all(not in_main for _, in_main in self.site.calls), "off the UI thread")
+        for key, title in (("rec", "R"), ("subs", "S1"), ("later", "Later one"), ("history", "S3"), ("lists", "S4"), ("trend", "S5")):
+            self.assertEqual(self.titles(self.kept("s:" + key)), [title], key)
+        window.stop()
+        self.site.calls.clear()
+        again = self.open(wait=False, state={"section": "history"})
+        self.assertEqual(self.shown(again), ["S3"])                                   # the second launch of the day: at once
+        self.assertTrue(again.warming.wait(5))
+        self.assertEqual(self.site.asked(), [], "everything was fresh: nothing is fetched again")
+
+    def test_the_visible_section_comes_first_and_the_others_follow_it_in_the_rails_order(self):
+        self.warming()
+        self.sections()
+        self.site.routes[D.SECTIONS[3].route] = answer(vid(3, "S3"))
+        window = self.open(state={"section": "history"})
+        self.assertTrue(window.warming.wait(5))
+        self.assertEqual(self.site.asked(), [R, D.SECTIONS[3].route, D.SECTIONS[4].route, D.SECTIONS[5].route, self.REC,
+                                              D.SECTIONS[1].route, LATER])
+
+    def test_signed_out_only_what_needs_no_account_is_fetched(self):
+        self.warming()
+        self.sections()
+        Fake.signed = False
+        window = self.open()
+        self.assertEqual(window.mode, D.SIGNIN)
+        self.assertTrue(window.warming.wait(5))
+        self.assertEqual(self.site.asked(), [R, D.SECTIONS[5].route])
+        self.assertEqual([self.kept("s:" + key) is not None for key in D.SECTION_KEYS[:6]], [False] * 5 + [True])
+
+    def test_the_fetch_leaves_a_section_that_answers_nothing_and_goes_on(self):
+        self.warming()
+        self.sections()
+        self.site.routes[D.SECTIONS[1].route] = answer()
+        self.site.routes[LATER] = {"id": 1, "error": {"code": 1, "message": "boom"}}
+        window = self.open()
+        self.assertTrue(window.warming.wait(5))
+        self.assertEqual([self.kept("s:" + key) is not None for key in ("subs", "later", "history", "lists", "trend")],
+                         [False, False, True, True, True])
+
+    def test_the_fetch_waits_while_the_window_is_waiting_for_its_own_page(self):
+        self.warming()
+        self.sections()
+        self.site.held[self.REC] = hold = threading.Event()
+        window = self.open(wait=False)
+        time.sleep(0.5)
+        self.assertEqual(self.site.asked(), [R, self.REC])                           # nothing competes with the Loading card
+        hold.set()
+        self.assertTrue(window.warming.wait(5))
+        self.assertIn(D.SECTIONS[5].route, self.site.asked())
+
+    def test_closing_the_window_stops_the_fetch(self):
+        self.warming()
+        self.sections()
+        self.site.held[D.SECTIONS[1].route] = hold = threading.Event()
+        window = self.open()
+        handle = window.warming
+        self.assertTrue(wait_for(lambda: D.SECTIONS[1].route in self.site.asked()))
+        window.stop()
+        hold.set()
+        self.assertTrue(handle.wait(5))
+        self.assertEqual((handle.cancelled, window.warming), (True, None))
+        self.assertNotIn(D.SECTIONS[5].route, self.site.asked())
+
+    def test_a_switched_profile_is_fetched_for_under_its_own_namespace(self):
+        self.warming()
+        self.sections()
+        window = self.open()
+        self.assertTrue(window.warming.wait(5))
+        first = window.warming
+        self.site.routes[D.SECTIONS[1].route] = answer(vid(31, "Boris subs"))
+        Fake.profile, Fake.name = "p2", "Boris"
+        self.assertTrue(wait_for(lambda: window.warming is not first and window.warming is not None and window.warming.wait(0.05)))
+        self.assertEqual(window.warming.namespace, "youtube:p2")
+        self.assertEqual(self.titles(self.kept("s:subs", "p2")), ["Boris subs"])
+        self.assertEqual(self.titles(self.kept("s:subs", "p1")), ["S1"])
 
 
 class Files(unittest.TestCase):

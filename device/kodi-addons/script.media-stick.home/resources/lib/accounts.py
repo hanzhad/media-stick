@@ -16,7 +16,7 @@ from urllib.parse import quote
 import xbmc
 import xbmcgui
 
-from resources.lib import apps, profiles, signin, store, ui
+from resources.lib import apps, page_cache, profiles, signin, store, ui
 
 YOUTUBE = "youtube"
 PROFILE_SERVICES = (YOUTUBE,)                    # the services that have several profiles
@@ -142,6 +142,7 @@ def signin_service(service, allow_skip=False):
 def sign_out(service):
     if not addon_ready(service):
         return False
+    page_cache.drop_service(service)         # the account's cached pages go with it
     xbmc.executebuiltin(f"RunPlugin({SIGNOUT[service]})")
     return True
 
