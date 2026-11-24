@@ -165,7 +165,7 @@ class Search(unittest.TestCase):
         self.assertEqual((other["cid"], other["playable"]), ("99", False))
         movie, person = rows_of(rows, "movie")[0], rows_of(rows, "person")[0]
         self.assertEqual((movie["title"], movie["subtitle"], movie["playable"], movie["cid"], movie["epg"]),
-                         ("Divorce Club", "2020, Comedy", False, "", ""))
+                         ("Divorce Club", "2020, Comedy", True, "", ""))
         self.assertEqual((person["title"], person["playable"]), ("Іван Холостяк", False))
         self.assertEqual(len(rows), 9)                                                               # the weird kind, bad ids, no title and no start are gone
 

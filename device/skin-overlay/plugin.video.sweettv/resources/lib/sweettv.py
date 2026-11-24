@@ -762,8 +762,22 @@ def _ms_start(cid, epg, videoid):
     return offset
 
 
+def _ms_quality():
+    try:
+        import mediastick_resume as _ms_res
+        return _ms_res.read_quality()
+    except Exception:
+        return '1080p'
+
+
+def _ms_apply_quality_cap(listitem, quality):
+    if listitem is not None and helper.get_setting('playerType') != 'ffmpeg' and quality in ('720p', '1080p'):
+        listitem.setProperty('inputstream.adaptive.max_resolution', quality)
+
+
 def _ms_names(cid, epg):
-    """(channel name, programme text, start, stop) from the saved channel list; empty where unknown, never raises."""
+    """(channel name, programme text, start, stop) from the saved channel list (falling back to sweetapi.recall)."""
+    name = ''
     try:
         now = int(time.time())
         for channel in helper.get_channel_list().get('list') or []:
@@ -774,41 +788,105 @@ def _ms_names(cid, epg):
                 here = str(p.get('id')) == str(epg) if epg else p['time_start'] <= now < p['time_stop']
                 if here:
                     return name, str(p.get('text') or ''), int(p['time_start']), int(p['time_stop'])
-            return name, '', 0, 0
+            break
     except Exception as e:
         xbmc.log('media-stick: SWEET.TV channel name not read: ' + repr(e)[:120], xbmc.LOGWARNING)
-    return '', '', 0, 0
+    if epg:
+        try:
+            import mediastick_sweetapi as _ms_api
+            rec = _ms_api.recall(cid, epg)
+            if rec:
+                return name, '', int(rec['start']), int(rec['stop'])
+        except Exception:
+            pass
+    return name, '', 0, 0
 
 
 def _ms_name_the_item(cid, epg, offset=0):
-    """Wraps setResolvedUrl until the returned function is called: the item it resolves gets the channel name as its
-    title (for an archived programme: the programme, with the channel as its show). Unknown channel: upstream's item."""
+    """Wraps setResolvedUrl until the returned function is called: names the item, sets ResumeTime/TotalTime/DVR,
+    and applies the device's inputstream.adaptive max_resolution cap."""
     name, text, begin, end = _ms_names(cid, epg)
+    quality = _ms_quality()
     real = xbmcplugin.setResolvedUrl
-    if not name:
-        return lambda: None
 
     def resolved(handle, succeeded, listitem=None):
         try:
             if succeeded and listitem is not None:
-                title = (text or name) if epg else name
-                info = {'title': title, 'tvshowtitle': name}
-                if text and not epg:
-                    info['plot'] = text           # live: what is on now
-                listitem.setLabel(title)
-                listitem.setInfo('video', info)
+                if name:
+                    title = (text or name) if epg else name
+                    info = {'title': title, 'tvshowtitle': name}
+                    if text and not epg:
+                        info['plot'] = text           # live: what is on now
+                    listitem.setLabel(title)
+                    listitem.setInfo('video', info)
+                now = int(time.time())
+                use_is = helper.get_setting('playerType') != 'ffmpeg'
+                in_progress = bool(use_is and epg and begin and end and begin <= now < end)
                 if epg and offset:
-                    # Kodi ignores StartOffset of a resolved plugin item; a resume point is what it starts from (the service of
-                    # this add-on looks that the player got there, and seeks if not: mediastick_sweetlive.follow)
                     listitem.setProperty('ResumeTime', str(offset))
-                if epg and end > begin:
+                if in_progress:
+                    listitem.setProperty('inputstream.adaptive.manifest_update_parameter', 'full')
+                elif epg and end > begin:
                     listitem.setProperty('TotalTime', str(end - begin))   # the bar is the programme (upstream says 1 s)
+                _ms_apply_quality_cap(listitem, quality)
         except Exception as e:
             xbmc.log('media-stick: SWEET.TV item not named: ' + repr(e)[:120], xbmc.LOGWARNING)
         return real(handle, succeeded, listitem)
 
     xbmcplugin.setResolvedUrl = resolved
     return lambda: setattr(xbmcplugin, 'setResolvedUrl', real)
+
+
+@plugin.route('/playvod/<videoid>')
+def playvod(videoid):
+    if not helper.get_setting('logged'):
+        return
+    _ms_sync_auth()
+    _ms_sync_language()
+    parts = _ms_live.split_vod_id(videoid) if _ms_live else None
+    if not parts:
+        return
+    movie_id, ep_raw, owner_raw = parts
+    episode_id = None if ep_raw == 'null' else int(ep_raw)
+    owner_id = int(owner_raw)
+    quality = _ms_quality()
+    try:
+        import mediastick_sweetapi as _ms_api
+        res = _ms_api.vod_link(int(movie_id), episode_id=episode_id, owner_id=owner_id, quality=quality)
+    except Exception as e:
+        xbmc.log('media-stick: SWEET.TV vod_link failed: ' + repr(e)[:120], xbmc.LOGWARNING)
+        return
+    if not isinstance(res, dict) or not res.get('ok'):
+        xbmc.log('media-stick: SWEET.TV vod_link refused', xbmc.LOGWARNING)
+        return
+    ep_str = '' if episode_id is None else str(episode_id)
+    offset = _ms_start('vod:' + movie_id, ep_str, videoid) if ep_str else (
+        _ms_live.start_of(sys.argv, videoid, 'vod:' + movie_id, '', now=time.time())[0] if _ms_live else 0)
+    _ms_remember('vod:' + movie_id, ep_str, res['url'], offset)
+    real = xbmcplugin.setResolvedUrl
+
+    def resolved(handle, succeeded, listitem=None):
+        try:
+            if succeeded and listitem is not None:
+                title = res.get('title') or ''
+                if title:
+                    listitem.setLabel(title)
+                    listitem.setInfo('video', {'title': title})
+                if offset:
+                    listitem.setProperty('ResumeTime', str(offset))
+                if res.get('duration'):
+                    listitem.setProperty('TotalTime', str(res['duration']))
+                _ms_apply_quality_cap(listitem, quality)
+        except Exception as e:
+            xbmc.log('media-stick: SWEET.TV vod item not named: ' + repr(e)[:120], xbmc.LOGWARNING)
+        return real(handle, succeeded, listitem)
+
+    xbmcplugin.setResolvedUrl = resolved
+    try:
+        drm = 'com.widevine.alpha' if res.get('license_url') else None
+        helper.playstream(res['url'], res.get('license_url') or '', res.get('protocol') or 'hls', drm, flags=False, vod=True)
+    finally:
+        xbmcplugin.setResolvedUrl = real
 
 
 @plugin.route('/golive')

@@ -26,11 +26,14 @@ import json
 import os
 import re
 import tempfile
+import time
 from urllib.parse import parse_qs, urlsplit
 
 PREFS = os.environ.get("MEDIASTICK_PREFS_DIR", "/var/lib/media-stick/prefs")
 DIR = os.environ.get("MEDIASTICK_RESUME_DIR", "/var/lib/media-stick/resume")
 FLAG_FILE, STORE_FILE = "local-resume", "positions.json"
+QUALITY_FILE, DEFAULT_QUALITY = "max-quality", "1080p"
+FAVS_FILE = "sweettv-favourites.json"
 DEFAULT = False                     # off: the places keep reading what they read before this setting existed
 MAX_ITEMS = 300                     # the newest ones are kept
 MIN_POS = 5                         # s: a place nearer the start than this is not worth coming back to
@@ -38,8 +41,10 @@ END_MARGIN = 30                     # s: a place nearer the end than this (or pa
 WRITE_EVERY = 30                    # s between two writes of a place that moves on (a stop or the end writes at once)
 
 SWEET_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvid/([0-9]{1,12})\|(null|[0-9]{1,12})(?:\?[^\s]*)?")
+SWEET_VOD_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvod/([0-9]{1,12})\|(null|[0-9]{1,12})\|([0-9]{1,12})(?:\?[^\s]*)?")
 YOUTUBE_RE = re.compile(r"plugin://plugin\.video\.youtube/[^\s]*")
 VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{6,20}")
+FAV_KEY_RE = re.compile(r"(show:vod:[0-9]{1,12}|show:epg:[0-9]{1,12}|show:tv:[0-9]{1,12}|vod:[0-9]{1,12}|ch:[0-9]{1,12})")
 
 
 # ---- the choice -------------------------------------------------------------------------------
@@ -78,17 +83,47 @@ def set_enabled(flag) -> bool:
     return _write_atomic(PREFS, FLAG_FILE, "1\n" if flag else "0\n")
 
 
+def normalize_quality(value) -> str:
+    """Normalize device video quality cap to '720p', '1080p' (default), or 'unlimited'."""
+    if not isinstance(value, str):
+        return DEFAULT_QUALITY
+    v = value.strip().lower()
+    if v == "720p":
+        return "720p"
+    if v in ("unlimited", "4k"):
+        return "unlimited"
+    return DEFAULT_QUALITY
+
+
+def read_quality() -> str:
+    """Read /var/lib/media-stick/prefs/max-quality, returning '1080p' when missing or invalid."""
+    try:
+        with open(os.path.join(PREFS, QUALITY_FILE), encoding="utf-8") as f:
+            return normalize_quality(f.readline())
+    except (OSError, ValueError):
+        return DEFAULT_QUALITY
+
+
+def write_quality(value) -> bool:
+    """Write normalized quality cap atomically to prefs/max-quality."""
+    return _write_atomic(PREFS, QUALITY_FILE, normalize_quality(value) + "\n")
+
+
 # ---- what a played file is -------------------------------------------------------------------
 
 def parse(file):
-    """("yt", video id), ("sw", channel id, programme id or "" for live), or None: not something that is remembered."""
+    """(\"yt\", video id), (\"sw\", channel id, programme id or \"\" for live), (\"sw_vod\", movie id, episode id or \"\"), or None."""
     if not isinstance(file, str):
         return None
-    m = SWEET_RE.fullmatch(file.strip())
+    text = file.strip()
+    m = SWEET_RE.fullmatch(text)
     if m:
         return ("sw", m.group(1), "" if m.group(2) == "null" else m.group(2))
-    if YOUTUBE_RE.fullmatch(file.strip()):
-        found = parse_qs(urlsplit(file.strip()).query).get("video_id", [""])[0]
+    m = SWEET_VOD_RE.fullmatch(text)
+    if m:
+        return ("sw_vod", m.group(1), "" if m.group(2) == "null" else m.group(2))
+    if YOUTUBE_RE.fullmatch(text):
+        found = parse_qs(urlsplit(text).query).get("video_id", [""])[0]
         return ("yt", found) if VIDEO_ID_RE.fullmatch(found) else None
     return None
 
@@ -96,7 +131,11 @@ def parse(file):
 def key_of(parsed):
     if not parsed:
         return ""
-    return "yt:" + parsed[1] if parsed[0] == "yt" else "sw:%s|%s" % (parsed[1], parsed[2]) if parsed[2] else ""
+    if parsed[0] == "yt":
+        return "yt:" + parsed[1]
+    if parsed[0] == "sw_vod":
+        return "sw:vod:%s|%s" % (parsed[1], parsed[2]) if parsed[2] else "sw:vod:%s" % parsed[1]
+    return "sw:%s|%s" % (parsed[1], parsed[2]) if parsed[2] else ""
 
 
 # ---- the positions ---------------------------------------------------------------------------
@@ -110,23 +149,45 @@ def _number(value):
         and abs(value) < 10 ** 12 else None
 
 
+def _clean_sw_extras(item, src, old=None):
+    old = old if isinstance(old, dict) else {}
+    sid = src.get("show_id") if src.get("show_id") is not None else old.get("show_id")
+    if isinstance(sid, (str, int)) and not isinstance(sid, bool) and str(sid).strip():
+        item["show_id"] = str(sid).strip()[:32]
+    for field in ("season", "episode"):
+        val = _number(src.get(field) if src.get(field) is not None else old.get(field))
+        if val is not None and val >= 0:
+            item[field] = int(val)
+    thumb = src.get("thumb") or old.get("thumb")
+    if isinstance(thumb, str) and thumb.strip():
+        item["thumb"] = thumb.strip()[:300]
+
+
 def _clean(raw):
     """A positions document read from disk, reduced to what this library writes; anything else reads as nothing."""
     out = empty()
     items = raw.get("items") if isinstance(raw, dict) else None
     for key, e in (items.items() if isinstance(items, dict) else ()):
-        if not isinstance(key, str) or not isinstance(e, dict) or not re.fullmatch(r"(yt:[A-Za-z0-9_-]{6,20}|sw:[0-9]{1,12}\|[0-9]{1,12})", key):
+        if not isinstance(key, str) or not isinstance(e, dict) or not re.fullmatch(
+                r"(yt:[A-Za-z0-9_-]{6,20}|sw:[0-9]{1,12}\|[0-9]{1,12}|sw:vod:[0-9]{1,12}(?:\|[0-9]{1,12})?)", key):
             continue
         pos, total, at = _number(e.get("pos")), _number(e.get("total")), _number(e.get("at"))
         if at is None or total is None or total <= 0 or pos is None or pos < 0:
             continue
         item = {"pos": int(pos), "total": int(total), "done": e.get("done") is True, "at": int(at)}
-        if key.startswith("sw:"):
+        if key.startswith("sw:vod:"):
+            movie_id, _, ep_id = key[7:].partition("|")
+            item.update(movie_id=movie_id, episode_id=ep_id, title=str(e.get("title") or "")[:120])
+            thumb = e.get("thumb")
+            if isinstance(thumb, str) and thumb.strip():
+                item["thumb"] = thumb.strip()[:300]
+        elif key.startswith("sw:"):
             cid, epg = key[3:].split("|")
             item.update(cid=cid, epg=epg, title=str(e.get("title") or "")[:120])
             for field in ("start", "stop"):
                 value = _number(e.get(field))
                 item[field] = int(value) if value and value > 0 else 0
+            _clean_sw_extras(item, e)
         out["items"][key] = item
     live = raw.get("live") if isinstance(raw, dict) else None
     cid, at = (live.get("cid"), _number(live.get("at"))) if isinstance(live, dict) else (None, None)
@@ -174,6 +235,14 @@ def record(data, file, pos, total, now, meta=None):
         item.update(cid=parsed[1], epg=parsed[2], title=str(meta.get("title") or old.get("title") or "")[:120],
                     start=int(_number(meta.get("start")) or old.get("start") or 0),
                     stop=int(_number(meta.get("stop")) or old.get("stop") or 0))
+        _clean_sw_extras(item, meta, old)
+    elif parsed[0] == "sw_vod":
+        meta = meta if isinstance(meta, dict) else {}
+        old = data["items"].get(key, {})
+        item.update(movie_id=parsed[1], episode_id=parsed[2], title=str(meta.get("title") or old.get("title") or "")[:120])
+        thumb = meta.get("thumb") or old.get("thumb")
+        if isinstance(thumb, str) and thumb.strip():
+            item["thumb"] = thumb.strip()[:300]
     data["items"][key] = item
     if len(data["items"]) > MAX_ITEMS:
         newest = sorted(data["items"].items(), key=lambda kv: -kv[1]["at"])[:MAX_ITEMS]
@@ -239,3 +308,64 @@ def localize_reply(reply, data):
             item["resume"] = {"position": e["pos"], "total": e["total"]}
         out.append(item)
     return {**reply, "result": {**result, "files": out}}
+
+
+# ---- SWEET.TV local favourites ----------------------------------------------------------------
+
+def _clean_favs(raw):
+    out = {"v": 1, "items": {}}
+    items = raw.get("items") if isinstance(raw, dict) else None
+    for key, e in (items.items() if isinstance(items, dict) else ()):
+        if not isinstance(key, str) or not FAV_KEY_RE.fullmatch(key) or not isinstance(e, dict):
+            continue
+        at = _number(e.get("at"))
+        entry = {
+            "title": str(e.get("title") or "")[:120],
+            "thumb": str(e.get("thumb") or "")[:300],
+            "at": int(at) if at is not None else 0,
+        }
+        if isinstance(e.get("meta"), dict):
+            entry["meta"] = {str(k)[:32]: v for k, v in e["meta"].items() if isinstance(v, (str, int, float, bool)) or v is None}
+        out["items"][key] = entry
+    return out
+
+
+def load_favs(path=None):
+    try:
+        with open(path or os.path.join(DIR, FAVS_FILE), encoding="utf-8") as f:
+            return _clean_favs(json.load(f))
+    except (OSError, ValueError, MemoryError):
+        return {"v": 1, "items": {}}
+
+
+def save_favs(data, path=None) -> bool:
+    cleaned = _clean_favs(data)
+    if path:
+        return _write_atomic(os.path.dirname(path), os.path.basename(path), json.dumps(cleaned, ensure_ascii=False))
+    return _write_atomic(DIR, FAVS_FILE, json.dumps(cleaned, ensure_ascii=False))
+
+
+def fav_keys(data=None) -> set:
+    doc = _clean_favs(data) if data is not None else load_favs()
+    return set(doc["items"].keys())
+
+
+def toggle_fav(key, meta=None, now=None, path=None):
+    """Toggle a local SWEET.TV favourite (`show:vod:<id>`, `show:epg:<id>`, `show:tv:<id>`, `vod:<id>`, `ch:<id>`).
+    Returns (is_now_fav, saved_ok)."""
+    if not isinstance(key, str) or not FAV_KEY_RE.fullmatch(key):
+        return False, False
+    doc = load_favs(path)
+    if key in doc["items"]:
+        del doc["items"][key]
+        return False, save_favs(doc, path)
+    meta = meta if isinstance(meta, dict) else {}
+    entry = {
+        "title": str(meta.get("title") or "")[:120],
+        "thumb": str(meta.get("thumb") or "")[:300],
+        "at": int(time.time() if now is None else now),
+    }
+    if isinstance(meta.get("meta"), dict):
+        entry["meta"] = meta["meta"]
+    doc["items"][key] = entry
+    return True, save_favs(doc, path)

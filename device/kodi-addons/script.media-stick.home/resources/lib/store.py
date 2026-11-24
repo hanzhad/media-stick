@@ -45,15 +45,8 @@ SERVICES = lib.SERVICES
 
 
 def local_resume():
-    """The positions the stick saved while anything played (mediastick_resume's document) when the choice "remember where I
-    stopped, on the device" is on; None when it is off, the library is missing or it fails: the places then read what they
-    always did."""
-    if resume is None:
-        return None
-    try:
-        return resume.load() if resume.enabled() else None
-    except Exception:
-        return None
+    """YouTube uses its own profile/account history; local resume override is disabled for YouTube."""
+    return None
 
 
 def channel_state(profile_id) -> str:

@@ -6,3 +6,5 @@ secrets.env
 .DS_Store
 __pycache__/
 *.pyc
+tools/emulator/.state/
+*settings.xml

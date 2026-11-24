@@ -50,8 +50,20 @@ except ImportError:                 # a device without it: no bearer, every call
 
 API = "https://api.sweet.tv/"
 SEARCH, CHANNELS = "SearchService/Search.json", "TvService/GetChannels.json"
+TOP_SEARCH = "SearchService/GetTop.json"
+CONFIG = "MovieService/GetConfiguration.json"
+COLLECTIONS = "MovieService/GetCollections.json"
+COLLECTION_INFO = "MovieService/GetCollectionInfo.json"
+GENRE_MOVIES = "MovieService/GetGenreMovies.json"
+MOVIE_INFO = "MovieService/GetMovieInfo.json"
+MOVIE_LINK = "MovieService/GetLink.json"
+EPG_RECORDS = "TvService/GetEpgRecords.json"
 TIMEOUT = 8                         # s a call may take
 CACHE_TTL, CACHE_MAX = 60, 64       # s an answer is kept, and how many
+CONFIG_TTL = 600                    # s configuration() is cached in memory
+UHD_GENRE = 57
+UHD_CATEGORY = 24
+SORT_MODE_IDS = (1, 2, 3, 5, 6)
 MIN_NEEDLE, MAX_NEEDLE = 2, 100
 MAX_ROWS = 60
 DAY_PAGE = 30                       # programmes asked for before and after the moment (the API counts programmes, not hours)
@@ -164,6 +176,27 @@ def _known_channel(channels, cid):
     return channels.get(cid) if isinstance(channels, dict) else None
 
 
+def _is_uhd_movie(item):
+    genres = item.get("genres")
+    if isinstance(genres, list):
+        return any(_num(g) == UHD_GENRE for g in genres)
+    if isinstance(genres, str):
+        return "ultra hd" in genres.casefold()
+    return False
+
+
+def _is_uhd_channel(item, channel=None):
+    for src in (item, channel):
+        if not isinstance(src, dict):
+            continue
+        for key in ("category", "categories"):
+            cats = src.get(key)
+            if isinstance(cats, list) and any(_num(c) == UHD_CATEGORY for c in cats):
+                return True
+    genres = item.get("genres")
+    return isinstance(genres, str) and "ultra hd" in genres.casefold()
+
+
 def _programme_row(item, channels, now, tr):
     epg, cid, start, stop = _id(item.get("id")), _id(item.get("sub_id")), _time(item.get("time_start")), _time(item.get("time_stop"))
     title = _clean(item.get("text"))
@@ -176,19 +209,33 @@ def _programme_row(item, channels, now, tr):
     return {"kind": "programme", "id": epg, "title": title, "subtitle": "", "cid": cid, "epg": epg, "start": start, "stop": stop,
             "channel_name": _clean(channel.get("name"), 120) if channel else "", "when": when_text(start, now, tr),
             "live": live, "playable_in_archive": archive, "playable": archive or (live and channel is not None),
-            "available": True, "preview": "", "repeats": 0, "more": ""}
+            "available": True, "preview": "", "image_url": https(item.get("image_url")), "repeats": 0, "more": ""}
 
 
-def _other_row(item, kind, channels):
+def _other_row(item, kind, channels, quality="1080p"):
     ident, title = _id(item.get("id")), _clean(item.get("text"))
     if not ident or not title:
         return None
     channel = _known_channel(channels, ident) if kind == "channel" else None
+    if quality != "unlimited":
+        if kind == "movie" and _is_uhd_movie(item):
+            return None
+        if kind == "channel" and _is_uhd_channel(item, channel):
+            return None
     name = (_clean(channel.get("name"), 120) if channel else title) if kind == "channel" else ""
+    img = https(item.get("image_url"))
+    if kind == "movie":
+        avail_info = item.get("availability_info")
+        avail = isinstance(avail_info, dict) and avail_info.get("available") is not False and item.get("available") is not False
+        vod_url = ml.vod_url(ident, None, 0) if avail else ""
+        return {"kind": kind, "id": ident, "title": title, "subtitle": _clean(item.get("subtext")),
+                "cid": "", "epg": "", "start": 0, "stop": 0, "channel_name": "", "when": "",
+                "live": False, "playable_in_archive": False, "playable": bool(avail and vod_url), "available": avail,
+                "vod_url": vod_url, "preview": "", "image_url": img, "repeats": 0, "more": ""}
     return {"kind": kind, "id": ident, "title": title, "subtitle": _clean(item.get("subtext")),
             "cid": ident if kind == "channel" else "", "epg": "", "start": 0, "stop": 0, "channel_name": name, "when": "",
-            "live": False, "playable_in_archive": False, "playable": channel is not None, "available": False, "preview": "", "repeats": 0,
-            "more": ""}
+            "live": False, "playable_in_archive": False, "playable": channel is not None, "available": False, "preview": "",
+            "image_url": img, "repeats": 0, "more": ""}
 
 
 def _watchable(row):
@@ -239,7 +286,7 @@ def collapse(rows, now, tr_n=None):
 KINDS = {"EpgRecord": "programme", "Channel": "channel", "Movie": "movie", "Person": "person"}
 
 
-def normalize_search(reply, channels, now, tr=None, tr_n=None):
+def normalize_search(reply, channels, now, tr=None, tr_n=None, quality="1080p"):
     """The rows of a SearchService/Search.json answer: programmes (collapsed, newest first), then channels, films, people
     in the order the service gave them; at most MAX_ROWS. Odd items are left out; never raises."""
     tr = tr or ml.text
@@ -251,7 +298,7 @@ def normalize_search(reply, channels, now, tr=None, tr_n=None):
             row = _programme_row(item, channels, now, tr)
             programmes.extend([row] if row else [])
         elif kind:
-            row = _other_row(item, kind, channels)
+            row = _other_row(item, kind, channels, quality=quality)
             others[kind].extend([row] if row else [])
     rows = collapse(programmes, now, tr_n) + others["channel"] + others["movie"] + others["person"]
     return rows[:MAX_ROWS]
@@ -443,7 +490,7 @@ def recall(cid, epg, now=None):
     return {"start": found[0], "stop": found[1], "available": found[3]} if found and 0 <= now - found[2] <= KNOWN_TTL else None
 
 
-def search(needle, channels, now=None, client=None, tr=None, tr_n=None):
+def search(needle, channels, now=None, client=None, tr=None, tr_n=None, quality="1080p"):
     """{"ok": True, "query", "items": [row, ...], "count"}; with a needle shorter than MIN_NEEDLE characters nothing is asked
     ("short": True, no items); {"ok": False, "error", "message"} when SWEET.TV could not answer."""
     now = time.time() if now is None else now
@@ -453,9 +500,20 @@ def search(needle, channels, now=None, client=None, tr=None, tr_n=None):
     reply = (client or _default).post(SEARCH, {"needle": query})
     if not reply.ok:
         return _failure(reply.error, tr)
-    rows = normalize_search(reply.data, channels, now, tr, tr_n)
+    rows = normalize_search(reply.data, channels, now, tr, tr_n, quality=quality)
     _remember(rows, now)
     return {"ok": True, "query": query, "items": rows, "count": len(rows)}
+
+
+def top_search(channels, now=None, quality="1080p", client=None, tr=None, tr_n=None):
+    """{"ok": True, "items": [row, ...]} from SearchService/GetTop.json, marking playable movies and hiding UHD."""
+    now = time.time() if now is None else now
+    reply = (client or _default).post(TOP_SEARCH, {})
+    if not reply.ok:
+        return _failure(reply.error, tr)
+    rows = normalize_search(reply.data, channels, now, tr, tr_n, quality=quality)
+    _remember(rows, now)
+    return {"ok": True, "items": rows, "count": len(rows)}
 
 
 def _fetch(client, cid, moment, found):
@@ -516,3 +574,593 @@ def day(cid, day_unix, channels, now=None, client=None, tr=None):
     _remember(rows, now)
     return {"ok": True, "cid": cid, "name": _clean(channel.get("name"), 120), "date": when.isoformat(), "now": int(now),
             "archive_days": _archive_days(channel), "future_days": _future_days(channel), "items": rows}
+
+
+# ---- VOD, catalog, shows & stream links -------------------------------------------------------
+
+_config_cache = {}
+_config_lock = threading.Lock()
+
+
+def quality_id(quality) -> int:
+    """Map quality cap string ('720p', '1080p', 'unlimited'/'4k') to Sweet.TV video_quality_id (1/2/3)."""
+    if not isinstance(quality, str):
+        return 2
+    q = quality.strip().lower()
+    if q == "720p":
+        return 1
+    if q in ("unlimited", "4k"):
+        return 3
+    return 2
+
+
+def owner_of(movie) -> int:
+    """Extract owner_id from external_id_pairs (preferred first, else first valid) or owners[0], else 0."""
+    if not isinstance(movie, dict):
+        return 0
+    pairs = movie.get("external_id_pairs")
+    if isinstance(pairs, list):
+        for p in pairs:
+            if isinstance(p, dict) and p.get("preferred") is True:
+                oid = _num(p.get("owner_id"))
+                if oid and oid > 0:
+                    return oid
+        for p in pairs:
+            if isinstance(p, dict):
+                oid = _num(p.get("owner_id"))
+                if oid and oid > 0:
+                    return oid
+    owners = movie.get("owners")
+    if isinstance(owners, list) and owners:
+        oid = _num(owners[0])
+        if oid and oid > 0:
+            return oid
+    return 0
+
+
+def _movie_available(movie) -> bool:
+    if not isinstance(movie, dict):
+        return False
+    avail = movie.get("availability_info")
+    if isinstance(avail, dict) and avail.get("available") is False:
+        return False
+    return movie.get("available") is not False
+
+
+def _movie_card(movie):
+    mid = _num(movie.get("id"))
+    if not mid or mid <= 0:
+        return None
+    owner_id = owner_of(movie)
+    poster = https(movie.get("poster_url") or movie.get("original_poster_url"))
+    banner = https(movie.get("horizontal_poster_url") or movie.get("banner_url") or movie.get("original_banner_url"))
+    genres = [g for g in (_num(x) for x in (movie.get("genres") or ())) if g is not None]
+    imdb_raw = movie.get("rating_imdb")
+    imdb = float(imdb_raw) if isinstance(imdb_raw, (int, float)) and not isinstance(imdb_raw, bool) else 0.0
+    return {
+        "id": mid,
+        "title": _clean(movie.get("title")),
+        "owner_id": owner_id,
+        "poster": poster,
+        "banner": banner,
+        "year": _num(movie.get("year")) or 0,
+        "duration": _num(movie.get("duration")) or 0,
+        "imdb": imdb,
+        "genres": genres,
+        "vod_url": ml.vod_url(mid, None, owner_id),
+        "available": True,
+    }
+
+
+def configuration(client=None, tr=None):
+    """Fetch and normalize MovieService/GetConfiguration.json, cached in memory for CONFIG_TTL (600s)."""
+    c = client or _default
+    now = c._clock()
+    ckey = id(c)
+    with _config_lock:
+        hit = _config_cache.get(ckey)
+        if hit and now - hit[0] < CONFIG_TTL:
+            return hit[1]
+    reply = c.post(CONFIG, {})
+    if not reply.ok:
+        return _failure(reply.error, tr)
+    raw_genres = reply.data.get("genres") if isinstance(reply.data.get("genres"), list) else ()
+    genres = [{"id": _num(g.get("id")), "name": _clean(g.get("name"), 80)}
+              for g in raw_genres if isinstance(g, dict) and _num(g.get("id")) is not None and _clean(g.get("name"), 80)]
+    raw_modes = reply.data.get("sort_modes") if isinstance(reply.data.get("sort_modes"), list) else ()
+    modes_by_id = {_num(m.get("id")): _clean(m.get("name"), 80)
+                   for m in raw_modes if isinstance(m, dict) and _num(m.get("id")) in SORT_MODE_IDS}
+    sort_modes = [{"id": sid, "name": modes_by_id[sid]} for sid in SORT_MODE_IDS if sid in modes_by_id]
+    res = {"ok": True, "genres": genres, "sort_modes": sort_modes}
+    with _config_lock:
+        _config_cache[ckey] = (now, res)
+    return res
+
+
+def _genre_movie_ids(c, genre_id):
+    reply = c.post(GENRE_MOVIES, {"genre_id": int(genre_id)})
+    if not reply.ok:
+        return None, reply.error
+    ids = [_num(x) for x in (reply.data.get("movies") or ())]
+    return [x for x in ids if x and x > 0], ""
+
+
+def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, quality="1080p", client=None, tr=None):
+    """Paginated movies or series catalog from api.sweet.tv, filtering out TVOD and 4K UHD (unless unlimited)."""
+    c = client or _default
+    gid = int(genre_id or 0)
+    if section == "series":
+        base, err = _genre_movie_ids(c, 1)
+        if err:
+            return _failure(err, tr)
+        col_reply = c.post(COLLECTIONS, {"type": 3})
+        seen = set(base)
+        id_list = list(base)
+        if col_reply.ok:
+            for col in col_reply.data.get("collections") or ():
+                if isinstance(col, dict):
+                    for mid in col.get("id_list") or ():
+                        n = _num(mid)
+                        if n and n > 0 and n not in seen:
+                            seen.add(n)
+                            id_list.append(n)
+        if gid > 1:
+            g_ids, g_err = _genre_movie_ids(c, gid)
+            if not g_err and g_ids is not None:
+                allowed = set(g_ids)
+                id_list = [x for x in id_list if x in allowed]
+    else:
+        target_gid = gid or 61
+        id_list, err = _genre_movie_ids(c, target_gid)
+        if err:
+            return _failure(err, tr)
+        if target_gid == 61:
+            exclude = set()
+            for ex_gid in (1, 3):
+                ex_ids, ex_err = _genre_movie_ids(c, ex_gid)
+                if not ex_err and ex_ids:
+                    exclude.update(ex_ids)
+            if exclude:
+                id_list = [x for x in id_list if x not in exclude]
+
+    if not id_list:
+        return {"ok": True, "section": section, "items": [], "total": 0}
+    info_reply = c.post(MOVIE_INFO, {
+        "movies": id_list,
+        "limit": int(limit),
+        "offset": int(offset),
+        "sort_mode_id": int(sort_mode_id),
+        "need_extended_info": False,
+    })
+    if not info_reply.ok:
+        return _failure(info_reply.error, tr)
+    allowed_ids = set(id_list)
+    items = []
+    for m in info_reply.data.get("movies") or ():
+        if not isinstance(m, dict) or not _movie_available(m):
+            continue
+        mid = _num(m.get("id"))
+        if mid not in allowed_ids:
+            continue
+        card = _movie_card(m)
+        if not card:
+            continue
+        if quality != "unlimited" and UHD_GENRE in card["genres"]:
+            continue
+        items.append(card)
+    return {"ok": True, "section": section, "items": items, "total": len(id_list)}
+
+
+def _base_show_title(text):
+    title = _clean(text, 120)
+    for sep in (". Випуск ", ". Выпуск ", ". Сезон ", " — ", " - "):
+        if sep in title:
+            head, tail = title.split(sep, 1)
+            if head and any(ch.isdigit() for ch in tail[:12]):
+                return head.strip()
+    if ". " in title:
+        head, tail = title.split(". ", 1)
+        if head and any(ch.isdigit() for ch in tail):
+            return head.strip()
+    return title
+
+
+def shows(channels, now=None, quality="1080p", client=None, tr=None):
+    """Dynamically unify GetCollections(type=7) Movie & Epg shows and playable channel EPG shows."""
+    c = client or _default
+    now = time.time() if now is None else now
+    col_reply = c.post(COLLECTIONS, {"type": 7})
+    if not col_reply.ok:
+        return _failure(col_reply.error, tr)
+
+    movie_ids, movie_seen = [], set()
+    epg_col_ids, epg_seen = [], set()
+    for col in col_reply.data.get("collections") or ():
+        if not isinstance(col, dict):
+            continue
+        ctype = col.get("type")
+        if ctype == "Movie":
+            for mid in col.get("id_list") or ():
+                n = _num(mid)
+                if n and n > 0 and n not in movie_seen:
+                    movie_seen.add(n)
+                    movie_ids.append(n)
+        elif ctype == "Epg":
+            for cid in (col.get("id_list") or [col.get("id")]):
+                n = _num(cid)
+                if n and n > 0 and n not in epg_seen:
+                    epg_seen.add(n)
+                    epg_col_ids.append(n)
+
+    items = []
+    seen_titles = set()
+
+    def _add_item(item):
+        key = " ".join(item["title"].casefold().split())
+        if not key or key in seen_titles:
+            return
+        seen_titles.add(key)
+        items.append(item)
+
+    if movie_ids:
+        m_reply = c.post(MOVIE_INFO, {"movies": movie_ids, "need_extended_info": False})
+        if m_reply.ok:
+            for m in m_reply.data.get("movies") or ():
+                if not isinstance(m, dict) or not _movie_available(m):
+                    continue
+                card = _movie_card(m)
+                if not card:
+                    continue
+                if quality != "unlimited" and UHD_GENRE in card["genres"]:
+                    continue
+                _add_item({
+                    "kind": "show_vod",
+                    "id": "vod:%d" % card["id"],
+                    "movie_id": str(card["id"]),
+                    "owner_id": card["owner_id"],
+                    "title": card["title"],
+                    "poster": card["poster"],
+                    "banner": card["banner"],
+                    "year": card["year"],
+                    "imdb": card["imdb"],
+                    "vod_url": card["vod_url"],
+                })
+
+    if epg_col_ids:
+        ci_reply = c.post(COLLECTION_INFO, {"id_list": epg_col_ids, "need_translations": True})
+        cols = (ci_reply.data.get("collections") or ci_reply.data.get("collection") or []) if ci_reply.ok else []
+        sec_ids, sec_seen = [], set()
+        for col in cols if isinstance(cols, list) else ():
+            if isinstance(col, dict):
+                for sid in col.get("secondary_id_list") or ():
+                    n = _num(sid)
+                    if n and n > 0 and n not in sec_seen:
+                        sec_seen.add(n)
+                        sec_ids.append(n)
+        rec_by_id = {}
+        if sec_ids:
+            er_reply = c.post(EPG_RECORDS, {"id_list": sec_ids, "image_type": 0, "need_extended_info": True})
+            if er_reply.ok:
+                for r in er_reply.data.get("list") or ():
+                    rid = _num(r.get("id")) if isinstance(r, dict) else None
+                    if rid:
+                        rec_by_id[rid] = r
+
+        for col in cols if isinstance(cols, list) else ():
+            if not isinstance(col, dict):
+                continue
+            col_id = _num(col.get("id"))
+            if not col_id:
+                continue
+            recs = [rec_by_id[_num(sid)] for sid in (col.get("secondary_id_list") or ()) if _num(sid) in rec_by_id]
+            show_ids = {_num(r.get("tv_show_id")) for r in recs if _num(r.get("tv_show_id"))}
+            if len(show_ids) <= 1:
+                ch_ids = sorted({str(_num(r.get("channel_id"))) for r in recs if _num(r.get("channel_id"))})
+                poster = https(col.get("poster_url")) or next((https(r.get("image_url")) for r in recs if r.get("image_url")), "")
+                banner = https(col.get("horizontal_poster_url") or col.get("banner_url")) or next(
+                    (https(r.get("preview_url_ext")) for r in recs if r.get("preview_url_ext")), "")
+                _add_item({
+                    "kind": "show_epg",
+                    "id": "epg:%d" % col_id,
+                    "collection_id": str(col_id),
+                    "channel_ids": ch_ids,
+                    "curated_epg_ids": [str(_num(r.get("id"))) for r in recs if _num(r.get("id"))],
+                    "title": _clean(col.get("title"), 120),
+                    "poster": poster,
+                    "banner": banner,
+                })
+            else:
+                grouped = {}
+                for r in recs:
+                    sid = _num(r.get("tv_show_id")) or 0
+                    base = _base_show_title(r.get("text"))
+                    gkey = ("id", sid) if sid else ("title", base.casefold())
+                    grouped.setdefault(gkey, []).append(r)
+                for gkey, grecs in grouped.items():
+                    base = _base_show_title(grecs[0].get("text"))
+                    sid = gkey[1] if gkey[0] == "id" else ""
+                    ch_ids = sorted({str(_num(r.get("channel_id"))) for r in grecs if _num(r.get("channel_id"))})
+                    poster = next((https(r.get("image_url")) for r in grecs if r.get("image_url")), "")
+                    banner = next((https(r.get("preview_url_ext")) for r in grecs if r.get("preview_url_ext")), "")
+                    _add_item({
+                        "kind": "show_tv",
+                        "id": "tv:%s" % (sid or col_id),
+                        "show_id": str(sid),
+                        "channel_ids": ch_ids,
+                        "curated_epg_ids": [str(_num(r.get("id"))) for r in grecs if _num(r.get("id"))],
+                        "title": base,
+                        "poster": poster,
+                        "banner": banner,
+                    })
+
+    ch_list = channels.get("list") if isinstance(channels, dict) else ()
+    for ch in ch_list if isinstance(ch_list, list) else ():
+        if not isinstance(ch, dict) or ch.get("available") is False:
+            continue
+        cid = _id(ch.get("id"))
+        for p in ch.get("epg") if isinstance(ch.get("epg"), list) else ():
+            if not isinstance(p, dict):
+                continue
+            sid = _num(p.get("tv_show_id"))
+            if not sid:
+                continue
+            start, stop = _time(p.get("time_start")), _time(p.get("time_stop"))
+            if start is None:
+                continue
+            live = stop is not None and start <= now < stop
+            if not (live or ml.archive_ok(ch, p, now)):
+                continue
+            title = _base_show_title(p.get("text"))
+            _add_item({
+                "kind": "show_tv",
+                "id": "tv:%d" % sid,
+                "show_id": str(sid),
+                "channel_ids": [cid] if cid else [],
+                "curated_epg_ids": [],
+                "title": title,
+                "poster": https(p.get("image_url")),
+                "banner": https(p.get("preview_url_ext") or p.get("preview_url")),
+            })
+    return {"ok": True, "items": items}
+
+
+def _fav_set(favs):
+    if isinstance(favs, dict) and isinstance(favs.get("items"), dict):
+        return set(favs["items"].keys())
+    if isinstance(favs, (set, list, tuple)):
+        return set(favs)
+    return set()
+
+
+def _vod_resume(local, movie_id, episode_id=None):
+    if not isinstance(local, dict) or not isinstance(local.get("items"), dict):
+        return 0, False
+    key = "sw:vod:%s|%s" % (movie_id, episode_id) if episode_id else "sw:vod:%s" % movie_id
+    e = local["items"].get(key)
+    if not isinstance(e, dict):
+        return 0, False
+    done = e.get("done") is True
+    pos = int(e.get("pos") or 0)
+    return (0 if done else pos), done
+
+
+def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
+    """Detailed VOD movie/series metadata with seasons/episodes, local resume/watched, and local favourites."""
+    c = client or _default
+    mid = _num(movie_id)
+    if not mid or mid <= 0:
+        return _failure("format", tr)
+    reply = c.post(MOVIE_INFO, {"movies": [mid], "need_extended_info": True})
+    if not reply.ok:
+        return _failure(reply.error, tr)
+    movies = reply.data.get("movies") or ()
+    movie = movies[0] if isinstance(movies, list) and movies and isinstance(movies[0], dict) else None
+    if not movie:
+        return _failure("service", tr)
+    card = _movie_card(movie)
+    if not card:
+        return _failure("format", tr)
+    fav_keys = _fav_set(favs)
+    is_fav = ("show:vod:%d" % mid) in fav_keys or ("vod:%d" % mid) in fav_keys
+    m_resume, m_watched = _vod_resume(local, mid)
+    seasons = []
+    for s in movie.get("seasons") if isinstance(movie.get("seasons"), list) else ():
+        if not isinstance(s, dict):
+            continue
+        s_owner = _num(s.get("owner_id")) or card["owner_id"]
+        eps = []
+        for ep in s.get("episodes") if isinstance(s.get("episodes"), list) else ():
+            if not isinstance(ep, dict) or ep.get("available") is False:
+                continue
+            eid = _num(ep.get("id"))
+            if not eid:
+                continue
+            ep_res, ep_done = _vod_resume(local, mid, eid)
+            eps.append({
+                "id": eid,
+                "episode_id": eid,
+                "number": _num(ep.get("number")) or 0,
+                "title": _clean(ep.get("title"), 120),
+                "duration": _num(ep.get("duration")) or 0,
+                "preview": https(ep.get("preview_url") or ep.get("image_url")),
+                "owner_id": s_owner,
+                "vod_url": ml.vod_url(mid, eid, s_owner),
+                "resume": ep_res,
+                "watched": ep_done,
+            })
+        seasons.append({
+            "id": _num(s.get("id")) or 0,
+            "title": _clean(s.get("title"), 120),
+            "owner_id": s_owner,
+            "episodes": eps,
+        })
+    return {
+        "ok": True,
+        "id": "vod:%d" % mid,
+        "movie_id": str(mid),
+        "title": card["title"],
+        "poster": card["poster"],
+        "banner": card["banner"],
+        "year": card["year"],
+        "duration": card["duration"],
+        "imdb": card["imdb"],
+        "owner_id": card["owner_id"],
+        "favourite": is_fav,
+        "resume": m_resume,
+        "watched": m_watched,
+        "vod_url": card["vod_url"],
+        "seasons": seasons,
+    }
+
+
+def show_detail(show_key, channels, now=None, local=None, favs=None, client=None, tr=None):
+    """Detail for show_key ('vod:<id>', 'epg:<col_id>', or 'tv:<show_id>')."""
+    if not isinstance(show_key, str):
+        return _failure("format", tr)
+    if show_key.startswith("vod:"):
+        return vod_detail(show_key[4:], local=local, favs=favs, client=client, tr=tr)
+    c = client or _default
+    now = time.time() if now is None else now
+    fav_keys = _fav_set(favs)
+    curated_ids = []
+    curated_set = set()
+    recs = []
+    title = ""
+    if show_key.startswith("epg:"):
+        col_id = _num(show_key[4:])
+        if not col_id:
+            return _failure("format", tr)
+        ci = c.post(COLLECTION_INFO, {"id_list": [col_id], "need_translations": True})
+        if ci.ok:
+            cols = ci.data.get("collections") or ci.data.get("collection") or []
+            if isinstance(cols, list) and cols and isinstance(cols[0], dict):
+                title = _clean(cols[0].get("title"), 120)
+                curated_ids = [_num(x) for x in (cols[0].get("secondary_id_list") or ()) if _num(x)]
+                curated_set = set(curated_ids)
+        if curated_ids:
+            er = c.post(EPG_RECORDS, {"id_list": curated_ids, "image_type": 0, "need_extended_info": True})
+            if er.ok:
+                recs = [r for r in (er.data.get("list") or ()) if isinstance(r, dict)]
+    elif show_key.startswith("tv:"):
+        target_sid = _num(show_key[3:])
+        if not target_sid:
+            return _failure("format", tr)
+        ch_list = channels.get("list") if isinstance(channels, dict) else ()
+        for ch in ch_list if isinstance(ch_list, list) else ():
+            if not isinstance(ch, dict):
+                continue
+            for p in ch.get("epg") if isinstance(ch.get("epg"), list) else ():
+                if isinstance(p, dict) and _num(p.get("tv_show_id")) == target_sid:
+                    recs.append({**p, "channel_id": ch.get("id")})
+                    if not title:
+                        title = _base_show_title(p.get("text"))
+    else:
+        return _failure("format", tr)
+
+    ch_map = channel_map(channels)
+    airings = []
+    for r in recs:
+        epg = _id(r.get("id"))
+        cid = _id(r.get("channel_id"))
+        start, stop = _time(r.get("time_start")), _time(r.get("time_stop"))
+        if not epg or not cid or start is None or stop is None or stop <= start:
+            continue
+        ch = _known_channel(ch_map, cid)
+        airings.append({
+            "epg": epg,
+            "cid": cid,
+            "title": _clean(r.get("text"), 120),
+            "start": start,
+            "stop": stop,
+            "curated": _num(epg) in curated_set,
+            "playable": bool(ch) and (start <= now < stop or ml.archive_ok(ch, r, now)),
+            "url": ml.url(cid, epg, 0),
+        })
+    grouped = {}
+    for a in airings:
+        grouped.setdefault(" ".join(a["title"].casefold().split()), []).append(a)
+    episodes = []
+    for g in grouped.values():
+        curated_g = [x for x in g if x["curated"]]
+        pool = curated_g if curated_g else g
+        episodes.append(max(_complete(pool), key=lambda x: x["start"]))
+    episodes.sort(key=lambda x: -x["start"])
+    return {
+        "ok": True,
+        "id": show_key,
+        "title": title,
+        "favourite": ("show:" + show_key) in fav_keys,
+        "episodes": episodes,
+    }
+
+
+def vod_link(movie_id, episode_id=None, owner_id=0, quality="1080p", client=None, tr=None):
+    """Resolve playable VOD stream URL (hls/mpd) and optional Widevine license URL via MovieService/GetLink.json."""
+    c = client or _default
+    mid = _num(movie_id)
+    if not mid or mid <= 0:
+        return _failure("format", tr)
+    ep_id = _num(episode_id)
+    oid = _num(owner_id) or 0
+    title = ""
+    duration = 0
+
+    if not oid or ep_id is None:
+        info = c.post(MOVIE_INFO, {"movies": [mid], "need_extended_info": True})
+        if info.ok:
+            movies = info.data.get("movies") or ()
+            movie = movies[0] if isinstance(movies, list) and movies and isinstance(movies[0], dict) else None
+            if movie:
+                title = _clean(movie.get("title"), 120)
+                duration = _num(movie.get("duration")) or 0
+                if not oid:
+                    oid = owner_of(movie)
+                seasons = movie.get("seasons") if isinstance(movie.get("seasons"), list) else ()
+                if seasons and ep_id is None:
+                    for s in seasons:
+                        if not isinstance(s, dict):
+                            continue
+                        for ep in s.get("episodes") if isinstance(s.get("episodes"), list) else ():
+                            if isinstance(ep, dict) and ep.get("available") is not False and _num(ep.get("id")):
+                                ep_id = _num(ep.get("id"))
+                                oid = _num(s.get("owner_id")) or oid
+                                duration = _num(ep.get("duration")) or duration
+                                break
+                        if ep_id is not None:
+                            break
+
+    body = {
+        "movie_id": int(mid),
+        "owner_id": int(oid),
+        "video_quality_id": quality_id(quality),
+        "audio_track": -1,
+        "preferred_link_type": 0,
+        "subtitle": "all",
+    }
+    if ep_id:
+        body["episode_id"] = int(ep_id)
+
+    reply = c.post(MOVIE_LINK, body)
+    if not reply.ok:
+        return _failure(reply.error, tr)
+
+    hs = reply.data.get("http_stream") if isinstance(reply.data.get("http_stream"), dict) else {}
+    host = hs.get("host", {}).get("address") if isinstance(hs.get("host"), dict) else ""
+    path = str(hs.get("url") or "")
+    if path.startswith(("http://", "https://")):
+        stream_url = path
+    elif host and path:
+        stream_url = "https://%s%s" % (host, path if path.startswith("/") else "/" + path)
+    else:
+        return _failure("service", tr)
+
+    scheme = str(reply.data.get("scheme") or "").upper()
+    protocol = "mpd" if ("DASH" in scheme or ".mpd" in stream_url.lower()) else "hls"
+    return {
+        "ok": True,
+        "url": stream_url,
+        "protocol": protocol,
+        "license_url": str(reply.data.get("license_url") or ""),
+        "duration": duration,
+        "title": title,
+    }
