@@ -878,10 +878,47 @@ class VodAndCatalog(unittest.TestCase):
         res = api.shows(CHANNELS, now=NOW, quality="1080p", client=c2, tr=ENGLISH)
         self.assertTrue(res["ok"])
         self.assertEqual(len(col_info_calls), 1)
-        self.assertEqual(col_info_calls[0]["collections"], [8838])
+        self.assertEqual(col_info_calls[0]["id_list"], [8838])
         ids = [x["id"] for x in res["items"]]
         self.assertIn("vod:9558", ids)
         self.assertIn("epg:8838", ids)
+
+    def test_shows_reads_collection_posters_list_and_show_detail_posts_id_list(self):
+        ci_calls = []
+
+        def by(call):
+            url = call["url"]
+            if url.endswith("GetCollections.json"):
+                return reply({"status": "OK", "collection": (
+                    [{"id": 8838, "type": "Epg", "id_list": [15]}] if call["body"] == {"type": 7} else []
+                )})
+            if url.endswith("GetCollectionInfo.json"):
+                ci_calls.append(call["body"])
+                return reply({"status": "OK", "collections": [{
+                    "id": 8838,
+                    "title": "Холостяк",
+                    "posters": [{"orientation": "Horizontal", "original_poster_url": "https://img.example/col8838.png"}],
+                    "secondary_id_list": [931394511],
+                }]})
+            if url.endswith("GetEpgRecords.json"):
+                return reply({"status": "OK", "epg_records": [
+                    {"id": 931394511, "channel_id": 15, "text": "Холостяк. Випуск 6",
+                     "time_start": NOW - 20000, "time_stop": NOW - 2480, "tv_show_id": 111, "available": True},
+                ]})
+            return reply({"status": "OK"})
+
+        c2, _ = client(by=by)
+        res = api.shows(CHANNELS, now=NOW, quality="1080p", client=c2, tr=ENGLISH)
+        epg_item = next(x for x in res["items"] if x["id"] == "epg:8838")
+        self.assertEqual(epg_item["poster"], "https://img.example/col8838.png")
+        self.assertEqual(epg_item["banner"], "https://img.example/col8838.png")
+        det = api.show_detail("epg:8838", CHANNELS, now=NOW, client=c2, tr=ENGLISH)
+        self.assertTrue(det["ok"])
+        self.assertEqual(det["title"], "Холостяк")
+        self.assertEqual(len(det["episodes"]), 1)
+        self.assertGreaterEqual(len(ci_calls), 1)
+        for call_body in ci_calls:
+            self.assertEqual(call_body["id_list"], [8838])
 
     def test_shows_and_show_detail_accept_both_raw_and_channel_map(self):
         self.assertEqual(api.channel_map(MAP), MAP)

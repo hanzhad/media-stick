@@ -858,7 +858,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                 })
 
     if epg_col_ids:
-        ci_reply = c.post(COLLECTION_INFO, {"collections": epg_col_ids, "need_translations": True})
+        ci_reply = c.post(COLLECTION_INFO, {"id_list": epg_col_ids, "need_translations": True})
         cols = (ci_reply.data.get("collections") or ci_reply.data.get("collection") or []) if ci_reply.ok else []
         sec_ids, sec_seen = [], set()
         for col in cols if isinstance(cols, list) else ():
@@ -887,8 +887,11 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
             show_ids = {_num(r.get("tv_show_id")) for r in recs if _num(r.get("tv_show_id"))}
             if len(show_ids) <= 1:
                 ch_ids = sorted({str(_num(r.get("channel_id"))) for r in recs if _num(r.get("channel_id"))})
-                poster = https(col.get("poster_url")) or next((https(r.get("image_url")) for r in recs if r.get("image_url")), "")
-                banner = https(col.get("horizontal_poster_url") or col.get("banner_url")) or next(
+                col_posters = [p for p in (col.get("posters") or ()) if isinstance(p, dict)]
+                poster_from_list = next((https(p.get("original_poster_url") or p.get("poster_url")) for p in col_posters if p.get("original_poster_url") or p.get("poster_url")), "")
+                horiz_from_list = next((https(p.get("original_poster_url") or p.get("poster_url")) for p in col_posters if p.get("orientation") == "Horizontal" and (p.get("original_poster_url") or p.get("poster_url"))), "")
+                poster = https(col.get("poster_url")) or poster_from_list or next((https(r.get("image_url")) for r in recs if r.get("image_url")), "")
+                banner = https(col.get("horizontal_poster_url") or col.get("banner_url")) or horiz_from_list or next(
                     (https(r.get("preview_url_ext")) for r in recs if r.get("preview_url_ext")), "")
                 _add_item({
                     "kind": "show_epg",
@@ -1066,7 +1069,7 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         col_id = _num(show_key[4:])
         if not col_id:
             return _failure("format", tr)
-        ci = c.post(COLLECTION_INFO, {"collections": [col_id], "need_translations": True})
+        ci = c.post(COLLECTION_INFO, {"id_list": [col_id], "need_translations": True})
         if ci.ok:
             cols = ci.data.get("collections") or ci.data.get("collection") or []
             if isinstance(cols, list) and cols and isinstance(cols[0], dict):
