@@ -1,253 +1,440 @@
-"""SWEET.TV app: the shows and the films of the TV screen, and the episodes of a show. Ready data in, rows out; nothing
-here touches Kodi.
+"""SWEET.TV app: pure data builders for the 7-section Netflix-style UI, filter chips, hero, and modals.
 
-SWEET.TV's own categories are the genres of the channels (18 of them), so the left menu has them as its first group, and
-as its second the two things the channel list has no category for: the shows and series, and the films. They are not in the
-channel list as such, only the programme guide of each channel is; the phone page already makes them from it with
-mediastick_sweetsections, and this module asks that same code (and mediastick_sweetlive's `slim` and `archive_ok`, the guide's
-rule for what can be played from the archive), so the two screens cannot disagree about what a show or a film is. The row
-of cards along the bottom then shows a card per show, per film or, after OK on a show, per episode.
-
-A Library holds the index of the list for as long as the person is in the shows or the films, and is let go of soon after
-(the list is 5 MB of JSON for 200 channels; the index keeps the slimmed rows of it). The rows are made lazily, on the first
-look, and capped: a Pi 3B+ keeps a few hundred of them, not thousands.
-
-  Library.load(key, read)                    build the index from `read()` (the whole list) unless `key` is the one it has
-  Library.shows(now), .episodes(sid, now, logos), .films(now, logos)     (rows, how many there are before the cap)
-  Row                                        what one card says, and what OK on it plays
-  card_texts(row)                            the Row's texts, each cut to the room the skin has for it
+Ready data in -> pure dicts/tuples out. Nothing here imports xbmc or touches disk/network.
 """
-import threading
+from datetime import date, timedelta
 from typing import NamedTuple, Optional, Tuple
 
-from resources.lib import sweettv_data as data, sweettv_text as words, sweettv_view as view, textfit
+from resources.lib import sweettv_data as data, sweettv_text as words, sweettv_view as view
 
-CHANNELS, SHOWS, FILMS, EPISODES, SEARCH = "channels", data.SHOWS, data.FILMS, "episodes", data.SEARCH   # what the row of cards holds
-SECTIONS = (SHOWS, FILMS, EPISODES)              # all of it that is not channels
-MAX_SHOWS, MAX_FILMS, MAX_EPISODES = 300, 300, 200
-CAPTION_PX, TITLE_PX, META_PX, LINE_PX = 236, 740, 740, 740    # room in the skin: the caption of a card (25 px high), the title over the
-                                                               # row (60, or 40 when it is long), its meta and amber lines (25), the big
-                                                               # line under them (40)
-TITLE_PX_FONT, SMALL_PX_FONT = 60, 40
-
-
-class Row(NamedTuple):
-    """A card of the shows, of the episodes of a show, or of the films. OK on a show opens it, on a programme plays it
-    (when `playable`) from its beginning in the archive. The texts are whole: card_texts cuts them to the skin."""
-    key: str                    # a show's id ("" for a programme)
-    title: str                  # the show, the film or "S2 E7  ·  Name"; the card's caption and the title over the row
-    sub: str                    # the line under the title: how many episodes and the channel, the length and the channel, ...
-    side: str                   # the amber line: when the newest episode / the film is on, what keeps an episode from being watched
-    icon: str                   # the channel's picture ("" when there is none)
-    mark: str                   # what the picture's badge and the card's colours are made from when there is no picture
-    playable: bool = True
-    future: bool = False        # not on air yet (a row that is not playable and is not this is just not in the archive)
-    cid: str = ""
-    epg: str = ""
-    start: int = 0
-    stop: int = 0
-    name: str = ""              # what the archived programme is called when it is played
-    line: str = ""              # the big line: the newest episode of a show, how many times a film is on
+RAIL = (
+    ("search", "Search"),
+    ("continue", "Continue"),
+    ("favourites", "Favourites"),
+    ("shows", "Shows"),
+    ("series", "Series"),
+    ("movies", "Movies"),
+    ("channels", "TV Channels"),
+)
+SECTION_KEYS = tuple(k for k, _ in RAIL)
+FILTERED_SECTIONS = frozenset(("search", "series", "movies", "channels"))
+SORT_MODES_DEFAULT = (
+    {"id": 1, "name": "Popular"},
+    {"id": 3, "name": "IMDb Rating"},
+    {"id": 2, "name": "Newest"},
+    {"id": 5, "name": "A-Z"},
+)
 
 
-# ---- rows ------------------------------------------------------------------------------------
-
-def _text(value, limit=120) -> str:
-    return data.clean_text(value, limit)
-
-
-def fit(text, width, size) -> str:
-    """`text` on one line of `width` px in a font `size` px high: cut with an ellipsis when it would not fit (the skin's
-    labels would cut it anyway, not always where it looks right). What fits is returned as it is (the spaces round a middle dot
-    stay: the wrapping would squeeze them)."""
-    if textfit.text_px(text, size) <= width:
-        return text
-    return textfit.wrap_name(text, width, size, 1)[0]
-
-
-def card_texts(row) -> dict:
-    """What a card and the preview over the row say of `row`: the caption under the picture, the title, the line under it,
-    the amber line and the big line, each cut to its room. A title that is too long for the big letters is set smaller
-    (`small`, which the skin reads) before it is cut."""
-    big = textfit.text_px(row.title, TITLE_PX_FONT) <= TITLE_PX
-    return {"caption": fit(row.title, CAPTION_PX, 25), "title": row.title if big else fit(row.title, TITLE_PX, SMALL_PX_FONT),
-            "small": "" if big else "1", "meta": fit(row.sub, META_PX, 25), "cap": fit(row.side, META_PX, 25),
-            "line": fit(row.line, LINE_PX, 40)}
-
-
-def _when(ts, now) -> str:
-    return f"{view.day_prefix(ts, now)}{data.hhmm(ts)}"
-
-
-def _span(start, stop, now) -> str:
-    return f"{view.day_prefix(start, now)}{data.span(start, stop)}"
-
-
-def _line(*parts) -> str:
-    return "  ·  ".join(p for p in parts if p)
-
-
-def episode_title(episode) -> str:
-    """"S2 E7  ·  Name" ("С2 Э7" in Russian, "С2 Е7" in Ukrainian); the numbers or the name alone; "Episode" when it says neither."""
-    number = " ".join(p for p in (words.tr("S{n}").format(n=episode["season"]) if episode["season"] else "",
-                                  words.tr("E{n}").format(n=episode["episode"]) if episode["episode"] else "") if p)
-    return _line(number, _text(episode["title"])) or words.tr("Episode")
+class Card(NamedTuple):
+    kind: str           # channel | movie | series | show_vod | show_epg | show_tv | programme
+    key: str            # unique id
+    fav_key: str        # ch:<cid> | vod:<mid> | show:vod:<mid> | show:epg:<col> | show:tv:<sid>
+    title: str
+    art: str            # poster / logo URL or path
+    banner: str         # 16:9 hero backdrop URL
+    meta: str           # metadata line in hero
+    desc: str           # 2-line description in hero
+    play_url: str       # plugin:// URL for primary play (empty if modal-only or unplayable)
+    alt_url: str        # plugin:// URL for "From start" (catchup programme or vod start)
+    cid: str            # channel id if channel/programme
+    epg: str            # epg id if programme
+    start: int
+    stop: int
+    resume_pos: int     # seconds to seek on primary play
+    bar: str            # sweettv-bar-XX.png or ""
+    pbar: str           # sweettv-pbar-XX.png or ""
+    fav: bool
+    catchup: bool
+    playable: bool
+    dim: bool
+    num: str
+    initials: str
+    plate: str
+    plate_hi: str
+    bg: str
+    tint: str
+    now: str
+    nowline: str
+    next: str
+    nextline: str
+    resume_label: str
+    small: bool
 
 
-def show_row(show, now) -> Row:
-    """`show` is mediastick_sweetsections.shows' item: id, title, how many episodes, the picture, and the newest one."""
-    title = _text(show["title"]) or str(show["id"])
-    latest = show.get("latest")
-    channel = _text(latest["channel"], 80) if latest else ""
-    return Row(str(show["id"]), title, _line(words.tr("Episodes: {n}").format(n=show["episodes"]), channel),
-               _line(words.tr("Latest episode"), _when(latest["start"], now)) if latest else "", data.logo_of(show["icon"]), title,
-               line=episode_title(latest) if latest else "")
+def fmt_mmss(seconds) -> str:
+    s = max(0, int(seconds or 0))
+    m, sec = divmod(s, 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
 
 
-def episode_row(episode, show_title, icon, now) -> Row:
-    playable = bool(episode["available"])
-    future = not playable and episode["start"] > now
-    season = words.tr("Season {n}").format(n=episode["season"]) if episode["season"] else ""
-    title = episode_title(episode)
-    channel = _text(episode["channel"], 80)
-    note = "" if playable else words.tr("Soon" if future else "Not in the archive")
-    return Row("", title, _line(show_title, season, channel), _line(_span(episode["start"], episode["stop"], now), note), icon,
-               channel or show_title, playable, future, str(episode["cid"]), str(episode["epg"]), episode["start"], episode["stop"],
-               _line(show_title, title))
+def _bar_from_fraction(fraction, wide=False) -> str:
+    if fraction <= 0:
+        return ""
+    step = max(1, min(data.BAR_STEPS, round(fraction * data.BAR_STEPS)))
+    return data.bar_name(step, wide=wide)
 
 
-def film_row(film, icon, now) -> Row:
-    channel = _text(film["channel"], 80)
-    title = _text(film["title"]) or str(film["epg"])
-    airings = film["airings"]
-    return Row("", title, _line(words.tr("{n} min").format(n=film["minutes"]), channel), _span(film["start"], film["stop"], now), icon,
-               channel or title, True, False, str(film["cid"]), str(film["epg"]), film["start"], film["stop"], title,
-               words.tr("Airings: {n}").format(n=airings) if airings > 1 else "")
+def _vod_progress(resume_doc, movie_id, episode_id="") -> Tuple[int, float]:
+    items = (resume_doc or {}).get("items") or {}
+    key = f"sw:vod:{movie_id}|{episode_id}" if episode_id else f"sw:vod:{movie_id}"
+    entry = items.get(key)
+    if not isinstance(entry, dict):
+        return 0, 0.0
+    total = int(entry.get("total") or 0)
+    pos = int(entry.get("pos") or 0)
+    if entry.get("done"):
+        return 0, 1.0
+    if pos >= 5 and total > 0:
+        return pos, min(1.0, pos / total)
+    return 0, 0.0
 
 
-def first_playable(rows) -> int:
-    """Where the cursor starts in a list of episodes: the first one that can be watched."""
-    return next((i for i, row in enumerate(rows) if row.playable), 0)
+def _epg_progress(resume_doc, cid, epg) -> Tuple[int, float]:
+    items = (resume_doc or {}).get("items") or {}
+    entry = items.get(f"sw:{cid}|{epg}")
+    if not isinstance(entry, dict):
+        return 0, 0.0
+    total = int(entry.get("total") or 0)
+    pos = int(entry.get("pos") or 0)
+    if entry.get("done"):
+        return 0, 1.0
+    if pos >= 5 and total > 0:
+        return pos, min(1.0, pos / total)
+    return 0, 0.0
 
 
-def capped(rows, limit) -> list:
-    """`rows` cut to `limit`, in their order. What goes first is what cannot be played (the episodes still to come, the last
-    of them first), so nothing that can be watched is lost to the cap."""
-    if len(rows) <= limit:
-        return list(rows)
-    chosen = {i for i, row in enumerate(rows) if row.playable}
-    chosen = set(sorted(chosen)[:limit])
-    for i in range(len(rows)):
-        if len(chosen) >= limit:
-            break
-        chosen.add(i)
-    return [rows[i] for i in sorted(chosen)]
+def _palette(seed_text):
+    c = view.colours(seed_text)
+    return view.initials(seed_text), c["plate"], c["plate_hi"], c["bg"], c["tint"]
 
 
-# ---- the index -------------------------------------------------------------------------------
+def channel_card(ch, cat_names, now, resume_doc=None, favs=()) -> Card:
+    current, following = data.now_next(ch, now)
+    step = data.progress_step(current, now) if current else 0
+    bar = data.bar_name(step) if current else ""
+    pbar = data.bar_name(step, wide=True) if current else ""
+    cats = [cat_names[f"c:{k}"] for k in ch.cats if f"c:{k}" in cat_names][:2]
+    meta_parts = ([words.tr("Channel {n}").format(n=ch.number)] if ch.number else []) + cats
+    if ch.fast:
+        meta_parts.append(words.tr("24/7"))
+    meta = "  ·  ".join(meta_parts)
+    now_text = current.title if current else (words.tr("No programme information") if not ch.epg else "")
+    nowline = words.now_line(data.time_range(current)) if current else ""
+    next_text = following.title if following else ""
+    nextline = words.next_line(data.time_range(following), following.title) if following else ""
+    desc = current.desc if current and current.desc else (now_text if now_text else nextline)
+    alt_url = ""
+    if current and current.epg_id and ch.catchup:
+        alt_url = data.play_url(ch.cid, current.epg_id)
+    initials, plate, plate_hi, bg, tint = _palette(ch.name)
+    fav_key = f"ch:{ch.cid}"
+    return Card(
+        kind="channel", key=ch.cid, fav_key=fav_key, title=ch.name,
+        art=ch.logo, banner=ch.logo, meta=meta, desc=desc,
+        play_url=data.play_url(ch.cid), alt_url=alt_url,
+        cid=ch.cid, epg=current.epg_id if current else "",
+        start=current.start if current else 0, stop=current.stop if current else 0,
+        resume_pos=0, bar=bar, pbar=pbar, fav=fav_key in favs,
+        catchup=ch.catchup, playable=True, dim=False,
+        num=str(ch.number) if ch.number else "",
+        initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+        now=now_text, nowline=nowline, next=next_text, nextline=nextline,
+        resume_label="", small=len(ch.name) > 22,
+    )
 
-def _libs() -> Tuple[Optional[object], Optional[object]]:
-    """(mediastick_sweetsections, mediastick_sweetlive) of the device's library; None for one that is not there."""
-    try:
-        from resources.lib import store
-        return store.sweetsections, store.sweetlive
-    except Exception:
-        return None, None
+
+def vod_card(item, kind="movie", resume_doc=None, favs=()) -> Card:
+    mid = str(item.get("id") or "")
+    title = str(item.get("title") or "")
+    year = int(item.get("year") or 0)
+    imdb = float(item.get("imdb") or 0.0)
+    duration = int(item.get("duration") or 0)
+    meta_parts = []
+    if year:
+        meta_parts.append(str(year))
+    if imdb > 0:
+        meta_parts.append(f"IMDb {imdb:.1f}")
+    if duration >= 60:
+        meta_parts.append(words.tr("{n} min").format(n=duration // 60))
+    pos, frac = _vod_progress(resume_doc, mid) if kind == "movie" else (0, 0.0)
+    resume_label = words.tr("Continue from {time}").format(time=fmt_mmss(pos)) if pos else ""
+    url = str(item.get("vod_url") or "")
+    initials, plate, plate_hi, bg, tint = _palette(title)
+    fav_key = f"vod:{mid}"
+    return Card(
+        kind=kind, key=mid, fav_key=fav_key, title=title,
+        art=str(item.get("poster") or ""), banner=str(item.get("banner") or item.get("poster") or ""),
+        meta="  ·  ".join(meta_parts), desc=str(item.get("description") or ""),
+        play_url=url if kind == "movie" else "", alt_url=url if (kind == "movie" and pos) else "",
+        cid="", epg="", start=0, stop=0, resume_pos=pos,
+        bar=_bar_from_fraction(frac), pbar=_bar_from_fraction(frac, wide=True),
+        fav=fav_key in favs, catchup=False, playable=bool(url), dim=False,
+        num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+        now="", nowline="", next="", nextline="", resume_label=resume_label, small=len(title) > 22,
+    )
 
 
-class Library:
-    """The index of the channel list for the shows and the films: built once per version of the file, dropped by release()."""
+def show_card(item, favs=()) -> Card:
+    show_id = str(item.get("id") or "")
+    kind = str(item.get("kind") or "show_vod")
+    title = str(item.get("title") or "")
+    year = int(item.get("year") or 0)
+    imdb = float(item.get("imdb") or 0.0)
+    meta_parts = [words.tr("Shows")]
+    if year:
+        meta_parts.append(str(year))
+    if imdb > 0:
+        meta_parts.append(f"IMDb {imdb:.1f}")
+    fav_key = f"show:{show_id}"
+    initials, plate, plate_hi, bg, tint = _palette(title)
+    return Card(
+        kind=kind, key=show_id, fav_key=fav_key, title=title,
+        art=str(item.get("poster") or ""), banner=str(item.get("banner") or item.get("poster") or ""),
+        meta="  ·  ".join(meta_parts), desc="",
+        play_url="", alt_url="", cid="", epg="", start=0, stop=0,
+        resume_pos=0, bar="", pbar="", fav=fav_key in favs,
+        catchup=False, playable=True, dim=False,
+        num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+        now="", nowline="", next="", nextline="", resume_label="", small=len(title) > 22,
+    )
 
-    def __init__(self, libs=None):
-        self._given = libs
-        self._lock = threading.RLock()
-        self.key = None
-        self.index = None
-        self._memo = {}
-        self._minute = None
 
-    def libs(self):
-        return self._given if self._given is not None else _libs()
+def search_card(row, resume_doc=None, favs=()) -> Card:
+    kind = str(row.get("kind") or "")
+    title = str(row.get("title") or "")
+    subtitle = str(row.get("subtitle") or "")
+    cid = str(row.get("cid") or "")
+    epg = str(row.get("epg") or "")
+    start = int(row.get("start") or 0)
+    stop = int(row.get("stop") or 0)
+    playable = bool(row.get("playable", True)) and row.get("available") is not False
+    vod_url = str(row.get("vod_url") or "")
+    art = str(row.get("image_url") or row.get("preview") or "")
+    if kind == "channel" and cid:
+        url = data.play_url(cid)
+        fav_key = f"ch:{cid}"
+        pos, frac = 0, 0.0
+    elif vod_url:
+        url = vod_url
+        rid = str(row.get("id") or "")
+        fav_key = f"vod:{rid}" if rid.isdigit() else ""
+        pos, frac = _vod_progress(resume_doc, rid) if rid.isdigit() else (0, 0.0)
+    elif cid and epg:
+        url = data.play_url(cid, epg)
+        fav_key = f"ch:{cid}"
+        pos, frac = _epg_progress(resume_doc, cid, epg)
+    else:
+        url, fav_key, pos, frac = "", "", 0, 0.0
+    meta_parts = [p for p in (str(row.get("channel_name") or ""), str(row.get("when") or ""), subtitle) if p]
+    initials, plate, plate_hi, bg, tint = _palette(title)
+    return Card(
+        kind=kind or "movie", key=str(row.get("id") or cid or title), fav_key=fav_key, title=title,
+        art=art, banner=art, meta="  ·  ".join(meta_parts), desc="",
+        play_url=url if playable else "", alt_url=url if (playable and pos) else "",
+        cid=cid, epg=epg, start=start, stop=stop, resume_pos=pos,
+        bar=_bar_from_fraction(frac), pbar=_bar_from_fraction(frac, wide=True),
+        fav=bool(fav_key and fav_key in favs), catchup=bool(row.get("playable_in_archive")),
+        playable=playable and bool(url), dim=not (playable and bool(url)),
+        num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+        now="", nowline="", next="", nextline="",
+        resume_label=words.tr("Continue from {time}").format(time=fmt_mmss(pos)) if pos else "",
+        small=len(title) > 22,
+    )
 
-    def available(self) -> bool:
-        return all(self.libs())
 
-    @property
-    def loaded(self) -> bool:
-        return self.index is not None
+def continue_cards(resume_doc, catalog, now, favs=()) -> list:
+    """Build item-level Continue cards from mediastick_resume without per-channel collapse."""
+    items = (resume_doc or {}).get("items") or {}
+    ch_by_id = {ch.cid: ch for ch in catalog.channels} if catalog else {}
+    entries = []
+    for key, e in items.items():
+        if not isinstance(e, dict) or not str(key).startswith("sw:"):
+            continue
+        if e.get("done"):
+            continue
+        pos = int(e.get("pos") or 0)
+        total = int(e.get("total") or 0)
+        if pos < 5 or total <= 0:
+            continue
+        at = int(e.get("at") or 0)
+        entries.append((at, str(key), e))
+    entries.sort(key=lambda x: -x[0])
+    out = []
+    for _, key, e in entries:
+        pos = int(e.get("pos") or 0)
+        total = int(e.get("total") or 1)
+        frac = min(1.0, pos / total)
+        bar = _bar_from_fraction(frac)
+        pbar = _bar_from_fraction(frac, wide=True)
+        resume_label = words.tr("Continue from {time}").format(time=fmt_mmss(pos))
+        if key.startswith("sw:vod:"):
+            mid = str(e.get("movie_id") or "")
+            eid = str(e.get("episode_id") or "")
+            title = str(e.get("title") or f"VOD {mid}")
+            url = f"plugin://plugin.video.sweettv/playvod/{mid}|{eid or 'null'}|0"
+            fav_key = f"vod:{mid}"
+            art = str(e.get("thumb") or "")
+            initials, plate, plate_hi, bg, tint = _palette(title)
+            out.append(Card(
+                kind="movie" if not eid else "episode", key=f"{mid}|{eid}", fav_key=fav_key,
+                title=title, art=art, banner=art, meta=resume_label, desc="",
+                play_url=url, alt_url=url, cid="", epg="", start=0, stop=0, resume_pos=pos,
+                bar=bar, pbar=pbar, fav=fav_key in favs, catchup=False, playable=True, dim=False,
+                num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+                now="", nowline="", next="", nextline="", resume_label=resume_label, small=len(title) > 22,
+            ))
+        else:
+            cid = str(e.get("cid") or "")
+            epg = str(e.get("epg") or "")
+            ch = ch_by_id.get(cid)
+            title = str(e.get("title") or (ch.name if ch else f"Channel {cid}"))
+            url = data.play_url(cid, epg)
+            fav_key = f"ch:{cid}"
+            art = ch.logo if ch else str(e.get("thumb") or "")
+            initials, plate, plate_hi, bg, tint = _palette(title)
+            meta = f"{ch.name}  ·  {resume_label}" if ch else resume_label
+            out.append(Card(
+                kind="programme", key=f"{cid}|{epg}", fav_key=fav_key,
+                title=title, art=art, banner=art, meta=meta, desc="",
+                play_url=url, alt_url=url, cid=cid, epg=epg,
+                start=int(e.get("start") or 0), stop=int(e.get("stop") or 0), resume_pos=pos,
+                bar=bar, pbar=pbar, fav=fav_key in favs, catchup=True, playable=bool(url), dim=not bool(url),
+                num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+                now="", nowline="", next="", nextline="", resume_label=resume_label, small=len(title) > 22,
+            ))
+    return out
 
-    def release(self):
-        with self._lock:
-            self.key = self.index = self._minute = None
-            self._memo = {}
 
-    def load(self, key, read) -> bool:
-        """The index of `read()` (the list as the plugin saved it; None when it cannot be read now), kept for `key`, the
-        file's version. True when there is an index to ask (an older one is better than none)."""
-        sections, live = self.libs()
-        if sections is None or live is None:
-            return False
-        with self._lock:
-            if self.index is not None and self.key == key:
-                return True
-            raw = read()
-            if raw is None:
-                return self.index is not None
-            self.index, self.key, self._memo = sections.build(live.slim(raw)), key, {}
-            return True
+def favourites_cards(favs_doc, catalog, cat_names, now, resume_doc=None) -> list:
+    items = (favs_doc or {}).get("items") or {}
+    fav_set = set(items.keys())
+    ch_by_id = {ch.cid: ch for ch in catalog.channels} if catalog else {}
+    entries = sorted(((int(e.get("at") or 0), k, e) for k, e in items.items() if isinstance(e, dict)),
+                     key=lambda x: -x[0])
+    out = []
+    for _, key, e in entries:
+        if key.startswith("ch:"):
+            cid = key[3:]
+            ch = ch_by_id.get(cid)
+            if ch:
+                out.append(channel_card(ch, cat_names, now, resume_doc, fav_set))
+                continue
+            title = str(e.get("title") or f"Channel {cid}")
+            art = str(e.get("thumb") or "")
+            initials, plate, plate_hi, bg, tint = _palette(title)
+            out.append(Card(
+                kind="channel", key=cid, fav_key=key, title=title, art=art, banner=art,
+                meta=words.tr("TV Channels"), desc="", play_url=data.play_url(cid), alt_url="",
+                cid=cid, epg="", start=0, stop=0, resume_pos=0, bar="", pbar="", fav=True,
+                catchup=False, playable=True, dim=False, num="",
+                initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+                now="", nowline="", next="", nextline="", resume_label="", small=len(title) > 22,
+            ))
+        elif key.startswith("show:"):
+            show_id = key[5:]
+            title = str(e.get("title") or show_id)
+            art = str(e.get("thumb") or "")
+            initials, plate, plate_hi, bg, tint = _palette(title)
+            kind = "show_vod" if show_id.startswith("vod:") else ("show_epg" if show_id.startswith("epg:") else "show_tv")
+            out.append(Card(
+                kind=kind, key=show_id, fav_key=key, title=title, art=art, banner=art,
+                meta=words.tr("Shows"), desc="", play_url="", alt_url="",
+                cid="", epg="", start=0, stop=0, resume_pos=0, bar="", pbar="", fav=True,
+                catchup=False, playable=True, dim=False, num="",
+                initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+                now="", nowline="", next="", nextline="", resume_label="", small=len(title) > 22,
+            ))
+        elif key.startswith("vod:"):
+            mid = key[4:]
+            title = str(e.get("title") or f"VOD {mid}")
+            art = str(e.get("thumb") or "")
+            pos, frac = _vod_progress(resume_doc, mid)
+            url = f"plugin://plugin.video.sweettv/playvod/{mid}|null|0"
+            initials, plate, plate_hi, bg, tint = _palette(title)
+            out.append(Card(
+                kind="movie", key=mid, fav_key=key, title=title, art=art, banner=art,
+                meta=words.tr("Movies"), desc="", play_url=url, alt_url=url if pos else "",
+                cid="", epg="", start=0, stop=0, resume_pos=pos,
+                bar=_bar_from_fraction(frac), pbar=_bar_from_fraction(frac, wide=True),
+                fav=True, catchup=False, playable=True, dim=False, num="",
+                initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+                now="", nowline="", next="", nextline="",
+                resume_label=words.tr("Continue from {time}").format(time=fmt_mmss(pos)) if pos else "",
+                small=len(title) > 22,
+            ))
+    return out
 
-    def _asked(self, name, now, make):
-        """`make()` once per version of the file and minute: the archive rule depends on the clock, so what it found is reused
-        for a minute (going back from a show to the list must not work it out again). None without an index."""
-        with self._lock:
-            if self.index is None:
-                return None
-            if self._minute != int(now) // 60:
-                self._memo, self._minute = {}, int(now) // 60
-            if name not in self._memo:
-                self._memo[name] = make()
-            return self._memo[name]
 
-    def _ok(self, now):
-        live = self.libs()[1]
-        return lambda record: live.archive_ok(record["channel_ref"], record["programme_ref"], now)
+def filter_channels(channels, filter_key) -> list:
+    if filter_key == "live":
+        return [ch for ch in channels if not ch.fast]
+    if filter_key == "fast":
+        return [ch for ch in channels if ch.fast]
+    if isinstance(filter_key, str) and filter_key.startswith("c:"):
+        cid = filter_key[2:]
+        return [ch for ch in channels if cid in ch.cats]
+    return list(channels)
 
-    def _found(self, name, now, ask):
-        return self._asked(name, now, lambda: ask(self.libs()[0], self.index, self._ok(now)))
 
-    def warm(self, now):
-        """Work out the shows and the films (the slow part of the rows), so that counts() knows how many there are."""
-        self._found(SHOWS, now, lambda s, i, ok: s.shows(i, ok))
-        self._found(FILMS, now, lambda s, i, ok: s.films(i, ok))
+def channel_chips(categories) -> list:
+    chips = [("all", words.tr("All items")), ("live", words.tr("Live TV")), ("fast", words.tr("24/7"))]
+    for key, name in (categories or ())[:5]:
+        chips.append((key, name))
+    return chips[:8]
 
-    def counts(self, now) -> Optional[Tuple[int, int]]:
-        """(shows, films) that can be watched now, when warm() has worked them out this minute; never works them out itself
-        (the menu asks on the UI thread). None otherwise."""
-        with self._lock:
-            shows, films = self._memo.get(SHOWS), self._memo.get(FILMS)
-            if self.index is None or self._minute != int(now) // 60 or shows is None or films is None:
-                return None
-            return len(shows), len(films)
 
-    def shows(self, now):
-        """(rows, how many there are) of the shows with an episode to watch, by title; None without an index."""
-        found = self._found(SHOWS, now, lambda s, i, ok: s.shows(i, ok))
-        return None if found is None else ([show_row(s, now) for s in found[:MAX_SHOWS]], len(found))
+def catalog_chips(genres, sort_modes, sort_idx) -> list:
+    modes = sort_modes or SORT_MODES_DEFAULT
+    mode = modes[sort_idx % len(modes)]
+    chips = [("all", words.tr("All items")), ("sort", words.tr(mode["name"]))]
+    for g in (genres or ())[:6]:
+        gid = g.get("id")
+        name = g.get("name")
+        if gid and name:
+            chips.append((f"g:{gid}", str(name)))
+    return chips[:8]
 
-    def episodes(self, sid, now, logos):
-        """(the show's title, rows, how many there are) of one show: every episode of the list by season and number, the ones
-        that cannot be watched yet dimmed, each with the picture of its channel (`logos`: channel id -> picture). None without
-        an index or without such a show."""
-        found = self._found((EPISODES, sid), now, lambda s, i, ok: s.show(i, sid, ok))
-        if found is None:
-            return None
-        title, fallback = _text(found["title"]) or str(sid), found["icon"]
-        rows = [episode_row(e, title, data.logo_of(logos.get(str(e["cid"]), ""), fallback), now) for e in found["episodes"]]
-        return title, capped(rows, MAX_EPISODES), len(rows)
 
-    def films(self, now, logos):
-        """(rows, how many there are) of the films that can be watched now, by title; `logos` maps a channel id to its picture."""
-        found = self._found(FILMS, now, lambda s, i, ok: s.films(i, ok))
-        if found is None:
-            return None
-        return [film_row(f, data.logo_of(logos.get(str(f["cid"]), "")), now) for f in found[:MAX_FILMS]], len(found)
+def day_tabs(archive_days, future_days, now) -> list:
+    today = date.fromtimestamp(int(now))
+    tabs = []
+    for offset in range(-max(0, int(archive_days or 0)), max(0, int(future_days or 0)) + 1):
+        d = today + timedelta(days=offset)
+        noon_ts = int(now) + offset * 86400
+        label = d.strftime("%a %d.%m")
+        tabs.append((noon_ts, label))
+    return tabs or [(int(now), today.strftime("%a %d.%m"))]
+
+
+def hero_info(card: Optional[Card]) -> dict:
+    if card is None:
+        return {
+            "hero_title": "", "hero_meta": "", "hero_desc": "",
+            "hero_play": words.tr("Watch"), "hero_alt": "", "hero_guide": "",
+            "hero_fav": words.tr("Add to favourites"),
+            "has_play": "", "has_alt": "", "has_guide": "", "has_fav": "",
+        }
+    is_show = card.kind in ("show_vod", "show_epg", "show_tv", "series")
+    if is_show:
+        play_label = words.tr("Seasons and episodes")
+        alt_label = ""
+        guide_label = words.tr("Episodes")
+    else:
+        play_label = card.resume_label if card.resume_label else words.tr("Watch")
+        alt_label = words.tr("From start") if card.alt_url else ""
+        guide_label = words.tr("Programme guide") if card.kind == "channel" else ""
+    return {
+        "hero_title": card.title,
+        "hero_meta": card.meta,
+        "hero_desc": card.desc,
+        "hero_play": play_label,
+        "hero_alt": alt_label,
+        "hero_guide": guide_label,
+        "hero_fav": words.tr("In favourites") if card.fav else words.tr("Add to favourites"),
+        "has_play": "1" if (card.playable or is_show) else "",
+        "has_alt": "1" if alt_label else "",
+        "has_guide": "1" if guide_label else "",
+        "has_fav": "1" if card.fav_key else "",
+    }

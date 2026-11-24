@@ -1,109 +1,120 @@
-"""SWEET.TV app: the ListItems of the screen. One item per channel, made once per catalog; a minute's tick writes
-into them only the properties that changed (a property write makes Kodi redraw the card). Menu entries, the cards of
-the shows, episodes and films, and the rows of the programme guide are made here too.
-"""
-import os
-
+"""SWEET.TV app: building Kodi ListItems for the 7-section rail, 4x2 card grid, and modals."""
 import xbmcgui
 
-from resources.lib import sweettv_data as data, sweettv_sections as sections, sweettv_text as words, sweettv_view as view, ui
-
-DIMMED = "55"                    # the alpha of a card that cannot be watched now
+from resources.lib import sweettv_sections as sections, sweettv_text as words
 
 
-def build(catalog, now, state):
-    """(items by channel id, the properties each item has now, category names). The slow part: no lock held."""
-    names = dict(catalog.categories)
-    items, shown = {}, {}
-    for channel in catalog.channels:
-        item = xbmcgui.ListItem(channel.name, offscreen=True)
-        if channel.logo:
-            item.setArt({"icon": channel.logo})
-        items[channel.cid] = item
-        write_props(item, channel, now, state, names, shown)
-    return items, shown, names
-
-
-def refresh(items, channels, now, state, names, shown):
-    """The same channels a minute later."""
-    for channel in channels:
-        write_props(items[channel.cid], channel, now, state, names, shown)
-
-
-def write_props(item, channel, now, state, names, shown):
-    props = view.card_props(channel, now, channel.cid in state["favourites"], names, view.resume_for(state, channel, now))
-    for key in ("bar", "pbar"):
-        if props[key]:
-            props[key] = os.path.join(ui.MEDIA, props[key])
-    old = shown.setdefault(channel.cid, {})
-    for key, value in props.items():
-        if old.get(key) != value:
-            item.setProperty(key, value)
-            old[key] = value
-
-
-def _section(entry) -> bool:
-    return entry.group == data.SECTION_GROUP
-
-
-def _name(entry) -> str:
-    """What the menu calls an entry: our own names are said in the device's language, a genre's is SWEET.TV's."""
-    return words.tr(entry.name) if entry.msgid else entry.name
-
-
-def _menu_props(item, entry, active_key):
-    """What the skin reads from an entry of the menu: the count, the heading the preview shows over the cards, the mark on the
-    entry the row follows, `section` for Shows and series and Films (drawn in the accent colour) and `caption` for the heading
-    of the genres (a small line the cursor does not rest on)."""
-    item.setLabel2("" if entry.count is None else str(entry.count))
-    item.setProperty("heading", "" if not entry.focusable else view.section_heading(_name(entry), entry.count)
-                     if _section(entry) or entry.count is None else view.category_heading(_name(entry), entry.count))
-    item.setProperty("active", "1" if entry.key == active_key else "")
-    item.setProperty("section", "1" if _section(entry) else "")
-    item.setProperty("caption", "" if entry.focusable else "1")
-
-
-def menu_items(entries, active_key):
-    """One item per menu entry (sweettv_data.rail): its name, how many, and the properties above."""
+def rail_items(active_section, counts=None) -> list:
+    counts = counts or {}
     out = []
-    for entry in entries:
-        item = xbmcgui.ListItem(_name(entry), offscreen=True)
-        _menu_props(item, entry, active_key)
-        out.append(item)
+    for key, msgid in sections.RAIL:
+        name = words.tr(msgid)
+        count = counts.get(key)
+        li = xbmcgui.ListItem(name, str(count) if count is not None else "", offscreen=True)
+        li.setProperty("section", key)
+        li.setProperty("key", key)
+        li.setProperty("active", "1" if key == active_section else "")
+        li.setProperty("heading", name)
+        out.append(li)
     return out
 
 
-def update_menu(items, entries, active_key):
-    """Counts, headings and the marked entry, in place."""
-    for entry, item in zip(entries, items):
-        _menu_props(item, entry, active_key)
+def card_props(card: sections.Card) -> dict:
+    return {
+        "kind": card.kind,
+        "key": card.key,
+        "fav_key": card.fav_key,
+        "title": card.title,
+        "small": "1" if card.small else "",
+        "meta": card.meta,
+        "desc": card.desc,
+        "bar": card.bar,
+        "pbar": card.pbar,
+        "fav": "1" if card.fav else "",
+        "catchup": "1" if card.catchup else "",
+        "guide": "1" if card.kind == "channel" else "",
+        "dim": "1" if card.dim else "",
+        "num": card.num,
+        "initials": card.initials,
+        "plate": card.plate,
+        "plate_hi": card.plate_hi,
+        "bg": card.bg,
+        "tint": card.tint,
+        "now": card.now,
+        "nowline": card.nowline,
+        "next": card.next,
+        "nextline": card.nextline,
+        "resume": card.resume_label,
+    }
 
 
-def card_items(rows):
-    """The cards of shows, episodes or films (sweettv_sections.Row), made like the channel cards: the channel's picture or its
-    badge, the title under it, the colours of the card and of the screen behind it, and what the preview over the row says
-    (title, meta, cap, line). `dim` is for what cannot be watched now: its plate is let through."""
+def apply_card(li, card: sections.Card, prev=None) -> dict:
+    props = card_props(card)
+    if prev is None:
+        for k, v in props.items():
+            li.setProperty(k, v)
+    else:
+        for k, v in props.items():
+            if prev.get(k) != v:
+                li.setProperty(k, v)
+    if card.art:
+        li.setArt({"icon": card.art})
+    return props
+
+
+def card_item(card: sections.Card) -> xbmcgui.ListItem:
+    li = xbmcgui.ListItem(card.title, offscreen=True)
+    apply_card(li, card)
+    return li
+
+
+def modal_tab_items(tabs, active_idx=0) -> list:
     out = []
-    for row in rows:
-        texts = sections.card_texts(row)
-        colours = view.colours(row.mark)
-        item = xbmcgui.ListItem(texts.pop("caption"), offscreen=True)
-        if row.icon:
-            item.setArt({"icon": row.icon})
-        props = {**texts, "initials": view.initials(row.mark), "bg": colours["bg"], "dim": "" if row.playable else "1",
-                 "plate": colours["plate"] if row.playable else DIMMED + colours["plate"][2:],
-                 "plate_hi": colours["plate_hi"] if row.playable else DIMMED + colours["plate_hi"][2:]}
-        for key, value in props.items():
-            item.setProperty(key, value)
-        out.append(item)
+    for idx, (_, label) in enumerate(tabs):
+        li = xbmcgui.ListItem(str(label), offscreen=True)
+        li.setProperty("active", "1" if idx == active_idx else "")
+        out.append(li)
     return out
 
 
-def guide_items(rows):
+def episode_items(episodes) -> list:
     out = []
-    for row in rows:
-        item = xbmcgui.ListItem(row.title, words.tr("Live") if row.kind == "live" else "", offscreen=True)
-        item.setProperty("when", row.when)
-        item.setProperty("kind", row.kind)
-        out.append(item)
+    for ep in episodes:
+        title = str(ep.get("title") or "")
+        dur = int(ep.get("duration") or 0)
+        res = int(ep.get("resume") or 0)
+        done = bool(ep.get("watched"))
+        if res > 0:
+            badge = words.tr("Continue from {time}").format(time=sections.fmt_mmss(res))
+        elif done:
+            badge = words.tr("Watched")
+        elif dur >= 60:
+            badge = words.tr("{n} min").format(n=dur // 60)
+        else:
+            badge = ""
+        li = xbmcgui.ListItem(title, badge, offscreen=True)
+        num = int(ep.get("number") or 0)
+        li.setProperty("when", words.tr("E{n}").format(n=num) if num else "")
+        li.setProperty("kind", "resume" if res > 0 else ("done" if done else ""))
+        out.append(li)
+    return out
+
+
+def guide_items(rows) -> list:
+    out = []
+    for r in rows:
+        title = str(r.get("title") or "")
+        if r.get("live"):
+            badge = words.tr("Live")
+            kind = "live"
+        elif r.get("playable_in_archive"):
+            badge = words.tr("Archive")
+            kind = "archive"
+        else:
+            badge = words.tr("Soon") if r.get("start", 0) > 0 else ""
+            kind = "future"
+        li = xbmcgui.ListItem(title, badge, offscreen=True)
+        li.setProperty("when", str(r.get("when") or ""))
+        li.setProperty("kind", kind)
+        out.append(li)
     return out

@@ -64,6 +64,7 @@ class Channel(NamedTuple):
     catchup: bool
     epg: Tuple[Programme, ...]
     days: int = 0               # days of archive behind a catch-up channel; 0: no archive
+    fast: bool = False          # 24/7 FAST marathon channel (is_fast_channel)
 
 
 class Catalog(NamedTuple):
@@ -188,7 +189,7 @@ def parse_channel(raw, now) -> Optional[Channel]:
                    number if number and number > 0 else 0,
                    logo_of(raw.get("icon_v2_url"), raw.get("icon_url")),
                    tuple(dict.fromkeys(str(k) for k in keys if k is not None)),
-                   catchup, parse_epg(raw.get("epg"), now, days), days)
+                   catchup, parse_epg(raw.get("epg"), now, days), days, bool(raw.get("is_fast_channel")))
 
 
 def parse_catalog(raw, now) -> Catalog:

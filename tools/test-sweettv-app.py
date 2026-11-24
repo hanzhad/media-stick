@@ -1209,10 +1209,6 @@ class Channels(WindowCase):
             Fake.now = NOW + n
             window.onClick(ROW)
         self.assertEqual([e["id"] for e in window.state["recent"]], [str(100 + n) for n in range(14, 2, -1)])
-        self.assertEqual(window.controls[MENU].items[0].label2, "12")
-        window.cat_key = ""
-        window._fill_row(D.RECENT)
-        self.assertEqual(self.shown(window)[:3], ["C14", "C13", "C12"])
         self.assertTrue(wait_for(lambda: self.saved()["last"] == "114"))
         self.assertEqual([e["id"] for e in self.saved()["recent"]], [str(100 + n) for n in range(14, 2, -1)])
 
@@ -1260,15 +1256,15 @@ class Channels(WindowCase):
         window = self.ready()
         window.focus = MENU
         fills = []
-        real = window._fill_row
-        window._fill_row = lambda *a, **k: (fills.append(a), real(*a, **k))[1]
+        real = window._open_section
+        window._open_section = lambda *a, **k: (fills.append(a), real(*a, **k))[1]
         with mock.patch.object(sweettv_app, "MENU_DELAY", 0.05):
-            for position in (7, 8, 7, 8):
+            for position in (1, 2, 1, 2):
                 window.controls[MENU].selected = position
                 self.press(window, KEY_DOWN)
             self.assertTrue(wait_for(lambda: fills))
             time.sleep(0.15)
-        self.assertEqual([a[0] for a in fills], ["c:2"])
+        self.assertEqual([a[0] for a in fills], ["favourites"])
 
     def test_ok_plays_live_through_player_open_on_a_worker_thread_and_remembers_it(self):
         window = self.ready()
@@ -1283,7 +1279,6 @@ class Channels(WindowCase):
         self.assertTrue(wait_for(lambda: self.saved()["last"] == "20"))
         saved = self.saved()
         self.assertEqual(saved["recent"], [{"id": "20", "at": NOW}])
-        self.assertEqual(window.controls[MENU].items[0].label2, "1")
         self.assertIsNone(window.session)                            # live: nothing to follow
 
     def test_the_state_is_written_only_on_the_writers_thread_and_whole(self):
@@ -1298,7 +1293,7 @@ class Channels(WindowCase):
             window.onClick(ROW)
             window.focus = ROW
             self.press(window, 117)
-            self.assertTrue(wait_for(lambda: self.saved()["favourites"] == ["20"] and self.saved()["last"] == "20"))
+            self.assertTrue(wait_for(lambda: "ch:20" in MR.fav_keys() and self.saved()["last"] == "20"))
             window.stop()
         self.assertTrue(calls)
         self.assertTrue(all(t is not threading.main_thread() for t in calls))
@@ -1338,27 +1333,27 @@ class Channels(WindowCase):
         window.focus = ROW
         self.press(window, 117)
         self.assertEqual(window.controls[ROW].items[1].props["fav"], "1")
-        self.assertEqual(window.controls[MENU].items[1].label2, "1")
-        self.assertTrue(wait_for(lambda: self.saved()["favourites"] == ["20"]))
+        self.assertEqual(window.controls[MENU].items[2].label2, "1")
+        self.assertTrue(wait_for(lambda: "ch:20" in MR.fav_keys()))
         window.stop()
         again = self.open()
         self.assertTrue(wait_for(lambda: again.mode == D.DATA))
         self.assertEqual(again.controls[ROW].items[1].props["fav"], "1")
         self.assertEqual(again.controls[ROW].items[0].props["fav"], "")
-        again.controls[MENU].selected = 1
+        again.controls[MENU].selected = 2
         again.onClick(MENU)
         self.assertEqual(self.shown(again), ["Twenty"])
         again.focus = ROW
         self.press(again, 117)                                      # off again, in the favourites view
         self.assertEqual(self.shown(again), [])
-        self.assertTrue(wait_for(lambda: self.saved()["favourites"] == []))
+        self.assertTrue(wait_for(lambda: "ch:20" not in MR.fav_keys()))
         again.focus = MENU
         self.press(again, 117)                                      # on the menu the key does nothing
         self.assertEqual(self.shown(again), [])
 
     def test_removing_a_favourite_keeps_the_focus_close(self):
         window = self.ready(state={"favourites": ["10", "20", "30"], "recent": [], "last": ""})
-        window.controls[MENU].selected = 1
+        window.controls[MENU].selected = 2
         window.onClick(MENU)
         window.controls[ROW].selected = 1
         window.focus = ROW
@@ -1372,8 +1367,7 @@ class Channels(WindowCase):
         window = self.ready(raw=answer(chan(1, "A", number=1, category=[1]), chan(2, "B", number=12, category=[2]),
                                        chan(3, "C", number=40, category=[1]),
                                        categories=[{"id": 1, "caption": "X"}, {"id": 2, "caption": "Y"}]))
-        window.controls[MENU].selected = 7
-        window.onClick(MENU)
+        window.onClick(404)
         self.assertEqual(self.shown(window), ["A", "C"])
         self.press(window, 58 + 4)
         self.press(window, 0, 0xF000 + ord("0"))                    # "40": a keyboard digit
@@ -1385,8 +1379,8 @@ class Channels(WindowCase):
         self.press(window, 58 + 2)                                  # "12" is in another category: All opens
         self.assertEqual(self.shown(window), ["A", "B", "C"])
         self.assertEqual(window.controls[ROW].selected, 1)
-        self.assertEqual(window.controls[MENU].selected, 2)         # and the menu is on All
-        self.assertEqual([i.props["active"] for i in window.controls[MENU].items][2], "1")
+        self.assertEqual(window.controls[MENU].selected, 6)         # and the menu is on TV Channels
+        self.assertEqual([i.props["active"] for i in window.controls[MENU].items][6], "1")
         self.assertEqual(window.getProperty("jump"), "")
         self.assertEqual(window.focus, ROW)
         self.press(window, 58 + 7)
@@ -1422,19 +1416,18 @@ class Channels(WindowCase):
 
     def test_a_catalog_that_changes_keeps_the_focused_channel_and_category(self):
         window = self.ready()
-        window.controls[MENU].selected = 7
-        window.onClick(MENU)
+        window.onClick(404)
         window.controls[ROW].selected = 1
         write_list(self.raw())
         os.utime(files.channel_path(), (time.time() + 60, time.time() + 60))
         window._look()
         self.assertEqual((self.shown(window), window.controls[ROW].selected), (["Ten", "Thirty"], 1))
-        self.assertEqual(window.controls[MENU].selected, 7)
+        self.assertEqual(window.filter_key, "c:1")
         write_list(answer(chan(10, "Ten", number=10)))              # the categories are gone: back to the default
         os.utime(files.channel_path(), (time.time() + 90, time.time() + 90))
         window._look()
         self.assertEqual(self.shown(window), ["Ten"])
-        self.assertEqual(window.cat_key, D.ALL)
+        self.assertEqual(window.filter_key, "all")
 
     def test_only_the_polling_the_budget_allows(self):
         waits = []
@@ -1555,9 +1548,7 @@ class Language(WindowCase):
     def test_in_russian_the_menu_the_hint_and_the_chip_are_russian(self):
         window = self.window("ru", state={"favourites": [], "recent": recent("10"), "last": "10"})
         menu = window.controls[MENU].items
-        self.assertEqual([i.label for i in menu], ["Продолжить", "Избранное", "Все каналы", "Поиск", "Шоу и сериалы", "Фильмы", "Жанры", "News"])
-        self.assertEqual([i.props["heading"] for i in menu], ["Продолжить  ·  1 канал", "Избранное  ·  0 каналов", "Все каналы  ·  2 канала",
-                                                              "Поиск", "Шоу и сериалы", "Фильмы", "", "News  ·  2 канала"])
+        self.assertEqual([i.label for i in menu], ["Поиск", "Продолжить", "Избранное", "Шоу", "Сериалы", "Фильмы", "ТВ-каналы"])
         self.assertEqual(window.getProperty("hint"),
                          W.hint_line(True, True))
         for word in ("Смотреть", "Меню", "Избранное", "0-9", "Номер канала", "Вверх", "Программа и продолжение"):
@@ -1570,36 +1561,47 @@ class Language(WindowCase):
         card = window.controls[ROW].items[0]
         self.assertEqual((card.props["meta"], card.props["nowline"], card.props["nextline"], card.props["resume"]),
                          ("Канал 10  ·  News", "Сейчас   07:50 – 08:10", "Далее   08:10 – 08:20   Then ten", ""))
-        self.assertEqual(window.controls[MENU].selected, 0)
+        self.assertEqual(window.controls[MENU].selected, 6)
         menu_empty = window.controls[MENU]
-        menu_empty.selected = 1
+        menu_empty.selected = 2
         window.onClick(MENU)
         self.assertTrue(window.getProperty("emptycat").startswith("Избранного пока нет"))
+        window.controls[MENU].selected = 6
+        window.onClick(MENU)
         self.press(window, 58 + 1)
         self.assertEqual(window.getProperty("jump"), "Канал 1")
         self.assertEqual(W.LANG, "ru")
 
     def test_the_resume_button_and_the_guide_are_russian(self):
-        state = {"favourites": [], "recent": [], "last": "", "resume": {"10": {"epg": "3", "title": "Old ten", "start": NOW - 7200,
-                                                                                  "stop": NOW - 3600, "pos": 900, "at": NOW}}}
-        window = self.window("ru", state=state)
-        self.assertEqual(window.controls[ROW].items[0].props["resume"], "Продолжить с 06:15")
+        doc = MR.record(MR.empty(), "plugin://plugin.video.sweettv/playvid/10|3", 900, 3600, NOW,
+                        {"title": "Old ten", "start": NOW - 7200, "stop": NOW - 3600})
+        MR.save(doc)
+        window = self.window("ru")
+        self.assertEqual(window.controls[ROW].items[0].props["resume"], "Продолжить с 15:00")
+        window.controls[MENU].selected = 6
+        window.onClick(MENU)
         window.focus = ROW
-        window._guide_show()
+        with mock.patch.object(API, "day", return_value={
+                "ok": True, "cid": "10", "name": "Ten", "date": "2027-01-15", "now": NOW,
+                "archive_days": 1, "future_days": 3,
+                "items": [{"epg": "1", "cid": "10", "title": "Now ten", "start": NOW - 600, "stop": NOW + 600,
+                           "when": "07:50", "live": True, "playable_in_archive": True, "available": True,
+                           "preview": "", "season": 0, "episode": 0, "show_id": ""}]}):
+            window._guide_show()
+            self.assertTrue(wait_for(lambda: len(window.controls[GUIDE].items) >= 1))
         self.assertEqual([i.label2 for i in window.controls[GUIDE].items][:1], ["В эфире"])
 
     def test_in_ukrainian_the_same(self):
         window = self.window("uk")
-        self.assertEqual([i.label for i in window.controls[MENU].items][:7],
-                         ["Продовжити", "Обране", "Усі канали", "Пошук", "Шоу та серіали", "Фільми", "Жанри"])
+        self.assertEqual([i.label for i in window.controls[MENU].items],
+                         ["Пошук", "Продовжити", "Обране", "Шоу", "Серіали", "Фільми", "ТБ-канали"])
         self.assertEqual((window.getProperty("chip"), window.getProperty("l_retry")), ("Вхід виконано", "Повторити"))
-        self.assertEqual(window.controls[MENU].items[2].props["heading"], "Усі канали  ·  2 канали")
 
     def test_in_english_and_in_any_language_without_translation_the_strings_are_the_msgids(self):
         for lang in ("en", "de"):
             window = self.window(lang)
-            self.assertEqual([i.label for i in window.controls[MENU].items][:7],
-                             ["Continue", "Favourites", "All", "Search", "Shows and series", "Films", "Genres"])
+            self.assertEqual([i.label for i in window.controls[MENU].items],
+                             ["Search", "Continue", "Favourites", "Shows", "Series", "Movies", "TV Channels"])
             self.assertEqual((window.getProperty("chip"), window.getProperty("l_guide")), ("Signed in", "Programme guide"))
             self.assertEqual(window.controls[ROW].items[0].props["meta"], "Channel 10  ·  News")
             window.stop()
@@ -2083,6 +2085,7 @@ class ChannelsSection(WindowCase):
         self.assertEqual(self.shown(window), ["24/7 Comedy"])
 
     def test_ok_on_channel_plays_live_and_hero_211_starts_from_zero_and_212_opens_guide(self):
+        Fake.now = NOW
         raw = answer(chan(10, "Ten", number=10, catchup=True, catchup_duration=7,
                           epg=[prog(NOW - 600, NOW + 600, "Now ten", 9)]))
         write_list(raw)
