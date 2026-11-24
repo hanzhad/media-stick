@@ -227,6 +227,8 @@ kodi_wanted=("${on_settings[@]/%/=true}" services.airplay=false services.webserv
   # Kodi was restarted by every update for it.
   "audiooutput.audiodevice=ALSA:hdmi:CARD=vc4hdmi,DEV=0|vc4-hdmi (vc4hdmi)"
   "audiooutput.passthroughdevice=ALSA:hdmi:CARD=vc4hdmi,DEV=0|vc4-hdmi (vc4hdmi)"
+  videoplayer.primeallowhwdeinterlace=false
+  videoplayer.seekdelay=1250
   debug.screenshotpath=/run/media-stick/shots/)
 as_media() { setpriv --reuid=media --regid=media --init-groups "$@"; }
 # Files kept in device/skin-overlay/<addon>/ are copied over the installed add-on of that

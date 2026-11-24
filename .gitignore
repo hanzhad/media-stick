@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 tools/emulator/.state/
 *settings.xml
+!device/files/home/media/.kodi/userdata/advancedsettings.xml

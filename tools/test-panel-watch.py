@@ -1124,6 +1124,26 @@ class SweetRoutes(unittest.TestCase):
         self.assertIn("<webserver>false</webserver>", script)
         self.assertIn("<tcpport>9090</tcpport>", script)
 
+    def test_restart_kodi_route_and_pi_seek_stall_mitigations(self):
+        with open(PANEL, encoding="utf-8") as f:
+            panel_src = f.read()
+        self.assertIn('id="rk-btn"', panel_src)
+        self.assertIn("/api/restart-kodi", panel_src)
+        self.assertIn("armed('rk-btn'", panel_src)
+        self.assertIn('subprocess.Popen(["sudo", "-n", "systemctl", "restart", "kodi.service"])', panel_src)
+        self.assertIn('p == "/api/restart-kodi"', panel_src)
+        with open(os.path.join(ROOT, "device", "bootstrap.sh"), encoding="utf-8") as f:
+            bs_src = f.read()
+        self.assertIn("videoplayer.primeallowhwdeinterlace=false", bs_src)
+        self.assertIn("videoplayer.seekdelay=1250", bs_src)
+        with open(os.path.join(ROOT, "device", "files", "home", "media", ".kodi", "userdata", "advancedsettings.xml"), encoding="utf-8") as f:
+            adv_src = f.read()
+        self.assertIn("<curlclienttimeout>15</curlclienttimeout>", adv_src)
+        self.assertIn("<curllowspeedtime>15</curllowspeedtime>", adv_src)
+        with open(os.path.join(ROOT, "device", "skin-overlay", "plugin.video.sweettv", "resources", "lib", "sweettv.py"), encoding="utf-8") as f:
+            sw_src = f.read()
+        self.assertIn("def _ms_use_ffmpeg(", sw_src)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

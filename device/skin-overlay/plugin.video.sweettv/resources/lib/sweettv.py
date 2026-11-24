@@ -802,6 +802,18 @@ def _ms_names(cid, epg):
     return name, '', 0, 0
 
 
+def _ms_use_ffmpeg(cid, epg, protocol, drm):
+    """Use Kodi's native ffmpeg demuxer for finished non-DRM HLS archives (avoids ISA+DRMPRIME seek stalls)."""
+    if drm is not None:
+        return False
+    if helper.get_setting('playerType') == 'ffmpeg':
+        return True
+    if protocol != 'hls' or not epg:
+        return False
+    _, _, begin, end = _ms_names(cid, epg)
+    return bool(begin and end and end <= int(time.time()))
+
+
 def _ms_name_the_item(cid, epg, offset=0):
     """Wraps setResolvedUrl until the returned function is called: names the item, sets ResumeTime/TotalTime/DVR,
     and applies the device's inputstream.adaptive max_resolution cap."""
@@ -973,7 +985,7 @@ def playvid(videoid):
             ms_undo = _ms_name_the_item(idx, ms_epg, ms_offset)
             _ms_remember(idx, ms_epg, stream_url, ms_offset)
             # media-stick end
-            if helper.get_setting('playerType') == 'ffmpeg' and DRM is None:
+            if _ms_use_ffmpeg(idx, ms_epg, PROTOCOL, DRM):
                 helper.ffmpeg_player(stream_url)
             else:
                 helper.playstream(stream_url, lic_url, PROTOCOL, DRM, flags=False, subs=subs, vod=vod)

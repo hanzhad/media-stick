@@ -333,7 +333,7 @@ class Page(unittest.TestCase):
 
     def test_results_of_actions_go_to_the_toast(self):
         js = self.page
-        self.assertIn("toast(what==='reboot'?'Перезагружаю…':'Обновление запущено')", js)
+        self.assertIn("toast(what==='reboot'?'Перезагружаю…':what==='restart-kodi'?'Перезапускаю плеер…':'Обновление запущено')", js)
         self.assertNotIn('id="a-msg"', js)
         self.assertIn("hideMsg('w-msg');toast('Подключено к «'+ssid+'»", js)
         self.assertIn("toast('HTTPS включён')", js)

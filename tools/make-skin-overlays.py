@@ -336,6 +336,16 @@ OVERLAYS = [
          "        except Exception:\n"
          "            pass\n"
          "    return name, '', 0, 0\n\n\n"
+         "def _ms_use_ffmpeg(cid, epg, protocol, drm):\n"
+         "    \"\"\"Use Kodi's native ffmpeg demuxer for finished non-DRM HLS archives (avoids ISA+DRMPRIME seek stalls).\"\"\"\n"
+         "    if drm is not None:\n"
+         "        return False\n"
+         "    if helper.get_setting('playerType') == 'ffmpeg':\n"
+         "        return True\n"
+         "    if protocol != 'hls' or not epg:\n"
+         "        return False\n"
+         "    _, _, begin, end = _ms_names(cid, epg)\n"
+         "    return bool(begin and end and end <= int(time.time()))\n\n\n"
          "def _ms_name_the_item(cid, epg, offset=0):\n"
          "    \"\"\"Wraps setResolvedUrl until the returned function is called: names the item, sets ResumeTime/TotalTime/DVR,\n"
          "    and applies the device's inputstream.adaptive max_resolution cap.\"\"\"\n"
@@ -446,7 +456,7 @@ OVERLAYS = [
          "            ms_undo = _ms_name_the_item(idx, ms_epg, ms_offset)\n"
          "            _ms_remember(idx, ms_epg, stream_url, ms_offset)\n"
          "            # media-stick end\n"
-         "            if helper.get_setting('playerType') == 'ffmpeg' and DRM is None:\n"),
+         "            if _ms_use_ffmpeg(idx, ms_epg, PROTOCOL, DRM):\n"),
         ("                helper.playstream(stream_url, lic_url, PROTOCOL, DRM, flags=False, subs=subs, vod=vod)\n",
          "                helper.playstream(stream_url, lic_url, PROTOCOL, DRM, flags=False, subs=subs, vod=vod)\n"
          "            # media-stick begin\n"
