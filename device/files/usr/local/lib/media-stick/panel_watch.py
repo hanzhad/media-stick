@@ -418,7 +418,10 @@ def apps_view(rpc):
     if mod is None:
         raise Refused("Список приложений недоступен на этом устройстве.", 503)
 
+    degraded = False
+
     def make():
+        nonlocal degraded
         found = []
         for addon_type, content in mod.QUERIES:
             try:
@@ -426,13 +429,20 @@ def apps_view(rpc):
                                              "properties": ["name", "thumbnail"]})
             except (OSError, ValueError):
                 r = None
-            found += (r or {}).get("addons") or [] if isinstance(r, dict) else []
+            if not isinstance(r, dict) or "error" in r:
+                degraded = True
+                continue
+            found += r.get("addons") or []
+        degraded = degraded or not found
         recent, _ = _read_json(os.path.join(signin.USERDATA, LAUNCHER, "recent.json"))
         apps = build_apps(mod, found, recent)
         for a in apps:       # the tile's picture, when the device has one: the page falls back to the letter
             a["art"] = art_url(a["id"]) if icon_file(a["id"], mod) else ""
         return apps
-    return {"apps": _cached("apps", APPS_TTL, make) or []}
+    apps = _cached("apps", APPS_TTL, make) or []
+    if degraded:             # Kodi is still starting: show the web apps now, but ask Kodi again on the next request
+        _cache.pop("apps", None)
+    return {"apps": apps}
 
 
 # ---- the tiles' pictures ---------------------------------------------------------------------

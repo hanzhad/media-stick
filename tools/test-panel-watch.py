@@ -277,6 +277,46 @@ class Apps(unittest.TestCase):
         self.assertNotIn("xbmc", sys.modules)      # the stand-ins are gone after the load
 
 
+class AppsCache(unittest.TestCase):
+    """The apps list is cached only when Kodi answered with add-ons: a list from a Kodi that is still starting is shown, not kept."""
+    WEB = ["webapp:netflix", "webapp:disney", "webapp:prime", "webapp:max"]
+
+    def setUp(self):
+        pw._cache.clear()
+
+    @staticmethod
+    def good(method, params=None, timeout=3):
+        return {"addons": [{"addonid": "plugin.video.youtube", "name": "YouTube"}]}
+
+    @staticmethod
+    def down(method, params=None, timeout=3):
+        raise OSError("kodi is starting")
+
+    @staticmethod
+    def empty(method, params=None, timeout=3):
+        return {"addons": []}
+
+    @staticmethod
+    def errored(method, params=None, timeout=3):
+        return {"error": {"code": -32100}}
+
+    def ids(self, rpc):
+        return [a["id"] for a in pw.get("/api/watch/apps", rpc)[0]["apps"]]
+
+    def test_a_failing_kodi_shows_the_web_apps_and_is_not_cached(self):
+        for bad in (self.down, self.empty, self.errored):
+            pw._cache.clear()
+            first = self.ids(bad)
+            self.assertEqual(first, self.WEB, bad.__name__)
+            self.assertIn("plugin.video.youtube", self.ids(self.good), bad.__name__)
+
+    def test_a_good_list_is_cached(self):
+        first = self.ids(self.good)
+        self.assertIn("plugin.video.youtube", first)
+        self.assertEqual(self.ids(self.down), first)
+        self.assertEqual(self.ids(self.empty), first)
+
+
 PNG = b"\x89PNG\r\n\x1a\n" + b"icon" * 20
 
 
