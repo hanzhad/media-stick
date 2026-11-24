@@ -6,9 +6,13 @@ EMU_HOME="${EMU_HOME:-/tmp/emu-home}"
 KODI_HOME="$EMU_HOME/.kodi"
 USERDATA_TMP="/run/emu-userdata"
 ADDONS_CACHE="${ADDONS_CACHE:-/tmp/emu-addons-cache}"
+PANEL_PORT=${PANEL_PORT:-18080}
 
-mkdir -p "$KODI_HOME/addons" "$KODI_HOME/userdata/addon_data" "$USERDATA_TMP" "$ADDONS_CACHE"
+mkdir -p "$KODI_HOME/addons" "$KODI_HOME/userdata/addon_data" "$KODI_HOME/temp" "$USERDATA_TMP" "$ADDONS_CACHE"
 mkdir -p /var/lib/media-stick/prefs /var/lib/media-stick/resume /run/media-stick
+mkdir -p /home/media
+rm -rf /home/media/.kodi
+ln -s "$KODI_HOME" /home/media/.kodi
 
 # Stage device/files into /usr/local (read-only mount friendly)
 if [ -d "$REPO/device/files/usr/local/lib/media-stick" ]; then
@@ -17,6 +21,7 @@ if [ -d "$REPO/device/files/usr/local/lib/media-stick" ]; then
 fi
 if [ -d "$REPO/device/files/usr/local/bin" ]; then
     cp -a "$REPO/device/files/usr/local/bin/." /usr/local/bin/
+    chmod +x /usr/local/bin/*
 fi
 
 # Unpack locked kodi-addons.list zips into $KODI_HOME/addons
@@ -52,13 +57,16 @@ if [ -n "${SWEETTV_SETTINGS:-}" ] && [ -f "$SWEETTV_SETTINGS" ]; then
     ln -s "$USERDATA_TMP/plugin.video.sweettv" "$KODI_HOME/userdata/addon_data/plugin.video.sweettv"
 fi
 
-# Enable JSON-RPC on :9090
+if [ -n "${SWEETTV_CHANNELS:-}" ] && [ -f "$SWEETTV_CHANNELS" ]; then
+    cp "$SWEETTV_CHANNELS" "$KODI_HOME/temp/channelList.json"
+fi
+
+# Enable JSON-RPC on :9090 (disable webserver to avoid passwordless-webserver dialog)
 cat > "$KODI_HOME/userdata/advancedsettings.xml" <<'EOF'
 <advancedsettings version="1.0">
   <services>
     <esallinterfaces>true</esallinterfaces>
-    <webserver>true</webserver>
-    <webserverport>8080</webserverport>
+    <webserver>false</webserver>
     <zeroconf>false</zeroconf>
   </services>
   <jsonrpc>
@@ -74,9 +82,9 @@ export DISPLAY=":99"
 Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
 XVFB_PID=$!
 
-# Start phone panel on :8080 if present
-if [ -x /usr/local/bin/panel ]; then
-    MEDIASTICK_PANEL_PORT=8080 /usr/local/bin/panel &
+# Start phone panel on $PANEL_PORT if present
+if [ -f /usr/local/bin/panel ]; then
+    PANEL_PORT="$PANEL_PORT" python3 /usr/local/bin/panel &
 fi
 
 cleanup() {
