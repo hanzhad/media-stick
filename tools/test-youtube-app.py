@@ -189,6 +189,7 @@ from resources.lib import (accounts, apps, profiles, store, youtube_app, youtube
 R = D.ROOT
 REAL_KEYS_POLL = youtube_app.KEYS_POLL            # the window tests make it short
 RAIL, GRID, ACTION = youtube_app.RAIL, youtube_app.GRID, youtube_app.ACTION
+AVATAR = youtube_app.AVATAR                                        # 150: the button over the circle of the account
 KIND_IDS = tuple(youtube_app.KIND_BUTTONS)                         # 401..404: Videos, Channels, Playlists, Live
 UP, DOWN = youtube_app.ACTION_MOVE_UP, youtube_app.ACTION_MOVE_DOWN
 SEARCH_AT = D.SECTION_KEYS.index(D.SEARCH)
@@ -2155,6 +2156,79 @@ class ProfileChange(WindowCase):
         self.assertIn("profile", window._timers)                                # and it looks again later
 
 
+class PickProfile(WindowCase):
+    """OK on the circle: the picker of the Accounts screen; the window then follows the profile picked."""
+
+    @staticmethod
+    def profile(uid, name, signed=True):
+        return {"id": str(uid), "name": name, "current": True, "tokens": 4 if signed else 0, "signed_in": signed}
+
+    def switching(self, uid, name, signed=True):
+        """A picker that switches the add-on to profile `uid`, as accounts.choose_profile does, and returns it."""
+        def choose():
+            Fake.profile, Fake.name, Fake.signed = f"p{uid}", name, signed
+            return self.profile(uid, name, signed)
+        return mock.patch.object(accounts, "choose_profile", side_effect=choose)
+
+    def test_a_picked_profile_is_switched_to_and_the_window_shows_it(self):
+        self.rec(vid(1, "Anna video"))
+        window = self.open()
+        self.assertEqual((self.shown(window), window.getProperty("avatar")), (["Anna video"], "A"))
+        self.rec(vid(2, "Boris video"))
+        loads = window.loads
+        with self.switching(2, "Boris") as choose, mock.patch.object(accounts, "signin_service") as signin:
+            window.onClick(AVATAR)
+        choose.assert_called_once_with()
+        signin.assert_not_called()
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Boris video"] and window.getProperty("avatar") == "B"))
+        self.assertGreater(window.loads, loads)
+        self.assertEqual(window.profile, "p2")
+
+    def test_the_profile_is_followed_at_once_not_only_by_the_timer(self):
+        self.rec(vid(1, "Anna video"))
+        window = self.open()
+        window._cancel("profile")
+        self.rec(vid(2, "Boris video"))
+        with self.switching(2, "Boris"):
+            window.onClick(AVATAR)
+        self.assertEqual(window.profile, "p2")                                      # the click itself looked (the timer was off)
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Boris video"]))
+
+    def test_backing_out_of_the_picker_changes_nothing(self):
+        self.rec(vid(1, "Anna video"))
+        window = self.open()
+        loads = window.loads
+        with mock.patch.object(accounts, "choose_profile", return_value=None) as choose, \
+                mock.patch.object(accounts, "signin_service") as signin:
+            window.onClick(AVATAR)
+        choose.assert_called_once_with()
+        signin.assert_not_called()
+        time.sleep(0.1)
+        self.assertEqual((window.loads, window.profile, window.getProperty("avatar")), (loads, "p1", "A"))
+
+    def test_a_new_profile_with_no_account_is_offered_the_sign_in_with_a_way_past_it_and_then_looked_at_again(self):
+        self.rec(vid(1, "Anna video"))
+        window = self.open()
+        with self.switching(3, "Clara", signed=False), mock.patch.object(accounts, "signin_service", return_value="skipped") as signin:
+            window.onClick(AVATAR)
+        signin.assert_called_once_with("youtube", allow_skip=True)
+        self.assertTrue(wait_for(lambda: window.mode == D.SIGNIN and window.getProperty("avatar") == "?"))
+
+    def test_the_demo_switches_nothing_and_says_so(self):
+        window = self.open(demo=True)
+        with mock.patch.object(accounts, "choose_profile") as choose:
+            window.onClick(AVATAR)
+        choose.assert_not_called()
+        self.assertEqual(Fake.notes, [youtube_app.DEMO_PICK_NOTICE])
+
+    def test_a_picker_that_breaks_does_not_kill_the_window(self):
+        self.rec(vid(1, "Anna video"))
+        window = self.open()
+        with mock.patch.object(accounts, "choose_profile", side_effect=RuntimeError("boom")):
+            window.onClick(AVATAR)
+        self.assertEqual(window.mode, D.DATA)
+
+
 class Files(unittest.TestCase):
     def setUp(self):
         shutil.rmtree(os.path.join(TMP, "addon_data"), ignore_errors=True)
@@ -2318,7 +2392,7 @@ class Skin(unittest.TestCase):
         ids = [c.get("id") for c in root.iter("control") if c.get("id")]
         self.assertEqual(len(ids), len(set(ids)))
         types_ = {int(c.get("id")): c.get("type") for c in root.iter("control") if c.get("id", "").isdigit()}
-        self.assertEqual(types_, {RAIL: "list", GRID: "panel", ACTION: "button", **{c: "button" for c in KIND_IDS}})
+        self.assertEqual(types_, {RAIL: "list", AVATAR: "button", GRID: "panel", ACTION: "button", **{c: "button" for c in KIND_IDS}})
 
     def test_every_window_and_item_property_the_xml_reads_is_set_by_the_python(self):
         text = "".join(ET.tostring(self.tree(), encoding="unicode").split())
@@ -2606,7 +2680,7 @@ class Skin(unittest.TestCase):
             self.assertEqual(nofocus.attrib, {}, button.get("id"))
             self.assertEqual(button.findtext("font"), "Reg25")
         self.assertEqual([b.findtext("onleft") for b in buttons], ["100", "401", "402", "403"])    # Left of the first is the rail
-        self.assertEqual([b.findtext("onright") for b in buttons], ["402", "403", "404", "404"])
+        self.assertEqual([b.findtext("onright") for b in buttons], ["402", "403", "404", str(AVATAR)])   # Right of the last is the circle
         rail = self.by_id(root, RAIL)
         self.assertLess(int(rail.findtext("left")) + int(rail.findtext("width")), int(buttons[0].findtext("left")))
 
@@ -2614,7 +2688,51 @@ class Skin(unittest.TestCase):
         root = self.tree()
         for control in (GRID, ACTION):
             ups = [(up.get("condition"), up.text) for up in self.by_id(root, control).findall("onup")]
-            self.assertEqual(ups, [(f"String.IsEqual(Window.Property(kind),{key})", str(button)) for key, button in zip(D.KIND_KEYS, KIND_IDS)], control)
+            self.assertEqual(ups, [(f"String.IsEqual(Window.Property(kind),{key})", str(button)) for key, button in zip(D.KIND_KEYS, KIND_IDS)]
+                             + [("!String.IsEmpty(Window.Property(avatar))", str(AVATAR))], control)      # no search row: the circle
+
+    def goes(self, root, control, direction, window):
+        """Where the base navigation of Kodi sends the focus from `control` on `direction` (up, down, left, right): the first
+        on... tag whose condition holds; None when there is none (the focus stays)."""
+        for node in self.by_id(root, control).findall("on" + direction):
+            if node.get("condition") is None or self.holds(node.get("condition"), window):
+                return int(node.text)
+        return None
+
+    def test_the_circle_is_a_button_reached_by_the_skin_from_the_rail_the_grid_the_card_and_the_search_row(self):
+        root = self.tree()
+        button = self.by_id(root, AVATAR)
+        self.assertEqual(button.get("type"), "button")
+        self.assertEqual(button.findtext("visible"), "!String.IsEmpty(Window.Property(avatar))")      # drawn with the circle only
+        circle = next(g for g in root.find("controls").findall("control") if g.findtext("left") == "1808" and g.get("type") == "group")
+        box = [int(button.findtext(k)) for k in ("left", "top", "width", "height")]
+        around = [int(circle.findtext(k)) for k in ("left", "top", "width", "height")]
+        self.assertEqual((box[0] + box[2] // 2, box[1] + box[3] // 2), (around[0] + around[2] // 2, around[1] + around[3] // 2))
+        self.assertGreater(box[2], around[2])                                       # a ring round the circle, not under it
+        controls = list(root.find("controls"))
+        self.assertLess(controls.index(button), controls.index(circle))             # drawn under the circle
+        self.assertLessEqual(box[0] + box[2], 1920)
+        self.assertEqual((button.find("texturenofocus").text or "").strip(), "")    # nothing drawn until it has the focus
+        self.assertEqual(button.find("texturefocus").get("colordiffuse"), "FFFFFFFF")
+        plain = {"mode": "data", "avatar": "A"}
+        for control in (RAIL, GRID):
+            self.assertEqual(self.goes(root, control, "up", plain), AVATAR, control)
+        self.assertEqual(self.goes(root, ACTION, "up", {"mode": "signin", "avatar": "?", "action": "Sign in"}), AVATAR)
+        self.assertIsNone(self.goes(root, GRID, "up", {"mode": "data"}), "no circle yet: nothing above the grid")
+        self.assertEqual(self.goes(root, AVATAR, "left", plain), RAIL)
+        self.assertEqual(self.goes(root, AVATAR, "down", plain), GRID)
+        self.assertEqual(self.goes(root, AVATAR, "down", {"mode": "signin", "action": "Sign in"}), ACTION)
+        self.assertEqual(self.goes(root, AVATAR, "down", {"mode": "loading"}), RAIL)
+        self.assertEqual(self.goes(root, AVATAR, "down", {"mode": "needkey", "action": "Try again"}), ACTION)
+        # a search keeps its row of types above the results and the button of the card; the circle is Right of the last type
+        search = {"mode": "data", "avatar": "A", "search": "1", "kind": "channel"}
+        self.assertEqual(self.goes(root, GRID, "up", search), 402)
+        self.assertEqual(self.goes(root, ACTION, "up", {**search, "mode": "empty", "action": "New search"}), 402)
+        self.assertEqual(self.goes(root, 404, "right", search), AVATAR)
+        self.assertEqual(self.goes(root, AVATAR, "left", search), 404)
+        self.assertEqual(self.goes(root, AVATAR, "down", search), GRID)
+        folder_of_search = {"mode": "data", "avatar": "A", "kind": ""}               # no row of types there: the circle is above
+        self.assertEqual(self.goes(root, GRID, "up", folder_of_search), AVATAR)
 
     def test_the_row_of_types_fits_the_pi_budget(self):
         root = self.tree()

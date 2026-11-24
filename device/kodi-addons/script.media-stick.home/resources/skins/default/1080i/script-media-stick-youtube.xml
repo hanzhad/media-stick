@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- YouTube app (resources/lib/youtube_app.py), laid out like YouTube on a TV: a black page (#0F0F0F), the section rail on
      the left, rounded 16:9 thumbnails with the title in two lines and one grey line under each, no boxes.
-     Controls: 100 section rail, 200 video grid, 300 the card's button, 401-404 what a search is for (Videos, Channels,
-     Playlists, Live).
+     Controls: 100 section rail, 150 the button over the account's circle (OK: the "Who's watching" picker), 200 video grid,
+     300 the card's button, 401-404 what a search is for (Videos, Channels, Playlists, Live).
      Window properties: mode (data | signin | needkey | empty | loading | error | unavailable | prompt), demo, signed (1 | 0 | none),
      search (1 while the search is shown: the row 401-404 is), kind (video | channel | playlist | live: the chosen one),
      avatar (the letter in the circle, none: no circle), avatar_color, title (the section's name), notice (the line
@@ -68,6 +68,24 @@
                 <aligny>center</aligny>
                 <label>DEMO</label>
             </control>
+        </control>
+        <!-- the button over the account's circle (150): OK opens the "Who's watching" picker. Drawn under the circle, it shows
+             as a white ring round it when focused (84 px at 1798, 14; the circle is 64 px at 1808, 24). Reached with Up from the
+             rail, the grid and the card's button (a search has its row of types there: Right of Live), Left goes to the rail
+             (to Live in a search), Down to the grid, else the card's button, else the rail: the skin does the moving. -->
+        <control type="button" id="150">
+            <left>1798</left>
+            <top>14</top>
+            <width>84</width>
+            <height>84</height>
+            <onleft condition="!String.IsEmpty(Window.Property(search))">404</onleft>
+            <onleft>100</onleft>
+            <ondown condition="String.IsEqual(Window.Property(mode),data)">200</ondown>
+            <ondown condition="!String.IsEmpty(Window.Property(action))">300</ondown>
+            <ondown>100</ondown>
+            <texturefocus border="32" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
+            <texturenofocus />
+            <visible>!String.IsEmpty(Window.Property(avatar))</visible>
         </control>
         <control type="group">
             <left>1808</left>
@@ -209,7 +227,7 @@
                 <align>center</align>
                 <aligny>center</aligny>
                 <onleft>403</onleft>
-                <onright>404</onright>
+                <onright>150</onright>
                 <texturefocus border="28" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
                 <texturenofocus />
             </control>
@@ -224,6 +242,7 @@
             <orientation>vertical</orientation>
             <scrolltime>150</scrolltime>
             <onright>200</onright>
+            <onup condition="!String.IsEmpty(Window.Property(avatar))">150</onup>
             <itemlayout width="304" height="76">
                 <control type="image">
                     <left>0</left>
@@ -355,6 +374,7 @@
             <onup condition="String.IsEqual(Window.Property(kind),channel)">402</onup>
             <onup condition="String.IsEqual(Window.Property(kind),playlist)">403</onup>
             <onup condition="String.IsEqual(Window.Property(kind),live)">404</onup>
+            <onup condition="!String.IsEmpty(Window.Property(avatar))">150</onup>
             <itemlayout width="384" height="382">
                 <control type="image">
                     <left>16</left>
@@ -728,6 +748,7 @@
                 <onup condition="String.IsEqual(Window.Property(kind),channel)">402</onup>
                 <onup condition="String.IsEqual(Window.Property(kind),playlist)">403</onup>
                 <onup condition="String.IsEqual(Window.Property(kind),live)">404</onup>
+                <onup condition="!String.IsEmpty(Window.Property(avatar))">150</onup>
                 <texturenofocus border="32" colordiffuse="33FFFFFF">youtube-pill.png</texturenofocus>
                 <texturefocus border="32" colordiffuse="FFFFFFFF">youtube-pill.png</texturefocus>
                 <visible>!String.IsEmpty(Window.Property(action))</visible>

@@ -73,13 +73,19 @@ def service_for_app(app_id):
 
 def plan(app_id, accts):
     """(service, what to do first) for launching `app_id`, given store.lib.accounts():
-    LAUNCH straight away, SIGNIN (must be signed in), PICK a YouTube profile first."""
+    LAUNCH straight away, SIGNIN (must be signed in), PICK a YouTube profile first. YouTube opens straight on the profile
+    the add-on has as current (the last one used: a switch from the TV or the phone sets it) when that one is signed in;
+    the picker is for a current profile that is not (the add-on's own, or a new one) and is reached on purpose from the
+    YouTube window's circle and the Accounts screen."""
     service = service_for_app(app_id)
     entry = next((a for a in accts if a["service"] == service), None) if service else None
     if entry is None:
         return None, LAUNCH
     if service == YOUTUBE:
-        return service, PICK if len(entry["profiles"]) > 1 else LAUNCH     # one profile, even signed out: anonymous works
+        current = next((p for p in entry["profiles"] if p["current"]), None)
+        if len(entry["profiles"]) > 1 and not (current and current["signed_in"]):
+            return service, PICK
+        return service, LAUNCH                                              # one profile, even signed out: anonymous works
     return service, LAUNCH if entry["signed_in"] else SIGNIN
 
 

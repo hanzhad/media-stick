@@ -23,7 +23,7 @@ from resources.lib import (onboarding_view, profiles, single_instance, sweettv_t
                            youtube_demo, youtube_files as files, youtube_state as saved)
 
 XML = "script-media-stick-youtube.xml"
-RAIL, GRID, ACTION = 100, 200, 300
+RAIL, AVATAR, GRID, ACTION = 100, 150, 200, 300
 KIND_BUTTONS = {401 + n: kind.key for n, kind in enumerate(data.KINDS)}     # the row of choices above the results of a search
 ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_PAGE_UP, ACTION_PAGE_DOWN = 1, 2, 3, 4, 5, 6
 MOVES = (ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_PAGE_UP, ACTION_PAGE_DOWN)
@@ -44,6 +44,7 @@ FOCUS_WAIT = 2.0                 # s a worker waits for the control to be shown 
 NO_THUMB = os.path.join(ui.MEDIA, data.NO_THUMB)
 DEMO_ART = f"{ui.ADDON_PATH}/resources/media/demo"
 DEMO_NOTICE = "Demo: nothing is played."
+DEMO_PICK_NOTICE = "Demo: no profile is switched."
 
 
 def clock():
@@ -484,6 +485,8 @@ class YouTube(xbmcgui.WindowXML):
                 self._choose_section(commit=True)
             elif control_id == ACTION:
                 self._act()
+            elif control_id == AVATAR:
+                self._pick_profile()
             elif control_id in KIND_BUTTONS:
                 self._choose_kind(KIND_BUTTONS[control_id])
         except Exception as e:                   # never let a click kill the window
@@ -692,6 +695,22 @@ class YouTube(xbmcgui.WindowXML):
         from resources.lib import accounts
         accounts.signin_service("youtube")
         self._navigate(self.view, focus=True)
+
+    def _pick_profile(self):
+        """OK on the account's circle: the "Who's watching" picker, the one the Accounts screen has (it switches the add-on to
+        the profile picked). The window then follows the add-on's current profile at once (the timer's look, so the cache
+        and the circle are the new profile's); a profile with no account is offered the sign-in, with a way past it."""
+        if self.demo:
+            ui.notify(DEMO_PICK_NOTICE)
+            return
+        from resources.lib import accounts
+        profile = accounts.choose_profile()
+        if profile is None:
+            return
+        self._profile_tick()
+        if accounts.after_pick(profile) != accounts.LAUNCH:
+            accounts.signin_service("youtube", allow_skip=True)
+            self._navigate(self.view, focus=True)
 
 
 def main(args):

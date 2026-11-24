@@ -196,11 +196,18 @@ def ended(kind, updated=1000):
 class Decision(unittest.TestCase):
     def test_which_screen_for_which_accounts(self):
         two = [prof(0, "Default", 4, True), prof(1, "Anna", 0)]
+        current_out = [prof(0, "Default", 4), prof(1, "Anna", 0, True)]               # the one used last has no account
+        current_other = [prof(0, "Default", 4), prof(1, "Anna", 2, True)]
+        none_current = [prof(0, "Default", 4), prof(1, "Anna", 4)]
         one_in, one_out = [prof(0, "Default", 4, True)], [prof(0, "Default", 0, True)]
         cases = [
             (SW, [acct("sweettv", signed_in=False)], ("sweettv", accounts.SIGNIN)),
             (SW, [acct("sweettv", signed_in=True)], ("sweettv", accounts.LAUNCH)),
-            (YT, [acct("youtube", two, True)], ("youtube", accounts.PICK)),
+            (YT, [acct("youtube", two, True)], ("youtube", accounts.LAUNCH)),          # the last used one is signed in: no picker
+            (YT, [acct("youtube", current_other, True)], ("youtube", accounts.LAUNCH)),    # a partly signed in one counts as in
+            (YT, [acct("youtube", current_out, True)], ("youtube", accounts.PICK)),
+            (YT, [acct("youtube", none_current, True)], ("youtube", accounts.PICK)),       # none is the current one: ask
+            (YT, [acct("youtube", [prof(0, "Default", 0, True), prof(1, "Anna", 0)], False)], ("youtube", accounts.PICK)),
             (YT, [acct("youtube", one_in, True)], ("youtube", accounts.LAUNCH)),
             (YT, [acct("youtube", one_out, False)], ("youtube", accounts.LAUNCH)),     # anonymous YouTube works
             (YT, [acct("youtube", [], False)], ("youtube", accounts.LAUNCH)),
@@ -255,8 +262,16 @@ class Launching(unittest.TestCase):
         read.assert_not_called()
         self.assertEqual(launch.call_count, 2)
 
-    def test_youtube_with_several_profiles_asks_who_is_watching(self):
-        accts = [acct("youtube", [prof(0, "D", 4, True), prof(1, "Anna", 0)], True)]
+    def test_youtube_with_several_profiles_opens_on_the_last_used_one_without_asking(self):
+        for accts in ([acct("youtube", [prof(0, "D", 4, True), prof(1, "Anna", 0)], True)],
+                      [acct("youtube", [prof(0, "D", 4), prof(1, "Anna", 4, True)], True)]):
+            launch, sign, choose = self.run_launch(YT, accts)
+            launch.assert_called_once_with(YT)
+            sign.assert_not_called()
+            choose.assert_not_called()
+
+    def test_youtube_with_several_profiles_asks_who_is_watching_when_the_last_used_one_has_no_account(self):
+        accts = [acct("youtube", [prof(0, "D", 4), prof(1, "Anna", 0, True)], True)]
         launch, sign, choose = self.run_launch(YT, accts, choose={"return_value": prof(0, "D", 4, True)})
         choose.assert_called_once_with()
         sign.assert_not_called()
@@ -265,7 +280,7 @@ class Launching(unittest.TestCase):
         launch.assert_not_called()
 
     def test_a_profile_without_account_gets_the_sign_in_with_a_way_past_it(self):
-        accts = [acct("youtube", [prof(0, "D", 4, True), prof(1, "Anna", 0)], True)]
+        accts = [acct("youtube", [prof(0, "D", 4), prof(1, "Anna", 0, True)], True)]
         for result, launched in (("done", True), ("skipped", True), ("cancelled", False), ("failed", False)):
             launch, sign, _ = self.run_launch(YT, accts, choose={"return_value": prof(1, "Anna", 0, True)},
                                               signin={"return_value": result})
