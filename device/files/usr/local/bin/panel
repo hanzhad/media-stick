@@ -109,21 +109,44 @@ def web_key(key):
 def web_type(text):
     subprocess.run(["wtype", "--", text], env=wayland_env(), timeout=10, capture_output=True)
 
+def kodi_take(buf, rid):
+    """Look through `buf` (bytes read from Kodi's JSON-RPC socket, objects back to back with no
+    separator) for the reply to request `rid`: (True, its "result" or None for an error, the bytes
+    after it), or (False, None, buf) while it has not all arrived. Notifications (a "method", no
+    "id": the YouTube add-on sends Other.service_ipc before every directory reply) and answers to
+    other ids are skipped."""
+    dec = json.JSONDecoder()
+    while True:
+        try:
+            text = buf.decode("utf-8")
+            obj, end = dec.raw_decode(text.lstrip())
+        except (UnicodeDecodeError, ValueError):   # half an object, or half a character: wait for more
+            return False, None, buf
+        buf = text[len(text) - len(text.lstrip()) + end:].encode("utf-8")
+        if isinstance(obj, dict) and "method" not in obj and obj.get("id") == rid:
+            return True, obj.get("result"), buf
+
 def kodi(method, params=None, timeout=3):
-    req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
+    """The "result" of one JSON-RPC call to Kodi: None when Kodi answers with an error or closes the
+    socket, OSError when it cannot be reached or is silent for `timeout` s. The socket also pushes
+    notifications, so this reads until the answer with our id arrives; notifications arriving all
+    the time cannot keep the call open past 3 x `timeout`."""
+    rid = 1
+    req = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}})
+    stop = time.monotonic() + 3 * max(timeout, 1)
     with socket.create_connection(("127.0.0.1", 9090), timeout=timeout) as s:
         s.sendall(req.encode())
         buf = b""
-        while True:  # Kodi sends one JSON object, no newline
+        while True:
+            s.settimeout(max(0.05, min(timeout, stop - time.monotonic())))
             chunk = s.recv(65536)
             if not chunk:
-                break
-            buf += chunk
-            try:
-                return json.loads(buf).get("result")
-            except ValueError:
-                continue
-    return None
+                return None
+            done, result, buf = kodi_take(buf + chunk, rid)
+            if done:
+                return result
+            if time.monotonic() >= stop:
+                raise socket.timeout("kodi answered, but not to this call")
 
 def player_action(a, flags):
     """The action to send for button `a` given Kodi's answer to PLAYER_BOOLS (a dict): the

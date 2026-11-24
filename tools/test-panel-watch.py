@@ -6,11 +6,17 @@ The pure functions of panel_watch (pictures, what may be played, the channel lis
 control requests), the routes against a fake Kodi, and the injection into the real page of `panel`.
 The add-on's own modules (youtube_data, sweettv_data, apps) are loaded from the repository, as the panel
 does on a device that has no copy yet."""
+import importlib.machinery
+import importlib.util
+import json
 import os
 import re
 import shutil
+import socket
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -594,6 +600,134 @@ class Routes(unittest.TestCase):
         self.assertEqual(pw.get("/api/watch/now", down), ({"playing": False}, 200))
         self.assertEqual(pw.post("/api/watch/play", {"file": VID}, down)[1], 503)
         self.assertEqual(pw.get("/api/watch/nothing", down)[1], 404)
+
+
+class FakeKodiSocket:
+    """Kodi's JSON-RPC TCP socket for one client: reads the request, then plays `steps` back: a number
+    is a pause in seconds, bytes go out as they are, a callable gets the request's id and returns bytes."""
+    def __init__(self, steps):
+        self.steps, self.request = steps, None
+        self.srv = socket.socket()
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(1)
+        self.port = self.srv.getsockname()[1]
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        try:
+            conn, _ = self.srv.accept()
+            with conn:
+                data = b""
+                while self.request is None:
+                    data += conn.recv(65536)
+                    try:
+                        self.request = json.loads(data)
+                    except ValueError:
+                        pass
+                for step in self.steps:
+                    if isinstance(step, (int, float)):
+                        time.sleep(step)
+                    else:
+                        conn.sendall(step(self.request["id"]) if callable(step) else step)
+        except OSError:
+            pass     # the client gave up and went away
+
+    def close(self):
+        self.srv.close()
+
+
+def jline(obj):
+    return json.dumps(obj, ensure_ascii=False).encode("utf-8")
+
+
+def reply(result, other=0):
+    return lambda rid: jline({"jsonrpc": "2.0", "id": rid + other, "result": result})
+
+
+NOTE = jline({"jsonrpc": "2.0", "method": "Other.service_ipc", "params": {"data": {
+    "response_required": False, "target": "plugin_wakeup"}, "sender": "plugin.video.youtube"}})
+NOTE2 = jline({"jsonrpc": "2.0", "method": "GUI.OnScreensaverDeactivated", "params": {"data": {}}})
+
+
+class KodiSocket(unittest.TestCase):
+    """The panel's kodi(): the TCP socket pushes notifications to every client, and the YouTube add-on
+    sends one before it answers Files.GetDirectory; the answer is the object with our id."""
+    @classmethod
+    def setUpClass(cls):
+        env = {"PANEL_STATE_DIR": os.path.join(TMP, "state"), "MEDIASTICK_ONBOARDING_DIR": os.path.join(TMP, "onboarding"),
+               "MEDIASTICK_YTCHANNEL_OFF": "1"}
+        with mock.patch.dict(os.environ, env):
+            loader = importlib.machinery.SourceFileLoader("panel_kodi_socket", PANEL)
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            cls.panel = importlib.util.module_from_spec(spec)
+            loader.exec_module(cls.panel)
+        cls.real_connect = staticmethod(socket.create_connection)
+
+    def ask(self, steps, timeout=3):
+        fake = FakeKodiSocket(steps)
+        self.addCleanup(fake.close)
+        connect = lambda addr, timeout=None: self.real_connect(("127.0.0.1", fake.port), timeout=timeout)
+        with mock.patch.object(self.panel.socket, "create_connection", connect):
+            return self.panel.kodi("Files.GetDirectory", {"directory": YT}, timeout=timeout), fake
+
+    def test_a_notification_before_the_reply(self):
+        got, fake = self.ask([NOTE, 0.1, reply({"files": [{"label": "Home"}]})])
+        self.assertEqual(got, {"files": [{"label": "Home"}]})
+        self.assertEqual(fake.request["method"], "Files.GetDirectory")
+
+    def test_two_notifications_and_the_reply_in_one_chunk(self):
+        got, _ = self.ask([lambda rid: NOTE + NOTE2 + reply({"ok": 1})(rid)])
+        self.assertEqual(got, {"ok": 1})
+
+    def test_the_reply_split_over_two_chunks_after_a_notification(self):
+        def text(rid):
+            return reply({"files": [{"label": "Кошки"}]})(rid)
+        cut = lambda rid: text(rid).index("К".encode("utf-8")) + 1     # inside the first Cyrillic letter
+        half = lambda rid: text(rid)[:cut(rid)]
+        rest = lambda rid: text(rid)[cut(rid):]
+        got, _ = self.ask([NOTE, 0.1, half, 0.2, rest])
+        self.assertEqual(got, {"files": [{"label": "Кошки"}]})
+
+    def test_a_notification_cut_in_two_before_the_reply(self):
+        got, _ = self.ask([NOTE[:30], 0.1, NOTE[30:] + reply({"a": 2})(1)])
+        self.assertEqual(got, {"a": 2})
+
+    def test_an_error_reply_is_none(self):
+        err = lambda rid: jline({"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "Invalid params."}})
+        self.assertIsNone(self.ask([NOTE, err])[0])
+
+    def test_a_reply_with_another_id_is_ignored(self):
+        got, _ = self.ask([reply({"wrong": 1}, other=7), NOTE, 0.1, reply({"right": 1})])
+        self.assertEqual(got, {"right": 1})
+
+    def test_a_closed_socket_is_none(self):
+        self.assertIsNone(self.ask([NOTE])[0])
+
+    def test_nobody_home_is_an_oserror(self):
+        with mock.patch.object(self.panel.socket, "create_connection", side_effect=ConnectionRefusedError):
+            with self.assertRaises(OSError):
+                self.panel.kodi("Player.GetActivePlayers")
+
+    def test_silence_is_a_timeout(self):
+        t = time.monotonic()
+        with self.assertRaises(OSError):
+            self.ask([NOTE, 1.5, reply({})], timeout=0.3)
+        self.assertLess(time.monotonic() - t, 1.2)
+
+    def test_a_slow_reply_within_the_timeout_still_arrives(self):
+        self.assertEqual(self.ask([NOTE, 0.8, reply({"slow": True})], timeout=2)[0], {"slow": True})
+
+    def test_notifications_without_end_do_not_hold_the_call_forever(self):
+        t = time.monotonic()
+        with self.assertRaises(OSError):
+            self.ask([NOTE, 0.2] * 40, timeout=0.5)       # an answer never comes, a notification every 0.2 s
+        self.assertLess(time.monotonic() - t, 4)
+
+    def test_take_leaves_what_follows_the_reply(self):
+        take = self.panel.kodi_take
+        self.assertEqual(take(NOTE + reply({"x": 1})(1) + NOTE2[:10], 1), (True, {"x": 1}, NOTE2[:10]))
+        self.assertEqual(take(NOTE + NOTE2[:10], 1), (False, None, NOTE2[:10]))
+        self.assertEqual(take(b"", 1), (False, None, b""))
 
 
 class Page(unittest.TestCase):
