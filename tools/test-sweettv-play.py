@@ -24,12 +24,15 @@ sys.modules[spec.name] = stubs
 spec.loader.exec_module(stubs)
 
 NOW = 1_800_000_000
+# what the add-on writes down about the stream it resolves (mediastick_sweetlive.remember) goes here, not to the device's place
+os.environ.setdefault("MEDIASTICK_SWEETNOW_DIR", os.path.join(tempfile.mkdtemp(), "now"))
 LIST = {"status": "OK", "list": [
     {"id": 5, "name": "Первый канал", "epg": [
         {"id": 50, "time_start": NOW - 7200, "time_stop": NOW - 3600, "text": "Утро"},
         {"id": 51, "time_start": NOW - 3600, "time_stop": NOW + 3600, "text": "Холостяк"}]},
     {"id": 6, "name": "Второй", "epg": []}]}
 STREAM = {"result": "OK", "http_stream": {"host": {"address": "cdn.example"}, "url": "/live.m3u8"}, "scheme": "HTTP_HLS"}
+STREAM_URL = "https://cdn.example/live.m3u8"       # what the add-on resolves STREAM to
 
 
 class Item:

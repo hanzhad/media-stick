@@ -8,8 +8,10 @@ from resources.lib.sweettv import refreshToken, initSettings, refreshChannelList
 
 # media-stick begin: going back on a live channel plays the archive of the programme on now (the window of a live stream is
 # about a minute): a seek back, and a pause that outlasts the window. The deciding is mediastick_sweetlive.plan, which the
-# phone's -10 asks too
+# phone's -10 asks too. An archive asked to start somewhere other than its beginning is put there once it has begun (Kodi
+# ignores the start place of a plugin item), and an item whose address is a stream's is known from what the plugin wrote down
 import sys as _ms_sys
+import threading as _ms_threading
 
 import xbmcgui as _ms_gui
 from resources.lib import sweettv as _ms_sweettv
@@ -30,10 +32,27 @@ class _MsPlayer(xbmc.Player):
     def _live(self):
         # the channel id of the live SWEET.TV stream that is playing, else ''
         try:
-            found = _ml.ref(self.getPlayingFile())
+            found = _ml.identify(self.getPlayingFile(), time.time())
         except Exception:
             return ''
         return found[0] if found and not found[1] else ''
+
+    def onAVStarted(self):
+        # an archive that was asked to start at second N: the stream starts at 0 and the player is told where it should be
+        try:
+            file = self.getPlayingFile()
+            entry = _ml.start_place(file, time.time())
+            if entry:
+                _ms_threading.Thread(target=self._to_place, args=(entry, file), daemon=True).start()
+        except Exception as e:
+            xbmc.log('media-stick: SWEET.TV start place not looked at: ' + repr(e)[:120], xbmc.LOGWARNING)
+
+    def _to_place(self, entry, file):
+        try:
+            result = _ml.follow(self, entry, file)
+            xbmc.log('media-stick: SWEET.TV start place %ss: %s' % (entry['offset'], result), xbmc.LOGINFO)
+        except Exception as e:
+            xbmc.log('media-stick: SWEET.TV start place not set: ' + repr(e)[:120], xbmc.LOGWARNING)
 
     def _rewind(self, cid, back):
         if time.time() < self.quiet_until:   # a held key sends several seeks: the first one counts

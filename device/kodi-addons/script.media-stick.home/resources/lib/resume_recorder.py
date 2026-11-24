@@ -92,8 +92,10 @@ class Watcher(xbmc.Player):
         self.recorder = recorder
 
     def _file(self):
-        """The path of what plays: the player's own, else the label Kodi keeps for a plugin item; "" when neither is one
+        """The path of what plays: the player's own, else the label Kodi keeps for a plugin item, else the plugin path of the
+        stream address the player gives (an archived programme: the add-on wrote down which one it is); "" when none is one
         the library remembers."""
+        streams = []
         for ask in (self.getPlayingFile, lambda: xbmc.getInfoLabel("Player.Filenameandpath")):
             try:
                 found = ask()
@@ -101,6 +103,19 @@ class Watcher(xbmc.Player):
                 continue
             if self.recorder.lib.parse(found):
                 return found
+            streams.append(found)
+        return self._known(streams)
+
+    @staticmethod
+    def _known(streams):
+        lib = store.sweetlive
+        for found in streams:
+            try:
+                known = lib.identify(found, time.time()) if lib else None
+            except Exception:
+                known = None
+            if known:
+                return lib.url(known[0], known[1])   # no place in it: one string for the whole item, whatever its start was
         return ""
 
     def tick(self):

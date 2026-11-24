@@ -12,6 +12,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 LIB = os.path.join(ROOT, "device", "files", "usr", "local", "lib", "media-stick")
@@ -21,12 +22,14 @@ os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, ".kodi", "userdata", "addon_data")
 os.environ.pop("MEDIASTICK_ADDON_LIB", None)
 os.environ["MEDIASTICK_ADDONS_ROOT"] = os.path.join(TMP, ".kodi", "addons")
+os.environ["MEDIASTICK_SWEETNOW_DIR"] = os.path.join(TMP, "now")      # what the SWEET.TV add-on wrote down about its streams
 os.environ.pop("MEDIASTICK_APP_ART", None)
 sys.dont_write_bytecode = True
 sys.path.insert(0, LIB)
 
 import panel_accounts  # noqa: E402
 import panel_lang  # noqa: E402
+import mediastick_sweetlive as ml  # noqa: E402
 import panel_watch as pw  # noqa: E402
 
 NOW = 1_800_000_000
@@ -267,6 +270,42 @@ class NowPlaying(unittest.TestCase):
         v = pw.now_view(item, None, None, name_of=lambda cid: "x")
         self.assertEqual((v["title"], v["live"], v["cid"], v["epg"], v["channel"]),
                          ("Холостяк", False, "5", "51", "Первый канал"))
+
+    def test_an_archive_that_is_a_stream_address_keeps_what_the_add_on_wrote_down(self):
+        """Kodi gives the address of the stream for an archived programme: without the entry nothing says what it is."""
+        stream = "https://hls-dvr2.sweet.tv/dvr/5/51/index.m3u8?token=x"
+        item = {"title": "Холостяк", "label": "Холостяк", "showtitle": "", "file": stream}
+        shutil.rmtree(ml.NOW_DIR, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, ml.NOW_DIR, True)
+        v = pw.now_view(item, None, None, name_of=lambda cid: "Первый канал")
+        self.assertEqual((v["live"], v["cid"], v["epg"], v["app"], v["channel"]), (False, "", "", "other", ""))
+        self.assertIsNone(pw.sweet_ref(stream))
+        ml.remember(5, 51, stream, 120)
+        v = pw.now_view(item, None, None, name_of=lambda cid: "Первый канал")
+        self.assertEqual((v["title"], v["live"], v["cid"], v["epg"], v["app"], v["channel"]),
+                         ("Холостяк", False, "5", "51", "sweettv", "Первый канал"))
+        self.assertEqual(pw.sweet_ref(stream), ("5", "51"))
+        self.assertEqual(pw.sweet_ref(stream + "|Referer=x"), ("5", "51"))
+        self.assertIsNone(pw.sweet_ref("https://example.org/dvr/5/52/index.m3u8?token=x"))
+        ml.remember(5, "", "https://hls-live3.sweet.tv/live/5/index.m3u8", 0)
+        v = pw.now_view({"title": "", "label": "5", "file": "https://hls-live3.sweet.tv/live/5/index.m3u8"}, None, None,
+                        name_of=lambda cid: "Первый канал")
+        self.assertEqual((v["title"], v["live"], v["cid"], v["epg"], v["channel"]), ("Первый канал", True, "5", "", "Первый канал"))
+
+    def test_the_channel_is_named_for_a_plugin_path_without_a_show_title(self):
+        item = {"title": "Холостяк", "label": "Холостяк", "file": "plugin://plugin.video.sweettv/playvid/5|51"}
+        self.assertEqual(pw.now_view(item, None, None, name_of=lambda cid: "Первый канал")["channel"], "Первый канал")
+        item["showtitle"] = "Свой"
+        self.assertEqual(pw.now_view(item, None, None, name_of=lambda cid: "Первый канал")["channel"], "Свой")
+
+    def test_a_broken_or_missing_file_of_streams_is_no_sweettv_item(self):
+        os.makedirs(ml.NOW_DIR, exist_ok=True)
+        self.addCleanup(shutil.rmtree, ml.NOW_DIR, True)
+        with open(os.path.join(ml.NOW_DIR, ml.NOW_FILE), "w", encoding="utf-8") as f:
+            f.write("{broken")
+        self.assertIsNone(pw.sweet_ref("https://hls-dvr2.sweet.tv/dvr/5/51/index.m3u8"))
+        with mock.patch.object(ml, "recall", side_effect=ValueError("boom")):
+            self.assertIsNone(pw.sweet_ref("https://hls-dvr2.sweet.tv/dvr/5/51/index.m3u8"))
 
     def test_other_items_are_not_touched_by_the_sweettv_rules(self):
         v = pw.now_view({"title": "", "label": "7", "file": VID}, None, None, name_of=lambda cid: "x")

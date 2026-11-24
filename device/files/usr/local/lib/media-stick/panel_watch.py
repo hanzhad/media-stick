@@ -32,6 +32,11 @@ try:
 except ImportError:
     mr = None
 
+try:
+    import mediastick_sweetlive as sweetlive   # what the address of a SWEET.TV stream is (the add-on wrote it down)
+except ImportError:
+    sweetlive = None
+
 PREFIX = "/api/watch/"
 LAUNCHER = "script.media-stick.home"
 KODI_DOWN = "ТВ не отвечает. Подождите минуту и попробуйте снова."
@@ -314,9 +319,17 @@ def _streams(items, current, label):
 
 
 def sweet_ref(file):
-    """(channel id, epg id or "" for live) of a SWEET.TV play path as Kodi reports it, or None."""
+    """(channel id, epg id or "" for live) of a SWEET.TV item as Kodi reports it, or None: its plugin path, or - Kodi gives
+    the address of the stream the add-on resolved for an archived programme, not the plugin path - an address the add-on
+    wrote down when it resolved it (mediastick_sweetlive.recall)."""
     m = SWEET_ITEM_RE.fullmatch(file) if isinstance(file, str) else None
-    return (m.group(1), "" if m.group(2) == "null" else m.group(2)) if m else None
+    if m:
+        return (m.group(1), "" if m.group(2) == "null" else m.group(2))
+    try:
+        known = sweetlive.recall(file, time.time()) if sweetlive and isinstance(file, str) else None
+    except Exception:     # the file is the add-on's to write: whatever is wrong with it, the item is simply not known
+        known = None
+    return (known["cid"], known["epg"]) if known else None
 
 
 def sweet_name(cid):
@@ -351,11 +364,13 @@ def now_view(item, props, app, name_of=None):
     subs, sub_cur = _streams(props.get("subtitles"), props.get("currentsubtitle"), "Субтитры")
     audio, audio_cur = _streams(props.get("audiostreams"), props.get("currentaudiostream"), "Дорожка")
     app = app if isinstance(app, dict) else {}
+    kind = app_of(item.get("file"))
+    channel = str(item.get("showtitle") or item.get("channel") or "") or (ref and (name_of or sweet_name)(ref[0])) or ""
     return {"playing": True,
             "title": item_title(item, name_of)[:200],
             "live": bool(ref and not ref[1]), "cid": ref[0] if ref else "", "epg": ref[1] if ref else "",
-            "channel": str(item.get("showtitle") or item.get("channel") or "")[:120],
-            "thumb": thumb, "app": app_of(item.get("file")),
+            "channel": channel[:120],
+            "thumb": thumb, "app": "sweettv" if ref and kind == "other" else kind,
             "time": kodi_seconds(props.get("time")), "total": kodi_seconds(props.get("totaltime")),
             "speed": props.get("speed", 1), "subtitles": subs, "subtitle": sub_cur,
             "subtitles_on": bool(props.get("subtitleenabled")), "audio": audio, "audio_index": audio_cur,

@@ -719,7 +719,25 @@ def login(ms_mode=None):
     helper.refresh()
 
 
-# media-stick begin: the played item is named after the channel (and the programme of an archive)
+# media-stick begin: the played item is named after the channel (and the programme of an archive), and what its stream is is written down
+try:
+    if '/usr/local/lib/media-stick' not in sys.path:
+        sys.path.insert(0, '/usr/local/lib/media-stick')
+    import mediastick_sweetlive as _ms_live
+except Exception:  # not a media-stick device: the add-on behaves as upstream
+    _ms_live = None
+
+
+def _ms_remember(cid, epg, url, offset):
+    # Kodi tells the player the stream's address, not the plugin path: write down which channel and programme that address is
+    # (the phone's 'now playing', the way back to live, the recorder of places read it), and where it was asked to start
+    try:
+        if _ms_live and not _ms_live.remember(cid, epg, url, offset):
+            xbmc.log('media-stick: SWEET.TV stream not written down', xbmc.LOGWARNING)
+    except Exception as e:
+        xbmc.log('media-stick: SWEET.TV stream not written down: ' + repr(e)[:120], xbmc.LOGWARNING)
+
+
 def _ms_start():
     # where to start an archived programme, seconds in: the add-on's own service and the phone ask for a place in the query
     try:
@@ -765,7 +783,9 @@ def _ms_name_the_item(cid, epg, offset=0):
                 listitem.setLabel(title)
                 listitem.setInfo('video', info)
                 if epg and offset:
-                    listitem.setProperty('StartOffset', str(offset))   # seconds into the programme: Kodi's own start offset
+                    # Kodi ignores StartOffset of a resolved plugin item; a resume point is what it starts from (the service of
+                    # this add-on looks that the player got there, and seeks if not: mediastick_sweetlive.follow)
+                    listitem.setProperty('ResumeTime', str(offset))
                 if epg and end > begin:
                     listitem.setProperty('TotalTime', str(end - begin))   # the bar is the programme (upstream says 1 s)
         except Exception as e:
@@ -781,10 +801,17 @@ def ms_golive():
     # an archived programme is playing: its channel live (the remote's red key; the phone has a button of its own)
     path = xbmc.getInfoLabel('Player.Filenameandpath')
     prefix = 'plugin://plugin.video.sweettv/playvid/'
+    cid, rest = '', ''
     if path.startswith(prefix):
         cid, _, rest = path[len(prefix):].partition('|')
-        if cid.isdigit() and rest and not rest.startswith('null'):
-            xbmc.executebuiltin('PlayMedia(%s%s|null)' % (prefix, cid))
+    elif _ms_live:   # the label can give the stream's address: what the add-on wrote down says which programme it is
+        try:
+            found = _ms_live.identify(xbmc.Player().getPlayingFile(), time.time())
+            cid, rest = (found[0], found[1]) if found else ('', '')
+        except Exception:
+            pass
+    if cid.isdigit() and rest and not rest.startswith('null'):
+        xbmc.executebuiltin('PlayMedia(%s%s|null)' % (prefix, cid))
 # media-stick end
 
 
@@ -849,6 +876,7 @@ def playvid(videoid):
 
             # media-stick begin
             ms_undo = _ms_name_the_item(idx, pid if pid != 'null' else None, _ms_start())
+            _ms_remember(idx, pid if pid != 'null' else None, stream_url, _ms_start())
             # media-stick end
             if helper.get_setting('playerType') == 'ffmpeg' and DRM is None:
                 helper.ffmpeg_player(stream_url)

@@ -22,7 +22,8 @@ ADDON = os.path.join(ROOT, "device", "kodi-addons", "script.media-stick.home")
 ADDON_LIB = os.path.join(ADDON, "resources", "lib")
 LIB = os.path.join(ROOT, "device", "files", "usr", "local", "lib", "media-stick")
 TMP = tempfile.mkdtemp()
-for name, folder in (("SIGNIN", "signin"), ("ONBOARDING", "onboarding"), ("PREFS", "prefs"), ("RESUME", "resume")):
+for name, folder in (("SIGNIN", "signin"), ("ONBOARDING", "onboarding"), ("PREFS", "prefs"), ("RESUME", "resume"),
+                     ("SWEETNOW", "now")):
     os.environ["MEDIASTICK_%s_DIR" % name] = os.path.join(TMP, folder)
 os.environ["MEDIASTICK_YTCHANNEL_OFF"] = "1"
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
@@ -99,7 +100,7 @@ LIST = {"status": "OK", "list": [
 
 
 def clean_dirs():
-    for folder in (mr.PREFS, mr.DIR):
+    for folder in (mr.PREFS, mr.DIR, os.environ["MEDIASTICK_SWEETNOW_DIR"]):
         if os.path.isdir(folder):
             for name in os.listdir(folder):
                 os.unlink(os.path.join(folder, name))
@@ -466,6 +467,59 @@ class Watching(Base):
         State.file, State.label, State.time, State.total = "https://cdn.example/stream.m3u8", ARCHIVE, 700.0, 3600.0
         w.tick()
         w.onPlayBackStopped()
+        self.assertEqual(mr.load()["items"]["sw:5|50"]["pos"], 700)
+
+    def test_an_archive_the_player_gives_as_a_stream_address_is_recorded_as_its_programme(self):
+        """What the owner's device does: the player's file is the https address and the label is no help, so the plugin
+        path was nowhere; the address the add-on wrote down says which channel and programme it is."""
+        stream = "https://hls-dvr2.sweet.tv/dvr/5/50/index.m3u8?token=x"
+        store.sweetlive.remember(5, 50, stream, 600, now=NOW)
+        w = self.make()
+        State.file, State.label, State.time, State.total = stream, "", 700.0, 3600.0
+        w.tick()
+        w.onPlayBackStopped()
+        item = mr.load()["items"]["sw:5|50"]
+        self.assertEqual((item["cid"], item["epg"], item["pos"], item["total"], item["done"]), ("5", "50", 700, 3600, False))
+        self.assertEqual(mr.seconds_for(mr.load(), ARCHIVE), 700)            # the phone's "continue" finds it by the plugin path
+
+    def test_one_programme_is_one_item_whether_the_player_names_it_by_path_or_by_address(self):
+        stream = "https://hls-dvr2.sweet.tv/dvr/5/50/index.m3u8?token=x"
+        store.sweetlive.remember(5, 50, stream, 0, now=NOW)
+        w = self.make()
+        State.file, State.label, State.time, State.total = stream, "", 700.0, 3600.0
+        w.tick()
+        State.file, State.time = "", 900.0
+        State.label = ARCHIVE
+        w.tick()
+        w.onPlayBackStopped()
+        self.assertEqual(list(mr.load()["items"]), ["sw:5|50"])
+        self.assertEqual(mr.load()["items"]["sw:5|50"]["pos"], 900)
+
+    def test_a_live_stream_address_remembers_the_channel_and_no_place(self):
+        stream = "https://hls-live3.sweet.tv/live/5/index.m3u8"
+        store.sweetlive.remember(5, "", stream, 0, now=NOW)
+        w = self.make()
+        State.file, State.time, State.total = stream, 40.0, 56.0
+        w.tick()
+        w.onPlayBackStopped()
+        self.assertEqual(mr.load()["items"], {})
+        self.assertEqual(mr.load()["live"]["cid"], "5")
+
+    def test_a_stream_address_nobody_wrote_down_is_not_remembered(self):
+        store.sweetlive.remember(5, 50, "https://hls-dvr2.sweet.tv/dvr/5/50/index.m3u8?token=x", 0, now=NOW)
+        w = self.make()
+        State.file, State.time, State.total = "https://example.org/film.m3u8", 700.0, 3600.0
+        w.tick()
+        w.onPlayBackStopped()
+        self.assertEqual(mr.load(), mr.empty())
+
+    def test_a_device_without_the_stream_library_still_records_by_path(self):
+        w = self.make()
+        State.file, State.time, State.total = ARCHIVE, 700.0, 3600.0
+        with mock.patch.object(store, "sweetlive", None):
+            w.tick()
+            State.file, State.label = "https://cdn.example/stream.m3u8", ""
+            w.tick()
         self.assertEqual(mr.load()["items"]["sw:5|50"]["pos"], 700)
 
     def test_the_end_of_a_video_is_watched(self):

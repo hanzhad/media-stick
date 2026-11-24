@@ -26,6 +26,11 @@ try:        # where the person stopped; a device without it keeps what the place
 except ImportError:
     resume = None
 
+try:        # what the address of a SWEET.TV stream is (the add-on wrote it down); without it only the plugin path tells
+    import mediastick_sweetlive as sweetlive  # noqa: E402
+except ImportError:
+    sweetlive = None
+
 SERVICES = lib.SERVICES
 
 

@@ -186,7 +186,7 @@ def rewind(raw, file, by, now):
     a live SWEET.TV channel with an archive (the archive of the programme on now, from now - start + by),
     {"switched": "", "note": ...} when it is live but has none, None when this is not a live SWEET.TV item (an
     ordinary seek)."""
-    ref = ml.ref(file) if ml else None
+    ref = pw.sweet_ref(file) if ml else None
     if not ref or ref[1] or by >= 0:
         return None
     plan = ml.plan(raw, ref[0], min(-by, SEEK_BACK_MAX), now)
@@ -329,7 +329,7 @@ def golive(rpc):
     item = None
     if pid is not None:
         item = (pw._rpc(rpc, "Player.GetItem", {"playerid": pid, "properties": ["file"]}) or {}).get("item")
-    ref = ml.ref((item or {}).get("file"))
+    ref = pw.sweet_ref((item or {}).get("file"))
     if not ref or not ref[1]:
         raise pw.Refused(_t("An archived programme is not playing."), 409)
     pw._rpc(rpc, "Player.Open", {"item": {"file": ml.url(ref[0])}})
