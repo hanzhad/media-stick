@@ -216,6 +216,62 @@ class Search(unittest.TestCase):
         found = api.search("nothing", MAP, NOW, client=c)
         self.assertEqual((found["ok"], found["items"]), (True, []))
 
+    def test_span_and_complete_filter_truncated_repeats(self):
+        for row, expected in (
+                ({"start": 100, "stop": 400}, 300),
+                ({"start": 100.0, "stop": 250.5}, 150),
+                ({"start": 100}, 0),
+                ({"stop": 400}, 0),
+                ({}, 0),
+                ({"start": 100, "stop": 100}, 0),
+                ({"start": 200, "stop": 100}, 0),
+                ({"start": None, "stop": 200}, 0),
+                ({"start": "100", "stop": "200"}, 0),
+        ):
+            self.assertEqual(api._span(row), expected, row)
+
+        full = {"epg": "full", "start": 1000, "stop": 2000}
+        exact_80 = {"epg": "80", "start": 3000, "stop": 3800}
+        below_80 = {"epg": "79", "start": 4000, "stop": 4799}
+        self.assertEqual([r["epg"] for r in api._complete([full, exact_80])], ["full", "80"])
+        self.assertEqual([r["epg"] for r in api._complete([full, below_80])], ["full"])
+
+        no_stop = [{"epg": "a", "start": 100}, {"epg": "b", "start": 200, "stop": 200}]
+        self.assertEqual(api._complete(no_stop), no_stop)
+
+    def test_collapse_prefers_complete_premiere_over_split_repeat_halves(self):
+        rows = [
+            {"title": "Холостяк", "epg": "931394511", "start": 1763658000, "stop": 1763675520, "live": False, "playable_in_archive": True},
+            {"title": "Холостяк", "epg": "931410509", "start": 1763707680, "stop": 1763715600, "live": False, "playable_in_archive": True},
+            {"title": "Холостяк", "epg": "931416611", "start": 1763715720, "stop": 1763724540, "live": False, "playable_in_archive": True},
+        ]
+        collapsed = api.collapse(rows, NOW, ENGLISH_N)
+        self.assertEqual(len(collapsed), 1)
+        self.assertEqual((collapsed[0]["epg"], collapsed[0]["repeats"]), ("931394511", 2))
+
+    def test_collapse_and_stands_for_boundaries_and_fallback(self):
+        def row(epg, start, span, watchable=True):
+            r = {"title": "Show", "epg": epg, "start": start, "live": False, "playable_in_archive": watchable}
+            if span is not None:
+                r["stop"] = start + span
+            return r
+
+        # Similar full durations (>= 80% of longest) still pick the newest watchable airing
+        self.assertEqual(api.collapse([row("a", NOW - 9000, 5400), row("b", NOW - 3000, 5400)], NOW, ENGLISH_N)[0]["epg"], "b")
+        self.assertEqual(api.collapse([row("a", NOW - 20000, 10800), row("b", NOW - 10000, 9600)], NOW, ENGLISH_N)[0]["epg"], "b")
+        self.assertEqual(api.collapse([row("a", NOW - 9000, 1000), row("b", NOW - 3000, 800)], NOW, ENGLISH_N)[0]["epg"], "b")
+        self.assertEqual(api.collapse([row("a", NOW - 9000, 1000), row("b", NOW - 3000, 799)], NOW, ENGLISH_N)[0]["epg"], "a")
+
+        # Missing stop or stop <= start falls back to newest watchable without KeyError
+        self.assertEqual(api.collapse([row("a", NOW - 500, None), row("b", NOW - 200, None)], NOW, ENGLISH_N)[0]["epg"], "b")
+        self.assertEqual(api.collapse([row("a", NOW - 500, 0), row("b", NOW - 200, -10)], NOW, ENGLISH_N)[0]["epg"], "b")
+
+        # Coming: soonest wins regardless of duration; past unwatchable: complete wins over truncated repeat
+        coming = [row("c1", NOW + 100, 1800, False), row("c2", NOW + 500, 7200, False)]
+        self.assertEqual(api._stands_for(coming, NOW)["epg"], "c1")
+        past = [row("p1", NOW - 9000, 1000, False), row("p2", NOW - 3000, 500, False)]
+        self.assertEqual(api._stands_for(past, NOW)["epg"], "p1")
+
 
 class Calls(unittest.TestCase):
     def test_the_headers_are_those_of_the_addon_and_the_token_goes_only_in_the_header(self):

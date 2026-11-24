@@ -188,6 +188,83 @@ class Rules(unittest.TestCase):
         for sid in (None, 3, "", "4", "3 ", "../3", "t12", "T0123456789", "3" * 13, "t0123456789ab", ["3"]):
             self.assertIsNone(sec.show(index, sid, self.everything), sid)
 
+    def test_episode_key_and_best_airing_helpers(self):
+        self.assertEqual(sec._episode_key({"season": 1, "episode": 2, "text": "Alpha", "cid": "1", "epg": "11"}), (1, 2, "alpha"))
+        self.assertEqual(sec._episode_key({"season": 0, "episode": 5, "text": "Beta", "cid": "1", "epg": "12"}), (0, 5, "beta"))
+        self.assertEqual(sec._episode_key({"season": 2, "episode": 0, "text": "Gamma", "cid": "1", "epg": "13"}), (2, 0, "gamma"))
+        self.assertEqual(sec._episode_key({"season": 0, "episode": 0, "text": "Special", "cid": "1", "epg": "14"}), ("1", "14"))
+
+        full = {"epg": "full", "start": 1000, "stop": 2000}
+        exact_80 = {"epg": "80", "start": 3000, "stop": 3800}
+        below_80 = {"epg": "79", "start": 4000, "stop": 4799}
+        self.assertEqual(sec._best_airing([full, exact_80])["epg"], "80")
+        self.assertEqual(sec._best_airing([full, below_80])["epg"], "full")
+        self.assertEqual(sec._best_airing([{"epg": "z1", "start": 100, "stop": 100}, {"epg": "z2", "start": 200, "stop": 200}])["epg"], "z2")
+
+    def test_shows_and_show_prefer_complete_airing_over_split_repeat_halves(self):
+        started = lambda r: r["start"] <= NOW           # noqa: E731
+        raw = channel(1, [
+            programme(931394511, "Холостяк Season 14 Episode 5", NOW - 90000, minutes=292, tv_show_id=50),
+            programme(931410509, "Холостяк Season 14 Episode 5", NOW - 40000, minutes=132, tv_show_id=50),
+            programme(931416611, "холостяк Season 14 Episode 5", NOW - 30000, minutes=147, tv_show_id=50),
+        ])
+        index = self.build(raw)
+        shows_list = sec.shows(index, started)
+        self.assertEqual(len(shows_list), 1)
+        self.assertEqual((shows_list[0]["episodes"], shows_list[0]["latest"]["epg"]), (1, "931394511"))
+        shown = sec.show(index, "50", started)
+        self.assertEqual([(e["epg"], e["available"]) for e in shown["episodes"]], [("931394511", True)])
+
+        # Similar full durations (>= 80%) pick newest; below 80% keeps longer
+        raw_80 = channel(1, [programme(11, "Alpha Episode 1", NOW - 9000, minutes=100, tv_show_id=60),
+                             programme(12, "Alpha Episode 1", NOW - 3000, minutes=80, tv_show_id=60)])
+        idx_80 = self.build(raw_80)
+        self.assertEqual(sec.shows(idx_80, started)[0]["latest"]["epg"], "12")
+        self.assertEqual(sec.show(idx_80, "60", started)["episodes"][0]["epg"], "12")
+
+        raw_79 = channel(1, [programme(11, "Alpha Episode 1", NOW - 9000, minutes=100, tv_show_id=61),
+                             programme(12, "Alpha Episode 1", NOW - 3000, minutes=79, tv_show_id=61)])
+        idx_79 = self.build(raw_79)
+        self.assertEqual(sec.shows(idx_79, started)[0]["latest"]["epg"], "11")
+        self.assertEqual(sec.show(idx_79, "61", started)["episodes"][0]["epg"], "11")
+
+    def test_show_playability_tier_and_unplayable_complete_preference(self):
+        started = lambda r: r["start"] <= NOW           # noqa: E731
+        raw = channel(1, [
+            programme(11, "Alpha Episode 1", NOW + 9000, minutes=292, tv_show_id=70),
+            programme(12, "Alpha Episode 1", NOW - 9000, minutes=147, tv_show_id=70),
+            programme(21, "Alpha Episode 2", NOW + 1000, minutes=292, tv_show_id=70),
+            programme(22, "Alpha Episode 2", NOW + 20000, minutes=147, tv_show_id=70),
+            programme(31, "Alpha Special", NOW - 50000, minutes=60, tv_show_id=70),
+            programme(32, "Alpha Special", NOW - 20000, minutes=60, tv_show_id=70),
+        ])
+        index = self.build(raw)
+        self.assertEqual(sec.shows(index, started)[0]["latest"]["epg"], "12")
+        shown = sec.show(index, "70", started)
+        self.assertEqual([(e["episode"], e["epg"], e["available"]) for e in shown["episodes"]],
+                         [(0, "31", True), (0, "32", True), (1, "12", True), (2, "21", False)])
+
+    def test_films_prefers_complete_airing_and_preserves_airings_count(self):
+        started = lambda r: r["start"] <= NOW           # noqa: E731
+        films_ch = channel(1, [
+            programme(11, "Epic Movie", NOW - 90000, 160),
+            programme(12, "Epic Movie", NOW - 40000, 80),
+            programme(13, "epic movie", NOW - 30000, 85),
+            programme(14, "Epic Movie", NOW + 9000, 160),
+        ], category=(4,))
+        items = sec.films(self.build(films_ch), started)
+        self.assertEqual(len(items), 1)
+        self.assertEqual((items[0]["epg"], items[0]["minutes"], items[0]["airings"]), ("11", 160, 3))
+
+        # Similar full durations (>= 80%) pick newest; below 80% keeps longer, both preserve airings count
+        ch_80 = channel(2, [programme(21, "Pair", NOW - 9000, 100), programme(22, "Pair", NOW - 3000, 80)], category=(4,))
+        res_80 = sec.films(self.build(ch_80), started)
+        self.assertEqual((res_80[0]["epg"], res_80[0]["airings"]), ("22", 2))
+
+        ch_79 = channel(3, [programme(31, "Pair79", NOW - 9000, 100), programme(32, "Pair79", NOW - 3000, 79)], category=(4,))
+        res_79 = sec.films(self.build(ch_79), started)
+        self.assertEqual((res_79[0]["epg"], res_79[0]["airings"]), ("31", 2))
+
 
 class Fixture(unittest.TestCase):
     """What the guide of five real channels makes of it."""
