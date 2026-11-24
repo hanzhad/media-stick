@@ -13,11 +13,14 @@
      Row items, all kinds: label (the caption under the card), art "icon" (the logo or the picture), properties title (the
      big title over the row; small, set when it is too long for the big letters: it is drawn smaller), meta (the line under
      it), initials, plate, plate_hi, bg (the card's colours). A channel also has
-     num, tint, now, nowrange, bar (the card's progress picture), pbar (the preview's), desc, next, nextrange, fav, catchup,
+     num, tint, now, nowline ("Now   22:10 - 23:00"), bar (the card's progress picture), pbar (the preview's), desc, next,
+     nextline ("Next   23:00 - 23:50   Title"), fav, catchup,
      guide, resume; a show, an episode or a film cap (the amber line) and line (the big line), and dim (cannot be watched
      now: dimmed). Menu items: label, label2 (count), properties heading ("News  .  9 channels"), active, section (the
-     two entries of the shows and films: in the accent colour). Guide items: label (title), label2 ("Live" or ""),
-     properties when, kind.
+     two entries of the shows and films: in the accent colour), caption (the heading of the genres: a small line, not an entry).
+     Guide items: label (title), label2 ("Live" or ""), properties when, kind.
+     The fixed words are the window's properties l_catchup, l_favourite, l_guide, l_guide_help, l_signin_title, l_signin_sub,
+     l_scan, l_code, l_press_ok, l_retry: the skin has no text of its own, the Python says it in the device's language.
      The preview reads the row's focused item (Container(200)), also while the menu has the focus: the Python puts the
      row on the menu's entry a moment after the key, so it shows that entry's first card.
 
@@ -186,7 +189,7 @@
                 <textcolor>FF10141A</textcolor>
                 <align>center</align>
                 <aligny>center</aligny>
-                <label>DEMO</label>
+                <label>[UPPERCASE]$INFO[Window.Property(chip)][/UPPERCASE]</label>
             </control>
         </control>
         <control type="label">
@@ -332,7 +335,7 @@
                             <selectedcolor>B3FFFFFF</selectedcolor>
                             <aligny>center</aligny>
                             <label>$INFO[ListItem.Label]</label>
-                            <visible>String.IsEmpty(ListItem.Property(section))</visible>
+                            <visible>String.IsEmpty(ListItem.Property(section)) + String.IsEmpty(ListItem.Property(caption))</visible>
                         </control>
                         <control type="label">
                             <left>28</left>
@@ -345,6 +348,18 @@
                             <aligny>center</aligny>
                             <label>$INFO[ListItem.Label]</label>
                             <visible>!String.IsEmpty(ListItem.Property(section))</visible>
+                        </control>
+                        <control type="label">
+                            <left>28</left>
+                            <top>34</top>
+                            <width>264</width>
+                            <height>40</height>
+                            <font>Reg22</font>
+                            <textcolor>80FFFFFF</textcolor>
+                            <selectedcolor>80FFFFFF</selectedcolor>
+                            <aligny>center</aligny>
+                            <label>[UPPERCASE]$INFO[ListItem.Label][/UPPERCASE]</label>
+                            <visible>!String.IsEmpty(ListItem.Property(caption))</visible>
                         </control>
                         <control type="label">
                             <left>254</left>
@@ -367,7 +382,7 @@
                             <height>80</height>
                             <texture border="40">pill-80.png</texture>
                             <colordiffuse>FFFFFFFF</colordiffuse>
-                            <visible>Control.HasFocus(100)</visible>
+                            <visible>Control.HasFocus(100) + String.IsEmpty(ListItem.Property(caption))</visible>
                         </control>
                         <control type="image">
                             <left>0</left>
@@ -376,7 +391,7 @@
                             <height>80</height>
                             <texture border="40">pill-80.png</texture>
                             <colordiffuse>26FFFFFF</colordiffuse>
-                            <visible>!Control.HasFocus(100)</visible>
+                            <visible>!Control.HasFocus(100) + String.IsEmpty(ListItem.Property(caption))</visible>
                         </control>
                         <control type="label">
                             <left>28</left>
@@ -388,7 +403,7 @@
                             <selectedcolor>FF000000</selectedcolor>
                             <aligny>center</aligny>
                             <label>$INFO[ListItem.Label]</label>
-                            <visible>Control.HasFocus(100)</visible>
+                            <visible>Control.HasFocus(100) + String.IsEmpty(ListItem.Property(caption))</visible>
                         </control>
                         <control type="label">
                             <left>28</left>
@@ -400,7 +415,7 @@
                             <selectedcolor>B3FFFFFF</selectedcolor>
                             <aligny>center</aligny>
                             <label>$INFO[ListItem.Label]</label>
-                            <visible>!Control.HasFocus(100) + String.IsEmpty(ListItem.Property(section))</visible>
+                            <visible>!Control.HasFocus(100) + String.IsEmpty(ListItem.Property(section)) + String.IsEmpty(ListItem.Property(caption))</visible>
                         </control>
                         <control type="label">
                             <left>28</left>
@@ -415,6 +430,18 @@
                             <visible>!Control.HasFocus(100) + !String.IsEmpty(ListItem.Property(section))</visible>
                         </control>
                         <control type="label">
+                            <left>28</left>
+                            <top>34</top>
+                            <width>264</width>
+                            <height>40</height>
+                            <font>Reg22</font>
+                            <textcolor>80FFFFFF</textcolor>
+                            <selectedcolor>80FFFFFF</selectedcolor>
+                            <aligny>center</aligny>
+                            <label>[UPPERCASE]$INFO[ListItem.Label][/UPPERCASE]</label>
+                            <visible>!String.IsEmpty(ListItem.Property(caption))</visible>
+                        </control>
+                        <control type="label">
                             <left>254</left>
                             <top>0</top>
                             <width>46</width>
@@ -425,7 +452,7 @@
                             <align>right</align>
                             <aligny>center</aligny>
                             <label>$INFO[ListItem.Label2]</label>
-                            <visible>Control.HasFocus(100)</visible>
+                            <visible>Control.HasFocus(100) + String.IsEmpty(ListItem.Property(caption))</visible>
                         </control>
                         <control type="label">
                             <left>254</left>
@@ -515,7 +542,7 @@
                             <textcolor>FFFFFFFF</textcolor>
                             <align>center</align>
                             <aligny>center</aligny>
-                            <label>Catch-up</label>
+                            <label>$INFO[Window.Property(l_catchup)]</label>
                         </control>
                     </control>
                     <control type="group">
@@ -548,7 +575,7 @@
                             <font>Reg22</font>
                             <textcolor>FF10141A</textcolor>
                             <aligny>center</aligny>
-                            <label>Favourite</label>
+                            <label>$INFO[Window.Property(l_favourite)]</label>
                         </control>
                     </control>
                 </control>
@@ -560,7 +587,7 @@
                     <font>Reg25</font>
                     <textcolor>FFFFC857</textcolor>
                     <aligny>center</aligny>
-                    <label>$INFO[Container(200).ListItem.Property(nowrange),Now   ]$INFO[Container(200).ListItem.Property(cap)]</label>
+                    <label>$INFO[Container(200).ListItem.Property(nowline)]$INFO[Container(200).ListItem.Property(cap)]</label>
                 </control>
                 <control type="label">
                     <left>420</left>
@@ -598,7 +625,7 @@
                     <font>Reg25</font>
                     <textcolor>B3FFFFFF</textcolor>
                     <aligny>center</aligny>
-                    <label>$INFO[Container(200).ListItem.Property(nextrange),Next   ]$INFO[Container(200).ListItem.Property(next),   ]</label>
+                    <label>$INFO[Container(200).ListItem.Property(nextline)]</label>
                 </control>
                 <control type="label">
                     <left>400</left>
@@ -637,7 +664,7 @@
                     <control type="button" id="211">
                         <width>280</width>
                         <height>56</height>
-                        <label>Programme guide</label>
+                        <label>$INFO[Window.Property(l_guide)]</label>
                         <font>Reg25</font>
                         <textcolor>FFFFFFFF</textcolor>
                         <focusedcolor>FF10141A</focusedcolor>
@@ -870,7 +897,7 @@
                     <font>Reg25</font>
                     <textcolor>FFFFC857</textcolor>
                     <aligny>center</aligny>
-                    <label>Programme guide</label>
+                    <label>$INFO[Window.Property(l_guide)]</label>
                 </control>
                 <control type="list" id="400">
                     <left>40</left>
@@ -968,7 +995,7 @@
                     <font>Reg22</font>
                     <textcolor>80FFFFFF</textcolor>
                     <aligny>center</aligny>
-                    <label>OK plays the programme. Back closes the guide.</label>
+                    <label>$INFO[Window.Property(l_guide_help)]</label>
                 </control>
             </control>
         </control>
@@ -1002,7 +1029,7 @@
                 <font>Light60</font>
                 <textcolor>FFFFFFFF</textcolor>
                 <aligny>center</aligny>
-                <label>Sign in on your phone</label>
+                <label>$INFO[Window.Property(l_signin_title)]</label>
             </control>
             <control type="label">
                 <left>70</left>
@@ -1012,7 +1039,7 @@
                 <font>Reg25</font>
                 <textcolor>99FFFFFF</textcolor>
                 <aligny>center</aligny>
-                <label>Live TV and the channel guide</label>
+                <label>$INFO[Window.Property(l_signin_sub)]</label>
             </control>
             <control type="label">
                 <left>70</left>
@@ -1085,7 +1112,7 @@
                     <textcolor>99FFFFFF</textcolor>
                     <align>center</align>
                     <aligny>center</aligny>
-                    <label>Scan to open the phone page</label>
+                    <label>$INFO[Window.Property(l_scan)]</label>
                 </control>
             </control>
             <control type="button" id="300">
@@ -1093,7 +1120,7 @@
                 <top>450</top>
                 <width>660</width>
                 <height>90</height>
-                <label>Or sign in here with a code</label>
+                <label>$INFO[Window.Property(l_code)]</label>
                 <font>Med32</font>
                 <textcolor>FFFFFFFF</textcolor>
                 <focusedcolor>FF10141A</focusedcolor>
@@ -1110,7 +1137,7 @@
                 <font>Reg22</font>
                 <textcolor>80FFFFFF</textcolor>
                 <aligny>center</aligny>
-                <label>Press OK. Back returns to Home.</label>
+                <label>$INFO[Window.Property(l_press_ok)]</label>
             </control>
         </control>
         <!-- signed in, nothing to show: loading, an empty list, or an error -->
@@ -1191,7 +1218,7 @@
                 <top>450</top>
                 <width>420</width>
                 <height>90</height>
-                <label>Try again</label>
+                <label>$INFO[Window.Property(l_retry)]</label>
                 <font>Med32</font>
                 <textcolor>FFFFFFFF</textcolor>
                 <focusedcolor>FF10141A</focusedcolor>

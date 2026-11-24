@@ -31,6 +31,10 @@ os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(TMP, "onboarding")
 os.environ["MEDIASTICK_YTCHANNEL_OFF"] = "1"       # never ask Google from a test
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
 os.environ["MEDIASTICK_ADDON_LIB"] = os.path.join(ADDON, "resources", "lib")     # where the phone page finds the TV's texts
+os.environ["MEDIASTICK_PREFS_DIR"] = os.path.join(TMP, "prefs")        # the device's language lives here (mediastick_lang)
+os.makedirs(os.environ["MEDIASTICK_PREFS_DIR"])
+with open(os.path.join(os.environ["MEDIASTICK_PREFS_DIR"], "language"), "w", encoding="utf-8") as f:
+    f.write("en" + chr(10))                                                     # English unless a test says otherwise: the strings read as the code spells them
 os.environ["TZ"] = "UTC"
 time.tzset()
 
@@ -209,6 +213,7 @@ from resources.lib import page_cache, prefetch, sweettv_items as IT, sweettv_pag
 import mediastick_sweetlive as ML  # noqa: E402
 import panel_sweettv as ps  # noqa: E402
 
+W.set_language("en")                     # the pure parts of the screen (the windows set it from the file above)
 sweettv_shelf.PAGES = False              # most tests are not about the disk cache; SectionPages turns it on
 REAL_WARM = prefetch.warm                # the start-up run itself; a test case replaces the module's by one that does nothing
 D = data
@@ -266,7 +271,7 @@ class Parser(unittest.TestCase):
         self.assertEqual([c.number for c in catalog.channels], list(range(1, len(catalog.channels) + 1)))
         self.assertEqual(len({c.cid for c in catalog.channels}), len(catalog.channels))
         state = S.normalize_state({})
-        self.assertEqual([e.count for e in D.rail(catalog, state)][3:-2], [9, 8, 8, 8, 8, 8])           # the genres, then the two sections
+        self.assertEqual([e.count for e in D.rail(catalog, state)][6:], [9, 8, 8, 8, 8, 8])           # the genres, after the heading
         loose = next(c for c in catalog.channels if c.name == sweettv_demo.NO_CATEGORY[0])
         self.assertEqual(loose.cats, ("1000",))                               # in All, in no category
         self.assertEqual([c.cid for c in D.channels_for(catalog, "c:1", state)].count(loose.cid), 0)
@@ -366,7 +371,7 @@ class Parser(unittest.TestCase):
         catalog = D.parse_catalog(raw, NOW)
         self.assertEqual(catalog.categories, (("c:1", "News"), ("c:2", "Films")))       # data order; hidden, empty, unnamed gone
         state = S.normalize_state({})
-        self.assertEqual([e.name for e in D.rail(catalog, state)], ["Continue", "Favourites", "All", "News", "Films", D.SHOWS_NAME, D.FILMS_NAME])
+        self.assertEqual([e.name for e in D.rail(catalog, state)], ["Continue", "Favourites", "All", D.SHOWS_NAME, D.FILMS_NAME, D.GENRES_NAME, "News", "Films"])
         self.assertEqual([c.cid for c in D.channels_for(catalog, "c:2", state)], ["2", "5"])
         self.assertEqual([c.cid for c in D.channels_for(catalog, "c:77", state)], [])   # an unknown one is empty, not an error
         self.assertEqual(D.channels_for(catalog, "bogus", state), [])
@@ -465,13 +470,14 @@ class NowAndNext(unittest.TestCase):
 
     def test_the_texts_for_the_card_and_the_preview(self):
         props = V.card_props(self.channel, MIDNIGHT - 1800)
-        self.assertEqual((props["now"], props["nowrange"], props["next"], props["nextrange"]),
-                         ("Late show", "23:00 – 00:00", "Night news", "00:00 – 01:00"))
+        self.assertEqual((props["now"], props["nowline"], props["next"], props["nextline"]),
+                         ("Late show", "Now   23:00 – 00:00", "Night news", "Next   00:00 – 01:00   Night news"))
         self.assertEqual((props["bar"], props["pbar"]), ("sweettv-bar-10.png", "sweettv-pbar-10.png"))
         gap = V.card_props(self.channel, MIDNIGHT + 3600 + 5)
-        self.assertEqual((gap["now"], gap["bar"], gap["pbar"], gap["nextrange"]), ("No programme information", "", "", "02:00 – 03:00"))
+        self.assertEqual((gap["now"], gap["nowline"], gap["bar"], gap["pbar"]), ("No programme information", "", "", ""))
+        self.assertTrue(gap["nextline"].startswith("Next   02:00 – 03:00   "), gap["nextline"])
         after = V.card_props(self.channel, MIDNIGHT + 4 * 3600)
-        self.assertEqual((after["next"], after["nextrange"]), ("", ""))
+        self.assertEqual((after["next"], after["nextline"]), ("", ""))
 
     def test_progress_steps(self):
         p = D.Programme(1000, 2000, "x", "", True, "")
@@ -514,8 +520,8 @@ class View(unittest.TestCase):
         props = V.card_props(channel, NOW, favourite=True, cat_names={"c:1": "News", "c:2": "Sport", "c:3": "Kids"})
         self.assertEqual(props["meta"], "Channel 10  ·  News  ·  Sport")
         self.assertEqual((props["fav"], props["catchup"], props["guide"], props["resume"]), ("1", "1", "1", ""))
-        self.assertEqual((props["now"], props["nowrange"], props["next"], props["nextrange"]),
-                         ("Now ten", "07:50 – 08:10", "Then ten", "08:10 – 08:20"))
+        self.assertEqual((props["now"], props["nowline"], props["next"], props["nextline"]),
+                         ("Now ten", "Now   07:50 – 08:10", "Then ten", "Next   08:10 – 08:20   Then ten"))
         self.assertEqual(props["bar"], "sweettv-bar-10.png")
         plain = V.card_props(channel, NOW)
         self.assertEqual((plain["fav"], plain["meta"]), ("", "Channel 10"))
@@ -957,6 +963,7 @@ class WindowCase(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
         sign(True)
+        self.addCleanup(W.set_language, "en")                       # a window follows the device's language: put the tests' English back
         self.windows = []
 
     def tearDown(self):
@@ -1177,15 +1184,15 @@ class Channels(WindowCase):
         window = self.ready()
         self.assertEqual(self.shown(window), ["Ten", "Twenty", "Thirty"])
         self.assertEqual([(i.label, i.label2) for i in window.controls[MENU].items],
-                         [("Continue", "0"), ("Favourites", "0"), ("All", "3"), ("News", "2"), ("Films", "2"),
-                          (W.tr("Shows and series"), ""), (W.tr("Films"), "")])     # the channels, then the two sections
+                         [("Continue", "0"), ("Favourites", "0"), ("All", "3"), (W.tr("Shows and series"), ""), (W.tr("Films"), ""),
+                          (W.tr("Genres"), ""), ("News", "2"), ("Films", "2")])     # what matters, then the heading and the genres
         self.assertEqual((window.cat_key, window.controls[MENU].selected, window.focus), (D.ALL, 2, ROW))   # nothing watched yet
-        self.assertEqual(window.controls[MENU].items[3].props["heading"], "News  ·  2 channels")
+        self.assertEqual(window.controls[MENU].items[6].props["heading"], "News  ·  2 channels")
         card = window.controls[ROW].items[0]
         self.assertEqual((card.props["num"], card.props["now"], card.props["next"], card.props["desc"]),
                          ("10", "Now ten", "Then ten", "About ten"))
-        self.assertEqual((card.props["nowrange"], card.props["nextrange"], card.props["meta"]),
-                         ("07:50 – 08:10", "08:10 – 08:20", "Channel 10  ·  News"))
+        self.assertEqual((card.props["nowline"], card.props["nextline"], card.props["meta"]),
+                         ("Now   07:50 – 08:10", "Next   08:10 – 08:20   Then ten", "Channel 10  ·  News"))
         self.assertTrue(card.props["bar"].endswith("sweettv-bar-10.png") and card.props["pbar"].endswith("sweettv-pbar-10.png"))
         self.assertTrue(os.path.isabs(card.props["bar"]))
         self.assertEqual(window.getProperty("demo"), "")
@@ -1209,7 +1216,7 @@ class Channels(WindowCase):
         self.assertEqual((window.cat_key, self.shown(window)), (D.RECENT, ["Thirty", "Ten"]))
         self.assertEqual((window.controls[ROW].selected, window.focus, window.controls[MENU].selected), (0, ROW, 0))
         self.assertEqual(window.controls[MENU].items[0].props["heading"], "Continue  ·  2 channels")
-        self.assertEqual([i.props["active"] for i in window.controls[MENU].items], ["1", "", "", "", "", "", ""])
+        self.assertEqual([i.props["active"] for i in window.controls[MENU].items], ["1", "", "", "", "", "", "", ""])
         other = self.open(state={"favourites": [], "recent": recent("999"), "last": "999"})
         self.assertTrue(wait_for(lambda: other.mode == D.DATA))
         self.assertEqual((other.cat_key, other.controls[ROW].selected), (D.ALL, 0))          # nothing of it is on offer
@@ -1275,13 +1282,45 @@ class Channels(WindowCase):
     def test_a_category_in_the_menu_changes_the_row_after_a_short_rest(self):
         window = self.ready()
         menu = window.controls[MENU]
-        window.focus, menu.selected = MENU, 3
+        window.focus, menu.selected = MENU, 6
         with mock.patch.object(sweettv_app, "MENU_DELAY", 0.02):
             self.press(window, KEY_DOWN)                            # the row follows after the delay
             self.assertTrue(wait_for(lambda: self.shown(window) == ["Ten", "Thirty"]))
-        self.assertEqual([i.props["active"] for i in menu.items], ["", "", "", "1", "", "", ""])
+        self.assertEqual([i.props["active"] for i in menu.items], ["", "", "", "", "", "", "1", ""])
         self.assertEqual((window.controls[ROW].selected, window.cat_key), (0, "c:1"))                   # its first channel
         self.assertEqual(window.getProperty("emptycat"), "")
+
+    def test_the_cursor_never_rests_on_the_heading_of_the_genres_not_even_in_key_repeat(self):
+        window = self.ready()
+        menu = window.controls[MENU]
+        heading = [e.key for e in window.entries].index(D.GENRES)
+        self.assertEqual((heading, menu.items[heading].props["caption"], menu.items[heading].props["heading"]), (5, "1", ""))
+        self.assertEqual([i.props["caption"] for i in menu.items].count("1"), 1)
+        window.focus = MENU
+        with mock.patch.object(sweettv_app, "MENU_DELAY", 5):
+            for _ in range(3):                                      # held down: Kodi lands on the heading each time it passes
+                menu.selected = heading
+                self.press(window, KEY_DOWN)
+                self.assertEqual(menu.selected, heading + 1)
+            for _ in range(3):                                      # held up
+                menu.selected = heading
+                self.press(window, KEY_UP)
+                self.assertEqual(menu.selected, heading - 1)
+            menu.selected = 2                                       # any other entry is left where Kodi put it
+            self.press(window, KEY_DOWN)
+            self.assertEqual(menu.selected, 2)
+            window.focus, menu.selected = ROW, heading              # the keys of the row are none of the menu's business
+            self.press(window, KEY_UP)
+            self.assertEqual(menu.selected, heading)
+            window.focus, menu.selected = MENU, heading             # and the row does not follow a heading, whatever puts it there
+            window._apply_menu()
+            self.assertEqual((window.cat_key, self.shown(window)), (D.ALL, ["Ten", "Twenty", "Thirty"]))
+
+    def test_the_first_entry_is_a_channel_list_and_up_from_it_is_left_to_the_list(self):
+        window = self.ready()
+        self.assertEqual((window.entries[0].key, window.entries[0].focusable, window.entries[-1].focusable), (D.RECENT, True, True))
+        node = [c for c in ET.parse(XML).getroot().iter("control") if c.get("id") == str(MENU)][0]
+        self.assertEqual([node.findtext("onup"), node.findtext("ondown")], [None, None])       # the list's own rule: a tap wraps, a held key stops
 
     def test_a_burst_of_key_presses_in_the_menu_changes_the_row_once(self):
         window = self.ready()
@@ -1290,7 +1329,7 @@ class Channels(WindowCase):
         real = window._fill_row
         window._fill_row = lambda *a, **k: (fills.append(a), real(*a, **k))[1]
         with mock.patch.object(sweettv_app, "MENU_DELAY", 0.05):
-            for position in (3, 4, 3, 4):
+            for position in (6, 7, 6, 7):
                 window.controls[MENU].selected = position
                 self.press(window, KEY_DOWN)
             self.assertTrue(wait_for(lambda: fills))
@@ -1300,7 +1339,7 @@ class Channels(WindowCase):
     def test_right_goes_into_the_row_with_what_the_menu_shows_and_ok_does_too(self):
         window = self.ready()
         menu = window.controls[MENU]
-        window.focus, menu.selected = MENU, 4
+        window.focus, menu.selected = MENU, 7
         self.press(window, KEY_RIGHT)                                # before the rest is over
         self.assertEqual(self.shown(window), ["Twenty", "Thirty"])
         window.onClick(MENU)
@@ -1419,7 +1458,7 @@ class Channels(WindowCase):
         window = self.ready(raw=answer(chan(1, "A", number=1, category=[1]), chan(2, "B", number=12, category=[2]),
                                        chan(3, "C", number=40, category=[1]),
                                        categories=[{"id": 1, "caption": "X"}, {"id": 2, "caption": "Y"}]))
-        window.controls[MENU].selected = 3
+        window.controls[MENU].selected = 6
         window.onClick(MENU)
         self.assertEqual(self.shown(window), ["A", "C"])
         self.press(window, 58 + 4)
@@ -1469,14 +1508,14 @@ class Channels(WindowCase):
 
     def test_a_catalog_that_changes_keeps_the_focused_channel_and_category(self):
         window = self.ready()
-        window.controls[MENU].selected = 3
+        window.controls[MENU].selected = 6
         window.onClick(MENU)
         window.controls[ROW].selected = 1
         write_list(self.raw())
         os.utime(files.channel_path(), (time.time() + 60, time.time() + 60))
         window._look()
         self.assertEqual((self.shown(window), window.controls[ROW].selected), (["Ten", "Thirty"], 1))
-        self.assertEqual(window.controls[MENU].selected, 3)
+        self.assertEqual(window.controls[MENU].selected, 6)
         write_list(answer(chan(10, "Ten", number=10)))              # the categories are gone: back to the default
         os.utime(files.channel_path(), (time.time() + 90, time.time() + 90))
         window._look()
@@ -1710,6 +1749,109 @@ class Archive(WindowCase):
         self.assertEqual(window.controls[ROW].items[0].props["resume"], "")
 
 
+class Language(WindowCase):
+    """The strings of the window follow the device's language (mediastick_lang): the launcher's Home property, else the file."""
+
+    def raw(self):
+        return answer(chan(10, "Ten", number=10, category=[1], catchup=True,
+                           epg=[prog(NOW - 7200, NOW - 3600, "Old ten", 3), prog(NOW - 600, NOW + 600, "Now ten", 1),
+                                prog(NOW + 600, NOW + 1200, "Then ten", 2)]),
+                      chan(20, "Twenty", number=20, category=[1]), categories=[{"id": 1, "caption": "News"}])
+
+    def window(self, lang, **kw):
+        Fake.now = NOW
+        Fake.home["media-stick.lang"] = lang
+        write_list(self.raw())
+        window = self.open(**kw)
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        return window
+
+    def test_the_language_is_the_launchers_property_then_the_file_then_russian(self):
+        self.assertEqual(files.language(), "en")                                    # the file of these tests
+        for chosen, said in (("ru", "ru"), ("uk", "uk"), ("be", "ru"), ("de", "en"), ("en_US", "en"), ("pl", "pl"), ("xx", "ru")):
+            Fake.home["media-stick.lang"] = chosen
+            self.assertEqual(files.language(), said, chosen)
+        Fake.home.clear()
+        with mock.patch.dict(os.environ), mock.patch("mediastick_lang.DIR", os.path.join(TMP, "nothing")):
+            self.assertEqual(files.language(), "ru")                                  # no choice was ever made
+        with mock.patch.dict(sys.modules, {"mediastick_lang": None}):
+            self.assertEqual(files.language(), "ru")                                  # no library: the device's default
+
+    def test_in_russian_the_menu_the_hint_and_the_chip_are_russian(self):
+        window = self.window("ru", state={"favourites": [], "recent": recent("10"), "last": "10"})
+        menu = window.controls[MENU].items
+        self.assertEqual([i.label for i in menu], ["Продолжить", "Избранное", "Все каналы", "Шоу и сериалы", "Фильмы", "Жанры", "News"])
+        self.assertEqual([i.props["heading"] for i in menu], ["Продолжить  ·  1 канал", "Избранное  ·  0 каналов", "Все каналы  ·  2 канала",
+                                                              "Шоу и сериалы", "Фильмы", "", "News  ·  2 канала"])
+        self.assertEqual(window.getProperty("hint"),
+                         W.hint_line(True, True))
+        for word in ("Смотреть", "Меню", "Избранное", "0-9", "Номер канала", "Вверх", "Программа и продолжение"):
+            self.assertIn(word, window.getProperty("hint"))
+        for word in ("Watch", "Favourite", "Channel number", "Guide and continue"):
+            self.assertNotIn(word, window.getProperty("hint"))
+        self.assertEqual(window.getProperty("chip"), "Вход выполнен")
+        self.assertEqual((window.getProperty("l_catchup"), window.getProperty("l_favourite"), window.getProperty("l_guide")),
+                         ("Архив", "Избранное", "Программа передач"))
+        card = window.controls[ROW].items[0]
+        self.assertEqual((card.props["meta"], card.props["nowline"], card.props["nextline"], card.props["resume"]),
+                         ("Канал 10  ·  News", "Сейчас   07:50 – 08:10", "Далее   08:10 – 08:20   Then ten", ""))
+        self.assertEqual(window.controls[MENU].selected, 0)
+        menu_empty = window.controls[MENU]
+        menu_empty.selected = 1
+        window.onClick(MENU)
+        self.assertTrue(window.getProperty("emptycat").startswith("Избранного пока нет"))
+        self.press(window, 58 + 1)
+        self.assertEqual(window.getProperty("jump"), "Канал 1")
+        self.assertEqual(W.LANG, "ru")
+
+    def test_the_resume_button_and_the_guide_are_russian(self):
+        state = {"favourites": [], "recent": [], "last": "", "resume": {"10": {"epg": "3", "title": "Old ten", "start": NOW - 7200,
+                                                                                  "stop": NOW - 3600, "pos": 900, "at": NOW}}}
+        window = self.window("ru", state=state)
+        self.assertEqual(window.controls[ROW].items[0].props["resume"], "Продолжить с 06:15")
+        window.focus = ROW
+        window._guide_show()
+        self.assertEqual([i.label2 for i in window.controls[GUIDE].items][:1], ["В эфире"])
+
+    def test_in_ukrainian_the_same(self):
+        window = self.window("uk")
+        self.assertEqual([i.label for i in window.controls[MENU].items][:6],
+                         ["Продовжити", "Обране", "Усі канали", "Шоу та серіали", "Фільми", "Жанри"])
+        self.assertEqual((window.getProperty("chip"), window.getProperty("l_retry")), ("Вхід виконано", "Повторити"))
+        self.assertEqual(window.controls[MENU].items[2].props["heading"], "Усі канали  ·  2 канали")
+
+    def test_in_english_and_in_any_language_without_translation_the_strings_are_the_msgids(self):
+        for lang in ("en", "de"):
+            window = self.window(lang)
+            self.assertEqual([i.label for i in window.controls[MENU].items][:6],
+                             ["Continue", "Favourites", "All", "Shows and series", "Films", "Genres"])
+            self.assertEqual((window.getProperty("chip"), window.getProperty("l_guide")), ("Signed in", "Programme guide"))
+            self.assertEqual(window.controls[ROW].items[0].props["meta"], "Channel 10  ·  News")
+            window.stop()
+
+    def test_the_status_and_the_sign_in_card_and_the_notices_are_russian(self):
+        Fake.home["media-stick.lang"] = "ru"
+        window = self.open()                                                    # signed in, no list yet
+        self.assertEqual((window.getProperty("msg_kind"), window.getProperty("msg_title")), ("loading", "Загрузка каналов"))
+        sign(False)
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.SIGNIN))
+        self.assertEqual(window.getProperty("chip"), "Войти")
+        self.assertIn("Вкладка", window.getProperty("phone_step2"))
+        self.assertIn(W.PHONE_TAB, window.getProperty("phone_step2"))
+        sign(True)
+        write_list(self.raw(), age=3 * 3600)
+        stale = self.open()
+        self.assertTrue(wait_for(lambda: stale.mode == D.DATA))
+        self.assertEqual(stale.getProperty("notice"), "Список каналов устарел. Обновляется…")
+        demo = self.open(demo=True)
+        self.assertTrue(wait_for(lambda: demo.mode == D.DATA))
+        self.assertEqual(demo.getProperty("chip"), "Демо")
+        demo.controls[ROW].selected = 0
+        demo.onClick(ROW)
+        self.assertEqual(Fake.notes[-1:], ["Демо: ничего не воспроизводится."])
+
+
 class Demo(WindowCase):
     def test_demo_is_marked_fills_from_the_fixture_and_never_touches_real_data(self):
         write_list(answer(chan(1, "Real")))
@@ -1720,8 +1862,8 @@ class Demo(WindowCase):
             self.assertEqual((window.getProperty("demo"), window.getProperty("chip")), ("1", "Demo"))
             self.assertEqual(len(window.catalog.channels), len(sweettv_demo.names()))
             self.assertEqual([i.label for i in window.controls[MENU].items],
-                             ["Continue", "Favourites", "All", "News", "Movies & Series", "Sport", "Kids",
-                              "Music & Lifestyle", "Documentary", W.tr("Shows and series"), W.tr("Films")])
+                             ["Continue", "Favourites", "All", W.tr("Shows and series"), W.tr("Films"), W.tr("Genres"), "News",
+                              "Movies & Series", "Sport", "Kids", "Music & Lifestyle", "Documentary"])
             self.assertEqual(window.cat_key, D.RECENT)               # it opens on what was watched last, never on a list of sections
             self.assertEqual(self.shown(window)[:2], ["Cinema Nova", "Aurora News 24"])
             self.assertNotIn("Real", self.shown(window))
@@ -1859,18 +2001,39 @@ class Rail(unittest.TestCase):
         return D.parse_catalog(answer(chan(1, "A", category=[7]), chan(2, "B", category=[7, 8]),
                                       categories=[{"id": 7, "caption": "News"}, {"id": 8, "caption": "Films"}]), NOW)
 
-    def test_the_channels_come_first_then_the_shows_and_the_films(self):
+    def test_what_matters_comes_first_then_a_heading_and_the_genres_under_it(self):
         entries = D.rail(self.catalog(), EMPTY_STATE)
-        self.assertEqual([e.key for e in entries], [D.RECENT, D.FAVOURITES, D.ALL, "c:7", "c:8", D.SHOWS, D.FILMS])
-        self.assertEqual([e.group for e in entries], [D.CHANNEL_GROUP] * 5 + [D.SECTION_GROUP] * 2)
-        self.assertEqual([e.name for e in entries[-2:]], ["Shows and series", "Films"])            # msgids: the window translates them
-        self.assertEqual([e.count for e in entries], [0, 0, 2, 2, 1, None, None])                  # the sections are counted when they are made
+        self.assertEqual([e.key for e in entries], [D.RECENT, D.FAVOURITES, D.ALL, D.SHOWS, D.FILMS, D.GENRES, "c:7", "c:8"])
+        self.assertEqual([e.group for e in entries], [D.MAIN_GROUP] * 3 + [D.SECTION_GROUP] * 2 + [D.HEADING_GROUP] + [D.GENRE_GROUP] * 2)
+        self.assertEqual([e.name for e in entries[:6]], ["Continue", "Favourites", "All", "Shows and series", "Films", "Genres"])   # msgids
+        self.assertEqual([e.name for e in entries[6:]], ["News", "Films"])                         # SWEET.TV's own names, as it sends them
+        self.assertEqual([e.count for e in entries], [0, 0, 2, None, None, None, 2, 1])            # the sections are counted when they are made
+        self.assertEqual([e.msgid for e in entries], [True] * 6 + [False] * 2)
+
+    def test_only_the_heading_is_not_focusable_and_it_is_never_first_or_last(self):
+        entries = D.rail(self.catalog(), EMPTY_STATE)
+        self.assertEqual([e.key for e in entries if not e.focusable], [D.GENRES])
+        self.assertTrue(entries[0].focusable and entries[-1].focusable)
+        self.assertEqual([e.key for e in D.rail(demo_catalog(), EMPTY_STATE) if not e.focusable], [D.GENRES])
+
+    def test_without_genres_there_is_no_heading(self):
+        catalog = D.parse_catalog(answer(chan(1, "A")), NOW)
+        self.assertEqual([e.key for e in D.rail(catalog, EMPTY_STATE)], [D.RECENT, D.FAVOURITES, D.ALL, D.SHOWS, D.FILMS])
+
+    def test_the_cursor_steps_over_the_heading_in_the_direction_of_the_key(self):
+        entries = D.rail(self.catalog(), EMPTY_STATE)
+        heading = [e.key for e in entries].index(D.GENRES)
+        self.assertEqual(D.next_focusable(entries, heading, 1), heading + 1)                 # down: the first genre
+        self.assertEqual(D.next_focusable(entries, heading, -1), heading - 1)                # up: Films
+        self.assertEqual(D.next_focusable(entries, 0, 1), 0)                                 # an entry stays
+        self.assertEqual(D.next_focusable(entries[:6], 5, 1), 4)                             # nothing that way: back
+        self.assertEqual(D.next_focusable([], 0, 1), 0)
 
     def test_the_counts_of_the_sections_come_in_once_they_are_known(self):
         entries = D.rail(self.catalog(), EMPTY_STATE, (12, 3))
-        self.assertEqual([(e.key, e.count) for e in entries[-2:]], [(D.SHOWS, 12), (D.FILMS, 3)])
-        self.assertEqual([e.count for e in entries[:-2]], [0, 0, 2, 2, 1])
-        self.assertEqual([e.count for e in D.rail(self.catalog(), EMPTY_STATE, (0, 0))[-2:]], [0, 0])         # none is a count too
+        self.assertEqual([(e.key, e.count) for e in entries[3:5]], [(D.SHOWS, 12), (D.FILMS, 3)])
+        self.assertEqual([e.count for e in entries[:3] + entries[6:]], [0, 0, 2, 2, 1])
+        self.assertEqual([e.count for e in D.rail(self.catalog(), EMPTY_STATE, (0, 0))[3:5]], [0, 0])         # none is a count too
 
     def test_every_entry_has_its_own_key_and_the_sections_are_no_channel_category(self):
         keys = [e.key for e in D.rail(self.catalog(), EMPTY_STATE)]
@@ -2113,12 +2276,12 @@ class SectionWindow(WindowCase):
 
     def test_the_menu_ends_with_the_two_sections_and_the_window_opens_on_the_channels_not_on_a_list(self):
         window = self.home()
-        self.assertEqual([e.key for e in window.entries][-2:], [D.SHOWS, D.FILMS])
+        self.assertEqual([e.key for e in window.entries][3:5], [D.SHOWS, D.FILMS])      # right after All, not 25 presses down
         items_ = window.controls[MENU].items
-        self.assertEqual([i.label for i in items_][-2:], [W.tr("Shows and series"), W.tr("Films")])
-        self.assertEqual([i.props["section"] for i in items_], [""] * (len(items_) - 2) + ["1", "1"])
-        self.assertEqual([i.label2 for i in items_][-2:], ["", ""])             # not counted until they are made
-        self.assertEqual([i.props["heading"] for i in items_][-2:], [W.tr("Shows and series"), W.tr("Films")])
+        self.assertEqual([i.label for i in items_][3:5], [W.tr("Shows and series"), W.tr("Films")])
+        self.assertEqual([i.props["section"] for i in items_], [""] * 3 + ["1", "1"] + [""] * (len(items_) - 5))
+        self.assertEqual([i.label2 for i in items_][3:5], ["", ""])             # not counted until they are made
+        self.assertEqual([i.props["heading"] for i in items_][3:5], [W.tr("Shows and series"), W.tr("Films")])
         self.assertEqual((window.row_kind, window.cat_key, window.focus, window.getProperty("hint")),
                          (sweettv_shelf.CHANNELS, D.ALL, ROW, W.hint_line(window.numbered, window.archive_any)))
         self.assertEqual(len(window.controls[ROW].items), 5)
@@ -2170,7 +2333,7 @@ class SectionWindow(WindowCase):
         for word in ("Open", "Back"):
             self.assertIn(W.tr(word), window.getProperty("hint"))
         self.assertEqual(window.getProperty("emptycat"), "")
-        self.assertEqual([i.props["active"] for i in window.controls[MENU].items].index("1"), len(window.entries) - 2)
+        self.assertEqual([i.props["active"] for i in window.controls[MENU].items].index("1"), [e.key for e in window.entries].index(D.SHOWS))
 
     def test_while_a_list_is_made_the_row_is_empty_and_says_loading(self):
         gate, real = threading.Event(), SEC.Library.load
@@ -2312,10 +2475,10 @@ class SectionWindow(WindowCase):
     def test_the_counts_in_the_menu_appear_once_the_lists_have_been_made(self):
         window = self.home()
         self.go(window, D.SHOWS)
-        self.assertTrue(wait_for(lambda: [i.label2 for i in window.controls[MENU].items][-2:] == ["12", "12"]))
-        self.assertEqual([i.props["heading"] for i in window.controls[MENU].items][-2:],
+        self.assertTrue(wait_for(lambda: [i.label2 for i in window.controls[MENU].items][3:5] == ["12", "12"]))
+        self.assertEqual([i.props["heading"] for i in window.controls[MENU].items][3:5],
                          [f"{W.tr('Shows and series')}  ·  12", f"{W.tr('Films')}  ·  12"])
-        self.assertEqual([e.count for e in window.entries][-2:], [12, 12])
+        self.assertEqual([e.count for e in window.entries][3:5], [12, 12])
 
     def test_no_shows_and_no_films_say_so(self):
         write_list(answer(cast(10, [prog(T - 600, T + 600, "Live only", 201)], name="Ten", catchup=False)))
@@ -2652,7 +2815,7 @@ class SectionPages(WindowCase):
         self.assertEqual(self.kept("shows").value["total"], 12)
         window.stop()
         again = self.home()
-        self.assertEqual([i.label2 for i in again.controls[MENU].items][-2:], ["12", "12"])      # the menu has their numbers at launch
+        self.assertEqual([i.label2 for i in again.controls[MENU].items][3:5], ["12", "12"])      # the menu has their numbers at launch
         with mock.patch.object(files, "read_raw", side_effect=AssertionError("the file is read")):
             self.card(again, "shows")
             self.assertEqual((self.labels(again), again.getProperty("emptycat"), again.focus), (titles, "", ROW))   # before any worker
@@ -2832,7 +2995,7 @@ class SectionPages(WindowCase):
             self.assertEqual((handle.stored, handle.failed, handle.note), (["shows", "films"], 0, ""))
             self.assertEqual([self.kept(k).value["total"] for k in ("shows", "films")], [12, 12])
             self.assertEqual(self.kept(PG.COUNTS).value, PG.counts_value(12, 12))
-            self.assertTrue(wait_for(lambda: [i.label2 for i in window.controls[MENU].items][-2:] == ["12", "12"]))
+            self.assertTrue(wait_for(lambda: [i.label2 for i in window.controls[MENU].items][3:5] == ["12", "12"]))
             self.assertTrue(wait_for(lambda: not window.library.loaded), "nobody is looking at the lists: the index goes")
             self.assertEqual((window.row_kind, window.cat_key), (sweettv_shelf.CHANNELS, D.ALL))     # and the row never moved
 
@@ -2891,7 +3054,9 @@ class SectionWords(unittest.TestCase):
                     if isinstance(node, ast.Call) and node.args and \
                             (getattr(node.func, "id", None) == "tr" or getattr(node.func, "attr", None) == "tr"):
                         found |= {n.value for n in ast.walk(node.args[0]) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
-        found |= {D.SHOWS_NAME, D.FILMS_NAME, sweettv_shelf.LOAD_FAILED}        # said through tr() by a caller that is not a literal
+        found |= {D.SHOWS_NAME, D.FILMS_NAME, D.GENRES_NAME, D.RECENT_NAME, D.FAVOURITES_NAME, D.ALL_NAME, sweettv_shelf.LOAD_FAILED,
+                  sweettv_app.STALE_NOTICE, W.TRYING, *W.ERRORS.values(),
+                  *(D.empty_category_text(key) for key in (D.FAVOURITES, D.RECENT, D.ALL))}      # said through tr() by a caller that is not a literal
         return found
 
     def test_every_msgid_has_russian_and_ukrainian_with_the_same_placeholders(self):
@@ -2907,6 +3072,59 @@ class SectionWords(unittest.TestCase):
         self.assertLessEqual({"Loading…", "Soon", "Not in the archive", "Airings: {n}", "Season {n}", "Latest episode", "Episodes: {n}"}, found)
         for gone in ("What to watch?", "Channels: {n}", "Shows: {n}", "Films: {n}", "Episode {n}"):      # the home screen's words
             self.assertNotIn(gone, W.TEXT, gone)
+
+    def test_channels_are_counted_in_the_three_forms_of_russian_and_ukrainian(self):
+        def counted(lang, n):
+            with mock.patch.object(W, "LANG", lang):
+                return W.tr_n(n, "{n} channel", "{n} channels")
+        self.assertEqual([counted("en", n) for n in (0, 1, 2)], ["0 channels", "1 channel", "2 channels"])
+        self.assertEqual([counted("ru", n) for n in (0, 1, 2, 4, 5, 11, 12, 21, 22, 25, 101, 111)],
+                         ["0 каналов", "1 канал", "2 канала", "4 канала", "5 каналов", "11 каналов", "12 каналов", "21 канал",
+                          "22 канала", "25 каналов", "101 канал", "111 каналов"])
+        self.assertEqual([counted("uk", n) for n in (1, 2, 5, 11, 21, 24)],
+                         ["1 канал", "2 канали", "5 каналів", "11 каналів", "21 канал", "24 канали"])
+        self.assertEqual(counted("pl", 3), "3 channels")                  # a language without a translation reads the English
+        forms = [W.TEXT["{n} channels"][lang].split("|") for lang in ("ru", "uk")]
+        self.assertEqual([len(f) for f in forms], [3, 3])
+        self.assertTrue(all("{n}" in f for fs in forms for f in fs))
+
+    def test_the_episode_is_numbered_in_the_language(self):
+        episode = {"season": 1, "episode": 3, "title": "", "available": True, "start": 0, "stop": 0}
+        said = {}
+        for lang in ("en", "ru", "uk", "pl"):
+            with mock.patch.object(W, "LANG", lang):
+                said[lang] = (SEC.episode_title(episode), SEC.episode_title({**episode, "season": 0}),
+                              SEC.episode_title({**episode, "episode": 0, "title": "Name"}))
+        self.assertEqual(said["en"], ("S1 E3", "E3", "S1  ·  Name"))
+        self.assertEqual(said["ru"], ("С1 Э3", "Э3", "С1  ·  Name"))
+        self.assertEqual(said["uk"], ("С1 Е3", "Е3", "С1  ·  Name"))            # the Ukrainian E is the Cyrillic one
+        self.assertEqual(said["pl"], said["en"])
+
+    def test_every_word_of_the_fixed_places_has_a_translation_that_fits(self):
+        def width(text, size):
+            return textfit.text_px(re.sub(r"\[/?COLOR[^]]*\]", "", text), size)
+        english = W.labels()
+        for lang in ("ru", "uk"):
+            with mock.patch.object(W, "LANG", lang):
+                for key, text in W.labels().items():
+                    self.assertNotEqual(text, english[key], (lang, key))
+                self.assertLessEqual(width(W.labels()["l_catchup"], 22), 130, lang)                  # the chips
+                self.assertLessEqual(width(W.labels()["l_favourite"], 22), 124, lang)
+                self.assertLessEqual(width(W.labels()["l_guide"], 25), 260, lang)                   # the button of 280
+                self.assertLessEqual(width(W.labels()["l_guide_help"], 22), 1000, lang)
+                self.assertLessEqual(width(W.chip(False, True), 22), 180, lang)                     # the account chip of 200
+                self.assertLessEqual(width(W.tr("Demo").upper(), 34), 110, lang)                    # the badge of 130
+                self.assertLessEqual(width(W.hint_line(True, True), 22), 1200, lang)                # the line of key hints
+                self.assertLessEqual(width(V.resume_label({"start": NOW, "pos": 3599}), 25), 340, lang)    # the button of 380
+                for name in (D.RECENT_NAME, D.FAVOURITES_NAME, D.ALL_NAME, D.SHOWS_NAME, D.FILMS_NAME):
+                    self.assertLessEqual(width(W.tr(name), 28), 226, (lang, name))                   # the menu's label
+                    self.assertLessEqual(width(V.category_heading(W.tr(name), 300), 25), 760, (lang, name))
+                self.assertLessEqual(width(W.tr(D.GENRES_NAME).upper(), 22), 264, lang)             # the small heading
+                for text in (W.now_line("22:10 – 23:00"), W.next_line("23:00 – 23:50", "")):
+                    self.assertLessEqual(width(text, 25), 700, (lang, text))
+                for key in (D.FAVOURITES, D.RECENT, "c:1"):
+                    self.assertLessEqual(width(W.tr(D.empty_category_text(key)), 32), 1400, (lang, key))
+                self.assertLessEqual(width(W.tr(sweettv_app.STALE_NOTICE), 22), 560, lang)           # the notice of 566
 
     def test_the_names_and_the_notes_fit_where_the_skin_draws_them(self):
         for lang in ("ru", "uk"):
@@ -3005,7 +3223,7 @@ class Skin(unittest.TestCase):
         text = ET.tostring(self.tree(), encoding="unicode")
         containers = set(re.findall(r"Container\((\d+)\)", text))
         self.assertEqual(containers, {str(MENU), str(ROW)})
-        for prop in ("nowrange", "now", "pbar", "desc", "nextrange", "meta", "bg", "title", "cap", "line"):
+        for prop in ("nowline", "now", "pbar", "desc", "nextline", "meta", "bg", "title", "cap", "line"):
             self.assertIn(f"Container({ROW}).ListItem.Property({prop})", text, prop)
         self.assertIn(f"Container({MENU}).ListItem.Property(heading)", text)
 
@@ -3051,8 +3269,9 @@ class Skin(unittest.TestCase):
     def test_demo_is_marked_on_screen_only_in_the_demo(self):
         root = self.tree()
         parent = {child: node for node in root.iter() for child in node}
-        marks = [n for n in root.iter("label") if "demo" in (n.text or "").lower() and "$" not in n.text]
-        self.assertEqual([n.text for n in marks], ["DEMO"])      # the one literal "Demo" on the screen
+        self.assertEqual([n.text for n in root.iter("label") if "demo" in (n.text or "").lower() and "$" not in n.text], [])
+        marks = [n for n in root.iter("label") if (n.text or "") == "[UPPERCASE]$INFO[Window.Property(chip)][/UPPERCASE]"]
+        self.assertEqual(len(marks), 1)                          # the one badge: the account chip's word, in capitals
         gates, node = [], parent[marks[0]]
         while node is not None:                                  # and every condition on the way up to it
             if node.findtext("visible"):
@@ -3125,7 +3344,8 @@ class Skin(unittest.TestCase):
     def test_the_menu_pill_is_white_only_with_the_focus_and_dim_otherwise(self):
         focused = self.control(self.tree(), MENU).find("focusedlayout")
         pills = {c.findtext("visible"): c.findtext("colordiffuse") for c in focused.iter("control") if c.get("type") == "image"}
-        self.assertEqual(pills, {"Control.HasFocus(100)": "FFFFFFFF", "!Control.HasFocus(100)": "26FFFFFF"})
+        caption = "String.IsEmpty(ListItem.Property(caption))"                                  # the heading of the genres has no pill
+        self.assertEqual(pills, {f"Control.HasFocus(100) + {caption}": "FFFFFFFF", f"!Control.HasFocus(100) + {caption}": "26FFFFFF"})
         frame = [c for c in self.control(self.tree(), ROW).find("focusedlayout").iter("control")
                  if "card-glow" in (c.findtext("texture") or "")]
         self.assertEqual([c.findtext("visible") for c in frame], ["Control.HasFocus(200)"])       # the white frame of the launcher
@@ -3209,7 +3429,7 @@ class Skin(unittest.TestCase):
         for prop in ("plate", "plate_hi", "initials", "dim", "fav", "bar"):
             self.assertIn(f"ListItem.Property({prop})", text, prop)
         everything = ET.tostring(root, encoding="unicode")
-        for prop in ("title", "meta", "cap", "line", "now", "nowrange", "desc", "next"):
+        for prop in ("title", "meta", "cap", "line", "now", "nowline", "desc", "nextline"):
             self.assertIn(f"Container({ROW}).ListItem.Property({prop})", everything, prop)
         dim = [c for layout in (row.find("itemlayout"), row.find("focusedlayout")) for c in layout.iter("control")
                if c.get("type") == "label" and "Property(dim)" in (c.findtext("visible") or "")]
@@ -3225,8 +3445,24 @@ class Skin(unittest.TestCase):
             self.assertIn("!String.IsEmpty(ListItem.Property(section))", amber[0].findtext("visible"))
             self.assertGreaterEqual(len(names), 2)                                        # and the others draw the rest
         focused = [c for c in menu.find("focusedlayout").iter("control") if c.get("type") == "label" and
-                   c.findtext("visible") == "Control.HasFocus(100)" and c.findtext("label") == "$INFO[ListItem.Label]"]
+                   (c.findtext("visible") or "").startswith("Control.HasFocus(100)") and c.findtext("label") == "$INFO[ListItem.Label]"]
         self.assertEqual([c.findtext("textcolor") for c in focused], ["FF000000"])      # on the white pill every name is dark
+
+    def test_the_heading_of_the_genres_is_a_small_dim_line_that_the_pills_and_the_names_leave_alone(self):
+        menu = self.control(self.tree(), MENU)
+        for layout in (menu.find("itemlayout"), menu.find("focusedlayout")):
+            small = [c for c in layout.iter("control") if "!String.IsEmpty(ListItem.Property(caption))" == c.findtext("visible")]
+            self.assertEqual([(c.findtext("font"), c.findtext("textcolor")) for c in small], [("Reg22", "80FFFFFF")])
+            for c in layout.iter("control"):                       # every name drawn for an entry is not drawn for the heading
+                shown = c.findtext("visible") or ""
+                if c.get("type") == "label" and c.findtext("label") == "$INFO[ListItem.Label]" and c not in small:
+                    self.assertTrue("Property(caption)" in shown or "!String.IsEmpty(ListItem.Property(section))" in shown, shown)
+
+    def test_the_skin_has_no_words_of_its_own(self):
+        for node in self.tree().iter("label"):
+            self.assertTrue(not (node.text or "").strip() or "$" in node.text or node.text == "SWEET.TV", node.text)
+        found = set(re.findall(r"Window\.Property\((l_\w+)\)", ET.tostring(self.tree(), encoding="unicode")))
+        self.assertEqual(found, set(W.labels()))                  # each fixed label of the skin is said by the Python, and each one is used
 
     def test_the_message_of_an_empty_row_is_drawn_in_the_row_and_the_info_over_it_is_made_of_the_cards_properties(self):
         root = self.tree()

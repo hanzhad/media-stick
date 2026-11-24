@@ -4,7 +4,7 @@ A mixin of the window (sweettv_app.SweetTV), kept apart to keep that file small.
 has: _lock, _prop, _later, _cancel, _fill_row, _focus_on, getControl, and the attributes catalog, shown,
 digits and GRID_ID (the row). The choices (which digit, which channel, when to wait) are in sweettv_data.
 """
-from resources.lib import sweettv_data as data
+from resources.lib import sweettv_data as data, sweettv_text as words
 
 
 class DigitJump:
@@ -14,7 +14,7 @@ class DigitJump:
             self._cancel("digits")
             if not self.digits:
                 return
-            self._prop("jump", f"Channel {self.digits}")
+            self._prop("jump", words.tr("Channel {n}").format(n=self.digits))
             if data.could_grow(self.catalog.channels, self.digits):
                 self._later("digits", data.DIGIT_WAIT, self._digits_commit)
             else:
@@ -32,7 +32,7 @@ class DigitJump:
             channel = data.channel_numbered(self.catalog.channels, typed) if typed and self.catalog else None
             if channel is None:
                 if typed:
-                    self._prop("jump", f"No channel {typed}")
+                    self._prop("jump", words.tr("No channel {n}").format(n=typed))
                     self._later("digits", data.DIGIT_WAIT, lambda: self._prop("jump", ""))
                 return
             self._prop("jump", "")

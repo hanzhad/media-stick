@@ -8,11 +8,10 @@ import time
 import zlib
 from typing import NamedTuple, Optional
 
-from resources.lib import sweettv_data as data
+from resources.lib import sweettv_data as data, sweettv_text as words
 
 TINTS = ("FF5B6EE1", "FF2E9E8F", "FFC4623B", "FF8E5CC4", "FFB5497A", "FF4F8F3A", "FF3F7FBF", "FFB0852B")
 PLATE, PLATE_HI, GROUND = "FF1B222E", "FF2C3649", "FF0A0E14"    # a card, the focused card, the screen
-NO_PROGRAMMES = "No programme information"
 
 
 class GuideRow(NamedTuple):
@@ -96,7 +95,7 @@ def resume_for(state, channel, now) -> Optional[dict]:
 
 def resume_label(entry) -> str:
     """"Continue from 23:10": the clock time of the programme at the place it stopped."""
-    return f"Continue from {data.hhmm(entry['start'] + entry['pos'])}"
+    return words.tr("Continue from {time}").format(time=data.hhmm(entry["start"] + entry["pos"]))
 
 
 # ---- a channel -------------------------------------------------------------------------------
@@ -105,7 +104,7 @@ def card_props(channel, now, favourite=False, cat_names=None, resume=None) -> di
     """The strings the skin shows for a channel: the card and the preview. `cat_names` maps category key -> name,
     `resume` is the saved place of an archived programme (see resume_for) or None."""
     current, following = data.now_next(channel, now)
-    meta = [f"Channel {channel.number}"] if channel.number else []
+    meta = [words.tr("Channel {n}").format(n=channel.number)] if channel.number else []
     meta += [cat_names[f"c:{k}"] for k in channel.cats if cat_names and f"c:{k}" in cat_names][:2]
     step = data.progress_step(current, now)
     return {
@@ -113,13 +112,13 @@ def card_props(channel, now, favourite=False, cat_names=None, resume=None) -> di
         "title": channel.name,
         "num": str(channel.number) if channel.number else "",
         "initials": initials(channel.name),
-        "now": current.title if current else NO_PROGRAMMES,
-        "nowrange": data.time_range(current) if current else "",
+        "now": current.title if current else words.tr("No programme information"),
+        "nowline": words.now_line(data.time_range(current) if current else ""),
         "bar": data.bar_name(step) if current else "",
         "pbar": data.bar_name(step, wide=True) if current else "",
         "desc": current.desc if current else "",
         "next": following.title if following else "",
-        "nextrange": data.time_range(following) if following else "",
+        "nextline": words.next_line(data.time_range(following), following.title) if following else "",
         "meta": "  ·  ".join(meta),
         "fav": "1" if favourite else "",
         "catchup": "1" if channel.catchup else "",
@@ -130,7 +129,7 @@ def card_props(channel, now, favourite=False, cat_names=None, resume=None) -> di
 
 def category_heading(name, count) -> str:
     """The line over the preview: the category and how many channels it holds."""
-    return f"{name}  ·  {count} channel{'' if count == 1 else 's'}"
+    return f"{name}  ·  {words.tr_n(count, '{n} channel', '{n} channels')}"
 
 
 def section_heading(name, count) -> str:

@@ -25,10 +25,10 @@ PLAY_URL = "plugin://plugin.video.sweettv/playvid/{cid}|{epg}"    # live: epg is
 HIDDEN_CATEGORY = 1000          # the plugin's own playlist export leaves this one out too
 
 ALL, RECENT, FAVOURITES = "all", "recent", "fav"
-SHOWS, FILMS = "shows", "films"          # the rail's two entries after the channel categories: what the carousel holds then
-CHANNEL_GROUP, SECTION_GROUP = "channels", "sections"
-RECENT_NAME = "Continue"        # the menu's name for the channels watched last
-SHOWS_NAME, FILMS_NAME = "Shows and series", "Films"      # msgids (sweettv_text): the menu's names for the two sections
+SHOWS, FILMS, GENRES = "shows", "films", "genres"    # the rail's entries of what the carousel holds besides channels, and the heading of the genres
+MAIN_GROUP, SECTION_GROUP, HEADING_GROUP, GENRE_GROUP = "main", "sections", "heading", "genres"   # the rail's kinds of entries
+RECENT_NAME, FAVOURITES_NAME, ALL_NAME = "Continue", "Favourites", "All"    # msgids (sweettv_text): the menu's names of the channel lists
+SHOWS_NAME, FILMS_NAME, GENRES_NAME = "Shows and series", "Films", "Genres"
 DATA, SIGNIN, EMPTY = "data", "signin", "empty"      # what the window shows
 
 KEEP_PAST = 2 * 3600            # s of finished programmes kept on a channel without a catch-up archive
@@ -75,8 +75,19 @@ class Catalog(NamedTuple):
 class RailEntry(NamedTuple):
     key: str
     name: str
-    count: Optional[int]        # None: not counted yet (the shows and the films are counted when their lists have been made)
-    group: str = CHANNEL_GROUP
+    count: Optional[int]        # None: not counted yet (the shows and the films are counted when their lists have been made); a heading has none
+    group: str = GENRE_GROUP
+
+    @property
+    def focusable(self) -> bool:
+        """A heading only names the entries under it: the cursor never rests on it."""
+        return self.group != HEADING_GROUP
+
+    @property
+    def msgid(self) -> bool:
+        """Whether `name` is our own English text, to be said through sweettv_text.tr (a genre's name is SWEET.TV's, already in
+        the account's language)."""
+        return self.group != GENRE_GROUP
 
 
 EMPTY_CATALOG = Catalog((), (), 0)
@@ -281,18 +292,35 @@ def recent_ids(state) -> list:
 
 
 def rail(catalog, state, counts=None) -> list:
-    """The menu on the left, in two groups: the channels (Continue, what was watched last; Favourites; All; then the
-    categories of the data), then "Shows and series" and "Films", whose cards the carousel shows instead of channels.
-    `counts` is (shows, films) once known, None until then."""
+    """The menu on the left, the entries that matter first so that nobody has to press down 25 times: Continue (what was
+    watched last), Favourites, All, then "Shows and series" and "Films" (whose cards the carousel shows instead of channels),
+    then a heading and under it the genres of the data (SWEET.TV has about 18). The heading is not focusable (see
+    next_focusable) and is left out when there are no genres. `counts` is (shows, films) once known, None until then."""
     ids = {c.cid for c in catalog.channels}
     favourites = [c for c in state["favourites"] if c in ids]
     recent = [c for c in recent_ids(state) if c in ids]
-    out = [RailEntry(RECENT, RECENT_NAME, len(recent)), RailEntry(FAVOURITES, "Favourites", len(favourites)),
-           RailEntry(ALL, "All", len(catalog.channels))]
+    shows, films = counts if counts else (None, None)
+    out = [RailEntry(RECENT, RECENT_NAME, len(recent), MAIN_GROUP), RailEntry(FAVOURITES, FAVOURITES_NAME, len(favourites), MAIN_GROUP),
+           RailEntry(ALL, ALL_NAME, len(catalog.channels), MAIN_GROUP), RailEntry(SHOWS, SHOWS_NAME, shows, SECTION_GROUP),
+           RailEntry(FILMS, FILMS_NAME, films, SECTION_GROUP)]
+    if catalog.categories:
+        out.append(RailEntry(GENRES, GENRES_NAME, None, HEADING_GROUP))
     for key, name in catalog.categories:
         out.append(RailEntry(key, name, sum(1 for c in catalog.channels if key[2:] in c.cats)))
-    shows, films = counts if counts else (None, None)
-    return out + [RailEntry(SHOWS, SHOWS_NAME, shows, SECTION_GROUP), RailEntry(FILMS, FILMS_NAME, films, SECTION_GROUP)]
+    return out
+
+
+def next_focusable(entries, position, step) -> int:
+    """Where the cursor of the menu goes when it lands on `position` and the key was up (-1) or down (+1): on, in that
+    direction, to the first entry that can have the cursor; back the other way when there is none that way; where it is
+    when nothing can."""
+    for direction in (step, -step):
+        i = position
+        while 0 <= i < len(entries) and not entries[i].focusable:
+            i += direction
+        if 0 <= i < len(entries):
+            return i
+    return position
 
 
 def channels_for(catalog, key, state) -> list:
@@ -315,6 +343,7 @@ def default_category(catalog, state) -> str:
 
 
 def empty_category_text(key) -> str:
+    """What the empty row says, as a msgid (sweettv_text.TEXT): this module is the phone page's too and has no language."""
     if key == FAVOURITES:
         return "No favourites yet. Press the menu key on a channel to add it."
     if key == RECENT:

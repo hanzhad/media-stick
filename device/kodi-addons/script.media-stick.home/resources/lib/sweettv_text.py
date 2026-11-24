@@ -1,7 +1,8 @@
 """SWEET.TV app: the words on the screen. Ready data in, strings out; nothing here touches Kodi.
 
-The row of key hints, the status card (loading, empty, error), the steps for signing in on the phone, and the
-account chip. What is said about a channel is in sweettv_view.
+The row of key hints, the status card (loading, empty, error), the steps for signing in on the phone, the account chip, and
+the fixed labels of the skin. What is said about a channel is in sweettv_view. Every string goes through tr() (see the
+end of this file): the language is the device's, set once when the window is made (set_language).
 """
 from typing import NamedTuple
 
@@ -13,21 +14,40 @@ ACCENT, RED, DIM = "FFFFC857", "FFFF6B5E", "99FFFFFF"      # the skin's amber, a
 def hint_line(numbered, archive=False) -> str:
     """The key hints at the top: each key in the accent colour, then what it does. The number keys are left out
     when no channel has a number (they would do nothing), the archive keys when no channel has an archive."""
-    keys = [("OK", "Watch"), ("Menu", "Favourite")] + ([("0-9", "Channel number")] if numbered else [])
-    keys += [("Up", "Guide and continue")] if archive else []
+    keys = [("OK", tr("Watch")), (tr("Menu"), tr("Favourite"))] + ([("0-9", tr("Channel number"))] if numbered else [])
+    keys += [(tr("Up"), tr("Guide and continue"))] if archive else []
     return "        ".join(f"[COLOR {ACCENT}]{key}[/COLOR]  {what}" for key, what in keys)
 
 
 def section_hint(kind) -> str:
     """The key hints while the row of cards holds something that is not channels: the shows ("shows"), the episodes of a
     show and the films ("episodes", "films"). Only the keys of a remote: OK and Back."""
-    what = "Open" if kind == "shows" else "Watch"
-    return "        ".join(f"[COLOR {ACCENT}]{key}[/COLOR]  {tr(text)}" for key, text in (("OK", what), ("Back", "Back")))
+    what = tr("Open") if kind == "shows" else tr("Watch")
+    return "        ".join(f"[COLOR {ACCENT}]{key}[/COLOR]  {text}" for key, text in (("OK", what), (tr("Back"), tr("Go back"))))
 
 
 def chip(demo, signed) -> str:
     """The account chip top left. "Demo" only when the screen runs as the demo."""
-    return "Demo" if demo else "Signed in" if signed else "Sign in"
+    return tr("Demo") if demo else tr("Signed in") if signed else tr("Sign in")
+
+
+def labels() -> dict:
+    """The fixed labels of the skin, as window properties (the skin has no text of its own: it is in the device's language)."""
+    return {"l_catchup": tr("Catch-up"), "l_favourite": tr("Favourite"),
+            "l_guide": tr("Programme guide"), "l_guide_help": tr("OK plays the programme. Back closes the guide."),
+            "l_signin_title": tr("Sign in on your phone"), "l_signin_sub": tr("Live TV and the channel guide"),
+            "l_scan": tr("Scan to open the phone page"), "l_code": tr("Or sign in here with a code"),
+            "l_press_ok": tr("Press OK. Back returns to Home."), "l_retry": tr("Try again")}
+
+
+def now_line(span) -> str:
+    """"Now   22:10 – 23:00" over the title of a programme; "" when there is no time to say."""
+    return f"{tr('Now')}   {span}" if span else ""
+
+
+def next_line(span, title) -> str:
+    """"Next   23:00 – 23:50   Title"; "" when nothing comes next."""
+    return f"{tr('Next')}   {span}   {title}" if span else ""
 
 
 # ---- signed out: sign in on the phone --------------------------------------------------------
@@ -40,10 +60,10 @@ def short_url(url) -> str:
 def phone_steps(url) -> dict:
     """Window properties of the sign-in card: the three steps. `url` is the phone page ("" when offline)."""
     shown = short_url(url)
-    return {"phone_step1": "1    On your phone, open" if shown else "1    Connect the stick to a network first",
+    return {"phone_step1": tr("1    On your phone, open") if shown else tr("1    Connect the stick to a network first"),
             "phone_url": shown,
-            "phone_step2": f"2    Tab  {PHONE_TAB}  >  SWEET.TV",     # ">", not an arrow: the skin's font has no glyph for it
-            "phone_step3": "3    Sign in there: the channels appear here by themselves."}
+            "phone_step2": tr("2    Tab  {tab}  >  SWEET.TV").format(tab=PHONE_TAB),     # ">", not an arrow: the skin's font has no glyph for it
+            "phone_step3": tr("3    Sign in there: the channels appear here by themselves.")}
 
 
 # ---- signed in, nothing to show --------------------------------------------------------------
@@ -57,7 +77,7 @@ class Status(NamedTuple):
     note: str                   # the last line: what happens next
 
 
-ERRORS = {
+ERRORS = {                      # msgids: status() says them through tr()
     "service": "SWEET.TV answered with an error. Check the internet connection and that the account is signed in.",
     "format": "The channel list is not in the shape this screen knows. SWEET.TV may have changed it.",
     "unreadable": "The channel list cannot be read. SWEET.TV writes it again every 15 minutes.",
@@ -71,23 +91,33 @@ def status(error, has_file, unreadable, waited) -> Status:
     `waited` the seconds this screen has been waiting for a first list."""
     if error or ((not has_file or unreadable) and waited > WAIT_LIMIT):
         key = error if error else "unreadable" if has_file else "missing"
-        return Status("error", "!", RED, "Cannot load the channels", ERRORS.get(key, ERRORS["format"]), TRYING)
+        text = ERRORS.get(key, ERRORS["format"])
+        return Status("error", "!", RED, tr("Cannot load the channels"), tr(text), tr(TRYING))
     if not has_file or unreadable:
-        return Status("loading", "…", ACCENT, "Loading channels",
-                      "SWEET.TV is fetching the channel list. After signing in this takes a minute or two.",
-                      "Checking again every few seconds. Back returns to Home.")
-    return Status("empty", "0", DIM, "No channels yet",
-                  "The channel list is empty. SWEET.TV may still be loading it, or the account has none.",
-                  "Back returns to Home.")
+        return Status("loading", "…", ACCENT, tr("Loading channels"),
+                      tr("SWEET.TV is fetching the channel list. After signing in this takes a minute or two."),
+                      tr("Checking again every few seconds. Back returns to Home."))
+    return Status("empty", "0", DIM, tr("No channels yet"),
+                  tr("The channel list is empty. SWEET.TV may still be loading it, or the account has none."),
+                  tr("Back returns to Home."))
 
 
 # ---- translations ----------------------------------------------------------------------------
 # Every string a person sees goes through tr(msgid): the msgid is the English text as written in the code, the
-# translations are here, in one place. Until the language setting exists tr() answers in Russian where it has a
-# translation and in English where it has none; mediastick_lang.text(msgid, lang) will replace it without a change
-# in the callers.
+# translations are here, in one place. The language is the device's (the phone's "Language", mediastick_lang): the window
+# asks sweettv_files.language() when it is made and calls set_language(). Russian and Ukrainian are translated; any other
+# language reads the English msgid.
 
-LANG = "ru"
+DEFAULT_LANG = "ru"
+LANG = DEFAULT_LANG
+
+
+def set_language(code):
+    """The language of every string from now on: "ru", "uk", or another code, which reads English."""
+    global LANG
+    LANG = code if isinstance(code, str) and code else DEFAULT_LANG
+
+
 TEXT = {
     "Live": {"ru": "В эфире", "uk": "В ефірі"},
     "Back to live": {"ru": "К эфиру", "uk": "До ефіру"},
@@ -141,9 +171,108 @@ TEXT = {
     "Open": {"ru": "Открыть", "uk": "Відкрити"},
     "Watch": {"ru": "Смотреть", "uk": "Дивитися"},
     "Back": {"ru": "Назад", "uk": "Назад"},
+    # the menu on the left, the line over the cards and the key hints
+    "Continue": {"ru": "Продолжить", "uk": "Продовжити"},
+    "Favourites": {"ru": "Избранное", "uk": "Обране"},
+    "All": {"ru": "Все каналы", "uk": "Усі канали"},
+    "Genres": {"ru": "Жанры", "uk": "Жанри"},
+    "{n} channels": {"ru": "{n} канал|{n} канала|{n} каналов", "uk": "{n} канал|{n} канали|{n} каналів"},   # one|few|many
+    "Menu": {"ru": "Меню", "uk": "Меню"},
+    "Up": {"ru": "Вверх", "uk": "Вгору"},
+    "Favourite": {"ru": "Избранное", "uk": "Обране"},
+    "Channel number": {"ru": "Номер канала", "uk": "Номер каналу"},
+    "Guide and continue": {"ru": "Программа и продолжение", "uk": "Програма й продовження"},
+    "Go back": {"ru": "Вернуться", "uk": "Повернутися"},
+    # a channel
+    "Channel {n}": {"ru": "Канал {n}", "uk": "Канал {n}"},
+    "No channel {n}": {"ru": "Нет канала {n}", "uk": "Немає каналу {n}"},
+    "Now": {"ru": "Сейчас", "uk": "Зараз"},
+    "Next": {"ru": "Далее", "uk": "Далі"},
+    "Catch-up": {"ru": "Архив", "uk": "Архів"},
+    "Programme guide": {"ru": "Программа передач", "uk": "Програма передач"},
+    "Continue from {time}": {"ru": "Продолжить с {time}", "uk": "Продовжити з {time}"},
+    "No programme information": {"ru": "Нет сведений о передаче", "uk": "Немає відомостей про передачу"},
+    "Programme": {"ru": "Передача", "uk": "Передача"},
+    "OK plays the programme. Back closes the guide.": {"ru": "OK смотреть передачу. Назад закрыть программу.",
+                                                       "uk": "OK дивитися передачу. Назад закрити програму."},
+    "No favourites yet. Press the menu key on a channel to add it.": {
+        "ru": "Избранного пока нет. Нажмите кнопку меню на канале, чтобы добавить его.",
+        "uk": "Обраного поки немає. Натисніть кнопку меню на каналі, щоб додати його."},
+    "Nothing watched yet. The channels you play show up here.": {
+        "ru": "Вы пока ничего не смотрели. Включённые каналы появятся здесь.",
+        "uk": "Ви поки нічого не дивилися. Увімкнені канали з'являться тут."},
+    "No channels here.": {"ru": "Здесь нет каналов.", "uk": "Тут немає каналів."},
+    "The channel list is out of date. Refreshing…": {"ru": "Список каналов устарел. Обновляется…",
+                                                      "uk": "Список каналів застарів. Оновлюється…"},
+    "Demo: nothing is played.": {"ru": "Демо: ничего не воспроизводится.", "uk": "Демо: нічого не відтворюється."},
+    # the account chip, signing in and the status card
+    "Demo": {"ru": "Демо", "uk": "Демо"},
+    "Signed in": {"ru": "Вход выполнен", "uk": "Вхід виконано"},
+    "Sign in": {"ru": "Войти", "uk": "Увійти"},
+    "Sign in on your phone": {"ru": "Войдите с телефона", "uk": "Увійдіть з телефона"},
+    "Live TV and the channel guide": {"ru": "Прямой эфир и программа передач", "uk": "Прямий ефір і програма передач"},
+    "Scan to open the phone page": {"ru": "Наведите камеру, чтобы открыть страницу", "uk": "Наведіть камеру, щоб відкрити сторінку"},
+    "Or sign in here with a code": {"ru": "Или войдите здесь по коду", "uk": "Або увійдіть тут за кодом"},
+    "Press OK. Back returns to Home.": {"ru": "Нажмите OK. Назад на главный экран.", "uk": "Натисніть OK. Назад на головний екран."},
+    "Try again": {"ru": "Повторить", "uk": "Повторити"},
+    "1    On your phone, open": {"ru": "1    На телефоне откройте", "uk": "1    На телефоні відкрийте"},
+    "1    Connect the stick to a network first": {"ru": "1    Сначала подключите приставку к сети",
+                                                  "uk": "1    Спочатку підключіть приставку до мережі"},
+    "2    Tab  {tab}  >  SWEET.TV": {"ru": "2    Вкладка  {tab}  >  SWEET.TV", "uk": "2    Вкладка  {tab}  >  SWEET.TV"},
+    "3    Sign in there: the channels appear here by themselves.": {
+        "ru": "3    Войдите там: каналы появятся здесь сами.", "uk": "3    Увійдіть там: канали з'являться тут самі."},
+    "Cannot load the channels": {"ru": "Не удалось загрузить каналы", "uk": "Не вдалося завантажити канали"},
+    "SWEET.TV answered with an error. Check the internet connection and that the account is signed in.": {
+        "ru": "SWEET.TV ответил ошибкой. Проверьте интернет и что вход в аккаунт выполнен.",
+        "uk": "SWEET.TV відповів помилкою. Перевірте інтернет і чи виконано вхід в обліковий запис."},
+    "The channel list is not in the shape this screen knows. SWEET.TV may have changed it.": {
+        "ru": "Список каналов в неизвестном экрану виде. Возможно, SWEET.TV его изменил.",
+        "uk": "Список каналів у невідомому екрану вигляді. Можливо, SWEET.TV його змінив."},
+    "The channel list cannot be read. SWEET.TV writes it again every 15 minutes.": {
+        "ru": "Список каналов не читается. SWEET.TV записывает его заново каждые 15 минут.",
+        "uk": "Список каналів не читається. SWEET.TV записує його знову кожні 15 хвилин."},
+    "SWEET.TV has not delivered the channel list for a long while. Check the internet connection.": {
+        "ru": "SWEET.TV давно не присылал список каналов. Проверьте интернет.",
+        "uk": "SWEET.TV давно не надсилав список каналів. Перевірте інтернет."},
+    "Trying again every few seconds. Back returns to Home.": {
+        "ru": "Пробуем снова каждые несколько секунд. Назад на главный экран.",
+        "uk": "Пробуємо знову кожні кілька секунд. Назад на головний екран."},
+    "Loading channels": {"ru": "Загрузка каналов", "uk": "Завантаження каналів"},
+    "SWEET.TV is fetching the channel list. After signing in this takes a minute or two.": {
+        "ru": "SWEET.TV получает список каналов. После входа это занимает минуту-две.",
+        "uk": "SWEET.TV отримує список каналів. Після входу це займає хвилину-дві."},
+    "Checking again every few seconds. Back returns to Home.": {
+        "ru": "Проверяем снова каждые несколько секунд. Назад на главный экран.",
+        "uk": "Перевіряємо знову кожні кілька секунд. Назад на головний екран."},
+    "No channels yet": {"ru": "Каналов пока нет", "uk": "Каналів поки немає"},
+    "The channel list is empty. SWEET.TV may still be loading it, or the account has none.": {
+        "ru": "Список каналов пуст. Возможно, SWEET.TV ещё его загружает, или в аккаунте их нет.",
+        "uk": "Список каналів порожній. Можливо, SWEET.TV ще його завантажує, або в обліковому записі їх немає."},
+    "Back returns to Home.": {"ru": "Назад на главный экран.", "uk": "Назад на головний екран."},
+    # the name of an episode: S2 E7
+    "S{n}": {"ru": "С{n}", "uk": "С{n}"},
+    "E{n}": {"ru": "Э{n}", "uk": "Е{n}"},
 }
 
 
 def tr(msgid) -> str:
     """The text for a person: the translation in LANG, else the English msgid itself."""
     return TEXT.get(msgid, {}).get(LANG) or msgid
+
+
+def _form(n) -> int:
+    """Which of the three forms of a Russian or Ukrainian noun goes with `n`: 0 for 1, 21, ...; 1 for 2-4, 22-24, ...; 2 else."""
+    n = abs(n)
+    if n % 10 == 1 and n % 100 != 11:
+        return 0
+    return 1 if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else 2
+
+
+def tr_n(n, one, other) -> str:
+    """"1 channel" / "5 channels" in the language: `one` and `other` are English msgids with {n}. Russian and Ukrainian keep
+    the three forms of `other` in TEXT, joined with "|" (one|few|many); the English language, and any without a translation,
+    use `one` for 1 and `other` for the rest."""
+    forms = TEXT.get(other, {}).get(LANG)
+    if forms:
+        return forms.split("|")[_form(n)].format(n=n)
+    return (one if n == 1 else other).format(n=n)

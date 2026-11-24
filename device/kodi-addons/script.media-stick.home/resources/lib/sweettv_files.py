@@ -5,6 +5,7 @@ import json
 import os
 from typing import NamedTuple, Optional
 
+import xbmcgui
 import xbmcvfs
 
 from resources.lib import apps, net, sweettv_data as data, ui
@@ -51,6 +52,18 @@ def read_raw(path):
         ui.log(f"channel list not readable for the sections: {e!r}")
         return None
     return raw if isinstance(raw, dict) else None
+
+
+def language() -> str:
+    """The device's language as SWEET.TV's own list names it ("ru", "uk", "en", ...), the one the strings of the screen follow:
+    the Home property the launcher keeps (lang.reconcile), else the file the phone's "Language" writes, else Russian."""
+    try:
+        from resources.lib import lang as launcher      # also puts the device's library on the path
+        import mediastick_lang
+        return mediastick_lang.resolve(xbmcgui.Window(ui.HOME).getProperty(launcher.PROPERTY) or mediastick_lang.read()).sweet
+    except Exception as e:
+        ui.log(f"cannot tell the device's language: {e!r}")
+        return "ru"
 
 
 def signed_in():

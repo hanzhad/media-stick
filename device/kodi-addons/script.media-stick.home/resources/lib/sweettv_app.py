@@ -8,8 +8,9 @@ error) with a retry button.
   RunScript(script.media-stick.home,sweettv,open)    the app, from the plugin's channel list
   RunScript(script.media-stick.home,sweettv,demo)    the same screen on invented channels, shows and films; plays nothing
 
-One screen. The menu (100) has two groups: the channels (Continue, Favourites, All, then the genres of SWEET.TV) and, below
-them, "Shows and series" and "Films" (in the accent colour). The row (200) holds what the menu is on: that category's channel
+One screen. The menu (100) lists Continue, Favourites, All, "Shows and series" and "Films" (the last two in the accent colour),
+then a small heading "Genres" and under it the genres of SWEET.TV (about 18, so the entries that matter come first). The
+heading is never focused: the cursor steps over it, key repeat too. The row (200) holds what the menu is on: that category's channel
 cards, or the cards of the shows, or of the films (sweettv_shelf). OK on a channel plays it live, on a film plays it from its
 start in the archive, on a show opens its episodes in the same row; OK on an episode plays it (one not on air yet, or not in
 the archive, says so). Back goes one step up: the episodes to the shows (the cursor on the same show), the row to the menu,
@@ -24,7 +25,7 @@ signed in (sweettv_data describes it). The file is read and parsed off the UI th
 its mtime/size. What is on now and next is worked out from the clock, so a minute's tick refreshes the cards.
 The state (favourites, recent, places in the archive) is written by sweettv_writer's thread, Player.Open and the
 watch of the player run on worker threads. The thin Kodi part is here; the choices are in sweettv_data and
-sweettv_view, the words in sweettv_text, the number keys in sweettv_jump, the guide in sweettv_guide, the shows and
+sweettv_view, the words in sweettv_text (said in the device's language: sweettv_files.language), the number keys in sweettv_jump, the guide in sweettv_guide, the shows and
 films in sweettv_shelf (rows in sweettv_sections), the streams in sweettv_play.
 """
 import os
@@ -49,7 +50,7 @@ MENU_DELAY = 0.12                # s the menu rests on an entry before the row f
 RETURN_GRACE = 2                 # s: the window coming back sooner than this after Play is not a return from the player
 RUNNING = "media-stick.sweettv"  # Home window property while the app is open (single_instance): a live one blocks a second launch
 DEMO_LOGOS = os.path.join(ui.ADDON_PATH, "resources", "media", "demo")
-STALE_NOTICE = "The channel list is out of date. Refreshing…"
+STALE_NOTICE = "The channel list is out of date. Refreshing…"      # a msgid (sweettv_text)
 
 # Live video in the preview is off: the Pi 3B+ has one hardware decoder and the guide would fight the stream for it.
 # To try it: set True. The skin then shows a video window over the big logo (the property `preview_video`), the focused
@@ -79,6 +80,7 @@ class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
     instance = None              # the launch's single_instance flag; main() sets it
 
     def setup(self, demo=False):
+        words.set_language(files.language())     # before anything is said: the items, the pages and the cache follow it
         self.demo = demo
         self._lock = threading.RLock()
         self._loading = threading.Lock()         # one look at the file at a time
@@ -114,6 +116,8 @@ class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
     def onInit(self):
         if self.instance is not None:
             self.instance.bind(xbmcgui.getCurrentWindowId())
+        for key, value in words.labels().items():
+            self._prop(key, value)
         self._prop("demo", "1" if self.demo else "")
         self._prop("preview_video", "1" if PREVIEW_VIDEO else "")
         if not self.started:
@@ -202,7 +206,7 @@ class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
             self._prop("net", kind)
             if mode == data.DATA:
                 self.waiting_since = None
-                self._prop("notice", STALE_NOTICE if data.is_stale(snap.mtime, now) and not self.demo else "")
+                self._prop("notice", words.tr(STALE_NOTICE) if data.is_stale(snap.mtime, now) and not self.demo else "")
                 if prepared is not None:
                     self._install(snap.catalog, prepared)
                 self.stamp, self.mtime = snap.stamp, snap.mtime
@@ -329,7 +333,7 @@ class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
         control.addItems([self.items[c.cid] for c in self.shown])
         if self.shown:
             control.selectItem(data.focus_index(self.shown, focus_cid))
-        self._prop("emptycat", "" if self.shown else data.empty_category_text(key))
+        self._prop("emptycat", "" if self.shown else words.tr(data.empty_category_text(key)))
         self._prop("hint", self._hint())
         self._update_menu(sync_menu)
 
@@ -376,6 +380,8 @@ class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
                     self._apply_menu()           # the row is what the menu shows, before the focus goes into it
                     self.enter_row = not self._row_size()
         super().onAction(action)
+        if self._focus() == MENU:
+            self._skip_heading(action_id)
         if action_id in (ACTION_MOVE_UP, ACTION_MOVE_DOWN) and self._focus() == MENU:
             self._later("menu", MENU_DELAY, self._apply_menu)
         elif PREVIEW_VIDEO and self._focus() == ROW:
@@ -440,11 +446,19 @@ class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
         else:
             self._focus_on(MENU)
 
+    def _skip_heading(self, action_id):
+        """The cursor of the menu landed on a heading (it is no entry): on to the next entry in the direction of the key. Every
+        key press (and every repeat of a held one) comes through here, so the heading is never stopped on."""
+        control = self.getControl(MENU)
+        position = control.getSelectedPosition()
+        if 0 <= position < len(self.entries) and not self.entries[position].focusable:
+            control.selectItem(data.next_focusable(self.entries, position, -1 if action_id == ACTION_MOVE_UP else 1))
+
     def _apply_menu(self):
         """The row follows the menu: the channels of a category, or the cards of the shows or of the films."""
         with self._lock:
             position = self.getControl(MENU).getSelectedPosition()
-            if self.catalog is not None and 0 <= position < len(self.entries) and self.entries[position].key != self.cat_key:
+            if self.catalog is not None and 0 <= position < len(self.entries) and self.entries[position].focusable                     and self.entries[position].key != self.cat_key:
                 key = self.entries[position].key
                 self.enter_row = False
                 if key in (data.SHOWS, data.FILMS):
@@ -472,7 +486,7 @@ class SweetTV(Guide, DigitJump, Shelf, xbmcgui.WindowXML):
     def _start(self, cid, programme=None, resume_at=0):
         """The same by channel id: the shows and films play a programme of a channel the screen may not be showing."""
         if self.demo:
-            ui.notify("Demo: nothing is played.")
+            ui.notify(words.tr("Demo: nothing is played."))
             return
         url = data.play_url(cid, programme.epg_id if programme else None)
         if not url:

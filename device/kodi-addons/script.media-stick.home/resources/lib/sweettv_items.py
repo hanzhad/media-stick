@@ -46,21 +46,28 @@ def _section(entry) -> bool:
     return entry.group == data.SECTION_GROUP
 
 
+def _name(entry) -> str:
+    """What the menu calls an entry: our own names are said in the device's language, a genre's is SWEET.TV's."""
+    return words.tr(entry.name) if entry.msgid else entry.name
+
+
 def _menu_props(item, entry, active_key):
     """What the skin reads from an entry of the menu: the count, the heading the preview shows over the cards, the mark on the
-    entry the row follows, and `section` for the second group (Shows and series, Films), drawn in the accent colour."""
+    entry the row follows, `section` for Shows and series and Films (drawn in the accent colour) and `caption` for the heading
+    of the genres (a small line the cursor does not rest on)."""
     item.setLabel2("" if entry.count is None else str(entry.count))
-    item.setProperty("heading", view.section_heading(words.tr(entry.name), entry.count) if _section(entry)
-                     else view.category_heading(entry.name, entry.count))
+    item.setProperty("heading", "" if not entry.focusable else view.section_heading(_name(entry), entry.count) if _section(entry)
+                     else view.category_heading(_name(entry), entry.count))
     item.setProperty("active", "1" if entry.key == active_key else "")
     item.setProperty("section", "1" if _section(entry) else "")
+    item.setProperty("caption", "" if entry.focusable else "1")
 
 
 def menu_items(entries, active_key):
-    """One item per menu entry (sweettv_data.rail): its name (the sections' is translated), how many, and the properties above."""
+    """One item per menu entry (sweettv_data.rail): its name, how many, and the properties above."""
     out = []
     for entry in entries:
-        item = xbmcgui.ListItem(words.tr(entry.name) if _section(entry) else entry.name, offscreen=True)
+        item = xbmcgui.ListItem(_name(entry), offscreen=True)
         _menu_props(item, entry, active_key)
         out.append(item)
     return out
@@ -95,7 +102,7 @@ def card_items(rows):
 def guide_items(rows):
     out = []
     for row in rows:
-        item = xbmcgui.ListItem(row.title, "Live" if row.kind == "live" else "", offscreen=True)
+        item = xbmcgui.ListItem(row.title, words.tr("Live") if row.kind == "live" else "", offscreen=True)
         item.setProperty("when", row.when)
         item.setProperty("kind", row.kind)
         out.append(item)

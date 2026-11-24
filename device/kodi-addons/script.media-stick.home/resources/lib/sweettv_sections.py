@@ -88,10 +88,9 @@ def _line(*parts) -> str:
 
 
 def episode_title(episode) -> str:
-    """"S2 E7  ·  Name"; the numbers or the name alone; "Episode" when it says neither. S and E are the way every streaming
-    app writes it, so they are not translated."""
-    number = " ".join(p for p in (f"S{episode['season']}" if episode["season"] else "",
-                                  f"E{episode['episode']}" if episode["episode"] else "") if p)
+    """"S2 E7  ·  Name" ("С2 Э7" in Russian, "С2 Е7" in Ukrainian); the numbers or the name alone; "Episode" when it says neither."""
+    number = " ".join(p for p in (words.tr("S{n}").format(n=episode["season"]) if episode["season"] else "",
+                                  words.tr("E{n}").format(n=episode["episode"]) if episode["episode"] else "") if p)
     return _line(number, _text(episode["title"])) or words.tr("Episode")
 
 
