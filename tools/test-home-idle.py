@@ -461,7 +461,7 @@ class IdleSkin(unittest.TestCase):
         cache = [c for c, _ in self.all if text(c, "imagepath") == "/var/cache/media-stick/wallpapers/"]
         self.assertEqual(len(cache), 1)
         self.assertEqual(cache[0].get("type"), "multiimage")
-        self.assertEqual(text(cache[0], "timeperimage"), "45000")
+        self.assertEqual(text(cache[0], "timeperimage"), "300000")
         self.assertEqual(text(cache[0], "loop"), "yes")
         self.assertEqual(text(cache[0], "visible"), "String.IsEqual(Window.Property(wallpaper),cache)")
         self.assertFalse(cache[0].findall("animation"))        # idle does not touch the wallpaper

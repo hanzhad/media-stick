@@ -21,7 +21,7 @@
             <width>1920</width>
             <height>1080</height>
             <imagepath>/var/cache/media-stick/wallpapers/</imagepath>
-            <timeperimage>45000</timeperimage>
+            <timeperimage>300000</timeperimage>
             <fadetime>1500</fadetime>
             <randomize>true</randomize>
             <loop>yes</loop>
@@ -34,7 +34,7 @@
             <width>1920</width>
             <height>1080</height>
             <imagepath>special://home/addons/script.media-stick.home/resources/wallpapers/</imagepath>
-            <timeperimage>45000</timeperimage>
+            <timeperimage>300000</timeperimage>
             <fadetime>1500</fadetime>
             <randomize>true</randomize>
             <loop>yes</loop>
