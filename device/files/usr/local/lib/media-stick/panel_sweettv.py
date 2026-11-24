@@ -385,7 +385,7 @@ def shows_api_view(raw, now, local_data=None, favs_data=None, quality="1080p"):
     """GET /api/sweettv/shows."""
     if ml is None or api is None:
         raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
-    res = _answered(api.shows(api.channel_map(raw), now, quality=quality))
+    res = _answered(api.shows(raw, now, quality=quality))
     fkeys = mr.fav_keys(favs_data) if mr else set()
     items = []
     for it in res.get("items") or []:
@@ -403,7 +403,7 @@ def show_api_view(raw, sid, now, local_data=None, favs_data=None):
         raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
     if not isinstance(sid, str) or not SHOW_KEY_RE.fullmatch(sid):
         raise pw.Refused(_t("Wrong show."))
-    return _answered(api.show_detail(sid, api.channel_map(raw), now, local=local_data, favs=favs_data))
+    return _answered(api.show_detail(sid, raw, now, local=local_data, favs=favs_data))
 
 
 def _int_param(query, name, default=0, low=0, high=100000):

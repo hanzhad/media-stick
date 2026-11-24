@@ -76,6 +76,10 @@ HEADERS = {"user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KH
            "content-type": "application/json", "accept": "application/json"}
 ID_RE = re.compile(r"[0-9]{1,12}")
 DATE_RE = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})")
+SHOW_MARKER_RE = re.compile(
+    r"(?:\s*[—\-.,:]\s*|\s+)(?:Season|Episode|Сезон|Серія|Серия|Епізод|Эпизод|Випуск|Выпуск)\s*[0-9]+\b.*$",
+    re.IGNORECASE,
+)
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")                                 # msgids (sweettv_text)
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 MORE_ONE, MORE_MANY = "{n} more airing", "{n} more airings"
@@ -140,9 +144,23 @@ def https(url):
 
 
 def channel_map(raw):
-    """{channel id: channel} of a channel list ({"list": [...]}, slimmed or not); {} for anything else."""
-    rows = raw.get("list") if isinstance(raw, dict) else None
-    return {str(c["id"]): c for c in rows if isinstance(c, dict) and c.get("id") is not None} if isinstance(rows, list) else {}
+    """{channel id: channel} of a channel list ({"list": [...]}, slimmed or not) or an existing map; {} for anything else."""
+    if not isinstance(raw, dict):
+        return {}
+    if "list" in raw:
+        rows = raw.get("list")
+        return {str(c["id"]): c for c in rows if isinstance(c, dict) and c.get("id") is not None} if isinstance(rows, list) else {}
+    return {str(c["id"]): c for c in raw.values() if isinstance(c, dict) and c.get("id") is not None}
+
+
+def _channel_list(channels):
+    """Channel dicts from either raw {"list": [...]} or channel_map {cid: ch}."""
+    if not isinstance(channels, dict):
+        return []
+    if "list" in channels:
+        rows = channels.get("list")
+        return [c for c in rows if isinstance(c, dict)] if isinstance(rows, list) else []
+    return [c for c in channels.values() if isinstance(c, dict) and c.get("id") is not None]
 
 
 def when_text(ts, now=None, tr=None):
@@ -697,7 +715,7 @@ def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, qualit
         seen = set(base)
         id_list = list(base)
         if col_reply.ok:
-            for col in col_reply.data.get("collections") or ():
+            for col in col_reply.data.get("collection") or col_reply.data.get("collections") or ():
                 if isinstance(col, dict):
                     for mid in col.get("id_list") or ():
                         n = _num(mid)
@@ -753,7 +771,10 @@ def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, qualit
 
 def _base_show_title(text):
     title = _clean(text, 120)
-    for sep in (". Випуск ", ". Выпуск ", ". Сезон ", " — ", " - "):
+    stripped = SHOW_MARKER_RE.sub("", title).strip()
+    if stripped and stripped != title:
+        return stripped
+    for sep in (" — ", " - "):
         if sep in title:
             head, tail = title.split(sep, 1)
             if head and any(ch.isdigit() for ch in tail[:12]):
@@ -775,7 +796,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
 
     movie_ids, movie_seen = [], set()
     epg_col_ids, epg_seen = [], set()
-    for col in col_reply.data.get("collections") or ():
+    for col in col_reply.data.get("collection") or col_reply.data.get("collections") or ():
         if not isinstance(col, dict):
             continue
         ctype = col.get("type")
@@ -786,11 +807,21 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                     movie_seen.add(n)
                     movie_ids.append(n)
         elif ctype == "Epg":
-            for cid in (col.get("id_list") or [col.get("id")]):
-                n = _num(cid)
-                if n and n > 0 and n not in epg_seen:
-                    epg_seen.add(n)
-                    epg_col_ids.append(n)
+            n = _num(col.get("id"))
+            if n and n > 0 and n not in epg_seen:
+                epg_seen.add(n)
+                epg_col_ids.append(n)
+
+    col3_reply = c.post(COLLECTIONS, {"type": 3})
+    if col3_reply.ok:
+        for col in col3_reply.data.get("collection") or col3_reply.data.get("collections") or ():
+            if not isinstance(col, dict) or col.get("type") not in (None, "", "Movie"):
+                continue
+            for mid in col.get("id_list") or ():
+                n = _num(mid)
+                if n and n > 0 and n not in movie_seen:
+                    movie_seen.add(n)
+                    movie_ids.append(n)
 
     items = []
     seen_titles = set()
@@ -827,7 +858,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                 })
 
     if epg_col_ids:
-        ci_reply = c.post(COLLECTION_INFO, {"id_list": epg_col_ids, "need_translations": True})
+        ci_reply = c.post(COLLECTION_INFO, {"collections": epg_col_ids, "need_translations": True})
         cols = (ci_reply.data.get("collections") or ci_reply.data.get("collection") or []) if ci_reply.ok else []
         sec_ids, sec_seen = [], set()
         for col in cols if isinstance(cols, list) else ():
@@ -841,7 +872,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
         if sec_ids:
             er_reply = c.post(EPG_RECORDS, {"id_list": sec_ids, "image_type": 0, "need_extended_info": True})
             if er_reply.ok:
-                for r in er_reply.data.get("list") or ():
+                for r in er_reply.data.get("epg_records") or er_reply.data.get("list") or ():
                     rid = _num(r.get("id")) if isinstance(r, dict) else None
                     if rid:
                         rec_by_id[rid] = r
@@ -893,9 +924,8 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                         "banner": banner,
                     })
 
-    ch_list = channels.get("list") if isinstance(channels, dict) else ()
-    for ch in ch_list if isinstance(ch_list, list) else ():
-        if not isinstance(ch, dict) or ch.get("available") is False:
+    for ch in _channel_list(channels):
+        if ch.get("available") is False:
             continue
         cid = _id(ch.get("id"))
         for p in ch.get("epg") if isinstance(ch.get("epg"), list) else ():
@@ -932,21 +962,27 @@ def _fav_set(favs):
     return set()
 
 
-def _vod_resume(local, movie_id, episode_id=None):
+def _local_resume(local, key):
     if not isinstance(local, dict) or not isinstance(local.get("items"), dict):
         return 0, False
-    key = "sw:vod:%s|%s" % (movie_id, episode_id) if episode_id else "sw:vod:%s" % movie_id
     e = local["items"].get(key)
     if not isinstance(e, dict):
         return 0, False
     done = e.get("done") is True
-    pos = int(e.get("pos") or 0)
-    return (0 if done else pos), done
+    pos = _num(e.get("pos")) or 0
+    return (0 if done else max(0, pos)), done
+
+
+def _vod_resume(local, movie_id, episode_id=None):
+    key = "sw:vod:%s|%s" % (movie_id, episode_id) if episode_id else "sw:vod:%s" % movie_id
+    return _local_resume(local, key)
 
 
 def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
     """Detailed VOD movie/series metadata with seasons/episodes, local resume/watched, and local favourites."""
     c = client or _default
+    if isinstance(movie_id, str) and movie_id.startswith("vod:"):
+        movie_id = movie_id[4:]
     mid = _num(movie_id)
     if not mid or mid <= 0:
         return _failure("format", tr)
@@ -1030,7 +1066,7 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         col_id = _num(show_key[4:])
         if not col_id:
             return _failure("format", tr)
-        ci = c.post(COLLECTION_INFO, {"id_list": [col_id], "need_translations": True})
+        ci = c.post(COLLECTION_INFO, {"collections": [col_id], "need_translations": True})
         if ci.ok:
             cols = ci.data.get("collections") or ci.data.get("collection") or []
             if isinstance(cols, list) and cols and isinstance(cols[0], dict):
@@ -1040,15 +1076,12 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         if curated_ids:
             er = c.post(EPG_RECORDS, {"id_list": curated_ids, "image_type": 0, "need_extended_info": True})
             if er.ok:
-                recs = [r for r in (er.data.get("list") or ()) if isinstance(r, dict)]
+                recs = [r for r in (er.data.get("epg_records") or er.data.get("list") or ()) if isinstance(r, dict)]
     elif show_key.startswith("tv:"):
         target_sid = _num(show_key[3:])
         if not target_sid:
             return _failure("format", tr)
-        ch_list = channels.get("list") if isinstance(channels, dict) else ()
-        for ch in ch_list if isinstance(ch_list, list) else ():
-            if not isinstance(ch, dict):
-                continue
+        for ch in _channel_list(channels):
             for p in ch.get("epg") if isinstance(ch.get("epg"), list) else ():
                 if isinstance(p, dict) and _num(p.get("tv_show_id")) == target_sid:
                     recs.append({**p, "channel_id": ch.get("id")})
@@ -1066,14 +1099,22 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         if not epg or not cid or start is None or stop is None or stop <= start:
             continue
         ch = _known_channel(ch_map, cid)
+        ep_res, ep_done = _local_resume(local, "sw:%s|%s" % (cid, epg))
         airings.append({
             "epg": epg,
             "cid": cid,
             "title": _clean(r.get("text"), 120),
             "start": start,
             "stop": stop,
+            "duration": int(stop - start),
+            "when": when_text(start, now, tr),
+            "channel_name": _clean(ch.get("name"), 120) if ch else "",
+            "preview": https(r.get("preview_url_ext")) or https(r.get("preview_url")) or https(r.get("image_url")),
             "curated": _num(epg) in curated_set,
+            "available": r.get("available") is not False,
             "playable": bool(ch) and (start <= now < stop or ml.archive_ok(ch, r, now)),
+            "resume": ep_res,
+            "watched": ep_done,
             "url": ml.url(cid, epg, 0),
         })
     grouped = {}
@@ -1085,6 +1126,7 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         pool = curated_g if curated_g else g
         episodes.append(max(_complete(pool), key=lambda x: x["start"]))
     episodes.sort(key=lambda x: -x["start"])
+    _remember(episodes, now)
     return {
         "ok": True,
         "id": show_key,
