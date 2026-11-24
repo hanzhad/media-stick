@@ -195,13 +195,29 @@ def _watchable(row):
     return row["live"] or row["playable_in_archive"]
 
 
+def _span(row):
+    """Positive duration in whole seconds when start and stop are numeric and stop > start, else 0."""
+    start, stop = row.get("start"), row.get("stop")
+    if isinstance(start, bool) or isinstance(stop, bool):
+        return 0
+    if isinstance(start, (int, float)) and isinstance(stop, (int, float)) and stop > start:
+        return int(stop - start)
+    return 0
+
+
+def _complete(rows):
+    """Airings at least 80% as long as the longest one; unchanged when no row has a positive span."""
+    longest = max(_span(r) for r in rows)
+    return rows if longest <= 0 else [r for r in rows if _span(r) * 5 >= longest * 4]
+
+
 def _stands_for(airings, now):
-    """The airing of one title that is the row: the newest that can be watched now, else the soonest to come, else the newest."""
+    """The airing of one title that is the row: the newest complete airing that can be watched now, else the soonest to come, else the newest complete airing."""
     ready = [r for r in airings if _watchable(r)]
     if ready:
-        return max(ready, key=lambda r: r["start"])
+        return max(_complete(ready), key=lambda r: r["start"])
     coming = [r for r in airings if r["start"] > now]
-    return min(coming, key=lambda r: r["start"]) if coming else max(airings, key=lambda r: r["start"])
+    return min(coming, key=lambda r: r["start"]) if coming else max(_complete(airings), key=lambda r: r["start"])
 
 
 def collapse(rows, now, tr_n=None):

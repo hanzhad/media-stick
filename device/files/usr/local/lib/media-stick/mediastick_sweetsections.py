@@ -143,16 +143,29 @@ def shows(index, ok):
     return sorted(out, key=lambda e: (e["title"].casefold(), e["id"]))
 
 
-def _unique(records):
-    """One record per episode: the same season, episode and title is the same episode, whatever channel repeats it; the first one
-    given (the newest, when they come newest first) stays. A record that says nothing of what it is stays as it is."""
-    seen, out = set(), []
+def _episode_key(r):
+    """Deduplication key for an episode; unnumbered records stay distinct by (cid, epg)."""
+    return (r["season"], r["episode"], r["text"].casefold()) if r["season"] or r["episode"] else (r["cid"], r["epg"])
+
+
+def _best_airing(group):
+    """Newest airing in a same-tier group whose span is at least 80% of the longest in that group."""
+    longest = max(max(0, r["stop"] - r["start"]) for r in group)
+    return max((r for r in group if max(0, r["stop"] - r["start"]) * 5 >= longest * 4), key=lambda r: r["start"])
+
+
+def _unique(records, ok=None):
+    """One record per episode: the same season, episode and title is the same episode, whatever channel repeats it; a playable
+    airing wins over one to come, and within the same tier a complete airing (>= 80% of longest) wins, then newest.
+    A record that says nothing of what it is stays as it is."""
+    groups = {}
     for r in records:
-        key = (r["season"], r["episode"], r["text"].casefold()) if r["season"] or r["episode"] else (r["cid"], r["epg"])
-        if key not in seen:
-            seen.add(key)
-            out.append(r)
-    return out
+        groups.setdefault(_episode_key(r), []).append(r)
+    out = []
+    for group in groups.values():
+        ready = [r for r in group if ok(r)] if ok else group
+        out.append(_best_airing(ready or group))
+    return sorted(out, key=lambda r: -r["start"])
 
 
 def _episode(r, ok):
@@ -166,17 +179,19 @@ def show(index, sid, ok):
     entry = index["shows"].get(sid) if isinstance(sid, str) and SHOW_ID_RE.fullmatch(sid) else None
     if entry is None:
         return None
-    ordered = sorted(entry["records"], key=lambda r: (not ok(r), -r["start"]))      # a playable repeat wins over one to come
-    unique = sorted(_unique(ordered), key=lambda r: (r["season"], r["episode"], r["start"]))
+    unique = sorted(_unique(entry["records"], ok), key=lambda r: (r["season"], r["episode"], r["start"]))
     return {"title": _title_of(entry), "icon": _icon(entry["records"]), "episodes": [_episode(r, ok) for r in unique]}
 
 
 def films(index, ok):
     """[{cid, epg, title, start, stop, minutes, available, airings}] of the films that can be played now, by title; one film on
-    several channels or at several times is one item (its newest playable airing) with `airings` how many there are."""
+    several channels or at several times is one item (its newest complete playable airing) with `airings` how many there are."""
     groups = {}
     for r in _playable_first(index["films"], ok):
         groups.setdefault(r["text"].casefold(), []).append(r)
-    out = [{"cid": g[0]["cid"], "epg": g[0]["epg"], "title": g[0]["text"], "start": g[0]["start"], "stop": g[0]["stop"],
-            "minutes": g[0]["minutes"], "available": True, "airings": len(g), "channel": g[0]["channel"]} for g in groups.values()]
+    out = []
+    for g in groups.values():
+        best = _best_airing(g)
+        out.append({"cid": best["cid"], "epg": best["epg"], "title": best["text"], "start": best["start"], "stop": best["stop"],
+                    "minutes": best["minutes"], "available": True, "airings": len(g), "channel": best["channel"]})
     return sorted(out, key=lambda e: (e["title"].casefold(), e["start"]))
