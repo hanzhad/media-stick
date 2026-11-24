@@ -207,6 +207,16 @@ class Fixture(unittest.TestCase):
             ("t2f5828fff7", "Розслідування з Андрієм Данілевичем", 1), ("213184", "Світ навиворіт", 2), ("241218", "Сльози Дженнет", 4),
             ("228884", "Сусідка", 1), ("235390", "Таємниці архівів", 1)])
 
+    def test_a_show_says_its_newest_episode_that_can_be_played(self):
+        for item in sec.shows(self.index, self.ok):
+            shown = sec.show(self.index, item["id"], self.ok)
+            playable = [e for e in shown["episodes"] if e["available"]]
+            newest = max(playable, key=lambda e: e["start"])
+            self.assertEqual(item["latest"], newest, item["title"])
+            self.assertTrue(item["latest"]["available"] and item["latest"]["channel"])
+        self.assertEqual(set(sec.shows(self.index, self.ok)[0]["latest"]),
+                         {"cid", "epg", "title", "season", "episode", "start", "stop", "available", "channel"})
+
     def test_a_show_with_an_id_and_numbered_episodes(self):
         shown = sec.show(self.index, "241218", self.ok)
         self.assertEqual(shown["title"], "Сльози Дженнет")

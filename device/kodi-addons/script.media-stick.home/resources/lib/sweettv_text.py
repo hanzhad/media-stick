@@ -19,9 +19,9 @@ def hint_line(numbered, archive=False) -> str:
 
 
 def section_hint(kind) -> str:
-    """The key hints of the screens that are not the channels: the three sections ("home"), the shows ("shows"), the
-    episodes of a show and the films ("episodes", "films"). Only the keys of a remote: OK and Back."""
-    what = "Open" if kind in ("home", "shows") else "Watch"
+    """The key hints while the row of cards holds something that is not channels: the shows ("shows"), the episodes of a
+    show and the films ("episodes", "films"). Only the keys of a remote: OK and Back."""
+    what = "Open" if kind == "shows" else "Watch"
     return "        ".join(f"[COLOR {ACCENT}]{key}[/COLOR]  {tr(text)}" for key, text in (("OK", what), ("Back", "Back")))
 
 
@@ -120,20 +120,11 @@ TEXT = {
     "Films": {"ru": "Фильмы", "uk": "Фільми"},
     "Wrong show.": {"ru": "Неверное шоу.", "uk": "Невірне шоу."},
     "This show is not in the list.": {"ru": "Такого шоу нет в списке.", "uk": "Такого шоу немає у списку."},
-    # the TV's three sections: the choice, the shows, their episodes, the films
-    "What to watch?": {"ru": "Что смотрим?", "uk": "Що дивимося?"},
-    "Live TV and the archive": {"ru": "Телеканалы в эфире и архив передач", "uk": "Телеканали в ефірі та архів передач"},
-    "Shows and series you can watch from the archive": {
-        "ru": "Шоу и сериалы, которые можно посмотреть в архиве", "uk": "Шоу та серіали, які можна подивитися в архіві"},
-    "Films you can watch from the archive": {
-        "ru": "Фильмы, которые можно посмотреть в архиве", "uk": "Фільми, які можна подивитися в архіві"},
-    "Channels: {n}": {"ru": "Каналов: {n}", "uk": "Каналів: {n}"},
-    "Shows: {n}": {"ru": "Шоу и сериалов: {n}", "uk": "Шоу та серіалів: {n}"},
-    "Films: {n}": {"ru": "Фильмов: {n}", "uk": "Фільмів: {n}"},
+    # the cards of the shows, their episodes and the films
     "Episodes: {n}": {"ru": "Серий: {n}", "uk": "Серій: {n}"},
+    "Latest episode": {"ru": "Последняя серия", "uk": "Остання серія"},
     "Airings: {n}": {"ru": "Показов: {n}", "uk": "Показів: {n}"},
     "Season {n}": {"ru": "Сезон {n}", "uk": "Сезон {n}"},
-    "Episode {n}": {"ru": "Серия {n}", "uk": "Серія {n}"},
     "Episode": {"ru": "Серия", "uk": "Серія"},
     "{n} min": {"ru": "{n} мин", "uk": "{n} хв"},
     "Soon": {"ru": "Скоро", "uk": "Незабаром"},

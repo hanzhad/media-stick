@@ -1,30 +1,34 @@
 """The built-in demo of the SWEET.TV app: about 50 invented channels in 6 categories with a plausible schedule around
 `now` (what was on, what is on, what comes), in the same shape the plugin saves (see sweettv_data), so the demo runs
 the real parser; and a state to go with it: some favourites, the channels watched last, and a place to continue
-an archived programme from.
+an archived programme from. Some programmes are episodes of series and the long ones of the film channels are films, marked
+the way the service marks them, so the app's "Shows and series" and "Films" are made by the real rules from the same list.
 
 Nothing here is a real channel or programme. Logos are the placeholder pictures in resources/media/demo/
 (made by tools/make-sweettv-art.py); some channels have none, to show the fallback badge.
 """
 import os
 import random
+import zlib
 
 LOGOS = 12                      # logo-1.png .. logo-12.png
 SLOT = 300                      # s: schedules start on a five-minute mark
 
-CATEGORIES = [(1, "News"), (2, "Movies & Series"), (3, "Sport"), (4, "Kids"), (5, "Music & Lifestyle"), (6, "Documentary")]
+FILM, KIDS = 4, 2               # SWEET.TV's "Film" category is 4 (mediastick_sweetsections.FILM_CATEGORY): a long programme on a
+                                # channel in it that is not a series is a film in the app's list of films
+CATEGORIES = [(1, "News"), (FILM, "Movies & Series"), (3, "Sport"), (KIDS, "Kids"), (5, "Music & Lifestyle"), (6, "Documentary")]
 HIDDEN = 1000                   # every real channel is in this one too; the app leaves it out
 
 # (name, category id); the order is the channel number. Every third channel has no logo.
 CHANNELS = [
     ("Aurora News 24", 1), ("Capital Report", 1), ("Новини Країни", 1), ("World Desk", 1),
     ("Business Hour", 1), ("Weather Centre", 1), ("Daybreak Live", 1), ("Перший Міський", 1),
-    ("Cinema Nova", 2), ("Premiere Classics", 2), ("Серіал Плюс", 2), ("Night Shift Films", 2),
-    ("Crime Files", 2), ("Laugh Track", 2), ("Frontier Westerns", 2), ("Sci-Fi Orbit and Beyond Network", 2),
+    ("Cinema Nova", FILM), ("Premiere Classics", FILM), ("Серіал Плюс", FILM), ("Night Shift Films", FILM),
+    ("Crime Files", FILM), ("Laugh Track", FILM), ("Frontier Westerns", FILM), ("Sci-Fi Orbit and Beyond Network", FILM),
     ("Arena Sport 1", 3), ("Arena Sport 2", 3), ("Harbor Football", 3), ("Мотор ТБ", 3),
     ("Court & Field", 3), ("Fight Night", 3), ("Race Control", 3), ("Snow Peaks Live", 3),
-    ("Tiny Tales", 4), ("Cartoon Cove", 4), ("Малюк", 4), ("Adventure Kids", 4),
-    ("Puzzle Planet", 4), ("Bedtime Stories", 4), ("Hero Squad", 4), ("Playground TV", 4),
+    ("Tiny Tales", KIDS), ("Cartoon Cove", KIDS), ("Малюк", KIDS), ("Adventure Kids", KIDS),
+    ("Puzzle Planet", KIDS), ("Bedtime Stories", KIDS), ("Hero Squad", KIDS), ("Playground TV", KIDS),
     ("Hit Parade", 5), ("Музика Плюс", 5), ("Acoustic Hour", 5), ("Club Mix", 5),
     ("Home & Garden", 5), ("Tasty Table", 5), ("Travel Journal", 5), ("Wellness Now", 5),
     ("Deep Planet", 6), ("Ancient Worlds", 6), ("Wild Frontier", 6), ("Science Lab", 6),
@@ -48,7 +52,7 @@ SHOWS = {
         ("Midday Update", "A quarter of an hour that catches you up on everything that happened since breakfast."),
         ("Press Room", "Editors from four newspapers argue about what the front page should have said."),
         ("Headline Hour", "The hour's headlines, repeated every ten minutes, with the details in between.")],
-    2: [("Harbour Lights", "A ferry captain returns to the town she left, and to the secret the harbour kept for twenty years."),
+    FILM: [("Harbour Lights","A ferry captain returns to the town she left, and to the secret the harbour kept for twenty years."),
         ("Paper Moons", "A small-time forger is hired to fake the one letter that could save a theatre."),
         ("The Long Way Round", "Two brothers drive across the continent to deliver an urn, arguing the whole way."),
         ("Quiet Streets", "Night shift in a city that never quite sleeps: a detective, a baker and a missing key."),
@@ -65,7 +69,7 @@ SHOWS = {
         ("Sport Extra", "Everything that does not fit the other shows: curling, darts, a tractor race."),
         ("Replay: Season Opener", "The first match of the season, in full, with the studio's second thoughts."),
         ("Pit Lane", "The mechanics' view of a race weekend, from the first lap to the last tyre.")],
-    4: [("Bubble and Squeak", "Two friends in a pond find out what happens when it rains upwards."),
+    KIDS: [("Bubble and Squeak","Two friends in a pond find out what happens when it rains upwards."),
         ("Little Explorers", "A group of four-year-olds, a magnifying glass and one very large garden."),
         ("The Cloud Factory", "Where clouds come from, who paints them and why some of them cry."),
         ("Story Time", "A story, a song and a sleepy bear. Best watched with a blanket."),
@@ -90,7 +94,15 @@ SHOWS = {
         ("Engineering Now", "The longest bridge, the deepest tunnel and the small bolt that holds them both."),
         ("Big Questions", "")],
 }
-DURATIONS = {1: (30, 30, 60), 2: (90, 105, 120), 3: (60, 90, 105, 120), 4: (20, 25, 30), 5: (30, 45, 60), 6: (45, 50, 60)}
+DURATIONS = {1: (30, 30, 60), FILM: (90, 105, 120), 3: (60, 90, 105, 120), KIDS: (20, 25, 30), 5: (30, 45, 60), 6: (45, 50, 60)}
+
+# The programmes that are episodes of a series: the service marks them with tv_show_id, season_number and episode_number
+# (mediastick_sweetsections makes the app's shows of them). The rest of the programmes of a film channel are its films.
+SERIES = {"Quiet Streets", "Second Chances", "Glass Houses", "Small Hours", "Bubble and Squeak", "Little Explorers",
+          "Dino Detectives", "Robot Friends", "Deep Planet", "Wild Frontier", "Ancient Worlds", "Sunday Brunch"}
+EPISODES = 10                   # episodes a series has in the demo: its programmes are numbered 1..10 over the channels
+EPISODE_NAMES = ["The Arrival", "A Quiet Night", "Crossing", "The Letter", "Open Water", "What Remains", "Homecoming",
+                 "The Long Way", "Second Thoughts", "The Last Stop"]
 PAST_MINUTES = (180, 420)       # a schedule starts this long before `now`: three to seven hours of archive
 
 
@@ -112,9 +124,20 @@ def _schedule(cid, category, now, rng, gap=False):
         if not (gap and t <= now < stop):
             title, blurb = rng.choice(SHOWS.get(category, [("Programme", "")]))
             out.append({"id": cid * 1000 + index, "time_start": t, "time_stop": stop, "text": title,
-                        "description": blurb, "available": True})
+                        "description": blurb, "available": True, **_episode(title, cid, index)})
         t, index = stop, index + 1
     return out
+
+
+def _episode(title, cid, index) -> dict:
+    """What the service adds to a programme that is an episode of a series: the series' id, season and episode number, and the
+    episode's name after the title; nothing for any other programme. The number follows the channel and the place in its
+    schedule, so a series has ten different episodes over the channels and the repeats of one are the same episode."""
+    if title not in SERIES:
+        return {}
+    episode = 1 + (cid * 7 + index) % EPISODES
+    return {"tv_show_id": 1 + zlib.crc32(title.encode("utf-8")) % 900_000, "season_number": 1, "episode_number": episode,
+            "text": f"{title} - Episode {episode} - {EPISODE_NAMES[episode - 1]}"}
 
 
 def demo_data(now, logo_dir) -> dict:

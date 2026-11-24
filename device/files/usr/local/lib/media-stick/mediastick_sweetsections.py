@@ -132,12 +132,14 @@ def _playable_first(records, ok):
 
 
 def shows(index, ok):
-    """[{id, title, episodes, icon}] of the shows that have something to play now, by title; `episodes` is how many different ones."""
+    """[{id, title, episodes, icon, latest}] of the shows that have something to play now, by title; `episodes` is how many
+    different ones, `latest` the newest of them as show() gives an episode (the TV's card says its channel and name)."""
     out = []
     for sid, entry in index["shows"].items():
         playable = _unique(_playable_first(entry["records"], ok))
         if playable:
-            out.append({"id": sid, "title": _title_of(entry), "episodes": len(playable), "icon": _icon(playable)})
+            out.append({"id": sid, "title": _title_of(entry), "episodes": len(playable), "icon": _icon(playable),
+                        "latest": _episode(playable[0], ok)})
     return sorted(out, key=lambda e: (e["title"].casefold(), e["id"]))
 
 

@@ -1,56 +1,45 @@
-"""SWEET.TV app: the three sections of the TV screen, Channels, Shows and series, and Films. Ready data in, rows out; nothing
+"""SWEET.TV app: the shows and the films of the TV screen, and the episodes of a show. Ready data in, rows out; nothing
 here touches Kodi.
 
-SWEET.TV's own categories are the genres of the channels (18 of them), so the screen opens on a choice of three sections:
-the channels (the existing screen, the genres are its menu), the shows and series, and the films. The shows and the films are
-not in the channel list as such, only the programme guide of each channel is; the phone page already makes them from it with
+SWEET.TV's own categories are the genres of the channels (18 of them), so the left menu has them as its first group, and
+as its second the two things the channel list has no category for: the shows and series, and the films. They are not in the
+channel list as such, only the programme guide of each channel is; the phone page already makes them from it with
 mediastick_sweetsections, and this module asks that same code (and mediastick_sweetlive's `slim` and `archive_ok`, the guide's
-rule for what can be played from the archive), so the two screens cannot disagree about what a show or a film is.
+rule for what can be played from the archive), so the two screens cannot disagree about what a show or a film is. The row
+of cards along the bottom then shows a card per show, per film or, after OK on a show, per episode.
 
 A Library holds the index of the list for as long as the person is in the shows or the films, and is let go of soon after
 (the list is 5 MB of JSON for 200 channels; the index keeps the slimmed rows of it). The rows are made lazily, on the first
 look, and capped: a Pi 3B+ keeps a few hundred of them, not thousands.
 
-  home_entries(channels, counts)             the three cards of the first screen
   Library.load(key, read)                    build the index from `read()` (the whole list) unless `key` is the one it has
   Library.shows(now), .episodes(sid, now, logos), .films(now, logos)     (rows, how many there are before the cap)
-  Row                                        what one line of the list says, and what OK on it plays
+  Row                                        what one card says, and what OK on it plays
+  card_texts(row)                            the Row's texts, each cut to the room the skin has for it
 """
 import threading
 from typing import NamedTuple, Optional, Tuple
 
 from resources.lib import sweettv_data as data, sweettv_text as words, sweettv_view as view, textfit
 
-CHANNELS, SHOWS, FILMS, EPISODES = "channels", "shows", "films", "episodes"   # the three sections, and the episodes of one show
-ORDER = (CHANNELS, SHOWS, FILMS)
-NAMES = {CHANNELS: "Channels", SHOWS: "Shows and series", FILMS: "Films"}          # msgids
-BLURBS = {CHANNELS: "Live TV and the archive", SHOWS: "Shows and series you can watch from the archive",
-          FILMS: "Films you can watch from the archive"}
-COUNTS = {CHANNELS: "Channels: {n}", SHOWS: "Shows: {n}", FILMS: "Films: {n}"}
-TINTS = {CHANNELS: "FF3F7FBF", SHOWS: "FF8E5CC4", FILMS: "FFC4623B"}              # blue, violet, orange: apart from each other
+CHANNELS, SHOWS, FILMS, EPISODES = "channels", data.SHOWS, data.FILMS, "episodes"   # what the row of cards holds
+SECTIONS = (SHOWS, FILMS, EPISODES)              # all of it that is not channels
 MAX_SHOWS, MAX_FILMS, MAX_EPISODES = 300, 300, 200
-TITLE_PX, SUB_PX, HEADING_PX = 740, 740, 1060     # room in the skin: a line's title (28 px high), its second line (22), the list's title (60)
-
-
-class Entry(NamedTuple):
-    """A card of the first screen."""
-    key: str
-    title: str
-    desc: str
-    count: str                  # "" until it is known (the shows and films are counted when their index is built)
-    plate: str
-    plate_hi: str
+CAPTION_PX, TITLE_PX, META_PX, LINE_PX = 236, 740, 740, 740    # room in the skin: the caption of a card (25 px high), the title over the
+                                                               # row (60, or 40 when it is long), its meta and amber lines (25), the big
+                                                               # line under them (40)
+TITLE_PX_FONT, SMALL_PX_FONT = 60, 40
 
 
 class Row(NamedTuple):
-    """A line of the list of shows, of the episodes of a show, or of films. OK on a show opens it, on a programme plays it
-    (when `playable`) from its beginning in the archive."""
+    """A card of the shows, of the episodes of a show, or of the films. OK on a show opens it, on a programme plays it
+    (when `playable`) from its beginning in the archive. The texts are whole: card_texts cuts them to the skin."""
     key: str                    # a show's id ("" for a programme)
-    title: str
-    sub: str                    # the second line: how many episodes / season, time and channel
-    side: str                   # the right-hand note: how many airings, "Soon", "Not in the archive"
+    title: str                  # the show, the film or "S2 E7  ·  Name"; the card's caption and the title over the row
+    sub: str                    # the line under the title: how many episodes and the channel, the length and the channel, ...
+    side: str                   # the amber line: when the newest episode / the film is on, what keeps an episode from being watched
     icon: str                   # the channel's picture ("" when there is none)
-    mark: str                   # what the picture's badge is made from when there is no picture
+    mark: str                   # what the picture's badge and the card's colours are made from when there is no picture
     playable: bool = True
     future: bool = False        # not on air yet (a row that is not playable and is not this is just not in the archive)
     cid: str = ""
@@ -58,19 +47,7 @@ class Row(NamedTuple):
     start: int = 0
     stop: int = 0
     name: str = ""              # what the archived programme is called when it is played
-
-
-def home_entries(channels, counts) -> list:
-    """The three cards: name, what is behind it, how many. `counts` is (shows, films), or None while they are not counted."""
-    shows, films = counts if counts else (None, None)
-    numbers = {CHANNELS: channels, SHOWS: shows, FILMS: films}
-    out = []
-    for key in ORDER:
-        n = numbers[key]
-        colours = view.shades(TINTS[key])
-        out.append(Entry(key, words.tr(NAMES[key]), words.tr(BLURBS[key]), words.tr(COUNTS[key]).format(n=n) if n is not None else "",
-                         colours["plate"], colours["plate_hi"]))
-    return out
+    line: str = ""              # the big line: the newest episode of a show, how many times a film is on
 
 
 # ---- rows ------------------------------------------------------------------------------------
@@ -88,16 +65,22 @@ def fit(text, width, size) -> str:
     return textfit.wrap_name(text, width, size, 1)[0]
 
 
-def _title(text) -> str:
-    return fit(text, TITLE_PX, 28)
-
-
-def _sub(text) -> str:
-    return fit(text, SUB_PX, 22)
+def card_texts(row) -> dict:
+    """What a card and the preview over the row say of `row`: the caption under the picture, the title, the line under it,
+    the amber line and the big line, each cut to its room. A title that is too long for the big letters is set smaller
+    (`small`, which the skin reads) before it is cut."""
+    big = textfit.text_px(row.title, TITLE_PX_FONT) <= TITLE_PX
+    return {"caption": fit(row.title, CAPTION_PX, 25), "title": row.title if big else fit(row.title, TITLE_PX, SMALL_PX_FONT),
+            "small": "" if big else "1", "meta": fit(row.sub, META_PX, 25), "cap": fit(row.side, META_PX, 25),
+            "line": fit(row.line, LINE_PX, 40)}
 
 
 def _when(ts, now) -> str:
     return f"{view.day_prefix(ts, now)}{data.hhmm(ts)}"
+
+
+def _span(start, stop, now) -> str:
+    return f"{view.day_prefix(start, now)}{data.span(start, stop)}"
 
 
 def _line(*parts) -> str:
@@ -105,14 +88,21 @@ def _line(*parts) -> str:
 
 
 def episode_title(episode) -> str:
-    """"Episode 7  ·  Name"; the number or the name alone; "Episode" when it says neither."""
-    number = words.tr("Episode {n}").format(n=episode["episode"]) if episode["episode"] else ""
+    """"S2 E7  ·  Name"; the numbers or the name alone; "Episode" when it says neither. S and E are the way every streaming
+    app writes it, so they are not translated."""
+    number = " ".join(p for p in (f"S{episode['season']}" if episode["season"] else "",
+                                  f"E{episode['episode']}" if episode["episode"] else "") if p)
     return _line(number, _text(episode["title"])) or words.tr("Episode")
 
 
-def show_row(show) -> Row:
+def show_row(show, now) -> Row:
+    """`show` is mediastick_sweetsections.shows' item: id, title, how many episodes, the picture, and the newest one."""
     title = _text(show["title"]) or str(show["id"])
-    return Row(str(show["id"]), _title(title), words.tr("Episodes: {n}").format(n=show["episodes"]), "", data.logo_of(show["icon"]), title)
+    latest = show.get("latest")
+    channel = _text(latest["channel"], 80) if latest else ""
+    return Row(str(show["id"]), title, _line(words.tr("Episodes: {n}").format(n=show["episodes"]), channel),
+               _line(words.tr("Latest episode"), _when(latest["start"], now)) if latest else "", data.logo_of(show["icon"]), title,
+               line=episode_title(latest) if latest else "")
 
 
 def episode_row(episode, show_title, icon, now) -> Row:
@@ -121,18 +111,19 @@ def episode_row(episode, show_title, icon, now) -> Row:
     season = words.tr("Season {n}").format(n=episode["season"]) if episode["season"] else ""
     title = episode_title(episode)
     channel = _text(episode["channel"], 80)
-    side = "" if playable else words.tr("Soon" if future else "Not in the archive")
-    return Row("", _title(title), _sub(_line(season, _when(episode["start"], now), channel)), side, icon, channel or show_title,
-               playable, future, str(episode["cid"]), str(episode["epg"]), episode["start"], episode["stop"], _line(show_title, title))
+    note = "" if playable else words.tr("Soon" if future else "Not in the archive")
+    return Row("", title, _line(show_title, season, channel), _line(_span(episode["start"], episode["stop"], now), note), icon,
+               channel or show_title, playable, future, str(episode["cid"]), str(episode["epg"]), episode["start"], episode["stop"],
+               _line(show_title, title))
 
 
 def film_row(film, icon, now) -> Row:
     channel = _text(film["channel"], 80)
     title = _text(film["title"]) or str(film["epg"])
     airings = film["airings"]
-    return Row("", _title(title), _sub(_line(channel, words.tr("{n} min").format(n=film["minutes"]), _when(film["start"], now))),
-               words.tr("Airings: {n}").format(n=airings) if airings > 1 else "", icon, channel or title, True, False,
-               str(film["cid"]), str(film["epg"]), film["start"], film["stop"], title)
+    return Row("", title, _line(words.tr("{n} min").format(n=film["minutes"]), channel), _span(film["start"], film["stop"], now), icon,
+               channel or title, True, False, str(film["cid"]), str(film["epg"]), film["start"], film["stop"], title,
+               words.tr("Airings: {n}").format(n=airings) if airings > 1 else "")
 
 
 def first_playable(rows) -> int:
@@ -232,7 +223,7 @@ class Library:
 
     def counts(self, now) -> Optional[Tuple[int, int]]:
         """(shows, films) that can be watched now, when warm() has worked them out this minute; never works them out itself
-        (the first screen asks on the UI thread). None otherwise."""
+        (the menu asks on the UI thread). None otherwise."""
         with self._lock:
             shows, films = self._memo.get(SHOWS), self._memo.get(FILMS)
             if self.index is None or self._minute != int(now) // 60 or shows is None or films is None:
@@ -242,7 +233,7 @@ class Library:
     def shows(self, now):
         """(rows, how many there are) of the shows with an episode to watch, by title; None without an index."""
         found = self._found(SHOWS, now, lambda s, i, ok: s.shows(i, ok))
-        return None if found is None else ([show_row(s) for s in found[:MAX_SHOWS]], len(found))
+        return None if found is None else ([show_row(s, now) for s in found[:MAX_SHOWS]], len(found))
 
     def episodes(self, sid, now, logos):
         """(the show's title, rows, how many there are) of one show: every episode of the list by season and number, the ones

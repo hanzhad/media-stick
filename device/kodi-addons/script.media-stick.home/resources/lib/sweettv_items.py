@@ -1,12 +1,14 @@
 """SWEET.TV app: the ListItems of the screen. One item per channel, made once per catalog; a minute's tick writes
-into them only the properties that changed (a property write makes Kodi redraw the card). Menu entries and the
-rows of the programme guide are made here too.
+into them only the properties that changed (a property write makes Kodi redraw the card). Menu entries, the cards of
+the shows, episodes and films, and the rows of the programme guide are made here too.
 """
 import os
 
 import xbmcgui
 
-from resources.lib import sweettv_view as view, ui
+from resources.lib import sweettv_data as data, sweettv_sections as sections, sweettv_text as words, sweettv_view as view, ui
+
+DIMMED = "55"                    # the alpha of a card that cannot be watched now
 
 
 def build(catalog, now, state):
@@ -40,49 +42,52 @@ def write_props(item, channel, now, state, names, shown):
             old[key] = value
 
 
+def _section(entry) -> bool:
+    return entry.group == data.SECTION_GROUP
+
+
+def _menu_props(item, entry, active_key):
+    """What the skin reads from an entry of the menu: the count, the heading the preview shows over the cards, the mark on the
+    entry the row follows, and `section` for the second group (Shows and series, Films), drawn in the accent colour."""
+    item.setLabel2("" if entry.count is None else str(entry.count))
+    item.setProperty("heading", view.section_heading(words.tr(entry.name), entry.count) if _section(entry)
+                     else view.category_heading(entry.name, entry.count))
+    item.setProperty("active", "1" if entry.key == active_key else "")
+    item.setProperty("section", "1" if _section(entry) else "")
+
+
 def menu_items(entries, active_key):
-    """One item per menu entry: its name, how many channels, the heading the preview shows over the channel,
-    and a mark on the category the row shows."""
+    """One item per menu entry (sweettv_data.rail): its name (the sections' is translated), how many, and the properties above."""
     out = []
     for entry in entries:
-        item = xbmcgui.ListItem(entry.name, str(entry.count), offscreen=True)
-        item.setProperty("heading", view.category_heading(entry.name, entry.count))
-        item.setProperty("active", "1" if entry.key == active_key else "")
+        item = xbmcgui.ListItem(words.tr(entry.name) if _section(entry) else entry.name, offscreen=True)
+        _menu_props(item, entry, active_key)
         out.append(item)
     return out
 
 
 def update_menu(items, entries, active_key):
-    """Counts, headings and the marked category, in place."""
+    """Counts, headings and the marked entry, in place."""
     for entry, item in zip(entries, items):
-        item.setLabel2(str(entry.count))
-        item.setProperty("heading", view.category_heading(entry.name, entry.count))
-        item.setProperty("active", "1" if entry.key == active_key else "")
+        _menu_props(item, entry, active_key)
 
 
-def home_items(entries):
-    """The three cards of the first screen: the section's name, what is behind it, how many, its colours."""
-    out = []
-    for entry in entries:
-        item = xbmcgui.ListItem(entry.title, offscreen=True)
-        for key, value in (("desc", entry.desc), ("count", entry.count), ("plate", entry.plate), ("plate_hi", entry.plate_hi)):
-            item.setProperty(key, value)
-        out.append(item)
-    return out
-
-
-def row_items(rows):
-    """The lines of a list of shows, episodes or films (sweettv_sections.Row): the title, its second line, the note on the right,
-    the channel's picture or its badge, and `dim` for what cannot be watched now."""
+def card_items(rows):
+    """The cards of shows, episodes or films (sweettv_sections.Row), made like the channel cards: the channel's picture or its
+    badge, the title under it, the colours of the card and of the screen behind it, and what the preview over the row says
+    (title, meta, cap, line). `dim` is for what cannot be watched now: its plate is let through."""
     out = []
     for row in rows:
-        item = xbmcgui.ListItem(row.title, row.side, offscreen=True)
+        texts = sections.card_texts(row)
+        colours = view.colours(row.mark)
+        item = xbmcgui.ListItem(texts.pop("caption"), offscreen=True)
         if row.icon:
             item.setArt({"icon": row.icon})
-        item.setProperty("sub", row.sub)
-        item.setProperty("initials", view.initials(row.mark))
-        item.setProperty("plate", view.colours(row.mark)["plate"])
-        item.setProperty("dim", "" if row.playable else "1")
+        props = {**texts, "initials": view.initials(row.mark), "bg": colours["bg"], "dim": "" if row.playable else "1",
+                 "plate": colours["plate"] if row.playable else DIMMED + colours["plate"][2:],
+                 "plate_hi": colours["plate_hi"] if row.playable else DIMMED + colours["plate_hi"][2:]}
+        for key, value in props.items():
+            item.setProperty(key, value)
         out.append(item)
     return out
 

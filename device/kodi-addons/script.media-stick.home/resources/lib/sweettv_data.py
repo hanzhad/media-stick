@@ -25,7 +25,10 @@ PLAY_URL = "plugin://plugin.video.sweettv/playvid/{cid}|{epg}"    # live: epg is
 HIDDEN_CATEGORY = 1000          # the plugin's own playlist export leaves this one out too
 
 ALL, RECENT, FAVOURITES = "all", "recent", "fav"
+SHOWS, FILMS = "shows", "films"          # the rail's two entries after the channel categories: what the carousel holds then
+CHANNEL_GROUP, SECTION_GROUP = "channels", "sections"
 RECENT_NAME = "Continue"        # the menu's name for the channels watched last
+SHOWS_NAME, FILMS_NAME = "Shows and series", "Films"      # msgids (sweettv_text): the menu's names for the two sections
 DATA, SIGNIN, EMPTY = "data", "signin", "empty"      # what the window shows
 
 KEEP_PAST = 2 * 3600            # s of finished programmes kept on a channel without a catch-up archive
@@ -72,7 +75,8 @@ class Catalog(NamedTuple):
 class RailEntry(NamedTuple):
     key: str
     name: str
-    count: int
+    count: Optional[int]        # None: not counted yet (the shows and the films are counted when their lists have been made)
+    group: str = CHANNEL_GROUP
 
 
 EMPTY_CATALOG = Catalog((), (), 0)
@@ -237,8 +241,12 @@ def hhmm(ts) -> str:
     return time.strftime("%H:%M", time.localtime(ts))
 
 
+def span(start, stop) -> str:
+    return f"{hhmm(start)} – {hhmm(stop)}"
+
+
 def time_range(programme) -> str:
-    return f"{hhmm(programme.start)} – {hhmm(programme.stop)}"
+    return span(programme.start, programme.stop)
 
 
 def play_url(cid, epg_id=None) -> str:
@@ -272,8 +280,10 @@ def recent_ids(state) -> list:
     return [entry["id"] for entry in state["recent"]]
 
 
-def rail(catalog, state) -> list:
-    """The category menu: Continue (what was watched last), Favourites, All, then the categories of the data."""
+def rail(catalog, state, counts=None) -> list:
+    """The menu on the left, in two groups: the channels (Continue, what was watched last; Favourites; All; then the
+    categories of the data), then "Shows and series" and "Films", whose cards the carousel shows instead of channels.
+    `counts` is (shows, films) once known, None until then."""
     ids = {c.cid for c in catalog.channels}
     favourites = [c for c in state["favourites"] if c in ids]
     recent = [c for c in recent_ids(state) if c in ids]
@@ -281,7 +291,8 @@ def rail(catalog, state) -> list:
            RailEntry(ALL, "All", len(catalog.channels))]
     for key, name in catalog.categories:
         out.append(RailEntry(key, name, sum(1 for c in catalog.channels if key[2:] in c.cats)))
-    return out
+    shows, films = counts if counts else (None, None)
+    return out + [RailEntry(SHOWS, SHOWS_NAME, shows, SECTION_GROUP), RailEntry(FILMS, FILMS_NAME, films, SECTION_GROUP)]
 
 
 def channels_for(catalog, key, state) -> list:

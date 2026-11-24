@@ -1,15 +1,15 @@
 """SWEET.TV app, the part of the page cache that needs no Kodi: which namespace and key a list is kept under, how long it is
-good for, and the lines of a list turned into a JSON value and back (page_cache keeps JSON; a Row is a tuple of 13 fields).
+good for, and the cards of a list turned into a JSON value and back (page_cache keeps JSON; a Row is a tuple of 14 fields).
 Everything here takes ready data and returns data.
 
   namespace   sweettv:<account>    ("sweettv:main": a stick has one SWEET.TV account; a sign-out drops "sweettv:*" and so does
                                    the window when it finds the account signed out, so another account never sees these pages)
-  key         shows                the list of shows
-              films                the list of films
+  key         shows                the cards of the shows
+              films                the cards of the films
               show:<id>            the episodes of one show
-              home                 how many shows and films there are (the numbers on the first screen's cards)
+              counts               how many shows and films there are (the numbers in the menu on the left)
   value       {"v", "lang", "title", "total", "rows": [[key, title, sub, side, icon, mark, playable, future, cid, epg, start,
-              stop, name], ...]}   (home: {"v", "lang", "shows", "films"})
+              stop, name, line], ...]}   (counts: {"v", "lang", "shows", "films"})
 
 Only a list that was made from the guide and has lines is kept (sweettv_app decides: never a failure, an empty list or a
 sign-in). Nothing live is kept: the address of a stream is made when a programme is played, from the two ids a row holds; what
@@ -26,15 +26,15 @@ from resources.lib import sweettv_sections as sections, sweettv_text as words
 SERVICE = "sweettv"
 ACCOUNT = "main"
 PAGE_TTL, PAGE_MAX_AGE = 300, 6 * 3600           # s: a page is shown without asking again for 5 minutes, and not shown after 6 hours
-HOME = "home"
-VERSION = 1
+COUNTS = "counts"
+VERSION = 2                                      # 2: a Row has its `line`, its titles are whole (1 kept lines cut to the skin)
 MAX_TEXT, MAX_ICON, MAX_COUNT = 300, 600, 100_000
 SHOW_ID = re.compile(r"[0-9]{1,12}|t[0-9a-f]{10}")
 NUMBER = re.compile(r"[0-9]{1,20}")
 ACCOUNT_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
 LIMITS = {sections.SHOWS: sections.MAX_SHOWS, sections.FILMS: sections.MAX_FILMS, sections.EPISODES: sections.MAX_EPISODES}
 _ROW = (("key", str), ("title", str), ("sub", str), ("side", str), ("icon", str), ("mark", str), ("playable", bool), ("future", bool),
-        ("cid", str), ("epg", str), ("start", int), ("stop", int), ("name", str))
+        ("cid", str), ("epg", str), ("start", int), ("stop", int), ("name", str), ("line", str))
 assert tuple(name for name, _ in _ROW) == sections.Row._fields
 
 
@@ -76,8 +76,8 @@ def _row_ok(row, kind) -> bool:
     for value, (_, type_) in zip(row, _ROW):
         if type_ is int and not _int(value) or type_ is bool and not isinstance(value, bool) or type_ is str and not isinstance(value, str):
             return False
-    key, title, sub, side, icon, mark, playable, future, cid, epg, start, stop, name = row
-    if not all(_text(t) for t in (title, sub, side, mark, name)) or not _text(icon, MAX_ICON) or not title:
+    key, title, sub, side, icon, mark, playable, future, cid, epg, start, stop, name, line = row
+    if not all(_text(t) for t in (title, sub, side, mark, name, line)) or not _text(icon, MAX_ICON) or not title:
         return False
     if icon and not icon.startswith(("http://", "https://", "special://", "/")):
         return False

@@ -1,7 +1,7 @@
 """SWEET.TV app: what the screen says about a channel. Ready data in, strings out; nothing here touches Kodi.
 
 One channel becomes the properties of its card and of the preview above the row (the skin reads both from the
-focused card): its colours, now and next, the progress, the badges, and whether there is a place to continue
+focused card; the cards of the shows, films and episodes are made in sweettv_items from sweettv_sections' rows): its colours, now and next, the progress, the badges, and whether there is a place to continue
 from or a guide to open. The programme guide of a channel and the "continue from" label are made here too.
 """
 import time
@@ -110,6 +110,7 @@ def card_props(channel, now, favourite=False, cat_names=None, resume=None) -> di
     step = data.progress_step(current, now)
     return {
         **colours(channel.name),
+        "title": channel.name,
         "num": str(channel.number) if channel.number else "",
         "initials": initials(channel.name),
         "now": current.title if current else NO_PROGRAMMES,
@@ -130,3 +131,8 @@ def card_props(channel, now, favourite=False, cat_names=None, resume=None) -> di
 def category_heading(name, count) -> str:
     """The line over the preview: the category and how many channels it holds."""
     return f"{name}  ·  {count} channel{'' if count == 1 else 's'}"
+
+
+def section_heading(name, count) -> str:
+    """The same over the preview for "Shows and series" and "Films": the name, and how many there are once that is known."""
+    return name if count is None else f"{name}  ·  {count}"
