@@ -211,8 +211,8 @@ wait_kodi() { for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping 2>/dev/null | grep 
 # Settings are written into guisettings.xml and add-ons unpacked with Kodi stopped,
 # not done over RPC: switching some settings over RPC puts a confirmation dialog on
 # the TV and hangs the call, and an add-on dropped in while Kodi runs comes up disabled.
-#  - look: Fire TV-style skin; no screensaver (empty mode): the home screen's wallpapers keep
-#    changing (Bing photos by media-stick-wallpapers) and its row dims itself when idle
+#  - look: native 1080p skin (skin.media-stick); no screensaver (empty mode): the home screen's
+#    wallpapers keep changing (Bing photos by media-stick-wallpapers) and its row dims itself when idle
 #  - casting: UPnP/DLNA renderer ("Cast to device", BubbleUPnP); Kodi's own AirPlay is off:
 #    UxPlay (airplay.service) receives AirPlay, screen mirroring included, which Kodi cannot
 #  - Kodi's web server on :8080 for the Kodi phone apps (Kore, Official Kodi Remote,
@@ -220,7 +220,7 @@ wait_kodi() { for i in $(seq 1 30); do kodi-rpc JSONRPC.Ping 2>/dev/null | grep 
 #    secrets.env; read it with: sudo grep KODI_WEB /etc/media-stick/secrets.env
 #  - screenshots to tmpfs for the page and tools/screenshot.sh
 #  - the mouse on: the page's tap-on-picture is a virtual mouse (panel, /dev/uinput); its
-#    pointer is the dot from device/skin-overlay, since the skin's own is a warning badge
+#    pointer is the dot bundled in skin.media-stick
 # Add-ons: device/kodi-addons.list (from tools/kodi-addons-lock.py) and device/kodi-addons/.
 SECRETS=/etc/media-stick/secrets.env
 grep -q '^KODI_WEB_PASSWORD=.' "$SECRETS" \
@@ -229,7 +229,7 @@ web_pass=$(sed -n 's/^KODI_WEB_PASSWORD=//p' "$SECRETS" | tail -1)
 on_settings=(services.zeroconf services.upnp services.upnprenderer
   services.webserver services.webserverauthentication)
 kodi_wanted=("${on_settings[@]/%/=true}" services.airplay=false services.webserverusername=kodi "services.webserverpassword=$web_pass"
-  lookandfeel.skin=skin.ftv screensaver.mode=
+  lookandfeel.skin=skin.media-stick screensaver.mode=
   lookandfeel.startupwindow=10000 input.enablemouse=true
   # 1080p60 explicitly; left alone Kodi picks the 1024x768 "DESKTOP" mode on the TV
   videoscreen.screenmode=0192001080060.00000pstd
@@ -262,8 +262,16 @@ overlay_apply() {
     install -D -o media -g media -m 0644 "$f" "/home/media/.kodi/addons/$rel"
   done < <(find "$OVERLAY" -type f -print0)
 }
-# Retired add-ons: gone from device/kodi-addons/, so remove them from the device (Kodi stopped).
-retired_addons=(service.media-stick.qr)
+# Retired add-ons: gone from device/kodi-addons/ or kodi-addons.want, so remove them from the device (Kodi stopped).
+retired_addons=(service.media-stick.qr
+  skin.ftv screensaver.bing
+  plugin.video.themoviedb.helper script.skinshortcuts script.skinvariables
+  script.module.jurialmunkey script.module.infotagger
+  script.module.beautifulsoup4 script.module.soupsieve
+  script.module.simpleeval script.module.unidecode
+  script.favourites script.globalsearch
+  resource.images.weatherfanart.single resource.uisounds.ftv
+  script.module.addon.signals)
 addons_ok=1; kodi-addons --check "$REPO" || addons_ok=0
 settings_ok=1; kodi-settings --check "${kodi_wanted[@]}" || settings_ok=0
 overlay_fresh=1; overlay_ok || overlay_fresh=0
@@ -303,7 +311,7 @@ if systemctl is-active -q kodi.service; then
   for s in "${on_settings[@]}"; do
     kodi-rpc Settings.GetSettingValue "{\"setting\":\"$s\"}" | grep -q '"value":true' || log "  kodi has $s off"
   done
-  kodi-rpc Settings.GetSettingValue '{"setting":"lookandfeel.skin"}' | grep -q skin.ftv || log "  kodi is not on skin.ftv"
+  kodi-rpc Settings.GetSettingValue '{"setting":"lookandfeel.skin"}' | grep -q skin.media-stick || log "  kodi is not on skin.media-stick"
 fi
 
 chown -R media:media "$REPO"

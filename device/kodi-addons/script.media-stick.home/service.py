@@ -1,5 +1,7 @@
 # Keeps the launcher window on screen whenever Kodi is on the skin Home.
 # show() plus waitForAbort() is what lets the window's callbacks run.
+import os
+import sys
 import time
 
 import xbmc
@@ -7,11 +9,73 @@ import xbmcgui
 
 from resources.lib.launcher import ADDON_PATH, Launcher
 
+_LIB_DIR = "/usr/local/lib/media-stick"
+if os.path.isdir(_LIB_DIR) and _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+
+try:
+    from mediastick_display import DisplayClient  # noqa: E402
+except Exception:
+    DisplayClient = None
+
 LOG = "[script.media-stick.home]"
 HOME_WINDOWS = (10000,)
 STATUS_EVERY = 5                     # seconds between IP / network refreshes
 SAMPLE_EVERY = 5                     # seconds between two looks at what plays (resume_recorder)
+IDLE_POLL = 1.0                      # seconds between checks while idle on Home
+PLAYING_POLL = 5.0                   # seconds between checks while video plays
 BLOCKED = "System.ScreenSaverActive | System.HasModalDialog | System.HasActiveModalDialog"
+
+
+def poll_interval(playing):
+    """Adaptive waitForAbort interval: slower during playback, 1 Hz while idle."""
+    return PLAYING_POLL if playing else IDLE_POLL
+
+
+def _notify_displayd(playing):
+    """Notify mediastick-displayd of playback transitions; no-op when absent."""
+    if DisplayClient is None:
+        return
+    client = None
+    try:
+        client = DisplayClient()
+        client.set_kodi_playing(bool(playing))
+    except Exception as e:
+        xbmc.log(f"{LOG} displayd notify({playing!r}) skipped: {e!r}", xbmc.LOGWARNING)
+    finally:
+        if client is not None and hasattr(client, "close"):
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
+_PlayerBase = getattr(xbmc, "Player", object)
+
+
+class PlaybackNotifier(_PlayerBase):
+    """Tracks playback state and notifies mediastick-displayd on start/stop/end."""
+
+    def __init__(self, notify=_notify_displayd):
+        super().__init__()
+        self.playing = False
+        self._notify = notify
+
+    def _set_playing(self, playing):
+        self.playing = bool(playing)
+        self._notify(self.playing)
+
+    def onAVStarted(self):
+        self._set_playing(True)
+
+    def onPlayBackStopped(self):
+        self._set_playing(False)
+
+    def onPlayBackEnded(self):
+        self._set_playing(False)
+
+    def onPlayBackError(self):
+        self._set_playing(False)
 
 
 def drop(launcher):
@@ -53,6 +117,7 @@ def main():
     apply_language()
     watcher = start_recorder()
     monitor = xbmc.Monitor()
+    player = PlaybackNotifier()
     launcher = None
     last_status = last_sample = time.monotonic()
     while not monitor.abortRequested():
@@ -85,9 +150,10 @@ def main():
         if watcher is not None and time.monotonic() - last_sample >= SAMPLE_EVERY:
             last_sample = time.monotonic()
             sample(watcher)
-        if monitor.waitForAbort(0.15):
+        if monitor.waitForAbort(poll_interval(player.playing)):
             break
     drop(launcher)
+    del player
     del launcher
 
 

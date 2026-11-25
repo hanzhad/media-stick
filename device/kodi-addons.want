@@ -1,10 +1,6 @@
 # Add-ons the device should have. Edit, then run: python3 tools/kodi-addons-lock.py
 # A bare id comes from Kodi's official repository; four fields pin a zip from elsewhere.
 
-# Look: Fire TV-style home screen, Bing photos as the screensaver
-skin.ftv
-screensaver.bing
-
 # Services
 plugin.video.youtube
 script.plex
