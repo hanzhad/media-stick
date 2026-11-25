@@ -347,6 +347,11 @@ def channels_view(raw, now, favs_data=None):
     """GET /api/sweettv/channels: all playable channels with FAST flag, categories, current/next, favourite."""
     if ml is None:
         raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
+    try:
+        import mediastick_sweetstore as _store
+        _store.default_store().upsert_channels(raw, now=now)
+    except Exception:
+        pass
     fkeys = mr.fav_keys(favs_data) if mr else set()
     out = []
     for c in _rows(raw.get("list") if isinstance(raw, dict) else None):
@@ -596,6 +601,10 @@ def day_view(raw, cid, date_text, now, local_data=None, client=None):
             saved = _saved(local_data, cid, p.get("epg") or p.get("id"))
             p["resume"] = saved["pos"] if saved and not saved["done"] and saved["pos"] >= min_pos else 0
             p["watched"] = bool(saved and saved["done"])
+            arch = bool(p.get("can_archive") or p.get("playable_in_archive") or p.get("archive"))
+            p["can_archive"] = arch
+            p["playable_in_archive"] = arch
+            p["archive"] = arch
     return res
 
 

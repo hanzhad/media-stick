@@ -233,7 +233,7 @@ function mkPlayer(){
     P.st=st;
     title.textContent=st.title||'Без названия';
     const isSw=st.app==='sweettv';
-    const liveBadge=isSw&&!st.is_vod?(st.live||(st.in_progress&&(st.lag_seconds||0)<=15)?'В эфире':(st.lag_seconds>0?'−'+tm(st.lag_seconds)+' от эфира':'')):(st.live?'В эфире':'');
+    const liveBadge=isSw&&!st.is_vod?(st.live||(st.in_progress&&(st.lag_seconds||0)<=15)?'В эфире':(st.lag_seconds>0?'−'+tm(st.lag_seconds)+' от эфира':(st.time>0?'С начала · '+tm(st.time):''))):(st.live?'В эфире':'');
     subl.textContent=[st.programme,st.channel&&st.channel!==st.title?st.channel:'',liveBadge,({youtube:'YouTube',sweettv:'SWEET.TV'})[st.app]].filter(Boolean).join(' · ');
     dvrRow.classList.toggle('hide',!isSw);
     if(isSw){

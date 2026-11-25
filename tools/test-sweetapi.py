@@ -163,16 +163,26 @@ class Search(unittest.TestCase):
 
     def test_channels_films_and_people_follow_the_programmes_and_odd_items_are_left_out(self):
         rows = self.rows()
-        self.assertEqual([r["kind"] for r in rows], ["show_tv"] + ["programme"] * 3 + ["channel", "channel", "movie", "person"])
-        stb, other = rows_of(rows, "channel")
-        self.assertEqual((stb["cid"], stb["title"], stb["channel_name"], stb["playable"], stb["subtitle"]),
-                         ("15", "СТБ HD", "СТБ", True, "Новини, шоу"))
-        self.assertEqual((other["cid"], other["playable"]), ("99", False))
+        self.assertEqual([r["kind"] for r in rows], ["show_tv"] + ["programme"] * 3 + ["channel", "movie", "person"])
+        stb = rows_of(rows, "channel")[0]
+        self.assertEqual((stb["cid"], stb["title"], stb["channel_name"], stb["playable"], stb["available"], stb["subtitle"]),
+                         ("15", "СТБ HD", "СТБ", True, True, "Новини, шоу"))
+        all_rows = api.normalize_search(SEARCH, MAP, NOW, tr=ENGLISH, tr_n=ENGLISH_N, include_unavailable=True)
+        _, other = rows_of(all_rows, "channel")
+        self.assertEqual((other["cid"], other["playable"], other["available"]), ("99", False, False))
         movie, person = rows_of(rows, "movie")[0], rows_of(rows, "person")[0]
         self.assertEqual((movie["title"], movie["subtitle"], movie["playable"], movie["cid"], movie["epg"]),
                          ("Divorce Club", "2020, Comedy", True, "", ""))
         self.assertEqual((person["title"], person["playable"]), ("Іван Холостяк", False))
-        self.assertEqual(len(rows), 8)                                                               # the weird kind, bad ids, no title and no start are gone
+        self.assertEqual(len(rows), 7)
+
+    def test_premiera_collapse_channel_boost_and_enriched_vod(self):
+        c1 = {"kind": "programme", "id": "1", "title": "Любовь на выживание", "cid": "15", "epg": "1", "start": NOW - 200, "stop": NOW - 100, "live": False, "playable_in_archive": True, "playable": True, "available": True}
+        c2 = {"kind": "programme", "id": "2", "title": "Премьера. Любовь на выживание", "cid": "15", "epg": "2", "start": NOW - 500, "stop": NOW - 400, "live": False, "playable_in_archive": True, "playable": True, "available": True}
+        self.assertEqual(len(api.collapse([c1, c2], NOW, ENGLISH_N)), 1)
+        boosted = api.normalize_search(SEARCH, MAP, NOW, tr=ENGLISH, tr_n=ENGLISH_N, needle="СТБ")
+        self.assertEqual(boosted[0]["kind"], "channel")
+        self.assertEqual(boosted[0]["cid"], "15")
 
     def test_odd_answers_never_raise(self):
         for junk in (None, 5, "x", [], {}, {"result": None}, {"result": "x"}, {"result": [None, 1, {}, {"type": 5}]}, {"result": {"a": 1}}):
@@ -513,7 +523,7 @@ class Routes(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(sender.calls[0]["body"], {"needle": "Холостяк"})
         self.assertEqual(body["ok"], True)
-        self.assertEqual([r["kind"] for r in body["items"]], ["show_tv"] + ["programme"] * 3 + ["channel", "channel", "movie", "person"])
+        self.assertEqual([r["kind"] for r in body["items"]], ["show_tv"] + ["programme"] * 3 + ["channel", "movie", "person"])
         self.assertEqual(body["items"][0]["episodes"][1]["more"], "ещё 2 показа")
 
     def test_a_short_needle_is_an_empty_answer_and_asks_nothing(self):
@@ -824,7 +834,7 @@ class VodAndCatalog(unittest.TestCase):
         self.assertFalse(tvod_movie["playable"])
         self.assertEqual(tvod_movie["image_url"], "https://img.example/top-9559.jpg")
 
-        res_4k = api.top_search(MAP, now=NOW, quality="unlimited", client=c, tr=ENGLISH)
+        res_4k = api.top_search(MAP, now=NOW, quality="unlimited", client=c, tr=ENGLISH, include_unavailable=True)
         self.assertIn("Космос 4K", [r["title"] for r in res_4k["items"]])
         self.assertIn("UHD 4K", [r["title"] for r in res_4k["items"]])
 

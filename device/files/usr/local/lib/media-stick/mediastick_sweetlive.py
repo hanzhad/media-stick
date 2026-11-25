@@ -163,7 +163,7 @@ def _channel(raw, cid):
     return None
 
 
-LIST_KEEP = ("id", "name", "catchup", "catchup_duration", "epg_days_future", "available", "category", "icon_v2_url", "icon_url",
+LIST_KEEP = ("id", "name", "number", "catchup", "catchup_duration", "epg_days_future", "available", "category", "icon_v2_url", "icon_url",
              "is_fast_channel", "banner_url")
 EPG_KEEP = ("id", "text", "time_start", "time_stop", "available", "tv_show_id", "season_number", "episode_number")
 
