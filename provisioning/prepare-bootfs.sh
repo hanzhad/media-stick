@@ -13,6 +13,13 @@ touch "$BOOT/ssh"
 mkdir -p "$BOOT/media-stick"
 cp "$here/firstboot/firstboot.sh" "$here/../device/files/usr/local/bin/wifi-setup" "$BOOT/media-stick/"
 # Fixed 1080p output even with no TV attached (D = force connector on).
-grep -q 'video=HDMI-A-1' "$BOOT/cmdline.txt" || \
-  sed -i '' '1s|$| video=HDMI-A-1:1920x1080@60D|' "$BOOT/cmdline.txt"
+if ! grep -q 'video=HDMI-A-1' "$BOOT/cmdline.txt"; then
+  tmp_cmdline=$(mktemp "$BOOT/cmdline.txt.XXXXXX")
+  if sed '1s|$| video=HDMI-A-1:1920x1080@60D|' "$BOOT/cmdline.txt" > "$tmp_cmdline"; then
+    mv "$tmp_cmdline" "$BOOT/cmdline.txt"
+  else
+    rm -f "$tmp_cmdline"
+    exit 1
+  fi
+fi
 echo "bootfs ready"

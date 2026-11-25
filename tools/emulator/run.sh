@@ -23,6 +23,10 @@ if [ -d "$REPO/device/files/usr/local/bin" ]; then
     cp -a "$REPO/device/files/usr/local/bin/." /usr/local/bin/
     chmod +x /usr/local/bin/*
 fi
+if [ -d "$REPO/device/files/usr/local/share/media-stick" ]; then
+    mkdir -p /usr/local/share/media-stick
+    cp -a "$REPO/device/files/usr/local/share/media-stick/." /usr/local/share/media-stick/
+fi
 
 # Unpack locked kodi-addons.list zips into $KODI_HOME/addons
 if [ -f "$REPO/device/kodi-addons.list" ]; then
