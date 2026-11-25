@@ -1,10 +1,12 @@
 [Unit]
 Description=AirPlay receiver: screen mirroring and audio from Apple devices (UxPlay)
-After=network-online.target avahi-daemon.service sound.target
+After=network-online.target avahi-daemon.service sound.target mediastick-displayd.service
 Wants=network-online.target avahi-daemon.service
 
 [Service]
-# root for stopping and starting Kodi; UxPlay itself runs as media (see the program)
+User=media
+Group=media
+SupplementaryGroups=video render audio input
 EnvironmentFile=-/etc/media-stick/local.env
 OOMScoreAdjust=-200
 ExecStart=/usr/local/bin/airplay

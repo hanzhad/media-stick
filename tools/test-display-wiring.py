@@ -160,7 +160,8 @@ class DrmDeduplicationTests(unittest.TestCase):
 
     def _load_drm(self):
         self.assertTrue(os.path.exists(DRM_PATH), f"missing {DRM_PATH}")
-        return _load_script("mediastick_drm", DRM_PATH)
+        import mediastick_drm
+        return mediastick_drm
 
     def test_mediastick_drm_exports_required_symbols(self):
         drm = self._load_drm()
@@ -453,11 +454,11 @@ class SystemdUnitWiringTests(unittest.TestCase):
         ):
             with self.subTest(directive=directive):
                 self.assertIn(directive, text)
-        self.assertRegex(text, r"^After=.*mediastick-displayd\.service", re.MULTILINE)
+        self.assertRegex(text, r"(?m)^After=.*mediastick-displayd\.service")
 
     def test_miracast_service_orders_after_displayd(self):
         text = _read_text(MIRACAST_SERVICE)
-        self.assertRegex(text, r"^After=.*mediastick-displayd\.service", re.MULTILINE)
+        self.assertRegex(text, r"(?m)^After=.*mediastick-displayd\.service")
 
     def test_webapp_service_has_no_kodi_race_and_notifies_displayd(self):
         text = _read_text(WEBAPP_SERVICE)
