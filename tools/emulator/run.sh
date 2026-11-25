@@ -113,6 +113,7 @@ if [ -x /usr/local/bin/kodi-settings ]; then
         input.enablemouse=true \
         addons.unknownsources=true \
         "videoscreen.screenmode=$SCREEN_MODE" \
+        filecache.buffermode=2 \
         window.width=1920 \
         window.height=1080 >/dev/null
 fi
@@ -129,6 +130,11 @@ cat > "$KODI_HOME/userdata/advancedsettings.xml" <<'EOF'
     <compactoutput>false</compactoutput>
     <tcpport>9090</tcpport>
   </jsonrpc>
+  <network>
+    <curlclienttimeout>5</curlclienttimeout>
+    <curllowspeedtime>5</curllowspeedtime>
+    <curlretries>1</curlretries>
+  </network>
 </advancedsettings>
 EOF
 
