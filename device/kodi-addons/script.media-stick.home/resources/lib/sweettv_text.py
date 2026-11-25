@@ -338,6 +338,8 @@ TEXT = {
     "No favourites yet.": {"ru": "Избранного пока нет.", "uk": "Обраного поки немає."},
     "Search everything": {"ru": "Поиск по всему", "uk": "Пошук по всьому"},
     "Search in {section}": {"ru": "Поиск: {section}", "uk": "Пошук: {section}"},
+    "Continue S{s} E{e} from {time}": {"ru": "Продолжить С{s} Э{e} с {time}", "uk": "Продовжити С{s} Е{e} з {time}"},
+    "Watch S{s} E{e}": {"ru": "Смотреть С{s} Э{e}", "uk": "Дивитись С{s} Е{e}"},
     "OK plays. Back closes.": {"ru": "OK воспроизводит. Назад закрывает.", "uk": "OK відтворює. Назад закриває."},
 }
 

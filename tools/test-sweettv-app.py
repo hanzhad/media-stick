@@ -1335,6 +1335,57 @@ class Channels(WindowCase):
             self.assertTrue(wait_for(lambda: m_search.called and len(window.cards) == 1))
             self.assertEqual(window.cards[0].kind, "show_tv")
 
+
+    def test_show_modal_auto_selects_next_up_season_episode_and_refreshes_on_return(self):
+        write_list(answer(chan(10, "Ten", number=10)))
+        detail = {
+            "ok": True, "id": "vod:500", "movie_id": "500", "title": "Futurama",
+            "seasons": [
+                {"id": 1, "title": "Season 1", "episodes": [
+                    {"id": 101, "episode_id": 101, "number": 1, "title": "Ep 1", "duration": 1400, "vod_url": "plugin://plugin.video.sweettv/playvod/500|101|10", "resume": 0, "watched": True, "resume_at": 100},
+                ]},
+                {"id": 2, "title": "Season 2", "episodes": [
+                    {"id": 201, "episode_id": 201, "number": 1, "title": "Ep 1", "duration": 1400, "vod_url": "plugin://plugin.video.sweettv/playvod/500|201|10", "resume": 320, "watched": False, "resume_at": 200},
+                    {"id": 202, "episode_id": 202, "number": 2, "title": "Ep 2", "duration": 1400, "vod_url": "plugin://plugin.video.sweettv/playvod/500|202|10", "resume": 0, "watched": False, "resume_at": 0},
+                ]},
+            ],
+            "next_up": {"season_index": 1, "episode_index": 0, "season_number": 2, "episode_number": 1, "season_title": "Season 2",
+                        "episode_id": 201, "owner_id": 10, "cid": "", "epg": "", "title": "Ep 1",
+                        "vod_url": "plugin://plugin.video.sweettv/playvod/500|201|10", "url": "plugin://plugin.video.sweettv/playvod/500|201|10",
+                        "resume": 320, "mode": "resume"},
+        }
+        with mock.patch.object(API, "vod_detail", return_value=detail):
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            from resources.lib import sweettv_sections as sections
+            card = sections.Card(
+                kind="series", key="500", fav_key="vod:500", title="Futurama", art="https://img/f.jpg",
+                banner="", meta="", desc="", play_url="", alt_url="", cid="", epg="", start=0, stop=0,
+                resume_pos=0, bar="", pbar="", fav=False, catchup=False, playable=True, dim=False, num="",
+                initials="FU", plate="", plate_hi="", bg="", tint="", now="", nowline="", next="", nextline="",
+                resume_label="", small=False,
+            )
+            window._open_show_modal(card)
+            self.assertTrue(wait_for(lambda: len(window.modal_seasons) == 2 and window.focus == 400))
+            self.assertEqual(window.modal_tab_idx, 1)
+            self.assertEqual(window.controls[410].selected, 1)
+            self.assertEqual(window.controls[400].selected, 0)
+            self.assertIn("2", window.controls[210].label)
+            # Click 210 plays S2E1 from 320s and records season/episode in resume
+            window.onClick(210)
+            self.assertTrue(wait_for(lambda: Fake.rpc))
+            req = json.loads(Fake.rpc[-1])
+            self.assertIn("playvod/500|201|10?start=320", req["params"]["item"]["file"])
+            self.assertEqual((window.session.season, window.session.episode), (2, 1))
+            # Finish S2E1 -> refresh advances modal to S2E2
+            window._report(window.session, 1390, 1400)
+            window._refresh_show_modal_progress()
+            self.assertEqual(window.modal_tab_idx, 1)
+            self.assertEqual(window.controls[400].selected, 1)
+            saved_ep = MR.load()["items"]["sw:vod:500|201"]
+            self.assertEqual((saved_ep["season"], saved_ep["episode"]), (2, 1))
+            self.assertTrue(saved_ep["done"])
+
     def test_hero_guide_button_416_opens_guide_modal(self):
         window = self.ready()
         window.onClick(416)

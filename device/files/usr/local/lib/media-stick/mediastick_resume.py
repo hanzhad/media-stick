@@ -235,9 +235,7 @@ def _clean(raw):
         if key.startswith("sw:vod:"):
             movie_id, _, ep_id = key[7:].partition("|")
             item.update(movie_id=movie_id, episode_id=ep_id, title=str(e.get("title") or "")[:120])
-            thumb = e.get("thumb")
-            if isinstance(thumb, str) and thumb.strip():
-                item["thumb"] = thumb.strip()[:300]
+            _clean_sw_extras(item, e)
         elif key.startswith("sw:"):
             cid, epg = key[3:].split("|")
             item.update(cid=cid, epg=epg, title=str(e.get("title") or "")[:120])
@@ -357,9 +355,7 @@ def record(data, file, pos, total, now, meta=None):
         meta = meta if isinstance(meta, dict) else {}
         old = data["items"].get(key, {})
         item.update(movie_id=parsed[1], episode_id=parsed[2], title=str(meta.get("title") or old.get("title") or "")[:120])
-        thumb = meta.get("thumb") or old.get("thumb")
-        if isinstance(thumb, str) and thumb.strip():
-            item["thumb"] = thumb.strip()[:300]
+        _clean_sw_extras(item, meta, old)
     data["items"][key] = item
     if len(data["items"]) > MAX_ITEMS:
         newest = sorted(data["items"].items(), key=lambda kv: -kv[1]["at"])[:MAX_ITEMS]

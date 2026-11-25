@@ -27,6 +27,9 @@ class Session(NamedTuple):
     start: int
     stop: int
     url: str = ""
+    season: int = 0
+    episode: int = 0
+    thumb: str = ""
 
     def programme(self) -> dict:
         return {"epg": self.epg, "title": self.title, "start": self.start, "stop": self.stop}
