@@ -439,7 +439,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self.section = key
             self._update_menu(follow=sync_menu)
             if key == "search":
-                self._set_chips("search", [("new", words.tr("New search"))])
+                self._set_chips("search", sections.search_chips())
                 self._prop("hint", words.section_hint("films"))
                 if self.search_cards:
                     self._apply_cards(self.search_cards)

@@ -239,7 +239,10 @@ def _programme_row(item, channels, now, tr):
     channel = _known_channel(channels, cid)
     archive = bool(channel) and ml.archive_ok(channel, {"time_start": start}, now)
     live = start <= now < stop
-    return {"kind": "programme", "id": epg, "title": title, "subtitle": "", "cid": cid, "epg": epg, "start": start, "stop": stop,
+    show_id = _id(item.get("tv_show_id"))
+    base_title = _base_show_title(title)
+    return {"kind": "programme", "id": epg, "title": title, "base_title": base_title, "show_id": show_id,
+            "subtitle": "", "cid": cid, "epg": epg, "start": start, "stop": stop,
             "channel_name": _clean(channel.get("name"), 120) if channel else "", "when": when_text(start, now, tr),
             "live": live, "playable_in_archive": archive, "playable": archive or (live and channel is not None),
             "available": True, "preview": "", "image_url": https(item.get("image_url")), "repeats": 0, "more": ""}
@@ -261,7 +264,9 @@ def _other_row(item, kind, channels, quality="1080p"):
         avail_info = item.get("availability_info")
         avail = (not isinstance(avail_info, dict) or avail_info.get("available") is not False) and item.get("available") is not False
         vod_url = ml.vod_url(ident, None, 0) if avail else ""
-        return {"kind": kind, "id": ident, "title": title, "subtitle": _clean(item.get("subtext")),
+        genres = item.get("genres") if isinstance(item.get("genres"), list) else ()
+        is_series = bool(item.get("is_serial") or (item.get("seasons_count") or 0) > 0 or any(_num(g) == 1 for g in genres))
+        return {"kind": "series" if is_series else kind, "id": ident, "title": title, "subtitle": _clean(item.get("subtext")),
                 "cid": "", "epg": "", "start": 0, "stop": 0, "channel_name": "", "when": "",
                 "live": False, "playable_in_archive": False, "playable": bool(avail and vod_url), "available": avail,
                 "vod_url": vod_url, "preview": "", "image_url": img, "repeats": 0, "more": ""}
@@ -319,13 +324,77 @@ def collapse(rows, now, tr_n=None):
 KINDS = {"EpgRecord": "programme", "Channel": "channel", "Movie": "movie", "Person": "person"}
 
 
+_SEARCH_SHOWS = {}
+_SEARCH_SHOWS_LOCK = threading.Lock()
+
+
+def _remember_search_shows(rows, now):
+    with _SEARCH_SHOWS_LOCK:
+        for k in list(_SEARCH_SHOWS.keys()):
+            if now - _SEARCH_SHOWS[k][0] > KNOWN_TTL:
+                del _SEARCH_SHOWS[k]
+        for r in rows:
+            if r.get("kind") == "show_tv" and r.get("episodes"):
+                _SEARCH_SHOWS[r["id"]] = (now, list(r["episodes"]))
+
+
+def _group_search_programmes(programmes, now, tr_n):
+    by_show, order, singles = {}, [], []
+    # First pass: bucket by tv_show_id or stripped base_title
+    buckets = {}
+    for p in programmes:
+        sid = p.get("show_id") or ""
+        base = p.get("base_title") or p["title"]
+        if sid:
+            key = ("tv", sid)
+        elif SHOW_MARKER_RE.search(p["title"]) and base != p["title"]:
+            key = ("base", " ".join(base.casefold().split()))
+        else:
+            key = ("single", p["id"])
+        buckets.setdefault(key, []).append(p)
+    shows = []
+    for key, grp in buckets.items():
+        distinct_titles = {" ".join(r["title"].casefold().split()) for r in grp}
+        if len(distinct_titles) >= 2 and (key[0] == "tv" or key[0] == "base"):
+            grp_sorted = collapse(grp, now, tr_n)
+            best = _stands_for(grp_sorted, now)
+            base = best.get("base_title") or best["title"]
+            show_key = f"tv:{key[1]}" if key[0] == "tv" else f"tv_s:{abs(hash(key[1])) % 10**9}"
+            img = next((r["image_url"] for r in grp_sorted if r.get("image_url")), "")
+            shows.append({
+                "kind": "show_tv",
+                "id": show_key,
+                "show_id": key[1] if key[0] == "tv" else "",
+                "title": base,
+                "subtitle": f"{len(grp_sorted)} вып.",
+                "cid": best["cid"],
+                "epg": best["epg"],
+                "start": best["start"],
+                "stop": best["stop"],
+                "channel_name": best["channel_name"],
+                "when": best["when"],
+                "live": any(r["live"] for r in grp_sorted),
+                "playable_in_archive": any(r["playable_in_archive"] for r in grp_sorted),
+                "playable": any(r["playable"] for r in grp_sorted),
+                "available": True,
+                "preview": img,
+                "image_url": img,
+                "repeats": len(grp_sorted) - 1,
+                "more": "",
+                "episodes_count": len(grp_sorted),
+                "episodes": grp_sorted,
+            })
+        else:
+            singles.extend(grp)
+    return shows, collapse(singles, now, tr_n)
+
+
 def normalize_search(reply, channels, now, tr=None, tr_n=None, quality="1080p"):
-    """The rows of a SearchService/Search.json answer: programmes (collapsed, newest first), then channels, films, people
-    in the order the service gave them; at most MAX_ROWS. Odd items are left out; never raises."""
+    """The rows of a SearchService/Search.json answer: grouped shows/series first, then programmes, channels, movies, people."""
     tr = tr or ml.text
     channels = channel_map(channels)
     found = reply.get("result") if isinstance(reply, dict) else None
-    programmes, others = [], {"channel": [], "movie": [], "person": []}
+    programmes, others = [], {"series": [], "channel": [], "movie": [], "person": []}
     for item in found if isinstance(found, list) else ():
         kind = KINDS.get(item.get("type")) if isinstance(item, dict) else None
         if kind == "programme":
@@ -333,8 +402,11 @@ def normalize_search(reply, channels, now, tr=None, tr_n=None, quality="1080p"):
             programmes.extend([row] if row else [])
         elif kind:
             row = _other_row(item, kind, channels, quality=quality)
-            others[kind].extend([row] if row else [])
-    rows = collapse(programmes, now, tr_n) + others["channel"] + others["movie"] + others["person"]
+            if row:
+                others[row["kind"]].append(row)
+    grouped_shows, single_progs = _group_search_programmes(programmes, now, tr_n)
+    _remember_search_shows(grouped_shows, now)
+    rows = others["series"] + grouped_shows + single_progs + others["channel"] + others["movie"] + others["person"]
     return rows[:MAX_ROWS]
 
 
@@ -509,8 +581,9 @@ def _remember(rows, now):
     """What the play route may check a programme against: the programmes shown lately (cid, epg -> start, stop)."""
     with _known_lock:
         for row in rows:
-            if row.get("kind", "programme") == "programme" and row.get("epg") and row.get("cid"):
-                _known[(row["cid"], row["epg"])] = (row["start"], row["stop"], now, row.get("available") is not False)
+            for item in (row.get("episodes") or (row,)):
+                if item.get("epg") and item.get("cid"):
+                    _known[(item["cid"], item["epg"])] = (item["start"], item["stop"], now, item.get("available") is not False)
         if len(_known) > KNOWN_MAX:
             for key in sorted(_known, key=lambda k: _known[k][2])[:len(_known) - KNOWN_MAX]:
                 del _known[key]
@@ -1101,16 +1174,29 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
             er = c.post(EPG_RECORDS, {"id_list": curated_ids, "image_type": 0, "need_extended_info": True})
             if er.ok:
                 recs = [r for r in (er.data.get("epg_records") or er.data.get("list") or ()) if isinstance(r, dict)]
-    elif show_key.startswith("tv:"):
-        target_sid = _num(show_key[3:])
-        if not target_sid:
-            return _failure("format", tr)
-        for ch in _channel_list(channels):
-            for p in ch.get("epg") if isinstance(ch.get("epg"), list) else ():
-                if isinstance(p, dict) and _num(p.get("tv_show_id")) == target_sid:
-                    recs.append({**p, "channel_id": ch.get("id")})
-                    if not title:
-                        title = _base_show_title(p.get("text"))
+    elif show_key.startswith(("tv:", "tv_s:")):
+        if show_key.startswith("tv:"):
+            target_sid = _num(show_key[3:])
+            if not target_sid:
+                return _failure("format", tr)
+            for ch in _channel_list(channels):
+                for p in ch.get("epg") if isinstance(ch.get("epg"), list) else ():
+                    if isinstance(p, dict) and _num(p.get("tv_show_id")) == target_sid:
+                        recs.append({**p, "channel_id": ch.get("id")})
+                        if not title:
+                            title = _base_show_title(p.get("text"))
+        with _SEARCH_SHOWS_LOCK:
+            cached_eps = _SEARCH_SHOWS.get(show_key)
+            cached_list = list(cached_eps[1]) if cached_eps else []
+        seen_epg = {_id(r.get("id")) for r in recs}
+        for ep in cached_list:
+            if ep["epg"] not in seen_epg:
+                seen_epg.add(ep["epg"])
+                recs.append({"id": ep["epg"], "channel_id": ep["cid"], "text": ep["title"],
+                             "time_start": ep["start"], "time_stop": ep["stop"],
+                             "image_url": ep.get("image_url", ""), "available": ep.get("available", True)})
+                if not title:
+                    title = ep.get("base_title") or _base_show_title(ep["title"])
     else:
         return _failure("format", tr)
 
