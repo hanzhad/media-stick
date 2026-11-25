@@ -12,7 +12,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 import mediastick_resume as mr
-from resources.lib import page_cache, single_instance, sweettv_data as data, sweettv_demo, \
+from resources.lib import page_cache, quick_resume, single_instance, sweettv_data as data, sweettv_demo, \
     sweettv_files as files, sweettv_items as items, sweettv_pages as pages, sweettv_play as play, \
     sweettv_sections as sections, sweettv_state as saved, sweettv_text as words, ui
 from resources.lib.sweettv_find import Find
@@ -91,6 +91,9 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self.play_at = 0.0
         self.session = None
         self.previewing = ""
+        self._qr_focus_index = 0
+        self._qr_focus_key = ""
+        self._qr_dirty = False
         self._shelf_setup()
         self._find_setup()
         self._guide_setup()
@@ -110,6 +113,13 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self.favs_doc = mr.load_favs()
                 self._migrate_legacy_favs()
                 self.fav_keys = mr.fav_keys(self.favs_doc)
+                snap = quick_resume.load_snapshot("sweettv", "default")
+                if snap and snap.get("section") in sections.SECTION_KEYS:
+                    self.section = snap["section"]
+                    if snap.get("filter"):
+                        self.filter_key = snap["filter"]
+                    self._qr_focus_index = max(0, int(snap.get("focused_index") or 0))
+                    self._qr_focus_key = str(snap.get("focused_key") or "")
                 self.writer.start()
             self._show_mode(data.EMPTY, self._status_props(words.status("", False, False, 0)))
         else:
@@ -118,6 +128,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         threading.Thread(target=self._look, daemon=True).start()
 
     def stop(self):
+        if self._qr_dirty:
+            self._save_quick_resume(immediate=True)
         self._stop.set()
         self._cancel_warm()
         for timer in list(self._timers.values()):
@@ -228,6 +240,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 ns = pages.namespace()
                 if ns:
                     page_cache.drop_namespace(ns)
+                    quick_resume.drop_snapshots("sweettv")
 
     def _card_props(self, mode, snap, now, phone):
         if mode == data.SIGNIN:
@@ -263,6 +276,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self._show_continue()
         elif self.section == "favourites":
             self._show_favourites()
+        elif self.section in ("movies", "series", "shows", "search"):
+            self._open_section(self.section, focus_cid=focus_cid)
 
     def _refresh_channels(self, now):
         cards = [sections.channel_card(c, self.cat_names, now, self.resume_doc, self.fav_keys) for c in self.shown]
@@ -418,6 +433,31 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._load_catalog(key, offset=0)
             elif key == "channels":
                 self._show_channels(focus_cid)
+        self._qr_dirty = True
+        self._save_quick_resume()
+
+    def _save_quick_resume(self, immediate=False):
+        if self.demo or not self.started or not self.signed or not self.section:
+            return
+        try:
+            pos = max(0, self.getControl(ROW).getSelectedPosition())
+        except Exception:
+            pos = 0
+        card = self.cards[pos] if 0 <= pos < len(self.cards) else None
+        fkey = card.key if card is not None else ""
+        snap = quick_resume.build_sweettv_snapshot(
+            section=self.section,
+            filter=self.filter_key,
+            focused_index=pos,
+            focused_key=fkey,
+            cards=self.cards[:24],
+        )
+        quick_resume.save_snapshot(
+            "sweettv",
+            "default",
+            snap,
+            debounce_s=0.0 if immediate else quick_resume.DEBOUNCE_S,
+        )
 
     def _fill_row(self, key, focus_cid="", sync_menu=False):
         if key == data.ALL:

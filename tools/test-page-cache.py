@@ -5,6 +5,7 @@ page_cache needs no Kodi (its folder is a temp directory here); time is passed i
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -41,11 +42,11 @@ class Case(unittest.TestCase):
         return sorted(os.listdir(self.dir)) if os.path.isdir(self.dir) else []
 
     def file_of(self, namespace=NS):
-        return pc._path(namespace)
+        return os.path.join(self.dir, "cache.db")
 
-    def text(self, namespace=NS):
-        with open(self.file_of(namespace), encoding="utf-8") as f:
-            return f.read()
+    def count_rows(self, namespace=NS):
+        with sqlite3.connect(self.file_of()) as con:
+            return con.execute("SELECT COUNT(*) FROM pages WHERE namespace = ?", (namespace,)).fetchone()[0]
 
 
 class PutGet(Case):
@@ -132,10 +133,11 @@ class Refused(Case):
         page = entries(40)
         page["entries"][0][2] = "How to get an API key and a token"           # words in a title are not credentials
         self.assertTrue(pc.put(NS, "rec", page, now=NOW))
-        text = self.text()
-        for word in ("access_token", "refresh_token", "client_secret", "Bearer", "ya29", "password="):
-            self.assertNotIn(word, text)
-        self.assertEqual(json.loads(text)["items"]["rec"]["v"], page)
+        with open(self.file_of(), "rb") as f:
+            raw = f.read()
+        for word in (b"access_token", b"refresh_token", b"client_secret", b"Bearer", b"ya29", b"password="):
+            self.assertNotIn(word, raw)
+        self.assertEqual(pc.get(NS, "rec", now=NOW).value, page)
 
     def test_a_page_too_big_for_a_file_is_refused_and_the_others_stay(self):
         pc.put(NS, "small", {"a": 1}, now=NOW)
@@ -150,8 +152,7 @@ class Caps(Case):
             pc.put(NS, f"k{i}", {"i": i}, now=NOW + i)
         found = [i for i in range(pc.MAX_ENTRIES + 5) if pc.get(NS, f"k{i}", max_age=1e9, now=NOW + 100)]
         self.assertEqual((len(found), found[0], found[-1]), (pc.MAX_ENTRIES, 5, pc.MAX_ENTRIES + 4))
-        doc = json.loads(self.text())
-        self.assertEqual(len(doc["items"]), pc.MAX_ENTRIES)
+        self.assertEqual(self.count_rows(NS), pc.MAX_ENTRIES)
 
     def test_a_put_of_an_old_key_keeps_it_young_and_is_not_the_one_dropped(self):
         for i in range(pc.MAX_ENTRIES):
@@ -162,59 +163,56 @@ class Caps(Case):
         self.assertIsNone(pc.get(NS, "k1", max_age=1e9, now=NOW + 102))
 
     def test_a_file_stays_below_its_size_cap_by_dropping_the_oldest_pages(self):
-        chunk = "x" * 100_000
-        for i in range(10):
-            self.assertTrue(pc.put(NS, f"k{i}", {"blob": chunk}, now=NOW + i))
-        self.assertLessEqual(os.path.getsize(self.file_of()), pc.MAX_FILE_BYTES)
+        with mock.patch.object(pc, "MAX_TOTAL_BYTES", pc.MAX_FILE_BYTES):
+            for i in range(10):
+                chunk = os.urandom(60_000).hex()
+                self.assertTrue(pc.put(NS, f"k{i}", {"blob": chunk}, now=NOW + i))
+        with sqlite3.connect(self.file_of()) as con:
+            total_bytes = con.execute("SELECT COALESCE(SUM(size_bytes), 0) FROM pages").fetchone()[0]
+        self.assertLessEqual(total_bytes, pc.MAX_FILE_BYTES)
         self.assertIsNotNone(pc.get(NS, "k9", max_age=1e9, now=NOW + 20))             # the newest is kept
         self.assertIsNone(pc.get(NS, "k0", max_age=1e9, now=NOW + 20))
 
     def test_the_folder_stays_below_its_total_the_file_untouched_longest_goes_first(self):
-        chunk = "x" * 400_000
-        with mock.patch.object(pc, "MAX_TOTAL_BYTES", 1_000_000):
+        with mock.patch.object(pc, "MAX_TOTAL_BYTES", 1_500):
             for i in range(4):
-                pc.put(f"app:{i}", "k", {"blob": chunk}, now=NOW + i)
-                os.utime(self.file_of(f"app:{i}"), (NOW + i, NOW + i))
-        size = sum(os.path.getsize(os.path.join(self.dir, name)) for name in self.files())
-        self.assertLessEqual(size, 1_000_000)
+                blob = os.urandom(500).hex()
+                self.assertTrue(pc.put(f"app:{i}", "k", {"blob": blob}, now=NOW + i))
         self.assertIsNotNone(pc.get("app:3", "k", max_age=1e9, now=NOW + 10))
         self.assertIsNone(pc.get("app:0", "k", max_age=1e9, now=NOW + 10))
 
-    def test_a_leftover_temp_file_is_swept_when_old(self):
-        os.makedirs(self.dir, exist_ok=True)
-        old, young = os.path.join(self.dir, "old.tmp"), os.path.join(self.dir, "young.tmp")
-        for path in (old, young):
-            open(path, "w").close()
-        os.utime(old, (1, 1))
+    def test_sqlite_store_uses_wal_mode(self):
         pc.put(NS, "k", 1, now=NOW)
-        self.assertEqual([name for name in self.files() if name.endswith(".tmp")], ["young.tmp"])
+        with sqlite3.connect(self.file_of()) as con:
+            self.assertEqual(str(con.execute("PRAGMA journal_mode").fetchone()[0]).lower(), "wal")
 
 
 class Damage(Case):
-    def test_a_corrupt_or_foreign_file_is_an_empty_cache_and_is_written_over(self):
+    def test_a_corrupt_or_foreign_payload_is_ignored_and_written_over(self):
         pc.put(NS, "k", 1, now=NOW)
-        path = self.file_of()
-        for content in ("{not json", "", "[]", "null", '{"v": 1}', '{"v": 2, "ns": "youtube:7", "items": {}}',
-                        json.dumps({"v": 1, "ns": "someone:else", "items": {"k": {"t": NOW, "v": 1}}}),
-                        json.dumps({"v": 1, "ns": NS, "items": {"k": 5, "j": {"t": "x", "v": 1}, "i": {"t": NOW}}}), "\x00\xff garbage"):
-            with open(path, "w", encoding="utf-8", errors="replace") as f:
-                f.write(content)
-            pc._memo.clear()
-            self.assertIsNone(pc.get(NS, "k", now=NOW), content)
-            self.assertTrue(pc.put(NS, "k", 2, now=NOW), content)
-            self.assertEqual(pc.get(NS, "k", now=NOW).value, 2)
+        with sqlite3.connect(self.file_of()) as con:
+            con.execute("UPDATE pages SET payload = ? WHERE namespace = ? AND key = ?", (b"not-zlib", NS, "k"))
+            con.commit()
+        self.assertIsNone(pc.get(NS, "k", now=NOW))
+        self.assertTrue(pc.put(NS, "k", 2, now=NOW))
+        self.assertEqual(pc.get(NS, "k", now=NOW).value, 2)
 
     def test_a_damaged_item_does_not_take_the_good_ones_with_it(self):
-        with open(self.file_of(), "w", encoding="utf-8") as f:
-            json.dump({"v": 1, "ns": NS, "items": {"good": {"t": NOW, "v": [1]}, "bad": 5, "nan": {"t": "now", "v": 1}}}, f)
+        pc.put(NS, "good", [1], now=NOW)
+        pc.put(NS, "bad", [2], now=NOW)
+        with sqlite3.connect(self.file_of()) as con:
+            con.execute("UPDATE pages SET payload = ? WHERE namespace = ? AND key = ?", (b"bad", NS, "bad"))
+            con.commit()
         self.assertEqual(pc.get(NS, "good", now=NOW).value, [1])
         self.assertIsNone(pc.get(NS, "bad", now=NOW))
 
     def test_a_file_that_changed_on_disk_is_read_again(self):
         pc.put(NS, "k", 1, now=NOW)
         pc.get(NS, "k", now=NOW)
-        with open(self.file_of(), "w", encoding="utf-8") as f:                     # another process wrote it
-            json.dump({"v": 1, "ns": NS, "items": {"k": {"t": NOW, "v": "other process"}}}, f)
+        with sqlite3.connect(self.file_of()) as con:
+            blob = pc.ms.encode_payload("other process")
+            con.execute("UPDATE pages SET payload = ? WHERE namespace = ? AND key = ?", (sqlite3.Binary(blob), NS, "k"))
+            con.commit()
         self.assertEqual(pc.get(NS, "k", now=NOW).value, "other process")
         os.unlink(self.file_of())
         self.assertIsNone(pc.get(NS, "k", now=NOW))
@@ -222,7 +220,7 @@ class Damage(Case):
     def test_nothing_raises_when_the_folder_cannot_be_used(self):
         blocker = os.path.join(self.dir, "blocker")
         open(blocker, "w").close()
-        with mock.patch.object(pc, "DIR", os.path.join(blocker, "inside")):         # a file where the folder should be
+        with mock.patch.object(pc, "DIR", os.path.join(blocker, "inside")):
             self.assertFalse(pc.put(NS, "k", 1, now=NOW))
             self.assertIsNone(pc.get(NS, "k", now=NOW))
             pc.drop(NS)
@@ -235,23 +233,16 @@ class Damage(Case):
             pc.drop_service("youtube")
         self.assertIsNone(pc.get(None, None))
 
-    def test_a_write_that_fails_leaves_the_old_file_and_no_temp_file(self):
+    def test_a_write_that_fails_leaves_the_old_value_and_no_temp_file(self):
         pc.put(NS, "k", "old", now=NOW)
-        with mock.patch.object(pc.os, "replace", side_effect=OSError("disk full")):
+        with mock.patch.object(pc.ms.CacheStore, "put_page", side_effect=OSError("disk full")):
             self.assertFalse(pc.put(NS, "k", "new", now=NOW + 1))
-        self.assertEqual(pc.get(NS, "k", now=NOW + 1).value, "old")
-        pc._memo.clear()
         self.assertEqual(pc.get(NS, "k", now=NOW + 1).value, "old")
         self.assertEqual([name for name in self.files() if name.endswith(".tmp")], [])
 
-    def test_a_file_is_written_whole_into_place(self):
-        calls = []
-        real = os.replace
-        with mock.patch.object(pc.os, "replace", side_effect=lambda a, b: calls.append((a, b)) or real(a, b)):
-            pc.put(NS, "k", 1, now=NOW)
-        (tmp, final), = calls
-        self.assertTrue(tmp.endswith(".tmp") and final == self.file_of() and os.path.dirname(tmp) == self.dir)
-        self.assertEqual(self.files(), [os.path.basename(final)])
+    def test_a_file_is_written_into_cache_db(self):
+        pc.put(NS, "k", 1, now=NOW)
+        self.assertEqual(self.files(), ["cache.db"])
 
 
 class Dropping(Case):
@@ -271,13 +262,14 @@ class Dropping(Case):
         self.assertEqual([pc.get(ns, "k", now=NOW) is not None for ns in ("youtube:1", "youtube:2", "youtube:anon", "sweettv:me", "youtubers:x")],
                          [False, False, False, True, True])
 
-    def test_drop_service_removes_an_unreadable_file_of_the_app_by_its_name(self):
+    def test_drop_service_removes_corrupt_entries_of_the_app_by_namespace(self):
         pc.put("youtube:1", "k", 1, now=NOW)
-        with open(self.file_of("youtube:1"), "w") as f:
-            f.write("{broken")
+        with sqlite3.connect(self.file_of()) as con:
+            con.execute("UPDATE pages SET payload = ? WHERE namespace = ?", (b"{broken", "youtube:1"))
+            con.commit()
         pc.put("sweettv:me", "k", 1, now=NOW)
         pc.drop_service("youtube")
-        self.assertEqual(len(self.files()), 1)
+        self.assertIsNone(pc.get("youtube:1", "k", now=NOW))
         self.assertEqual(pc.get("sweettv:me", "k", now=NOW).value, 1)
 
     def test_the_cache_lives_where_the_addon_keeps_its_data(self):
@@ -308,9 +300,7 @@ class Threads(Case):
         for t in threads:
             t.join()
         self.assertEqual(errors, [])
-        pc._memo.clear()
-        doc = json.loads(self.text())
-        self.assertEqual(len(doc["items"]), pc.MAX_ENTRIES)
+        self.assertEqual(self.count_rows(NS), pc.MAX_ENTRIES)
         self.assertEqual([name for name in self.files() if name.endswith(".tmp")], [])
 
 

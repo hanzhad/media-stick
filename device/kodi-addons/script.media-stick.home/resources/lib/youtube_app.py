@@ -30,7 +30,7 @@ import xbmcgui
 
 from resources.lib import (onboarding_view, profiles, single_instance, sweettv_text, ui, youtube_cards as cards, youtube_data as data,
                            youtube_demo, youtube_files as files, youtube_state as saved)
-from resources.lib import page_cache, prefetch, youtube_pages as pages
+from resources.lib import page_cache, prefetch, quick_resume, youtube_pages as pages
 
 XML = "script-media-stick-youtube.xml"
 RAIL, AVATAR, GRID, ACTION = 100, 150, 200, 300
@@ -117,13 +117,33 @@ class YouTube(xbmcgui.WindowXML):
             self._after_player()
             return
         self.started = True
+        select = 0
         if not self.demo:
             self.state = saved.load_state(files.state_path())
             self.profile, self.profile_known = files.profile_id(), True    # the disk cache is the profile's: know it before the first look
+            snap = quick_resume.load_snapshot("youtube", self.profile) if self._ns(self.profile) is not None else None
+            if snap:
+                has_state_file = os.path.exists(files.state_path())
+                same_target = (snap.get("section") == self.state["section"]
+                               and (snap.get("search_query") or "") == self.state["query"])
+                if not has_state_file:
+                    self.state = saved.apply_snapshot(self.state, snap)
+                if not has_state_file or same_target:
+                    select = max(0, int(snap.get("focused_index") or 0))
+                    for item in snap.get("nav_stack") or ():
+                        if isinstance(item, dict) and item.get("route"):
+                            view = data.View(
+                                item.get("key", ""),
+                                item.get("route", ""),
+                                item.get("title", ""),
+                                item.get("kind", data.DEFAULT_KIND),
+                                bool(item.get("needs_login", False)),
+                            )
+                            self.stack.append((view, max(0, int(item.get("pos") or 0))))
         self._set_avatar(None, "")
         self._fill_rail()
         self._navigate(data.section_view(self.state["section"], query=self.state["query"], kind=self.state["kind"]), focus=True,
-                       launch=True)
+                       select=select, launch=True)
         if not self.demo:
             self._later("profile", PROFILE_POLL, self._profile_tick)
             self._start_warm()                   # now, splash or not: it waits by itself (_idle) while the first page is asked for
@@ -155,6 +175,7 @@ class YouTube(xbmcgui.WindowXML):
                 self._later("profile", PROFILE_POLL, self._profile_tick)
 
     def stop(self):
+        self._save_quick_resume(immediate=True)
         self._stop.set()
         self._cancel_warm()
         for timer in list(self._timers.values()):
@@ -215,6 +236,8 @@ class YouTube(xbmcgui.WindowXML):
             self._prop("search", "1" if view.key == data.SEARCH else "")     # the row of choices is for a search only
             self._prop("kind", view.kind)
             self._mark_rail()
+            if not launch:
+                self._save_quick_resume()
             cached = self.cache.get(view.route)
             if not view.route:
                 self._show_card(data.PROMPT)
@@ -413,7 +436,29 @@ class YouTube(xbmcgui.WindowXML):
 
     def _idle(self):
         """Whether the window is waiting for nothing: no Loading card, no page being asked for again, no next page."""
-        return not self._stop.is_set() and self.mode not in ("", data.LOADING) and not self.refreshing and not self.loading_more
+        return not self._stop.is_set() and not playing() and self.mode not in ("", data.LOADING) and not self.refreshing and not self.loading_more
+
+    def _save_quick_resume(self, immediate=False):
+        if self.demo or not self.started or self._ns(self.profile) is None:
+            return
+        try:
+            pos = max(0, self.getControl(GRID).getSelectedPosition())
+        except Exception:
+            pos = 0
+        snap = quick_resume.build_youtube_snapshot(
+            section=self.state.get("section", data.DEFAULT_SECTION),
+            query=self.state.get("query", ""),
+            kind=self.state.get("kind", data.DEFAULT_KIND),
+            stack=self.stack,
+            focused_index=pos,
+            cards=[list(e) for e in self.entries[:24]],
+        )
+        quick_resume.save_snapshot(
+            "youtube",
+            self.profile,
+            snap,
+            debounce_s=0.0 if immediate else quick_resume.DEBOUNCE_S,
+        )
 
     def _warm_page(self, view, pid):
         """The job of one section: its first page as page_cache keeps it, None when there is nothing worth keeping."""

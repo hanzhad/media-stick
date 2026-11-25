@@ -2,7 +2,7 @@
 import threading
 
 import mediastick_sweetapi as sweetapi
-from resources.lib import page_cache, sweettv_demo, sweettv_pages as pages, sweettv_sections as sections, \
+from resources.lib import page_cache, prefetch, sweettv_demo, sweettv_pages as pages, sweettv_sections as sections, \
     sweettv_text as words, ui
 
 PAGE_SIZE = 30
@@ -137,12 +137,19 @@ class Shelf:
         ns = None if demo else pages.namespace()
         ckey = pages.catalog_key(section, gid, sort_id, offset)
         cached = None
+        hit_stale = False
         if ns and ckey:
-            hit = page_cache.get(ns, ckey, pages.PAGE_MAX_AGE)
+            hit = page_cache.get(ns, ckey, ttl=pages.PAGE_TTL, max_age=pages.PAGE_MAX_AGE)
             if hit:
                 parsed = pages.from_value(section, hit.value)
                 if parsed:
                     cached = parsed
+                    hit_stale = bool(hit.stale)
+                elif isinstance(hit.value, dict) and hit.value.get("lang") != words.LANG:
+                    parsed = pages.from_value(section, {**hit.value, "lang": words.LANG})
+                    if parsed:
+                        cached = parsed
+                        hit_stale = True
         if cached is not None:
             _, items, total = cached
             ok = True
@@ -180,6 +187,62 @@ class Shelf:
             msg = "" if cards else (words.tr("No films in the archive yet.") if ok
                                     else words.tr("The list could not be loaded. Try again in a minute."))
             self._apply_cards(cards, empty_msg=msg, keep_pos=(offset > 0))
+        if hit_stale:
+            t = threading.Timer(
+                0.01,
+                self._revalidate_catalog,
+                args=(gen, section, gid, sort_id, offset, ns, ckey, resume_doc, favs),
+            )
+            t.daemon = True
+            t.start()
+        if ok and not demo:
+            self._start_warm()
+
+    def _revalidate_catalog(self, gen, section, gid, sort_id, offset, ns, ckey, resume_doc, favs):
+        try:
+            res = sweetapi.catalog_page(section, genre_id=gid, sort_mode_id=sort_id,
+                                        offset=offset, limit=PAGE_SIZE, tr=words.tr)
+            if not res.get("ok"):
+                return
+            items = list(res.get("items") or ())
+            total = int(res.get("total") or len(items))
+            if items and len(items) <= pages.MAX_SLICE:
+                page_cache.put(ns, ckey, pages.to_value(section, items, total))
+            if offset != 0 or not items:
+                return
+            with self._lock:
+                if self._stop.is_set() or gen != self._section_gen or self.section != section:
+                    return
+                self.cat_items = items
+                self.cat_total = total
+                kind = "series" if section == "series" else "movie"
+                cards = [sections.vod_card(x, kind, resume_doc, favs) for x in self.cat_items]
+                self._apply_cards(cards, keep_pos=True)
+        except Exception as e:
+            ui.log(f"SWEET.TV revalidate failed: {e!r}")
+
+    def _shelf_idle(self):
+        return not self._stop.is_set() and not self.cat_loading and not self._playing()
+
+    def _start_warm(self):
+        if self.demo or not getattr(self, "signed", False):
+            return
+        ns = pages.namespace()
+        if not ns:
+            return
+        jobs = []
+        for sec in ("movies", "series"):
+            ckey = pages.catalog_key(sec, 0, 1, 0)
+            if ckey:
+                def _fetch(s=sec):
+                    res = sweetapi.catalog_page(s, genre_id=0, sort_mode_id=1, offset=0, limit=PAGE_SIZE, tr=words.tr)
+                    if res.get("ok") and res.get("items"):
+                        items = list(res["items"])
+                        return pages.to_value(s, items, int(res.get("total") or len(items)))
+                    return None
+                jobs.append((ckey, _fetch))
+        if jobs:
+            self._warm_handle = prefetch.warm(ns, jobs, ttl=pages.PAGE_TTL, idle=self._shelf_idle)
 
     def _maybe_paginate(self):
         with self._lock:

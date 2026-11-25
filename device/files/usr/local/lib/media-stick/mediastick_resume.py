@@ -22,9 +22,18 @@ seconds; a video or programme watched to its end is kept as done (a full bar), n
 import json
 import os
 import re
+import sqlite3
+import sys
 import tempfile
+import threading
 import time
 from urllib.parse import parse_qs, urlsplit
+
+_LIB_DIR = os.path.dirname(os.path.abspath(__file__))
+if _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+
+import mediastick_store as ms
 
 PREFS = os.environ.get("MEDIASTICK_PREFS_DIR", "/var/lib/media-stick/prefs")
 DIR = os.environ.get("MEDIASTICK_RESUME_DIR", "/var/lib/media-stick/resume")
@@ -41,6 +50,73 @@ SWEET_VOD_RE = re.compile(r"plugin://plugin\.video\.sweettv/playvod/([0-9]{1,12}
 YOUTUBE_RE = re.compile(r"plugin://plugin\.video\.youtube/[^\s]*")
 VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{6,20}")
 FAV_KEY_RE = re.compile(r"(show:vod:[0-9]{1,12}|show:epg:[0-9]{1,12}|show:tv:[0-9]{1,12}|vod:[0-9]{1,12}|ch:[0-9]{1,12})")
+
+_store_lock = threading.RLock()
+_stores = {}
+
+
+def _state_db_path():
+    return os.path.join(DIR, "state.db")
+
+
+def _legacy_exists():
+    return any(os.path.exists(os.path.join(DIR, name)) for name in (STORE_FILE, FAVS_FILE))
+
+
+def _migrate_live_from_json(store, pos_path):
+    try:
+        with open(pos_path, encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        return
+    live = raw.get("live") if isinstance(raw, dict) else None
+    if not isinstance(live, dict):
+        return
+    cid = live.get("cid")
+    at = _number(live.get("at"))
+    if not (isinstance(cid, str) and re.fullmatch(r"[0-9]{1,12}", cid) and at is not None):
+        return
+    cur_raw = store.get_pref("sweettv:live")
+    cur_at = -1
+    if cur_raw:
+        try:
+            cur_at = int(json.loads(cur_raw).get("at", -1))
+        except (ValueError, TypeError, AttributeError):
+            cur_at = -1
+    if int(at) > cur_at:
+        store.set_pref("sweettv:live", json.dumps({"cid": cid, "at": int(at)}))
+
+
+def _get_store(create=True):
+    db_path = _state_db_path()
+    pos_path = os.path.join(DIR, STORE_FILE)
+    fav_path = os.path.join(DIR, FAVS_FILE)
+    if not create and not os.path.exists(db_path) and not _legacy_exists():
+        return None
+    with _store_lock:
+        store = _stores.get(db_path)
+        if store is not None and not os.path.exists(db_path):
+            try:
+                store.close()
+            except Exception:
+                pass
+            _stores.pop(db_path, None)
+            store = None
+        if store is None:
+            if len(_stores) >= 4:
+                for old_path in list(_stores):
+                    if old_path != db_path:
+                        old_store = _stores.pop(old_path, None)
+                        if old_store is not None:
+                            try:
+                                old_store.close()
+                            except Exception:
+                                pass
+            store = ms.StateStore(db_path=db_path)
+            _stores[db_path] = store
+        store.migrate_legacy_json(positions_path=pos_path, favourites_path=fav_path)
+        _migrate_live_from_json(store, pos_path)
+        return store
 
 
 # ---- device preferences -----------------------------------------------------------------------
@@ -178,18 +254,78 @@ def _clean(raw):
 
 
 def load(path=None):
+    if path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                return _clean(json.load(f))
+        except (OSError, ValueError, MemoryError):
+            return empty()
     try:
-        with open(path or os.path.join(DIR, STORE_FILE), encoding="utf-8") as f:
-            return _clean(json.load(f))
-    except (OSError, ValueError, MemoryError):
+        store = _get_store(create=False)
+        if store is None:
+            return empty()
+        items = {}
+        for row in store.list_resume():
+            entry = {
+                "pos": row["pos"],
+                "total": row["total"],
+                "done": row["done"],
+                "at": int(row["updated_at"]),
+            }
+            meta = row.get("meta")
+            if isinstance(meta, dict):
+                entry.update(meta)
+            items[row["media_key"]] = entry
+        live = {}
+        live_raw = store.get_pref("sweettv:live")
+        if live_raw:
+            try:
+                live = json.loads(live_raw)
+            except ValueError:
+                live = {}
+        return _clean({"v": 1, "items": items, "live": live})
+    except (OSError, sqlite3.Error, ValueError, MemoryError):
         return empty()
 
 
 def save(data, path=None) -> bool:
-    """Write the whole document and rename it into place: a power cut leaves the old one or the new one."""
+    """Persist the resume document to SQLite WAL (or explicit JSON path)."""
     if path:
         return _write_atomic(os.path.dirname(path), os.path.basename(path), json.dumps(data, ensure_ascii=False))
-    return _write_atomic(DIR, STORE_FILE, json.dumps(data, ensure_ascii=False))
+    try:
+        cleaned = _clean(data)
+        store = _get_store(create=True)
+        skip_keys = {"pos", "total", "done", "at"}
+        with store._tx() as con:
+            existing_keys = {row[0] for row in con.execute("SELECT media_key FROM resume")}
+            target_keys = set(cleaned["items"].keys())
+            for dead_key in existing_keys - target_keys:
+                con.execute("DELETE FROM resume WHERE media_key = ?", (dead_key,))
+            for media_key, entry in cleaned["items"].items():
+                meta = {k: v for k, v in entry.items() if k not in skip_keys}
+                if ms.contains_secret(meta):
+                    continue
+                meta_json = json.dumps(meta, ensure_ascii=False, separators=(",", ":"))
+                con.execute(
+                    "INSERT INTO resume (media_key, app, pos, total, done, updated_at, meta_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(media_key) DO UPDATE SET "
+                    "app = excluded.app, pos = excluded.pos, total = excluded.total, "
+                    "done = excluded.done, updated_at = excluded.updated_at, meta_json = excluded.meta_json",
+                    (media_key, ms._infer_app(media_key), int(entry["pos"]), int(entry["total"]),
+                     int(bool(entry["done"])), float(entry["at"]), meta_json),
+                )
+            if cleaned["live"]:
+                con.execute(
+                    "INSERT INTO prefs (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    ("sweettv:live", json.dumps(cleaned["live"], separators=(",", ":"))),
+                )
+            else:
+                con.execute("DELETE FROM prefs WHERE key = ?", ("sweettv:live",))
+        return True
+    except (OSError, sqlite3.Error, ValueError, TypeError, ms.SecretRefused):
+        return False
 
 
 def record(data, file, pos, total, now, meta=None):
@@ -312,10 +448,28 @@ def _clean_favs(raw):
 
 
 def load_favs(path=None):
+    if path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                return _clean_favs(json.load(f))
+        except (OSError, ValueError, MemoryError):
+            return {"v": 1, "items": {}}
     try:
-        with open(path or os.path.join(DIR, FAVS_FILE), encoding="utf-8") as f:
-            return _clean_favs(json.load(f))
-    except (OSError, ValueError, MemoryError):
+        store = _get_store(create=False)
+        if store is None:
+            return {"v": 1, "items": {}}
+        items = {}
+        for row in store.list_favourites():
+            entry = {
+                "title": row["title"],
+                "thumb": row["thumb"],
+                "at": int(row["added_at"]),
+            }
+            if row.get("meta"):
+                entry["meta"] = row["meta"]
+            items[row["fav_key"]] = entry
+        return _clean_favs({"v": 1, "items": items})
+    except (OSError, sqlite3.Error, ValueError, MemoryError):
         return {"v": 1, "items": {}}
 
 
@@ -323,7 +477,30 @@ def save_favs(data, path=None) -> bool:
     cleaned = _clean_favs(data)
     if path:
         return _write_atomic(os.path.dirname(path), os.path.basename(path), json.dumps(cleaned, ensure_ascii=False))
-    return _write_atomic(DIR, FAVS_FILE, json.dumps(cleaned, ensure_ascii=False))
+    try:
+        store = _get_store(create=True)
+        with store._tx() as con:
+            existing_keys = {row[0] for row in con.execute("SELECT fav_key FROM favourites")}
+            target_keys = set(cleaned["items"].keys())
+            for dead_key in existing_keys - target_keys:
+                con.execute("DELETE FROM favourites WHERE fav_key = ?", (dead_key,))
+            for fav_key, entry in cleaned["items"].items():
+                meta = entry.get("meta") if isinstance(entry.get("meta"), dict) else {}
+                if ms.contains_secret(entry.get("thumb", "")) or ms.contains_secret(meta):
+                    continue
+                meta_json = json.dumps(meta, ensure_ascii=False, separators=(",", ":"))
+                con.execute(
+                    "INSERT INTO favourites (fav_key, app, title, thumb, meta_json, added_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(fav_key) DO UPDATE SET "
+                    "app = excluded.app, title = excluded.title, thumb = excluded.thumb, "
+                    "meta_json = excluded.meta_json, added_at = excluded.added_at",
+                    (fav_key, "sweettv", entry.get("title", ""),
+                     entry.get("thumb", ""), meta_json, float(entry.get("at", 0))),
+                )
+        return True
+    except (OSError, sqlite3.Error, ValueError, TypeError, ms.SecretRefused):
+        return False
 
 
 def fav_keys(data=None) -> set:
