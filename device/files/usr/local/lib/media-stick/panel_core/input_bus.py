@@ -354,8 +354,6 @@ class InputBus:
             fcntl.ioctl(fd, UI_SET_KEYBIT, BTN_RIGHT)
 
             fcntl.ioctl(fd, UI_SET_EVBIT, EV_REL)
-            fcntl.ioctl(fd, UI_SET_RELBIT, REL_X)
-            fcntl.ioctl(fd, UI_SET_RELBIT, REL_Y)
             fcntl.ioctl(fd, UI_SET_RELBIT, REL_WHEEL)
 
             fcntl.ioctl(fd, UI_SET_EVBIT, EV_ABS)

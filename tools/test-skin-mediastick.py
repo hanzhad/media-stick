@@ -279,6 +279,20 @@ class TestSkinMediaStick(unittest.TestCase):
         self.assertNotIn("RunScript(", raw)
         self.assertNotIn("RunPlugin(", raw)
 
+    def test_pointer_xml_hidden_on_startup_and_home(self):
+        pointer_xml = os.path.join(SKIN_XML_DIR, "Pointer.xml")
+        self.assertTrue(os.path.isfile(pointer_xml), f"Missing {pointer_xml}")
+        root = ET.parse(pointer_xml).getroot()
+        visibles = [
+            el.text.strip()
+            for el in root.findall(".//control/visible")
+            if el.text and el.text.strip()
+        ]
+        self.assertTrue(visibles, "Pointer.xml must define a <visible> guard on its pointer control")
+        combined = " ".join(visibles)
+        self.assertIn("!Window.IsActive(startup)", combined)
+        self.assertIn("!Window.IsActive(home)", combined)
+
     def test_home_xml_native_1080p_structure_and_idle_dimming(self):
         home_xml = os.path.join(SKIN_XML_DIR, "Home.xml")
         self.assertTrue(os.path.isfile(home_xml), f"Missing {home_xml}")
