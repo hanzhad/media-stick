@@ -116,8 +116,12 @@ if [ "$(cat "$PANEL_URL" 2>/dev/null)" != "$want" ]; then
   changed=1
 fi
 if [ $changed = 1 ]; then
-  log "certificate or address changed: restarting the panel"
-  systemctl restart panel.service
+  if systemctl is-active -q panel.service && ss -tln 2>/dev/null | grep -qE '(:443|\[::\]:443)\b'; then
+    log "certificate or address changed: panel HTTPS already active (hot-reloading TLS)"
+  else
+    log "certificate or address changed: restarting the panel"
+    systemctl restart panel.service
+  fi
 fi
 set_status ok ""
 log "ok: $want, $left days left"
