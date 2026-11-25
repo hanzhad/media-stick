@@ -216,6 +216,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self._prop("chip", words.chip(False, True))
             if self.section not in ("continue", "shows"):
                 self.section = "continue" if has_cont else "shows"
+            self._prop("wide_grid", "1" if self.section in WIDE_SECTIONS else "")
+            self._prop("section_title", words.section_title(self.section))
             self._fill_menu()
             if self.section == "continue":
                 self._show_continue()
@@ -351,7 +353,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self.mode, self.kind = mode, kind
         self._prop("mode", mode)
         self._prop("msg_kind", kind)
-        if changed:
+        if changed or (mode == data.DATA and self._focus() == 0):
             self._focus_mode()
 
     def _focus_mode(self):
@@ -368,7 +370,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         except RuntimeError:
             return 0
 
-    def _focus_on(self, control_id, tries=6):
+    def _focus_on(self, control_id, tries=12):
         for _ in range(tries):
             try:
                 self.setFocusId(control_id)
@@ -376,7 +378,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                     return True
             except RuntimeError:
                 pass
-            xbmc.sleep(60)
+            xbmc.sleep(50)
         return False
 
     def _section_counts(self):
@@ -495,6 +497,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._load_catalog(key, offset=0)
             elif key == "channels":
                 self._show_channels(focus_cid)
+        if self.cards and self.mode == data.DATA and self._focus() in (ROW, WIDE_ROW) and self._focus() != self._grid_id():
+            self._focus_on(self._grid_id())
         self._qr_dirty = True
         self._save_quick_resume()
 
