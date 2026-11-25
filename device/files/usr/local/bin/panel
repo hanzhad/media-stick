@@ -27,6 +27,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs
 
 sys.path.insert(0, "/usr/local/lib/media-stick")
 import panel_accounts   # the Accounts tab and its API
@@ -34,6 +35,11 @@ import panel_watch      # the Смотреть tab and its API
 import panel_lang       # the device's language: its settings page and API
 import panel_sweettv    # the SWEET.TV part of that API
 import panel_onboarding_ui   # the sheet of the shared TV <-> phone onboarding
+from panel_core import auth_pin, input_bus, kodi_bus, screen_cap, state_hub, tls_reload, ws_hub
+try:
+    from mediastick_display import DisplayClient
+except ImportError:
+    DisplayClient = None
 try:
     import mediastick_onboarding   # what the TV asks of this phone; the panel works without it
 except ImportError:
@@ -42,6 +48,8 @@ try:
     import mediastick_screen   # who has the TV (a cast, AirPlay, a web app); the panel works without it
 except ImportError:
     mediastick_screen = None
+
+_ORIG_CREATE_CONNECTION = socket.create_connection
 
 PORT = int(os.environ.get("PANEL_PORT", "80"))
 REPO = "/opt/media-stick"
@@ -85,6 +93,17 @@ WEB_KEYS = {"up": "Up", "down": "Down", "left": "Left", "right": "Right",
             "select": "Return", "back": "Escape", "playpause": "space",
             "fastforward": "Right", "rewind": "Left", "fullscreen": "f", "mute": "m"}
 
+LOG_UNITS = {
+    "kodi": "kodi.service",
+    "panel": "panel.service",
+    "update": "media-stick-update.service",
+    "displayd": "mediastick-displayd.service",
+}
+SECRET_LOG_RE = re.compile(
+    r"(?i)\b(DUCKDNS_TOKEN|KODI_WEB_PASSWORD|psk|password|token|secret|refresh_token|access_token|client_secret)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s]+)"
+)
+OAUTH_LOG_RE = re.compile(r"(?:ya29\.[A-Za-z0-9._-]+|1//[A-Za-z0-9._-]+)")
+
 # ---------------- helpers ----------------
 
 def run(cmd, stdin=None, timeout=20):
@@ -95,19 +114,31 @@ def run(cmd, stdin=None, timeout=20):
         return 124, ""
 
 
+def _run_bytes(cmd, env=None, timeout=10):
+    try:
+        p = subprocess.run(cmd, env=env, capture_output=True, timeout=timeout)
+        return p.returncode, p.stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return 124, b""
+
+
 def web_app_on():
     return run(["systemctl", "is-active", "-q", "web-app@*"])[0] == 0
 
 def wayland_env():
-    rt = f"/run/user/{os.getuid()}"
-    socks = sorted(glob.glob(f"{rt}/wayland-[0-9]"))
-    return dict(os.environ, XDG_RUNTIME_DIR=rt, WAYLAND_DISPLAY=os.path.basename(socks[-1]) if socks else "wayland-0")
+    return input_bus.wayland_env()
+
+INPUT_BUS = input_bus.InputBus()
+POINTER = INPUT_BUS
+PointerUnavailable = input_bus.InputUnavailable
+POINTER_NAME = input_bus.POINTER_NAME
+POINTER_ACTIONS = input_bus.POINTER_ACTIONS
 
 def web_key(key):
-    subprocess.run(["wtype", "-k", key], env=wayland_env(), timeout=5, capture_output=True)
+    INPUT_BUS.send_key(key)
 
 def web_type(text):
-    subprocess.run(["wtype", "--", text], env=wayland_env(), timeout=10, capture_output=True)
+    INPUT_BUS.type_text(text)
 
 def kodi_take(buf, rid):
     """Look through `buf` (bytes read from Kodi's JSON-RPC socket, objects back to back with no
@@ -126,11 +157,19 @@ def kodi_take(buf, rid):
         if isinstance(obj, dict) and "method" not in obj and obj.get("id") == rid:
             return True, obj.get("result"), buf
 
+KODI_BUS = kodi_bus.KodiBus(host="127.0.0.1", port=9090, timeout=3.0)
+
 def kodi(method, params=None, timeout=3):
     """The "result" of one JSON-RPC call to Kodi: None when Kodi answers with an error or closes the
-    socket, OSError when it cannot be reached or is silent for `timeout` s. The socket also pushes
-    notifications, so this reads until the answer with our id arrives; notifications arriving all
-    the time cannot keep the call open past 3 x `timeout`."""
+    socket, OSError when it cannot be reached or is silent for `timeout` s. Uses the persistent
+    KodiBus when active; falls back to one-shot TCP when socket.create_connection is patched."""
+    if KODI_BUS.is_running() and socket.create_connection is _ORIG_CREATE_CONNECTION:
+        try:
+            return KODI_BUS.call(method, params, timeout=timeout)
+        except kodi_bus.KodiRpcError:
+            return None
+        except TimeoutError as exc:
+            raise socket.timeout(str(exc)) from exc
     rid = 1
     req = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}})
     stop = time.monotonic() + 3 * max(timeout, 1)
@@ -170,60 +209,23 @@ def key_action(a):
 class FocusWatch:
     """What has focus on the TV, as a counter that goes up each time it changes, so the phone
     can buzz when something really moved there (a key press that reached the edge does not).
-    One kept-open JSON-RPC connection, asked at most every 80 ms however many pages poll."""
+    Shares the panel's persistent Kodi RPC path, asked at most every 80 ms however many pages poll."""
     def __init__(self):
         self.lock = threading.Lock()
-        self.sock = None
-        self.buf = b""
-        self.rid = 0
         self.sig = None
         self.win = None
         self.n = 0
         self.t = 0.0
-
-    def _close(self):
-        try:
-            if self.sock:
-                self.sock.close()
-        except OSError:
-            pass
-        self.sock, self.buf = None, b""
-
-    def _call(self, method, params):
-        if self.sock is None:
-            self.sock = socket.create_connection(("127.0.0.1", 9090), timeout=1.0)
-        self.rid += 1
-        self.sock.sendall(json.dumps({"jsonrpc": "2.0", "id": self.rid, "method": method,
-                                      "params": params}).encode())
-        dec = json.JSONDecoder()
-        while True:   # replies and Kodi's own notifications come back to back, no separator
-            try:
-                text = self.buf.decode("utf-8")
-                obj, end = dec.raw_decode(text.lstrip())
-            except (UnicodeDecodeError, ValueError):
-                chunk = self.sock.recv(65536)
-                if not chunk:
-                    raise OSError("kodi closed the connection")
-                self.buf += chunk
-                continue
-            used = len(text) - len(text.lstrip()) + end
-            self.buf = text[used:].encode("utf-8")
-            if obj.get("id") == self.rid:
-                return obj.get("result") or {}
 
     def poll(self, max_age=0.08):
         with self.lock:
             now = time.monotonic()
             if now - self.t < max_age:
                 return self.n
-            for attempt in (1, 2):
-                try:
-                    r = self._call("GUI.GetProperties", {"properties": ["currentwindow", "currentcontrol"]})
-                    break
-                except (OSError, ValueError):
-                    self._close()
-                    if attempt == 2:
-                        return self.n
+            try:
+                r = kodi("GUI.GetProperties", {"properties": ["currentwindow", "currentcontrol"]}) or {}
+            except (OSError, ValueError):
+                return self.n
             self.win = (r.get("currentwindow") or {}).get("id")
             sig = "%s|%s" % (self.win, (r.get("currentcontrol") or {}).get("label"))
             if self.sig is not None and sig != self.sig:
@@ -232,14 +234,8 @@ class FocusWatch:
             return self.n
 
     def after(self, before):
-        """After a key: Kodi runs actions on its own thread, so look a few times."""
-        n = before
-        for wait in (0.04, 0.05, 0.08):
-            time.sleep(wait)
-            n = self.poll(0)
-            if n != before:
-                break
-        return n
+        """Non-blocking post-key focus check without synchronous sleep."""
+        return self.poll(0)
 
 FOCUS = FocusWatch()
 
@@ -309,6 +305,15 @@ def https_status():
         https_cache.update(t=time.time(), s=s)
         return s
 
+def scrub_logs(text):
+    text = TOKEN_RE.sub("***", text or "")
+    text = OAUTH_LOG_RE.sub("***", text)
+    return SECRET_LOG_RE.sub(lambda m: f"{m.group(1)}=***", text)
+
+def read_unit_logs(unit_name, lines=200):
+    rc, out = run(["journalctl", "-u", unit_name, "-n", str(int(lines)), "--no-pager", "-o", "short-iso"], timeout=10)
+    return out if rc == 0 else ""
+
 # ---------------- screen ----------------
 
 shot_lock = threading.Lock()
@@ -339,147 +344,7 @@ def screenshot():
             time.sleep(0.05)
         raise TimeoutError("no screenshot from Kodi")
 
-# ---------------- pointer ----------------
-
-# A virtual mouse for Kodi (setting input.enablemouse is on): the page says where on the
-# picture of the TV a finger landed, positions are fractions 0..1 of the screen. One
-# absolute-position uinput device, made in the background when the panel starts (Kodi
-# needs about 2 s to notice a new device) and reused; /dev/uinput is group input by a
-# udev rule and the panel's user is in that group. Without access every other part of the
-# panel keeps working and /api/pointer answers 503.
-SCREEN_W, SCREEN_H = 1920, 1080
-POINTER_NAME = "media-stick-pointer"
-POINTER_ACTIONS = {"click", "right", "move", "move_by", "scroll"}
-
-class PointerUnavailable(Exception):
-    pass
-
-class Pointer:
-    SETTLE_S = 2.2   # Kodi picks up a new input device after about 2 s
-    RETRY_S = 5.0    # do not hammer /dev/uinput while it is not usable
-
-    def __init__(self):
-        self.lock = threading.RLock()
-        self.ui = None
-        self.ev = None
-        self.ready_at = 0.0
-        self.tried = 0.0
-        self.err = ""
-        self.x = None    # last position, fractions of the screen; None until first move
-        self.y = None
-
-    def _open(self):
-        """Make the device if there is none. Lock held."""
-        if self.ui is not None or time.time() - self.tried < self.RETRY_S:
-            return
-        self.tried = time.time()
-        try:
-            from evdev import AbsInfo, UInput, ecodes
-        except ImportError:
-            self.err = "не установлен python3-evdev"
-            return
-        caps = {ecodes.EV_KEY: [ecodes.BTN_LEFT, ecodes.BTN_RIGHT],
-                ecodes.EV_REL: [ecodes.REL_WHEEL],
-                ecodes.EV_ABS: [(ecodes.ABS_X, AbsInfo(0, 0, SCREEN_W - 1, 0, 0, 0)),
-                                (ecodes.ABS_Y, AbsInfo(0, 0, SCREEN_H - 1, 0, 0, 0))]}
-        try:
-            self.ui = UInput(caps, name=POINTER_NAME)
-        except OSError as e:
-            self.err = "нет доступа к /dev/uinput (%s)" % (e.strerror or e)
-            return
-        self.ev = ecodes
-        self.err = ""
-        self.x = self.y = None
-        self.ready_at = time.time() + self.SETTLE_S
-
-    def start(self):
-        """Make the device now, in the background, so the first tap need not wait."""
-        def go():
-            with self.lock:
-                self._open()
-        threading.Thread(target=go, daemon=True).start()
-
-    def close(self):
-        with self.lock:
-            try:
-                if self.ui is not None:
-                    self.ui.close()
-            except OSError:
-                pass
-            self.ui = None
-            self.tried = 0.0
-
-    def _ready(self):
-        self._open()
-        if self.ui is None:
-            raise PointerUnavailable(self.err or "устройство не создано")
-        wait = self.ready_at - time.time()
-        if wait > 0:
-            time.sleep(wait)
-
-    def _abs(self, fx, fy):
-        self.ui.write(self.ev.EV_ABS, self.ev.ABS_X, round(fx * (SCREEN_W - 1)))
-        self.ui.write(self.ev.EV_ABS, self.ev.ABS_Y, round(fy * (SCREEN_H - 1)))
-        self.ui.syn()
-
-    def move_to(self, fx, fy, settle=0.08):
-        """Absolute move; waits `settle` s after a real move so Kodi registers the hover."""
-        moved = self.x is None or abs(fx - self.x) > 1e-4 or abs(fy - self.y) > 1e-4
-        self._abs(fx, fy)
-        self.x, self.y = fx, fy
-        time.sleep(settle if moved else 0.02)
-
-    def move_by(self, dfx, dfy):
-        """Relative move in screen fractions: the air mouse (POST /api/pointer move_by)."""
-        fx = 0.5 if self.x is None else self.x
-        fy = 0.5 if self.y is None else self.y
-        self.move_to(min(1.0, max(0.0, fx + dfx)), min(1.0, max(0.0, fy + dfy)), 0.0)
-
-    def act(self, action, fx=None, fy=None, wheel=0):
-        with self.lock:
-            self._ready()
-            try:
-                if fx is None:   # scroll without a position: where the pointer already is
-                    fx = 0.5 if self.x is None else self.x
-                    fy = 0.5 if self.y is None else self.y
-                ev = self.ev
-                if action == "move":
-                    self.move_to(fx, fy, 0.0)
-                elif action == "move_by":   # fx, fy are the deltas here
-                    self.move_by(fx, fy)
-                elif action in ("click", "right"):
-                    self.move_to(fx, fy)
-                    btn = ev.BTN_LEFT if action == "click" else ev.BTN_RIGHT
-                    self.ui.write(ev.EV_KEY, btn, 1)
-                    self.ui.syn()
-                    time.sleep(0.05)
-                    self.ui.write(ev.EV_KEY, btn, 0)
-                    self.ui.syn()
-                elif action == "scroll":
-                    self.move_to(fx, fy, 0.03)
-                    for _ in range(abs(wheel)):   # one notch per event; + is up, like a wheel
-                        self.ui.write(ev.EV_REL, ev.REL_WHEEL, 1 if wheel > 0 else -1)
-                        self.ui.syn()
-                        time.sleep(0.01)
-            except OSError as e:
-                self.close()   # made again on the next action
-                raise PointerUnavailable("устройство пропало (%s)" % (e.strerror or e))
-
-POINTER = Pointer()
-
 # ---------------- state ----------------
-
-def wifi_status():
-    """Read-only nmcli calls: no sudo, so no PAM/polkit/logind work per poll."""
-    rc, out = run(["nmcli", "-t", "-f", "DEVICE,STATE,CONNECTION", "dev"])
-    wlan = next((l.split(":", 2) for l in out.splitlines() if l.startswith("wlan0:")), None)
-    con = wlan[2] if wlan and len(wlan) > 2 else ""
-    ap = con == "ms-setup"
-    ssid = ""
-    if con and not ap:
-        ssid = run(["nmcli", "-g", "802-11-wireless.ssid", "con", "show", con])[1]
-    online = run(["nmcli", "-t", "networking", "connectivity"])[1] == "full"
-    return {"online": online, "ap": ap, "ssid": ssid}
 
 # what the page may know of an onboarding document: the schema's fields, minus the TV-only chips
 ONBOARDING_FIELDS = ("v", "service", "flow", "state", "kicker", "title", "step", "steps", "code", "link", "action",
@@ -503,6 +368,24 @@ def screen_owner():
     except Exception:
         return ""
 
+STATE_HUB = state_hub.StateHub(
+    repo=REPO,
+    state_dir=STATE_DIR,
+    run_cmd=lambda cmd, **kw: run(cmd, **kw),
+    kodi_call=lambda m, p=None: kodi(m, p),
+    lang_fn=panel_lang.current,
+    item_title_fn=panel_watch.item_title,
+    kb_state_fn=kb_state,
+    web_app_on_fn=lambda: web_app_on(),
+    onboarding_fn=lambda: onboarding_docs(),
+    screen_owner_fn=lambda: screen_owner(),
+    actions=ACTIONS,
+    web_keys=WEB_KEYS,
+)
+
+def wifi_status():
+    return STATE_HUB.wifi_status()
+
 status_cache = {"t": 0.0, "s": None}
 status_lock = threading.Lock()
 
@@ -516,65 +399,15 @@ def status():
         return s
 
 def sd_minutes(ts, now=None):
-    """Whole minutes from `now` to a systemd timestamp ("Mon 2026-11-23 15:05:00 UTC", box-local time);
-    negative = in the past, None = empty or "n/a"."""
-    m = re.search(r"(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)", ts or "")
-    if not m:
-        return None
-    t = time.mktime(tuple(int(x) for x in m.groups()) + (0, 0, -1))
-    return int((t - (time.time() if now is None else now)) // 60)
-
+    return state_hub.sd_minutes(ts, now=now)
 
 def _status():
-    s = {"time": time.strftime("%H:%M")}
-    s["wifi"] = wifi_status()
-    s["uptime"] = run(["uptime", "-p"])[1].replace("up ", "")
-    s["temp"] = run(["vcgencmd", "measure_temp"])[1].split("=")[-1].strip().replace("'C", "°C")
-    t = run(["vcgencmd", "get_throttled"])[1].split("=")[-1]
-    s["throttled"] = t
-    s["power_ok"] = t == "0x0"
-    mem = dict(l.split(":", 1) for l in read("/proc/meminfo").splitlines() if ":" in l)
-    s["mem_free_mb"] = int(mem.get("MemAvailable", "0 kB").split()[0]) // 1024
-    st = os.statvfs("/")
-    s["disk_free_gb"] = round(st.f_bavail * st.f_frsize / 1e9, 1)
-    s["ip"] = run(["hostname", "-I"])[1].split()
-    s["https_url"] = read(PANEL_URL)
-    s["page"] = PAGE_VER
+    s = STATE_HUB.collect(refresh_timers=True)
     s["lang"] = panel_lang.current()
-    s["commit"] = run(["git", "-C", REPO, "log", "-1", "--format=%h %s"])[1]
-    s["commit_date"] = run(["git", "-C", REPO, "log", "-1", "--format=%cs"])[1]
-    s["bad_commit"] = read("/var/lib/media-stick/bad-commit")[:7]
-    nxt = run(["systemctl", "show", "media-stick-update.timer", "-p", "NextElapseUSecRealtime", "--value"])[1]
-    s["next_update"] = nxt
-    s["next_update_min"] = sd_minutes(nxt)
-    # when the last check finished: the oneshot service's exit time (empty until the first run after the start)
-    last = run(["systemctl", "show", "media-stick-update.service", "-p", "ExecMainExitTimestamp", "--value"])[1]
-    s["last_check"] = last
-    s["last_check_min"] = None if sd_minutes(last) is None else -sd_minutes(last)
-    s["playing"] = ""
-    s["kb"] = None
-    players = []
-    try:
-        players = kodi("Player.GetActivePlayers") or []
-        s["kodi"] = "up"
-        if players:
-            item = kodi("Player.GetItem", {"playerid": players[0]["playerid"],
-                                           "properties": ["title", "showtitle", "file"]}) or {}
-            s["playing"] = panel_watch.item_title(item.get("item", {}))
-        s["kb"] = kb_state()
-    except OSError:
-        s["kodi"] = "down"
-    # keys that do nothing now, greyed out on the page: in a web app only its own keys work;
-    # in Kodi the playback keys need something playing
-    if web_app_on():
-        s["dead"] = sorted(ACTIONS - set(WEB_KEYS) - {"home"})
-    elif not players:
-        s["dead"] = ["fastforward", "osd", "playpause", "rewind", "stop"]
-    else:
-        s["dead"] = []
-    s["screen"] = screen_owner()
-    s["onboarding"] = onboarding_docs()
     return s
+
+PIN_AUTH = auth_pin.PinAuth(state_dir=STATE_DIR)
+WS_HUB = ws_hub.WsHub()
 
 # ---------------- page ----------------
 
@@ -1780,17 +1613,60 @@ PAGE = panel_lang.inject(PAGE)
 PAGE = panel_onboarding_ui.inject(PAGE)
 PAGE_VER = hashlib.sha256(PAGE.encode()).hexdigest()[:12]
 PAGE = PAGE.replace("@@PAGE_VER@@", PAGE_VER)
+STATE_HUB.page_ver = PAGE_VER
 
 # ---------------- server ----------------
 
 def json_body(h):
-    n = int(h.headers.get("Content-Length") or 0)
+    raw = h.headers.get("Content-Length")
+    if raw is None:
+        return {}
+    s = str(raw).strip()
+    if not s:
+        return {}
+    try:
+        n = int(s)
+    except ValueError:
+        h.close_connection = True
+        return {}
+    if n <= 0:
+        return {}
     if n > 8192:   # not read to the end: this connection cannot carry another request
         h.close_connection = True
+        return {}
     try:
-        return json.loads(h.rfile.read(min(n, 8192)) or b"{}")
+        return json.loads(h.rfile.read(n) or b"{}")
     except ValueError:
         return {}
+
+
+def _ws_pointer(op, dx, dy):
+    if op == 1:
+        INPUT_BUS.move_by(min(0.25, max(-0.25, dx)), min(0.25, max(-0.25, dy)))
+    elif op == 2:
+        INPUT_BUS.act("click")
+    elif op == 3:
+        INPUT_BUS.act("right")
+    elif op == 4:
+        wheel = int(max(-10, min(10, round(dy))))
+        if wheel:
+            INPUT_BUS.act("scroll", wheel=wheel)
+    forget_shot()
+
+
+def _ws_text(msg, sock):
+    if not isinstance(msg, dict):
+        return
+    mtype = msg.get("type")
+    if mtype == "ping":
+        WS_HUB.send_json(sock, {"type": "pong"})
+    elif mtype == "key":
+        a = msg.get("action")
+        if a == "home":
+            kodi("GUI.ActivateWindow", {"window": "home"})
+        elif a in ACTIONS:
+            kodi("Input.ExecuteAction", {"action": key_action(a)})
+
 
 class H(BaseHTTPRequestHandler):
     # Keep-alive: the air mouse sends ~30 requests a second and the focus poll ~8; with
@@ -1803,7 +1679,7 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a):  # never log requests: bodies may carry a Wi-Fi password
         pass
 
-    def send(self, body, ctype="application/json", code=200):
+    def send(self, body, ctype="application/json", code=200, extra_headers=None):
         if isinstance(body, (dict, list)):
             body = json.dumps(body)
         if isinstance(body, str):
@@ -1811,6 +1687,9 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
+        if extra_headers:
+            for name, value in extra_headers:
+                self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1887,13 +1766,62 @@ class H(BaseHTTPRequestHandler):
         forget_shot()
         return self.send({"ok": True})
 
+    def power_post(self, b):
+        """POST /api/power {action: standby|wake|return_kodi} via mediastick-displayd."""
+        if not isinstance(b, dict):
+            return self.send("bad request", "text/plain", 400)
+        action = b.get("action")
+        if action not in ("standby", "wake", "return_kodi"):
+            return self.send("unknown action", "text/plain", 400)
+        if DisplayClient is None:
+            return self.send("displayd unavailable", "text/plain", 503)
+        try:
+            with DisplayClient() as dc:
+                if action == "standby":
+                    dc.standby()
+                elif action == "wake":
+                    dc.wake()
+                else:
+                    dc.release(force=True)
+        except Exception as e:
+            return self.send(str(e), "text/plain", 503)
+        status_cache["t"] = 0.0
+        return self.send({"ok": True})
+
+    def pin_post(self, b):
+        """POST /api/pin: set, verify, or disable optional 4-digit LAN PIN."""
+        if not isinstance(b, dict):
+            return self.send("bad request", "text/plain", 400)
+        action = b.get("action")
+        if action == "disable":
+            if PIN_AUTH.is_enabled() and not PIN_AUTH.check_request(self.headers):
+                return self.send("unauthorized", "text/plain", 401)
+            PIN_AUTH.disable()
+            return self.send(
+                {"ok": True, "enabled": False},
+                extra_headers=[("Set-Cookie", PIN_AUTH.clear_cookie(secure=self.secure))],
+            )
+        pin = b.get("pin", "")
+        if PIN_AUTH.is_enabled() and action != "set":
+            if not PIN_AUTH.verify_pin(str(pin)):
+                return self.send({"ok": False, "error": "Неверный PIN"}, code=401)
+            cookie = PIN_AUTH.issue_cookie(secure=self.secure)
+            return self.send({"ok": True, "enabled": True}, extra_headers=[("Set-Cookie", cookie)])
+        if PIN_AUTH.is_enabled() and not PIN_AUTH.check_request(self.headers):
+            return self.send("unauthorized", "text/plain", 401)
+        try:
+            PIN_AUTH.set_pin(str(pin))
+        except ValueError as e:
+            return self.send({"ok": False, "error": str(e)}, code=400)
+        cookie = PIN_AUTH.issue_cookie(secure=self.secure)
+        return self.send({"ok": True, "enabled": True}, extra_headers=[("Set-Cookie", cookie)])
+
     def do_GET(self):
         if self.redirect_to_https():
             return
         if not self.host_ok():
-            # hotspot mode: every name resolves here, so phones' captive-portal checks
-            # land on us; send them to the page
-            if wifi_status().get("ap"):
+            # hotspot mode: use only passive cached AP flag so bad Host headers cannot trigger nmcli DoS
+            if STATE_HUB.cached_wifi().get("ap"):
                 self.send_response(302)
                 self.send_header("Location", "http://10.42.0.1/")
                 self.send_header("Content-Length", "0")
@@ -1901,12 +1829,36 @@ class H(BaseHTTPRequestHandler):
                 return
             return self.send("bad host", "text/plain", 421)
         p = self.path.split("?")[0]
+        if p == "/ws":
+            if not PIN_AUTH.check_request(self.headers):
+                return self.send("unauthorized", "text/plain", 401)
+            if not ws_hub.validate_ws_headers(self.headers, public_host=public_host()):
+                return self.send("forbidden", "text/plain", 403)
+            ws_key = ws_hub._hdr_get(self.headers, "Sec-WebSocket-Key")
+            self.wfile.write(ws_hub.build_handshake_response(ws_key))
+            self.wfile.flush()
+            self.close_connection = True
+            WS_HUB.serve_client(self.connection, on_text=_ws_text, on_pointer=_ws_pointer)
+            return
         if p == "/":
             return self.send(PAGE, "text/html; charset=utf-8")
+        if p == "/api/pin":
+            return self.send({"enabled": PIN_AUTH.is_enabled()})
         if p == "/api/status":
             return self.send(panel_accounts.with_signin(status()))
         if p == "/api/accounts":
             return self.send(panel_accounts.view())
+        if p == "/api/logs":
+            qs = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            unit = (qs.get("unit") or [""])[0]
+            if unit not in LOG_UNITS:
+                return self.send("unknown unit", "text/plain", 400)
+            try:
+                lines = min(500, max(1, int((qs.get("lines") or ["200"])[0])))
+            except ValueError:
+                lines = 200
+            raw = read_unit_logs(LOG_UNITS[unit], lines=lines)
+            return self.send(scrub_logs(raw), "text/plain; charset=utf-8")
         if p == panel_watch.PREFIX + "art":      # an app's icon: bytes with a day's cache, not JSON
             code, headers, body = panel_watch.art_response(panel_watch.art(self.path, kodi),
                                                            self.headers.get("If-None-Match", ""))
@@ -1931,6 +1883,14 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/wifi/scan":
             rc, out = run(["sudo", "-n", "/usr/local/bin/wifi-setup", "scan"], timeout=40)
             return self.send(out or "[]")
+        if p == "/shot.jpg":
+            try:
+                jpg = screen_cap.capture_jpeg(screen_owner(), kodi_shot_fn=screenshot, run_cmd=_run_bytes)
+                return self.send(jpg, "image/jpeg")
+            except screen_cap.ScreenUnavailable as e:
+                return self.send(str(e), "text/plain", e.status)
+            except (OSError, TimeoutError) as e:
+                return self.send(str(e), "text/plain", 503)
         if p == "/shot.png":
             try:
                 return self.send(screenshot(), "image/png")
@@ -1945,7 +1905,13 @@ class H(BaseHTTPRequestHandler):
         if not self.host_ok() or self.headers.get("X-Panel") != "1":
             return self.send("forbidden", "text/plain", 403)
         p = self.path.split("?")[0]
+        if p != "/api/pin" and not PIN_AUTH.check_request(self.headers):
+            return self.send("unauthorized", "text/plain", 401)
         b = json_body(self)
+        if p == "/api/pin":
+            return self.pin_post(b)
+        if p == "/api/power":
+            return self.power_post(b)
         if p == "/api/pointer":
             return self.pointer_post(b)
         if p.startswith(panel_accounts.PREFIX):
@@ -1966,6 +1932,8 @@ class H(BaseHTTPRequestHandler):
                 if web_app_on():
                     if a == "home":
                         run(["sudo", "-n", "systemctl", "stop", "web-app@*"])
+                    elif a in ("volumeup", "volumedown", "mute"):
+                        INPUT_BUS.set_volume(a)
                     elif a in WEB_KEYS:
                         web_key(WEB_KEYS[a])
                     elif a not in ACTIONS:
@@ -1973,13 +1941,12 @@ class H(BaseHTTPRequestHandler):
                     return self.send({"ok": True})
                 if a != "home" and a not in ACTIONS:
                     return self.send("unknown action", "text/plain", 400)
-                before = FOCUS.poll(0)
                 status_cache["t"] = 0   # what plays may change: the next status looks again
                 if a == "home":
                     kodi("GUI.ActivateWindow", {"window": "home"})
                 else:
                     kodi("Input.ExecuteAction", {"action": key_action(a)})
-                return self.send({"ok": True, "fc": FOCUS.after(before), "kb": kb_now()})
+                return self.send({"ok": True, "fc": FOCUS.poll(0), "kb": kb_now()})
             if p == "/api/text" and web_app_on():
                 web_type(str(b.get("text", ""))[:200])
                 return self.send({"ok": True})
@@ -2031,11 +1998,17 @@ class TLSServer(DualStack):
     """The same handler over TLS. The handshake runs in the request's own thread, not in
     accept(), so a client that stalls in it cannot hold up the others."""
     ctx = None
+    reloader = None
 
     def finish_request(self, request, client_address):
         request.settimeout(15)
         try:
-            tls = self.ctx.wrap_socket(request, server_side=True)
+            if self.reloader is not None:
+                self.reloader.maybe_reload()
+                ctx = self.reloader.context
+            else:
+                ctx = self.ctx
+            tls = ctx.wrap_socket(request, server_side=True)
         except (ssl.SSLError, OSError):
             return
         try:
@@ -2055,16 +2028,21 @@ def start_https():
     if not (os.path.isfile(TLS_CRT) and os.path.isfile(TLS_KEY)):
         return
     try:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        ctx.load_cert_chain(TLS_CRT, TLS_KEY)
+        reloader = tls_reload.TlsReloader(TLS_CRT, TLS_KEY)
         srv = TLSServer(("::", HTTPS_PORT), HTTPSHandler)
     except (OSError, ssl.SSLError) as e:
         print("panel: HTTPS not started: %s" % e, file=sys.stderr, flush=True)
         return
-    srv.ctx = ctx
+    srv.reloader = reloader
+    srv.ctx = reloader.context
     https_state["up"] = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+def _on_kodi_push(method, params):
+    if method in kodi_bus.PUSH_METHODS:
+        if method.startswith("Player."):
+            status_cache["t"] = 0.0
+        WS_HUB.broadcast({"type": "kodi", "method": method, "params": params or {}})
 
 SETTLE_EVERY = 5   # s between looks at a given-up sign-in with another account
 
@@ -2078,7 +2056,9 @@ def settle_loop():
 
 if __name__ == "__main__":
     os.makedirs(SHOTS, exist_ok=True)
-    POINTER.start()
+    KODI_BUS.subscribe(_on_kodi_push)
+    KODI_BUS.start()
+    INPUT_BUS.start()
     threading.Thread(target=settle_loop, daemon=True).start()
     start_https()
     DualStack(("::", PORT), H).serve_forever()
