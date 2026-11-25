@@ -17,8 +17,10 @@ profile=/home/media/.config/web-apps
 mkdir -p "$profile"
 # A clean exit from last time, so no "restore pages?" bar.
 sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' "$profile/Default/Preferences" 2>/dev/null || true
-exec cage -d -- chromium \
+exec cage -- chromium \
   --user-data-dir="$profile" \
+  --disk-cache-dir=/tmp/chromium-cache \
+  --disk-cache-size=33554432 \
   --kiosk --app="$url" \
   --ozone-platform=wayland \
   --noerrdialogs --disable-infobars --no-first-run \

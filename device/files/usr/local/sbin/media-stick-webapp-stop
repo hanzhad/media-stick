@@ -1,0 +1,4 @@
+#!/bin/bash
+# Stop any active web-app@* unit without granting sudo wildcard access.
+set -euo pipefail
+exec /usr/bin/systemctl stop 'web-app@*'

@@ -27,7 +27,7 @@ pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect kodi-peripher
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted
       python3-evdev lego
       uxplay gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-alsa gstreamer1.0-tools
-      plymouth)
+      plymouth systemd-zram-generator)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
 if [ ${#missing[@]} -gt 0 ]; then
@@ -75,25 +75,36 @@ for w in Inter-Regular Inter-Medium Inter-SemiBold InterDisplay-Light InterDispl
   ln -sfn "/usr/share/fonts/opentype/inter/$w.otf" "$l"; chown -h media:media "$l"; log "  linked $l"
   changed_units+=(kodi.service)
 done
-while IFS= read -r -d '' src; do
-  rel=${src#"$FILES"/}; dst=/$rel; mode=0644
-  [[ $rel == usr/local/bin/* ]] && mode=0755
-  if ! cmp -s "$src" "$dst"; then
-    install -D -m "$mode" "$src" "$dst"; log "  updated /$rel"
-    [[ $rel == etc/systemd/system/* ]] && changed_units+=("$(basename "$rel")")
-    [[ $rel == home/media/.kodi/* ]] && changed_units+=(kodi.service)   # keymaps load at start
-    # the sound device: Kodi picks its output at start, UxPlay at its first stream
-    [[ $rel == etc/asound.conf ]] && changed_units+=(kodi.service airplay.service miracast.service)
-    # a library the panel imports at start: restart the panel (Kodi loads it afresh at each sign-in)
-    [[ $rel == usr/local/lib/media-stick/* ]] && changed_units+=("panel.service")
-    # the boot picture is read from the initramfs: rebuilt below
-    [[ $rel == usr/share/plymouth/themes/* ]] && splash_changed=1
-    # a program with a service of the same name: restart that service too
-    [[ $rel == usr/local/bin/* && -f "$FILES/etc/systemd/system/$(basename "$rel").service" ]] \
-      && changed_units+=("$(basename "$rel").service")
-  fi
-done < <(find "$FILES" -type f -print0)
+os_apply_out=$(python3 "$REPO/device/os_apply.py" --repo "$REPO")
+[ -n "$os_apply_out" ] && printf '%s\n' "$os_apply_out"
+while IFS= read -r line; do
+  [[ $line == "[os_apply] updated /"* ]] || continue
+  rel=${line#"[os_apply] updated /"}
+  [[ $rel == etc/systemd/system/* ]] && changed_units+=("$(basename "$rel")")
+  [[ $rel == home/media/.kodi/* ]] && changed_units+=(kodi.service)   # keymaps load at start
+  # the sound device: Kodi picks its output at start, UxPlay at its first stream
+  [[ $rel == etc/asound.conf ]] && changed_units+=(kodi.service airplay.service miracast.service)
+  # a library the panel imports at start: restart the panel (Kodi loads it afresh at each sign-in)
+  [[ $rel == usr/local/lib/media-stick/* ]] && changed_units+=("panel.service")
+  # the boot picture is read from the initramfs: rebuilt below
+  [[ $rel == usr/share/plymouth/themes/* ]] && splash_changed=1
+  [[ $rel == etc/sysctl.d/* ]] && sysctl_changed=1
+  [[ $rel == etc/systemd/journald.conf.d/* ]] && journald_changed=1
+  [[ $rel == etc/systemd/zram-generator.conf ]] && zram_changed=1
+  # a program with a service of the same name: restart that service too
+  [[ $rel == usr/local/bin/* && -f "$FILES/etc/systemd/system/$(basename "$rel").service" ]] \
+    && changed_units+=("$(basename "$rel").service")
+done <<< "$os_apply_out"
 systemd-tmpfiles --create /etc/tmpfiles.d/media-stick.conf
+[ "${sysctl_changed:-0}" = 1 ] && { sysctl --system >/dev/null || true; }
+[ "${journald_changed:-0}" = 1 ] && { systemctl restart systemd-journald || true; }
+if systemctl list-unit-files dphys-swapfile.service >/dev/null 2>&1; then
+  systemctl disable --now dphys-swapfile.service 2>/dev/null || true
+fi
+if [ "${zram_changed:-0}" = 1 ] || ! swapon --show=NAME --noheadings 2>/dev/null | grep -q zram0; then
+  systemctl daemon-reload
+  systemctl restart systemd-zram-setup@zram0.service 2>/dev/null || true
+fi
 # The boot splash: Plymouth starts from the initramfs, so the theme goes into it (-R rebuilds
 # it, a minute or two on a Pi 3; seen at the next boot).
 if [ "$(plymouth-set-default-theme)" != mediastick ] || [ "${splash_changed:-0}" = 1 ]; then
@@ -131,7 +142,7 @@ done
 # HTTPS: media-stick-cert.timer runs the service daily and a minute after boot. Bootstrap
 # never issues a certificate itself, and the service does nothing until DUCKDNS_DOMAIN and
 # DUCKDNS_TOKEN are in secrets.env (the panel's HTTPS card writes them).
-for unit in kodi.service panel.service airplay.service miracast.service wifi-fallback.service media-stick-update.timer media-stick-wallpapers.timer media-stick-cert.timer; do
+for unit in mediastick-displayd.service kodi.service panel.service airplay.service miracast.service wifi-fallback.service media-stick-update.timer media-stick-wallpapers.timer media-stick-cert.timer; do
   systemctl enable -q "$unit"
 done
 # The picture behind Kodi (console-splash): drawn again when it, its program or its unit changed
@@ -181,7 +192,7 @@ fi
 # AirPlay and Miracast first: a restarted receiver lets go of the screen, and Kodi then
 # restarts to get it back (Kodi keeps running without a picture when something else holds
 # the screen).
-for unit in airplay.service miracast.service kodi.service panel.service; do
+for unit in mediastick-displayd.service airplay.service miracast.service kodi.service panel.service; do
   # Kodi is stopped on purpose while a web app, an AirPlay phone or a Miracast PC has the screen.
   [ $unit = kodi.service ] && systemctl is-active -q 'web-app@*' && continue
   [ $unit = kodi.service ] && [ -e /run/media-stick/airplay ] && continue
@@ -267,10 +278,16 @@ if [ "${kodi_restart:-0}" = 1 ] || [ $addons_ok = 0 ] || [ $settings_ok = 0 ] ||
   for old in "${retired_addons[@]}"; do
     if [ -e "/home/media/.kodi/addons/$old" ]; then rm -rf "/home/media/.kodi/addons/$old"; log "  removed kodi add-on $old"; fi
   done
-  systemctl start kodi
-  wait_kodi || log "  kodi did not come back"
+  if [ -e /run/media-stick/airplay ] || [ -e /run/media-stick/miracast ] || systemctl is-active -q 'web-app@*'; then
+    log "  kodi start skipped (active media session)"
+  else
+    systemctl start kodi
+    wait_kodi || log "  kodi did not come back"
+  fi
 else
-  wait_kodi || log "  kodi is not answering"
+  if [ ! -e /run/media-stick/airplay ] && [ ! -e /run/media-stick/miracast ] && ! systemctl is-active -q 'web-app@*'; then
+    wait_kodi || log "  kodi is not answering"
+  fi
 fi
 # First install on a fresh card: Kodi had no add-on database yet, so enable over RPC.
 addon_ids=(inputstream.adaptive inputstream.ffmpegdirect peripheral.joystick $(awk '!/^#/ && NF==4 {print $1}' "$REPO/device/kodi-addons.list"))
