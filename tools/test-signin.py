@@ -526,7 +526,7 @@ class OverlayTool(unittest.TestCase):
 
     def test_it_makes_the_overlays_of_the_pinned_add_ons_and_leaves_no_bytecode_behind(self):
         self.assertEqual({f"{addon}/{path}" for addon, path, _ in self.tool.OVERLAYS}, set(Overlays.FILES))
-        for folder, _, names in os.walk(OVERLAY):  # (skin.ftv's pointer files there are ours, not made from upstream)
+        for folder, _, names in os.walk(OVERLAY):
             self.assertNotIn("__pycache__", folder)
             self.assertEqual([n for n in names if n.endswith(".pyc")], [])
 
