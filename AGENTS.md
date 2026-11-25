@@ -7,8 +7,9 @@ Read README.md first. This file is what it does not say.
 - Every tool in `tools/` reads `MEDIASTICK_HOST` / `MEDIASTICK_KEY`.
 
 ## Changing things
-- The device state is `device/bootstrap.sh` + `device/files/`. Change those, never hand-edit the Pi and leave it: a hand edit is lost on the next deploy.
+- The device state is `device/bootstrap.sh` + `device/os_apply.py` + `device/files/` (see `docs/architecture.md` for the full v2 layout). Change those, never hand-edit the Pi and leave it: a hand edit is lost on the next deploy, and `os_apply.py` prunes orphaned files from `managed-files.json`.
 - `bootstrap.sh` must stay idempotent: check before change, restart a service only when its file changed.
+- v2 components: `skin.media-stick` is the native 1080p Kodi skin (`device/kodi-addons/skin.media-stick/`); `mediastick-displayd` (`mediastick_display.py`) arbitrates Kodi/AirPlay/Miracast/web-app/Standby + CEC + P2P; `mediastick_store` (`device/files/usr/local/lib/media-stick/mediastick_store.py`) provides the shared SQLite WAL store for resume, SWR page/API cache, and Quick Resume snapshots; `panel_core/` (`device/files/usr/local/lib/media-stick/panel_core/`) drives the Panel v2 backend (`/ws`, dual `uinput`, `/shot.jpg`, LAN PIN, and ES-module PWA assets under `device/files/usr/local/share/media-stick/web/`).
 - Add-ons with an overlay (`device/skin-overlay/`: YouTube, SWEET.TV) are whole upstream files with fenced edits; never edit them by hand, edit the edit list in `tools/make-skin-overlays.py`. To bump one: change its line in `device/kodi-addons.want`, run `python3 tools/kodi-addons-lock.py`, then `python3 tools/make-skin-overlays.py` (it stops if upstream changed the file or an edit no longer applies; read the change, then `--accept-new-upstream`). Until the overlay is redone `tools/test-signin.py` fails: its header names the version it was made for. `make-skin-overlays.py --check` (needs the network) says whether the committed overlays equal a rebuild.
 - `provisioning/cloud-init/user-data` only clones the repo and runs bootstrap. Do not add logic there; it reaches the device only when a card is rewritten.
 - Quick fix loop: edit → `tools/deploy.sh --local` → `tools/doctor.sh` → `tools/screenshot.sh` → commit → `tools/deploy.sh`.
@@ -33,6 +34,7 @@ The device is one, and two sessions and the owner test on it: a restart, a deplo
 - `tools/smoke-accounts.sh` (checks only) and `tools/smoke-accounts.sh --live` (starts a SWEET.TV sign-in on the TV and cancels it, so nobody may be looking at the TV) need the lease and a tree that contains `origin/main`, like `deploy.sh`. `tools/test-smoke-accounts.py` tests it against stub `ssh`/`curl`.
 
 ## Verifying
+- `python3 tools/check.py` (or `make check`) runs offline lint (`shellcheck`, `xmllint`, `py_compile`) and all `tools/test-*.py` suites.
 - `tools/doctor.sh` must show no FAIL lines.
 - `tools/screenshot.sh` and look at the image: the UI should be on screen, not a console. Video on a hardware overlay plane can come out black in a screenshot — that is the capture, not playback.
 - Kodi log: `~media/.kodi/temp/kodi.log`; service: `journalctl -u kodi -n 100`.
