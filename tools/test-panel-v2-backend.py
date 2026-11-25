@@ -438,6 +438,45 @@ class TestInputBus(unittest.TestCase):
         bus.type_text("")
         bus.type_text("привет world")
 
+    def test_open_pointer_registers_abs_without_rel_xy(self):
+        ib_mod = _require_module(self, "panel_core.input_bus")
+        bus = ib_mod.InputBus(uinput_path="/dev/uinput")
+        ioctl_calls = []
+
+        def fake_ioctl(fd, req, arg=0):
+            ioctl_calls.append((fd, req, arg))
+            return 0
+
+        with mock.patch.object(ib_mod.os, "open", return_value=42) as mock_open, \
+                mock.patch.object(ib_mod.fcntl, "ioctl", side_effect=fake_ioctl):
+            fd = bus._open_pointer()
+
+        self.assertEqual(fd, 42)
+        mock_open.assert_called_once_with("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+
+        by_req = {}
+        for call_fd, req, arg in ioctl_calls:
+            self.assertEqual(call_fd, 42)
+            by_req.setdefault(req, []).append(arg)
+
+        ev_bits = set(by_req.get(ib_mod.UI_SET_EVBIT, []))
+        self.assertEqual(ev_bits, {ib_mod.EV_KEY, ib_mod.EV_REL, ib_mod.EV_ABS})
+
+        key_bits = set(by_req.get(ib_mod.UI_SET_KEYBIT, []))
+        self.assertIn(ib_mod.BTN_LEFT, key_bits)
+        self.assertIn(ib_mod.BTN_RIGHT, key_bits)
+
+        rel_bits = set(by_req.get(ib_mod.UI_SET_RELBIT, []))
+        self.assertIn(ib_mod.REL_WHEEL, rel_bits)
+        self.assertNotIn(ib_mod.REL_X, rel_bits, "REL_X causes libinput to discard EV_ABS motion")
+        self.assertNotIn(ib_mod.REL_Y, rel_bits, "REL_Y causes libinput to discard EV_ABS motion")
+
+        abs_bits = set(by_req.get(ib_mod.UI_SET_ABSBIT, []))
+        self.assertEqual(abs_bits, {ib_mod.ABS_X, ib_mod.ABS_Y})
+
+        self.assertIn(ib_mod.UI_DEV_SETUP, by_req)
+        self.assertIn(ib_mod.UI_DEV_CREATE, by_req)
+
 
 # ---- 4. screen_cap ----
 
