@@ -18,6 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
-EXPOSE 8080 9090
+EXPOSE 18080 8080 9090
 
 ENTRYPOINT ["/workspace/tools/emulator/run.sh"]

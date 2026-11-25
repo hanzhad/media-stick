@@ -1698,7 +1698,17 @@ class Demo(WindowCase):
         window.focus = ROW
         self.press(window, 117)
         window.onClick(212)
-        window.controls[GUIDE].selected = 1
+        self.assertTrue(wait_for(lambda: len(window.controls[GUIDE].items) > 0))
+        if not any(i.props.get("kind") in ("live", "archive") for i in window.controls[GUIDE].items):
+            tabs = window.controls[sweettv_app.MODAL_TABS]
+            tabs.selected = max(0, tabs.selected - 1)
+            window.controls[GUIDE].items.clear()
+            window.onClick(sweettv_app.MODAL_TABS)
+            self.assertTrue(wait_for(lambda: len(window.controls[GUIDE].items) > 0))
+        window.controls[GUIDE].selected = next(
+            i for i, item in enumerate(window.controls[GUIDE].items)
+            if item.props.get("kind") in ("live", "archive")
+        )
         window.onClick(GUIDE)
         time.sleep(0.05)
         self.assertEqual(Fake.rpc, [])
