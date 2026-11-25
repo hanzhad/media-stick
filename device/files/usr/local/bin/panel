@@ -35,7 +35,7 @@ import panel_watch      # the Смотреть tab and its API
 import panel_lang       # the device's language: its settings page and API
 import panel_sweettv    # the SWEET.TV part of that API
 import panel_onboarding_ui   # the sheet of the shared TV <-> phone onboarding
-from panel_core import auth_pin, input_bus, kodi_bus, screen_cap, state_hub, tls_reload, ws_hub
+from panel_core import auth_pin, input_bus, kodi_bus, screen_cap, state_hub, static_files, tls_reload, ws_hub
 try:
     from mediastick_display import DisplayClient
 except ImportError:
@@ -408,6 +408,7 @@ def _status():
 
 PIN_AUTH = auth_pin.PinAuth(state_dir=STATE_DIR)
 WS_HUB = ws_hub.WsHub()
+STATIC_ASSETS = static_files.StaticAssets()
 
 # ---------------- page ----------------
 
@@ -415,6 +416,8 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#121620">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Media Stick"><title>Media Stick</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <style>
 :root{--bg:#121620;--card:#1F2633;--card2:#2a3344;--line:rgba(255,255,255,.08);--dim:rgba(255,255,255,.7);--faint:rgba(255,255,255,.45);--bad:#ff6b6b;--ok:#4cc38a;--warn:#f0b429;--z-sheet:60;--z-toast:80;color-scheme:dark}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -549,18 +552,22 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 .rc .row.gap{margin-top:8px}
 /* the air pad takes the D-pad's place in the same card, so the key rows below do not move */
 .dwrap.air .dpad{display:none}
-#air,#air-no{position:absolute;inset:0}
-#air{display:flex;flex-direction:column;gap:8px}
+#air,#air-no,#tp-box{position:absolute;inset:0}
+#air,#tp-box{display:flex;flex-direction:column;gap:8px}
 #air-no{overflow:auto;padding:4px}
 .airk{display:flex;align-items:center;gap:12px;min-height:34px}
 .airk label{margin:0;white-space:nowrap;font-size:14px}
 .airk input{min-height:36px}
-#air .cap{margin:0}
+#air .cap,#tp-box .cap{margin:0}
 .pad small{font-size:13px;opacity:.7}
 /* a short pad (small phone) keeps only its main line */
-#air .pad{container-type:size;overflow:hidden}
+#air .pad,#tp-box .pad{container-type:size;overflow:hidden}
 @container (max-height:110px){.pad .i,.pad small{display:none}}
 #air-no .row{flex-direction:column}
+.cast-ban{align-items:center;justify-content:space-between;border-color:rgba(240,180,41,.4);color:#fff}
+.diag-pre{max-height:240px;overflow:auto;padding:12px;border-radius:14px;background:var(--bg);border:1px solid var(--line);font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;color:var(--dim);margin:10px 0 0}
+.pin-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+.pin-row input{max-width:120px;text-align:center;letter-spacing:.25em;font-weight:600}
 /* one look for sheets (sign-in code, onboarding, the key wizard, the player): the handle, the radius, the backdrop, the
    safe-area padding, the z-index; centred and 480px at most on a wide screen. A sheet adds only its own content. */
 .sheet{position:fixed;inset:0;z-index:var(--z-sheet);display:flex;align-items:flex-end;justify-content:center}
@@ -607,6 +614,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   .dwrap.air .dpad{display:block}
   .dwrap #air,.dwrap #air-no{display:none!important}
 }
+@media (min-width:900px){.dwrap #tp-box{display:none!important}}
 </style></head><body>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
@@ -651,6 +659,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 
 <div id="app" class="hide">
   <div class="top"><b>Media Stick</b><div class="pill" id="hdr"><i class="dot" id="hdr-dot"></i><span id="hdr-t"></span></div></div>
+  <div id="cast-banner" class="msg row cast-ban hide" style="grid-column:1/-1"><span id="cast-label">Экран занят трансляцией</span><button id="cast-return" class="btn sm acc fit" type="button">Вернуться в Kodi</button></div>
 
   @@WATCH_SECTION@@<section id="t-remote" data-tab="remote" class="hide">
     @@WATCH_BAR@@
@@ -671,6 +680,11 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         <div class="airk"><label for="air-k">Чувствительность</label><input id="air-k" type="range" min="1" max="10" step="1" value="5"></div>
         <div id="air-pad" class="pad" role="button" aria-label="Аэромышь: удерживайте и наводите телефон на телевизор"><svg class="i"><use href="#i-air"/></svg><span id="air-pt">Удерживайте и наводите телефон на&nbsp;телевизор</span><small id="air-ps">Короткое касание — клик</small></div>
         <div id="air-h" class="cap"></div>
+      </div>
+      <div id="tp-box" class="hide">
+        <div class="airk"><label for="tp-k">Чувствительность</label><input id="tp-k" type="range" min="1" max="10" step="1" value="5"></div>
+        <div id="tp-pad" class="pad" role="button" aria-label="Трекпад: водите пальцем для курсора"><svg class="i"><use href="#i-air"/></svg><span>Трекпад</span><small>Водите пальцем · касание — клик · удержание — меню · 2 пальца — прокрутка</small></div>
+        <div id="tp-h" class="cap">Работает по HTTP без датчиков · <a href="#https">Аэромышь (HTTPS)</a></div>
       </div>
       <div id="air-no" class="hide">
         <h2>Аэромышь</h2>
@@ -709,6 +723,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
           <button id="live-btn" class="btn sm" onclick="setLive(!live)"><svg class="i"><use id="live-ic" href="#i-play"/></svg><span id="live-t">Показать</span></button>
         </div>
       </div>
+      <div id="shot-cast" class="msg row cast-ban hide"><span id="shot-cast-t">Экран занят трансляцией</span><button id="shot-cast-ret" class="btn sm acc fit" type="button">Вернуться в Kodi</button></div>
       <div id="shot-box" class="shotbox"><img id="shot" alt=""><div id="shot-s">Нажмите «Показать»</div></div>
       <div class="grp">
         <button class="btn" data-a="back" aria-label="Назад"><svg class="i"><use href="#i-back"/></svg></button>
@@ -789,6 +804,16 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <p class="dsub" id="act-last"></p>
       <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
       <button id="rk-btn" class="btn" onclick="if(armed('rk-btn','Нажмите ещё раз, чтобы перезапустить плеер'))act('restart-kodi')">Перезапустить плеер</button><button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз, чтобы перезагрузить'))act('reboot')">Перезагрузить</button></div>
+      <div class="row gap"><button id="cec-standby" class="btn" type="button">ТВ Standby</button><button id="cec-wake" class="btn" type="button">ТВ Wake</button></div>
+      <div id="pin-box" class="gap" style="padding-top:12px;border-top:1px solid var(--line)">
+        <div class="head" style="margin-bottom:6px"><h2>LAN PIN-код</h2><span id="pin-state" class="cap" style="margin:0">Выключен</span></div>
+        <div class="pin-row"><input id="pin-in" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="4 цифры" autocomplete="off"><button id="pin-set" class="btn sm acc fit" type="button">Сохранить PIN</button><button id="pin-off" class="btn sm fit hide" type="button">Отключить</button></div>
+      </div>
+      <div id="diag-box" class="gap" style="padding-top:12px;border-top:1px solid var(--line)">
+        <h2>Журнал (Диагностика)</h2>
+        <div class="row"><select id="diag-unit" aria-label="Служба"><option value="panel">panel</option><option value="kodi">kodi</option><option value="update">update</option><option value="displayd">displayd</option></select><button id="diag-load" class="btn sm fit" type="button">Показать логи</button></div>
+        <pre id="diag-out" class="diag-pre hide"></pre>
+      </div>
       <div class="slist" style="margin:14px -18px -18px;border-top:1px solid var(--line)"><button id="keys-row" class="srow" onclick="ykOpen()"><span class="sname">Ключи Google</span><span class="sval">для входа в YouTube</span><span class="chev" aria-hidden="true">›</span></button></div>
     </div>
   </section>
@@ -797,6 +822,17 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
     @@WATCH_NAV@@<button data-go="remote"><span class="pb"><svg class="i"><use href="#i-remote"/></svg></span>Пульт</button>
     <button data-go="settings"><span class="pb"><svg class="i"><use href="#i-sliders"/></svg></span>Настройки</button>
   </nav>
+</div>
+
+<div id="pin-modal" class="sheet hide" role="dialog" aria-modal="true" aria-label="Ввод LAN PIN-кода">
+  <div id="pin-modal-back" class="sheet-back"></div>
+  <div class="sheet-box">
+    <h2>Введите PIN-код</h2>
+    <p class="expl">Доступ к управлению защищён 4-значным LAN PIN.</p>
+    <div id="pin-modal-err" class="msg hide"></div>
+    <input id="pin-modal-in" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="••••" autocomplete="off">
+    <button id="pin-modal-ok" class="btn acc wide gap" type="button">Разблокировать</button>
+  </div>
 </div>
 
 <div id="toast" class="toast hide" role="status" aria-live="polite"></div>
@@ -808,7 +844,7 @@ const wide=()=>matchMedia('(min-width:900px)').matches;
 const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
 async function api(path,body){
   const o=body===undefined?{}:{method:'POST',headers:{'X-Panel':'1','Content-Type':'application/json'},body:JSON.stringify(body)};
-  const r=await fetch(path,o); if(!r.ok){const e=new Error(await r.text());e.http=r.status;throw e} return r.json();
+  const r=await fetch(path,o); if(!r.ok){if(r.status===401)window.dispatchEvent(new CustomEvent('panel:unauthorized'));const e=new Error(await r.text());e.http=r.status;throw e} return r.json();
 }
 // Haptics. Android: navigator.vibrate. iPhone has no vibrate for pages, but since iOS 18 a
 // switch-style checkbox ticks when it flips, so a hidden one is flipped instead.
@@ -1089,12 +1125,14 @@ function pageCheck(v){
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick()});   // back to the app: check at once
 async function tick(){
+  if(document.hidden)return;
   try{const s=await api('/api/status');
     if(s.wifi.ap){ if($('setup').classList.contains('hide')){$('app').classList.add('hide');$('setup').classList.remove('hide');loadNets('s-ssid')} }
     else{$('setup').classList.add('hide');$('app').classList.remove('hide')}
     lastStatus=s;hdrDraw(); $('info').innerHTML=fmt(s);
     httpsUrl=s.https_url||'';setRows(s); httpsCheck(); airUi(); keysUi(s.dead);kbUi(s.kb);
     pageCheck(s.page);
+    window.dispatchEvent(new CustomEvent('panel:status',{detail:s}));
     if(window.accNote)accNote(s.signin);
     if(window.obNote)obNote(s.onboarding);
   }catch(e){lastStatus=null;hdrDraw()}
@@ -1154,6 +1192,7 @@ addEventListener('resize',()=>{if(full)rotApply()});
 document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement&&full)fullOn(false)});
 document.addEventListener('keydown',e=>{if(full&&e.key==='Escape'){e.stopImmediatePropagation();fullOn(false)}},true);
 function setLive(on){
+  if(window.__screenV2){window.__screenV2.setLive(on);return}
   live=on; liveSince=Date.now();
   $('live-t').textContent=on?'Стоп':'Показать';
   $('live-ic').setAttribute('href',on?'#i-stop':'#i-play');
@@ -1161,6 +1200,7 @@ function setLive(on){
   else{clearTimeout(liveTimer);shotState(gotFrame?'Остановлено':'Нажмите «Показать»')}
 }
 function frame(){
+  if(window.__screenV2){window.__screenV2.frame();return}
   if(shotBusy){redo=true;return}
   shotBusy=true; const t=Date.now(), im=new Image();
   im.onload=()=>{shotBusy=false;failed=0;gotFrame=true;$('shot').src=im.src;$('shot-box').classList.add('has');
@@ -1173,7 +1213,7 @@ function frame(){
   im.onerror=()=>{shotBusy=false;redo=false;
     if(!gotFrame&&failed++<1){shotState('Загрузка…');setTimeout(frame,800);return}
     shotState('ТВ не отвечает',true);if(live)liveTimer=setTimeout(frame,3000)};
-  im.src='/shot.png?'+t;
+  im.src='/shot.jpg?'+t;
 }
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&live)setLive(false)});
 
@@ -1430,7 +1470,8 @@ function airUi(){
   const air=mode==='air';
   $('stage').classList.toggle('air',air);
   $('air').classList.toggle('hide',!air||!airOk);
-  $('air-no').classList.toggle('hide',!air||airOk);
+  $('tp-box').classList.toggle('hide',!air||airOk);
+  $('air-no').classList.toggle('hide',true);
   if(!$('air-h').textContent)airNote('');
   if(airOk)return;
   const nt=$('air-nt'), a=$('air-a'), cp=$('air-copy'), st=$('air-steps');
@@ -1606,13 +1647,17 @@ setMode(lsGet('mode'));
 setPage('');
 if(!wide()){const t=lsGet('tab');if(TABS.includes(t)&&t!=='watch')document.querySelector('[data-go='+t+']').click()}
 hashGo();
-</script>@@ACC_TAIL@@@@WATCH_TAIL@@@@LANG_TAIL@@</body></html>"""
+</script><script type="module" src="/static/v2-boot.js?v=dev"></script>@@ACC_TAIL@@@@WATCH_TAIL@@@@LANG_TAIL@@</body></html>"""
 PAGE = panel_accounts.inject(PAGE)
 PAGE = panel_watch.inject(PAGE)
 PAGE = panel_lang.inject(PAGE)
 PAGE = panel_onboarding_ui.inject(PAGE)
+BOOT_VER = STATIC_ASSETS.asset_version("static/v2-boot.js")
+if BOOT_VER:
+    PAGE = PAGE.replace("/static/v2-boot.js?v=dev", f"/static/v2-boot.js?v={BOOT_VER}")
 PAGE_VER = hashlib.sha256(PAGE.encode()).hexdigest()[:12]
 PAGE = PAGE.replace("@@PAGE_VER@@", PAGE_VER)
+PAGE_BYTES = PAGE.encode("utf-8")
 STATE_HUB.page_ver = PAGE_VER
 
 # ---------------- server ----------------
@@ -1840,8 +1885,32 @@ class H(BaseHTTPRequestHandler):
             self.close_connection = True
             WS_HUB.serve_client(self.connection, on_text=_ws_text, on_pointer=_ws_pointer)
             return
+        if static_files.is_static_path(p):
+            code, headers, body = STATIC_ASSETS.serve(self.path, headers=self.headers)
+            self.send_response(code)
+            for name, value in headers:
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if code != 304 and body:
+                self.wfile.write(body)
+            return
         if p == "/":
-            return self.send(PAGE, "text/html; charset=utf-8")
+            code, headers, body = static_files.build_cached_response(
+                PAGE_BYTES,
+                "text/html; charset=utf-8",
+                req_headers=self.headers,
+                cache_control="no-cache",
+                compress=True,
+            )
+            self.send_response(code)
+            for name, value in headers:
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if code != 304 and body:
+                self.wfile.write(body)
+            return
         if p == "/api/pin":
             return self.send({"enabled": PIN_AUTH.is_enabled()})
         if p == "/api/status":
@@ -1888,6 +1957,8 @@ class H(BaseHTTPRequestHandler):
                 jpg = screen_cap.capture_jpeg(screen_owner(), kodi_shot_fn=screenshot, run_cmd=_run_bytes)
                 return self.send(jpg, "image/jpeg")
             except screen_cap.ScreenUnavailable as e:
+                if e.status == 409:
+                    return self.send({"error": str(e), "owner": e.owner}, "application/json", 409)
                 return self.send(str(e), "text/plain", e.status)
             except (OSError, TimeoutError) as e:
                 return self.send(str(e), "text/plain", 503)
