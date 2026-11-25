@@ -3,8 +3,8 @@
 
 Usage: make-pointer-art.py <out.png>     (no dependencies, writes a 96x96 RGBA PNG)
 
-skin.ftv is laid out in 3840x2160, so 96 px here is 48 px on the 1080p TV.
-The result is kept in device/skin-overlay/skin.ftv/media/ms-pointer.png; run this
+skin.media-stick is laid out in 1920x1080 (Pointer.xml draws it 48x48, so 96 px gives 2x crispness).
+The result is kept in device/kodi-addons/skin.media-stick/media/ms-pointer.png; run this
 again only to change the look.
 """
 import math

@@ -624,7 +624,7 @@ class NoScreensaver(unittest.TestCase):
         wanted = self.wanted()
         self.assertIn("screensaver.mode=", wanted)
         self.assertEqual([w for w in wanted if w.startswith("screensaver.") and w != "screensaver.mode="], [])
-        self.assertIn("lookandfeel.skin=skin.ftv", wanted)
+        self.assertIn("lookandfeel.skin=skin.media-stick", wanted)
 
     def test_bootstrap_comment_says_what_it_does(self):
         comment = re.search(r"#  - look:[^\n]*(\n#    [^\n]*)*", read(BOOTSTRAP)).group(0)

@@ -1191,7 +1191,7 @@ class Skin(unittest.TestCase):
         fonts = set()
         for name in ("script-media-stick-home.xml", "script-media-stick-remote.xml"):
             fonts |= {f.text for f in self.tree(name).iter("font")}
-        fonts.add("MsTitle")             # the skin's own title font (skin.ftv Font.xml): loaded at start, whoever draws with it
+        fonts.add("MsTitle")             # the skin's own title font (skin.media-stick Font.xml): loaded at start, whoever draws with it
         for name in self.NEW:
             root = self.tree(name)
             self.assertLessEqual({f.text for f in root.iter("font")}, fonts, name)
