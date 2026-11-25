@@ -6,6 +6,7 @@ Wants=network-online.target NetworkManager.service avahi-daemon.service
 [Service]
 # root for wpa_supplicant, stopping and starting Kodi; the drawer runs as media (see the program)
 EnvironmentFile=-/etc/media-stick/local.env
+OOMScoreAdjust=-200
 ExecStart=/usr/local/bin/miracast
 Restart=always
 RestartSec=3
