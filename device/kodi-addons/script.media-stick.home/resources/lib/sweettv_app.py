@@ -121,7 +121,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                     self._qr_focus_index = max(0, int(snap.get("focused_index") or 0))
                     self._qr_focus_key = str(snap.get("focused_key") or "")
                 self.writer.start()
-            self._show_mode(data.EMPTY, self._status_props(words.status("", False, False, 0)))
+            if not self._try_instant_start(clock()):
+                self._show_mode(data.EMPTY, self._status_props(words.status("", False, False, 0)))
         else:
             self._after_player()
         self._start_watch()
@@ -188,6 +189,29 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def _demo_raw(self, now):
         return sweettv_demo.demo_data(now, DEMO_LOGOS)
 
+    def _try_instant_start(self, now) -> bool:
+        if self.demo or not files.signed_in():
+            return False
+        has_cont = bool(sections.continue_cards(self.resume_doc, None, now, self.fav_keys))
+        ns = pages.namespace()
+        ckey = pages.catalog_key("shows") if ns else None
+        shows_hit = bool(ns and ckey and page_cache.get(ns, ckey, ttl=pages.PAGE_TTL, max_age=pages.PAGE_MAX_AGE))
+        if not has_cont and not shows_hit:
+            return False
+        with self._lock:
+            self.signed = True
+            self._prop("signed", "1")
+            self._prop("chip", words.chip(False, True))
+            if self.section not in ("continue", "shows"):
+                self.section = "continue" if has_cont else "shows"
+            self._fill_menu()
+            if self.section == "continue":
+                self._show_continue()
+            else:
+                self._open_section("shows")
+            self._show_mode(data.DATA, {})
+        return True
+
     def _snapshot(self, now) -> files.Snapshot:
         if self.demo:
             if self.demo_catalog is None:
@@ -229,6 +253,10 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                     self._refresh_channels(now)
                 self.stamp, self.mtime = snap.stamp, snap.mtime
                 self._show_mode(mode, {})
+            elif mode == data.EMPTY and snap.signed and snap.catalog is None and self.mode == data.DATA:
+                self.waiting_since = None
+                self._prop("notice", "")
+                self._show_mode(data.DATA, {})
             else:
                 self._prop("notice", "")
                 self._show_mode(mode, self._card_props(mode, snap, now, phone))
@@ -390,6 +418,12 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     def _sync_hero(self):
         card = self._focused_card()
+        banner = card.banner if card else ""
+        if not banner or not self._window_props.get("hero_art"):
+            self._cancel("hero_art")
+            self._prop("hero_art", banner)
+        else:
+            self._later("hero_art", 0.18, lambda b=banner: self._prop("hero_art", b))
         info = sections.hero_info(card)
         for k, v in info.items():
             self._prop(k, v)
@@ -421,15 +455,13 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._prop("hint", words.section_hint("films"))
                 self._show_favourites()
             elif key == "shows":
-                self._set_chips("shows", [])
+                self._set_chips("shows", sections.show_chips())
                 self._prop("hint", words.section_hint("shows"))
-                self._apply_cards([], empty_msg=words.tr("Loading…"))
                 self._load_shows()
             elif key in ("series", "movies"):
                 self.genre_id = 0
                 self._set_chips(key, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
                 self._prop("hint", words.section_hint("shows" if key == "series" else "films"))
-                self._apply_cards([], empty_msg=words.tr("Loading…"))
                 self._load_catalog(key, offset=0)
             elif key == "channels":
                 self._show_channels(focus_cid)

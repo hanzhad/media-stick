@@ -217,12 +217,15 @@ class Guide:
             url = row.get("vod_url") or row.get("url") or ""
             if not url:
                 return
+            resume = int(row.get("resume") or 0)
+            if resume > 0 and "start=" not in url:
+                url = f"{url}{'&' if '?' in url else '?'}start={resume}"
             if row.get("epg") and row.get("cid"):
                 session = play.Session(str(row["cid"]), str(row["epg"]), str(row.get("title") or title),
                                        int(row.get("start") or 0), int(row.get("stop") or 0), url=url)
             else:
                 session = play.Session("", "", str(row.get("title") or title), 0, 0, url=url)
-            self._start_playback(url, session=session, seek_to=int(row.get("resume") or 0))
+            self._start_playback(url, session=session, seek_to=resume)
         elif kind == "guide" and ch is not None:
             if row.get("live"):
                 url = data.play_url(ch.cid)

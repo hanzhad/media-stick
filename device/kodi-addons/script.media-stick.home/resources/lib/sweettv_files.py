@@ -12,6 +12,7 @@ from resources.lib import apps, net, sweettv_data as data, ui
 
 CHANNEL_FILE = "special://temp/channelList.json"
 QR_FAILED = set()
+_LAST_RAW = (None, None, None)
 
 
 def channel_path():
@@ -32,26 +33,34 @@ def file_stamp(path):
 
 def read_catalog(path, now):
     """The catalog in the plugin's file, or None when it cannot be read now (missing, half written, not JSON)."""
+    global _LAST_RAW
     try:
         with open(path, "rb") as f:
             raw = json.load(f)
     except (OSError, ValueError, MemoryError) as e:
         ui.log(f"channel list not readable: {e!r}")
         return None
+    if isinstance(raw, dict):
+        _LAST_RAW = (path, file_stamp(path), raw)
     return data.parse_catalog(raw, now)
 
 
 def read_raw(path):
-    """The plugin's channel list as it is (a dict), or None when it cannot be read now. The shows and films need what the
-    channel screen drops (show ids, season and episode numbers, the whole guide), so they read the file once more, when a
-    section is opened, and keep only what mediastick_sweetlive.slim leaves of it."""
+    """The plugin's channel list as it is (a dict), or None when it cannot be read now."""
+    global _LAST_RAW
+    stamp = file_stamp(path)
+    if _LAST_RAW[0] == path and _LAST_RAW[1] == stamp and _LAST_RAW[2] is not None:
+        return _LAST_RAW[2]
     try:
         with open(path, "rb") as f:
             raw = json.load(f)
     except (OSError, ValueError, MemoryError) as e:
         ui.log(f"channel list not readable for the sections: {e!r}")
         return None
-    return raw if isinstance(raw, dict) else None
+    if isinstance(raw, dict):
+        _LAST_RAW = (path, stamp, raw)
+        return raw
+    return None
 
 
 def language() -> str:

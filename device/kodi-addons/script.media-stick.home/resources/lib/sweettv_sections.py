@@ -17,7 +17,7 @@ RAIL = (
     ("channels", "TV Channels"),
 )
 SECTION_KEYS = tuple(k for k, _ in RAIL)
-FILTERED_SECTIONS = frozenset(("search", "series", "movies", "channels"))
+FILTERED_SECTIONS = frozenset(("search", "shows", "series", "movies", "channels"))
 SORT_MODES_DEFAULT = (
     {"id": 1, "name": "Popular"},
     {"id": 3, "name": "IMDb Rating"},
@@ -273,14 +273,15 @@ def continue_cards(resume_doc, catalog, now, favs=()) -> list:
             mid = str(e.get("movie_id") or "")
             eid = str(e.get("episode_id") or "")
             title = str(e.get("title") or f"VOD {mid}")
-            url = f"plugin://plugin.video.sweettv/playvod/{mid}|{eid or 'null'}|0"
+            base_url = f"plugin://plugin.video.sweettv/playvod/{mid}|{eid or 'null'}|0"
+            url = f"{base_url}?start={pos}" if pos > 0 else base_url
             fav_key = f"vod:{mid}"
             art = str(e.get("thumb") or "")
             initials, plate, plate_hi, bg, tint = _palette(title)
             out.append(Card(
                 kind="movie" if not eid else "episode", key=f"{mid}|{eid}", fav_key=fav_key,
                 title=title, art=art, banner=art, meta=resume_label, desc="",
-                play_url=url, alt_url=url, cid="", epg="", start=0, stop=0, resume_pos=pos,
+                play_url=url, alt_url=base_url, cid="", epg="", start=0, stop=0, resume_pos=pos,
                 bar=bar, pbar=pbar, fav=fav_key in favs, catchup=False, playable=True, dim=False,
                 num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
                 now="", nowline="", next="", nextline="", resume_label=resume_label, small=len(title) > 22,
@@ -290,7 +291,8 @@ def continue_cards(resume_doc, catalog, now, favs=()) -> list:
             epg = str(e.get("epg") or "")
             ch = ch_by_id.get(cid)
             title = str(e.get("title") or (ch.name if ch else f"Channel {cid}"))
-            url = data.play_url(cid, epg)
+            base_url = data.play_url(cid, epg)
+            url = data.play_url(cid, epg, start=pos) if pos > 0 else base_url
             fav_key = f"ch:{cid}"
             art = ch.logo if ch else str(e.get("thumb") or "")
             initials, plate, plate_hi, bg, tint = _palette(title)
@@ -298,7 +300,7 @@ def continue_cards(resume_doc, catalog, now, favs=()) -> list:
             out.append(Card(
                 kind="programme", key=f"{cid}|{epg}", fav_key=fav_key,
                 title=title, art=art, banner=art, meta=meta, desc="",
-                play_url=url, alt_url=url, cid=cid, epg=epg,
+                play_url=url, alt_url=base_url, cid=cid, epg=epg,
                 start=int(e.get("start") or 0), stop=int(e.get("stop") or 0), resume_pos=pos,
                 bar=bar, pbar=pbar, fav=fav_key in favs, catchup=True, playable=bool(url), dim=not bool(url),
                 num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
@@ -376,6 +378,18 @@ def filter_channels(channels, filter_key) -> list:
         cid = filter_key[2:]
         return [ch for ch in channels if cid in ch.cats]
     return list(channels)
+
+
+def show_chips() -> list:
+    return [("all", words.tr("All items")), ("special", "SWEET.TV Special"), ("tv", words.tr("Shows"))]
+
+
+def filter_shows(rows, filter_key) -> list:
+    if filter_key == "special":
+        return [r for r in rows if r.get("special") is True]
+    if filter_key == "tv":
+        return [r for r in rows if not r.get("special")]
+    return list(rows)
 
 
 def channel_chips(categories) -> list:

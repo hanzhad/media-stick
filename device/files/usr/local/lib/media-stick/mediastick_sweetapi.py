@@ -131,6 +131,21 @@ def _clean(value, limit=200):
     return " ".join("".join(c if c.isprintable() else " " for c in str(value)).split())[:limit]
 
 
+_CF_IMG_RE = re.compile(r"^(https?://[^/]+)/cdn-cgi/image/[^/]+/(https?://.+|.+)$")
+
+
+def _hq_url(url):
+    """Strip Cloudflare /cdn-cgi/image/.../ resize proxy for full-res HD hero backdrops."""
+    u = https(url)
+    if not u:
+        return ""
+    m = _CF_IMG_RE.match(u)
+    if not m:
+        return u
+    rest = m.group(2)
+    return https(rest) if rest.startswith("http") else f"{m.group(1)}/{rest.lstrip('/')}"
+
+
 def https(url):
     """A picture address as https; "" when it is not a web address."""
     if not isinstance(url, str):
@@ -244,7 +259,7 @@ def _other_row(item, kind, channels, quality="1080p"):
     img = https(item.get("image_url"))
     if kind == "movie":
         avail_info = item.get("availability_info")
-        avail = isinstance(avail_info, dict) and avail_info.get("available") is not False and item.get("available") is not False
+        avail = (not isinstance(avail_info, dict) or avail_info.get("available") is not False) and item.get("available") is not False
         vod_url = ml.vod_url(ident, None, 0) if avail else ""
         return {"kind": kind, "id": ident, "title": title, "subtitle": _clean(item.get("subtext")),
                 "cid": "", "epg": "", "start": 0, "stop": 0, "channel_name": "", "when": "",
@@ -308,6 +323,7 @@ def normalize_search(reply, channels, now, tr=None, tr_n=None, quality="1080p"):
     """The rows of a SearchService/Search.json answer: programmes (collapsed, newest first), then channels, films, people
     in the order the service gave them; at most MAX_ROWS. Odd items are left out; never raises."""
     tr = tr or ml.text
+    channels = channel_map(channels)
     found = reply.get("result") if isinstance(reply, dict) else None
     programmes, others = [], {"channel": [], "movie": [], "person": []}
     for item in found if isinstance(found, list) else ():
@@ -651,7 +667,7 @@ def _movie_card(movie):
         return None
     owner_id = owner_of(movie)
     poster = https(movie.get("poster_url") or movie.get("original_poster_url"))
-    banner = https(movie.get("horizontal_poster_url") or movie.get("banner_url") or movie.get("original_banner_url"))
+    banner = _hq_url(movie.get("horizontal_poster_url") or movie.get("banner_url") or movie.get("original_banner_url") or poster)
     genres = [g for g in (_num(x) for x in (movie.get("genres") or ())) if g is not None]
     imdb_raw = movie.get("rating_imdb")
     imdb = float(imdb_raw) if isinstance(imdb_raw, (int, float)) and not isinstance(imdb_raw, bool) else 0.0
@@ -812,6 +828,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                 epg_seen.add(n)
                 epg_col_ids.append(n)
 
+    special_ids = set(movie_ids)
     col3_reply = c.post(COLLECTIONS, {"type": 3})
     if col3_reply.ok:
         for col in col3_reply.data.get("collection") or col3_reply.data.get("collections") or ():
@@ -855,6 +872,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                     "year": card["year"],
                     "imdb": card["imdb"],
                     "vod_url": card["vod_url"],
+                    "special": card["id"] in special_ids,
                 })
 
     if epg_col_ids:
@@ -891,8 +909,8 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                 poster_from_list = next((https(p.get("original_poster_url") or p.get("poster_url")) for p in col_posters if p.get("original_poster_url") or p.get("poster_url")), "")
                 horiz_from_list = next((https(p.get("original_poster_url") or p.get("poster_url")) for p in col_posters if p.get("orientation") == "Horizontal" and (p.get("original_poster_url") or p.get("poster_url"))), "")
                 poster = https(col.get("poster_url")) or poster_from_list or next((https(r.get("image_url")) for r in recs if r.get("image_url")), "")
-                banner = https(col.get("horizontal_poster_url") or col.get("banner_url")) or horiz_from_list or next(
-                    (https(r.get("preview_url_ext")) for r in recs if r.get("preview_url_ext")), "")
+                banner = _hq_url(col.get("horizontal_poster_url") or col.get("banner_url")) or _hq_url(horiz_from_list) or _hq_url(next(
+                    (r.get("preview_url_ext") for r in recs if r.get("preview_url_ext")), ""))
                 _add_item({
                     "kind": "show_epg",
                     "id": "epg:%d" % col_id,
@@ -902,6 +920,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                     "title": _clean(col.get("title"), 120),
                     "poster": poster,
                     "banner": banner,
+                    "special": False,
                 })
             else:
                 grouped = {}
@@ -915,7 +934,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                     sid = gkey[1] if gkey[0] == "id" else ""
                     ch_ids = sorted({str(_num(r.get("channel_id"))) for r in grecs if _num(r.get("channel_id"))})
                     poster = next((https(r.get("image_url")) for r in grecs if r.get("image_url")), "")
-                    banner = next((https(r.get("preview_url_ext")) for r in grecs if r.get("preview_url_ext")), "")
+                    banner = _hq_url(next((r.get("preview_url_ext") for r in grecs if r.get("preview_url_ext")), ""))
                     _add_item({
                         "kind": "show_tv",
                         "id": "tv:%s" % (sid or col_id),
@@ -925,6 +944,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                         "title": base,
                         "poster": poster,
                         "banner": banner,
+                        "special": False,
                     })
 
     for ch in _channel_list(channels):
@@ -952,7 +972,8 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                 "curated_epg_ids": [],
                 "title": title,
                 "poster": https(p.get("image_url")),
-                "banner": https(p.get("preview_url_ext") or p.get("preview_url")),
+                "banner": _hq_url(p.get("preview_url_ext") or p.get("preview_url")),
+                "special": False,
             })
     return {"ok": True, "items": items}
 
