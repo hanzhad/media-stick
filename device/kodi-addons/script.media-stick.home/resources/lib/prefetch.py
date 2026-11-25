@@ -3,13 +3,11 @@
   handle = prefetch.warm("youtube:7", [(key, fetch), ...], ttl=300, idle=screen_is_idle)
   handle.cancel()                    # when the window closes or the account changes
 
-`fetch()` returns the JSON value to keep, or None for "nothing worth keeping" (an error, an empty list, a sign-in card). The
+fetch() returns the JSON value to keep, or None for nothing worth keeping (an error, an empty list, a sign-in card). The
 jobs run one after another (a Pi 3B+ has no room for two) in ONE daemon thread, at a lower priority, in the order given. A key
-whose page is still fresh (younger than `ttl`) is skipped. `idle()`, when given, is asked before each job: the screen says
-"the user is waiting for something, not now" by answering False, and the run waits (up to IDLE_TIMEOUT) instead of competing
-with it. A job cannot be interrupted, so a job that took longer than `job_timeout` ends the run (the answer that came late is
-dropped) rather than piling up more slow requests. A second warm() for a namespace that is still running changes nothing and
-returns the running handle. Nothing here raises, and a run logs one line.
+whose page is still fresh (younger than ttl) is skipped. idle(), when given, is asked before each job: the screen says
+the user is waiting for something, not now by answering False, and the run waits (up to IDLE_TIMEOUT) instead of competing
+with it. Background prefetch never runs while Kodi is playing or AirPlay/Miracast/WebApp owns the screen.
 
 start() is warm() under the other name.
 """
@@ -62,7 +60,7 @@ class Handle:
 def _log(text):
     try:
         import xbmc
-        xbmc.log(f"{LOG} {text}", xbmc.LOGINFO)
+        xbmc.log(f" {LOG} {text}".lstrip(), xbmc.LOGINFO)
     except Exception:
         pass
 
@@ -75,6 +73,24 @@ def _lower_priority(nice):
             pass
 
 
+def _is_playback_or_cast_active():
+    """True when Kodi is playing audio/video or AirPlay/Miracast/WebApp owns the screen."""
+    try:
+        import xbmc
+        if xbmc.Player().isPlaying():
+            return True
+    except Exception:
+        pass
+    screen_dir = os.environ.get("MEDIASTICK_SCREEN_DIR", "/run/media-stick")
+    for flag in ("airplay", "miracast", "webapp"):
+        try:
+            if os.path.exists(os.path.join(screen_dir, flag)):
+                return True
+        except OSError:
+            pass
+    return False
+
+
 def _acquire(handle):
     """Wait for the run in progress of another namespace; False when cancelled while waiting."""
     while not _serial.acquire(timeout=IDLE_POLL):
@@ -84,16 +100,21 @@ def _acquire(handle):
 
 
 def _wait_idle(handle, idle, timeout):
-    """True when the screen is idle; False when cancelled or it stayed busy for `timeout` seconds."""
-    if idle is None:
-        return True
+    """True when the screen is idle and no playback/cast is active; False when cancelled or busy for timeout."""
     end = time.monotonic() + timeout
     while True:
         try:
-            if idle():
-                return True
+            busy = _is_playback_or_cast_active()
         except Exception:
-            return True
+            busy = False
+        if not busy:
+            if idle is None:
+                return True
+            try:
+                if idle():
+                    return True
+            except Exception:
+                return True
         if handle.cancelled or time.monotonic() >= end:
             return False
         handle._cancel.wait(IDLE_POLL)
@@ -147,7 +168,7 @@ def _run(handle, jobs, job_timeout, idle, idle_timeout, pause, nice, log, ttl):
                     handle._cancel.wait(pause)
         finally:
             _serial.release()
-    except Exception as e:                       # a prefetch must never be what breaks the app
+    except Exception as e:
         handle.failed += 1
         handle.note = f"error {type(e).__name__}"
     finally:
@@ -164,7 +185,7 @@ def _run(handle, jobs, job_timeout, idle, idle_timeout, pause, nice, log, ttl):
 
 def warm(namespace, jobs, ttl=page_cache.DEFAULT_TTL, job_timeout=JOB_TIMEOUT, idle=None, idle_timeout=IDLE_TIMEOUT,
          pause=PAUSE, nice=NICE, log=None):
-    """Run `jobs` ([(key, fetch), ...]) for `namespace` in the background; the Handle at once. Never raises."""
+    """Run jobs ([(key, fetch), ...]) for namespace in the background; the Handle at once. Never raises."""
     handle = Handle(namespace)
     try:
         jobs = list(jobs)
@@ -176,7 +197,7 @@ def warm(namespace, jobs, ttl=page_cache.DEFAULT_TTL, job_timeout=JOB_TIMEOUT, i
         threading.Thread(target=_run, name="prefetch", daemon=True,
                          args=(handle, jobs, job_timeout, idle, idle_timeout, pause, nice, log, ttl)).start()
         return handle
-    except Exception:                            # no thread could be started: the run is over before it began
+    except Exception:
         with _lock:
             if _running.get(namespace) is handle:
                 del _running[namespace]

@@ -210,8 +210,12 @@ class Library(Base):
         data = self.placed((VID, 150, 600), (ARCHIVE, 1500, 3600))
         self.assertTrue(mr.save(data))
         self.assertEqual(mr.load(), data)
-        self.assertEqual(os.listdir(mr.DIR), ["positions.json"])           # no temporary file left behind
-        self.assertEqual(oct(os.stat(os.path.join(mr.DIR, "positions.json")).st_mode & 0o777), "0o644")
+        import sqlite3
+        db_path = os.path.join(mr.DIR, "state.db")
+        self.assertTrue(os.path.exists(db_path))
+        self.assertEqual([n for n in os.listdir(mr.DIR) if n.endswith(".tmp")], [])
+        with sqlite3.connect(db_path) as con:
+            self.assertEqual(str(con.execute("PRAGMA journal_mode").fetchone()[0]).lower(), "wal")
 
     def test_a_missing_or_broken_file_reads_as_nothing(self):
         self.assertEqual(mr.load(), mr.empty())

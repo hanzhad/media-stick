@@ -62,3 +62,15 @@ def save_state(path, state) -> bool:
             except OSError:
                 pass
         return False
+
+
+def apply_snapshot(state, snap) -> dict:
+    """Merge a Quick Resume snapshot's section, query, and kind into normalized state."""
+    base = normalize_state(state)
+    if not isinstance(snap, dict):
+        return base
+    return normalize_state({
+        "section": snap.get("section") or base["section"],
+        "query": snap.get("search_query") if snap.get("search_query") is not None else base["query"],
+        "kind": base["kind"],
+    })
