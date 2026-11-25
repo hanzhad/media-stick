@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+import xml.etree.ElementTree as ET
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -1112,6 +1113,29 @@ class SweetRoutes(unittest.TestCase):
             self.ps.show_api_view(FIXTURE, "epg:8838", NOW)
             self.assertIs(detail_mock.call_args[0][1], FIXTURE)
 
+    @staticmethod
+    def _kodi_wanted_tokens(bs_src):
+        idx = bs_src.index("kodi_wanted=(") + len("kodi_wanted=(")
+        depth, in_quote, chars, i = 1, False, [], idx
+        while i < len(bs_src) and depth > 0:
+            ch = bs_src[i]
+            if ch == "#" and not in_quote and (i == 0 or bs_src[i - 1] in " \t\n"):
+                while i < len(bs_src) and bs_src[i] != "\n":
+                    i += 1
+                continue
+            if ch == '"':
+                in_quote = not in_quote
+            elif not in_quote:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            chars.append(ch)
+            i += 1
+        return [t.strip('"') for t in "".join(chars).split()]
+
     def test_emulator_run_sh_configures_panel_port_symlinks_channels_and_disables_webserver(self):
         with open(os.path.join(ROOT, "tools", "emulator", "run.sh"), encoding="utf-8") as f:
             script = f.read()
@@ -1123,6 +1147,22 @@ class SweetRoutes(unittest.TestCase):
         self.assertIn("channelList.json", script)
         self.assertIn("<webserver>false</webserver>", script)
         self.assertIn("<tcpport>9090</tcpport>", script)
+        ks_match = re.search(r"^\s*/usr/local/bin/kodi-settings\b(.*?)(?:>/dev/null|\bfi\b)", script, re.M | re.S)
+        self.assertIsNotNone(ks_match, "kodi-settings invocation missing from tools/emulator/run.sh")
+        ks_tokens = [t.strip('"') for t in ks_match.group(1).replace("\\\n", " ").split()]
+        self.assertIn("filecache.buffermode=2", ks_tokens)
+        self.assertEqual(
+            [t for t in ks_tokens if t.startswith("filecache.buffermode=")],
+            ["filecache.buffermode=2"],
+        )
+        adv_match = re.search(r"(<advancedsettings\b.*?</advancedsettings>)", script, re.S)
+        self.assertIsNotNone(adv_match, "advancedsettings.xml block missing from tools/emulator/run.sh")
+        emu_adv = ET.fromstring(adv_match.group(1))
+        self.assertEqual(emu_adv.findtext("./services/webserver"), "false")
+        self.assertEqual(emu_adv.findtext("./jsonrpc/tcpport"), "9090")
+        self.assertEqual(emu_adv.findtext("./network/curlclienttimeout"), "5")
+        self.assertEqual(emu_adv.findtext("./network/curllowspeedtime"), "5")
+        self.assertEqual(emu_adv.findtext("./network/curlretries"), "1")
 
     def test_restart_kodi_route_and_pi_seek_stall_mitigations(self):
         with open(PANEL, encoding="utf-8") as f:
@@ -1136,10 +1176,23 @@ class SweetRoutes(unittest.TestCase):
             bs_src = f.read()
         self.assertIn("videoplayer.primeallowhwdeinterlace=false", bs_src)
         self.assertIn("videoplayer.seekdelay=1250", bs_src)
+        wanted_tokens = self._kodi_wanted_tokens(bs_src)
+        self.assertIn("filecache.buffermode=2", wanted_tokens)
+        self.assertEqual(
+            [t for t in wanted_tokens if t.startswith("filecache.buffermode=")],
+            ["filecache.buffermode=2"],
+        )
         with open(os.path.join(ROOT, "device", "files", "home", "media", ".kodi", "userdata", "advancedsettings.xml"), encoding="utf-8") as f:
             adv_src = f.read()
-        self.assertIn("<curlclienttimeout>15</curlclienttimeout>", adv_src)
-        self.assertIn("<curllowspeedtime>15</curllowspeedtime>", adv_src)
+        self.assertIn("<curlclienttimeout>5</curlclienttimeout>", adv_src)
+        self.assertIn("<curllowspeedtime>5</curllowspeedtime>", adv_src)
+        self.assertIn("<curlretries>1</curlretries>", adv_src)
+        adv_xml = ET.fromstring(adv_src)
+        self.assertEqual(adv_xml.tag, "advancedsettings")
+        self.assertEqual(adv_xml.findtext("./network/curlclienttimeout"), "5")
+        self.assertEqual(adv_xml.findtext("./network/curllowspeedtime"), "5")
+        self.assertEqual(adv_xml.findtext("./network/curlretries"), "1")
+        self.assertIsNone(adv_xml.find("cache"))
         with open(os.path.join(ROOT, "device", "skin-overlay", "plugin.video.sweettv", "resources", "lib", "sweettv.py"), encoding="utf-8") as f:
             sw_src = f.read()
         self.assertIn("def _ms_use_ffmpeg(", sw_src)
