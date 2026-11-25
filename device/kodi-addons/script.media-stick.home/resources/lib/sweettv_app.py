@@ -53,7 +53,15 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     GRID_ID = ROW
 
     def _grid_id(self) -> int:
-        return ROW
+        return WIDE_ROW if self.section in WIDE_SECTIONS else ROW
+
+    def _active_grid_pos(self) -> int:
+        cid = self._focus()
+        target = cid if cid in (ROW, WIDE_ROW) else self._grid_id()
+        try:
+            return max(0, self.getControl(target).getSelectedPosition())
+        except RuntimeError:
+            return 0
     MENU_ID = MENU
     DEMO_LOGOS = DEMO_LOGOS
     instance = None
@@ -315,12 +323,16 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     def _refresh_channels(self, now):
         cards = [sections.channel_card(c, self.cat_names, now, self.resume_doc, self.fav_keys) for c in self.shown]
-        ctrl = self.getControl(ROW)
-        size = ctrl.size() if hasattr(ctrl, "size") else len(ctrl.items)
-        for idx, card in enumerate(cards):
-            if idx < size:
-                item = ctrl.getListItem(idx) if hasattr(ctrl, "getListItem") else ctrl.items[idx]
-                self._shown_props[card.key] = items.apply_card(item, card, self._shown_props.get(card.key))
+        for cid in (ROW, WIDE_ROW):
+            try:
+                ctrl = self.getControl(cid)
+            except Exception:
+                continue
+            size = ctrl.size() if hasattr(ctrl, "size") else len(ctrl.items)
+            for idx, card in enumerate(cards):
+                if idx < size:
+                    item = ctrl.getListItem(idx) if hasattr(ctrl, "getListItem") else ctrl.items[idx]
+                    self._shown_props[card.key] = items.apply_card(item, card, self._shown_props.get(card.key))
         self.cards = cards
         self._sync_hero()
 
@@ -346,7 +358,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if self.mode == data.SIGNIN:
             self._focus_on(SIGNIN_BUTTON)
         elif self.mode == data.DATA:
-            self._focus_on(ROW if self.cards else MENU)
+            self._focus_on(self._grid_id() if self.cards else MENU)
         elif self.kind != "loading":
             self._focus_on(RETRY)
 
@@ -420,16 +432,16 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self._sync_hero()
 
     def _select_grid(self, pos):
-        ctrl = self.getControl(ROW)
         if 0 <= pos < len(self.cards):
-            ctrl.selectItem(pos)
+            self.getControl(ROW).selectItem(pos)
+            try:
+                self.getControl(WIDE_ROW).selectItem(pos)
+            except Exception:
+                pass
             self._sync_hero()
 
     def _focused_card(self):
-        try:
-            pos = self.getControl(ROW).getSelectedPosition()
-        except RuntimeError:
-            return None
+        pos = self._active_grid_pos()
         return self.cards[pos] if 0 <= pos < len(self.cards) else None
 
     def _sync_hero(self, card=None):
@@ -489,10 +501,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def _save_quick_resume(self, immediate=False):
         if self.demo or not self.started or not self.signed or not self.section:
             return
-        try:
-            pos = max(0, self.getControl(ROW).getSelectedPosition())
-        except Exception:
-            pos = 0
+        pos = self._active_grid_pos()
         card = self.cards[pos] if 0 <= pos < len(self.cards) else None
         fkey = card.key if card is not None else ""
         snap = quick_resume.build_sweettv_snapshot(
@@ -565,7 +574,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                     return
             else:
                 if action_id == ACTION_CONTEXT_MENU:
-                    if self._focus() in (ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV):
+                    if self._focus() in (ROW, WIDE_ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV):
                         self._toggle_favourite()
                     return
                 if digit is not None:
@@ -587,7 +596,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     def onClick(self, control_id):
         try:
-            if control_id == ROW:
+            if control_id in (ROW, WIDE_ROW):
                 self._ok_card()
             elif control_id == MENU:
                 self._cancel("menu")
@@ -599,7 +608,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                         return
                     self._open_section(key)
                     if self.cards:
-                        self._focus_on(ROW)
+                        self._focus_on(self._grid_id())
             elif control_id == RESUME:
                 self._ok_card()
             elif control_id == BTN_ALT:
@@ -728,8 +737,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             io.stop()
 
     def _focus_back(self):
-        if self.mode == data.DATA and self._focus() not in (MENU, ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV, GUIDE):
-            self._focus_on(GUIDE if self._modal_open() else ROW)
+        if self.mode == data.DATA and self._focus() not in (MENU, ROW, WIDE_ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV, GUIDE):
+            self._focus_on(GUIDE if self._modal_open() else self._grid_id())
 
     def _preview_start(self):
         card = self._focused_card()
@@ -755,7 +764,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 added, _ = mr.toggle_fav(card.fav_key, {"title": card.title, "thumb": card.art}, now=self._now())
                 self.favs_doc = mr.load_favs()
             self.fav_keys = set(self.favs_doc["items"].keys())
-            pos = max(0, self.getControl(ROW).getSelectedPosition())
+            pos = self._active_grid_pos()
             if self.section == "favourites" and not added:
                 self._show_favourites()
                 if self.cards:
@@ -763,8 +772,12 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             else:
                 updated = card._replace(fav=added)
                 self.cards[pos] = updated
-                li = self.getControl(ROW).items[pos]
-                self._shown_props[card.key] = items.apply_card(li, updated, self._shown_props.get(card.key))
+                for cid in (ROW, WIDE_ROW):
+                    try:
+                        li = self.getControl(cid).items[pos]
+                        self._shown_props[card.key] = items.apply_card(li, updated, self._shown_props.get(card.key))
+                    except Exception:
+                        pass
                 self._sync_hero()
             self._update_menu()
 

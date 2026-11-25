@@ -208,7 +208,7 @@
                         <top>12</top>
                         <width>328</width>
                         <height>356</height>
-                        <texture border="32">card-mask.png</texture>
+                        <texture>sweettv-poster-mask.png</texture>
                         <colordiffuse>FF121927</colordiffuse>
                     </control>
                     <control type="image">
@@ -216,8 +216,8 @@
                         <top>12</top>
                         <width>328</width>
                         <height>356</height>
-                        <aspectratio align="center" aligny="center">scale</aspectratio>
-                        <texture background="true" diffuse="card-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                        <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
+                        <texture background="true" diffuse="sweettv-poster-mask.png">$INFO[ListItem.Art(icon)]</texture>
                         <visible>!String.IsEmpty(ListItem.Art(icon))</visible>
                     </control>
                     <control type="label">
@@ -258,20 +258,21 @@
                 </itemlayout>
                 <focusedlayout width="352" height="440">
                     <control type="image">
-                        <left>8</left>
-                        <top>8</top>
-                        <width>336</width>
-                        <height>364</height>
-                        <texture border="32">card-mask.png</texture>
+                        <left>6</left>
+                        <top>6</top>
+                        <width>340</width>
+                        <height>368</height>
+                        <texture border="24">youtube-ring.png</texture>
                         <colordiffuse>FF14E0C8</colordiffuse>
+                        <visible>Control.HasFocus(200)</visible>
                     </control>
                     <control type="image">
                         <left>12</left>
                         <top>12</top>
                         <width>328</width>
                         <height>356</height>
-                        <aspectratio align="center" aligny="center">scale</aspectratio>
-                        <texture background="true" diffuse="card-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                        <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
+                        <texture background="true" diffuse="sweettv-poster-mask.png">$INFO[ListItem.Art(icon)]</texture>
                         <visible>!String.IsEmpty(ListItem.Art(icon))</visible>
                     </control>
                     <control type="label">
@@ -338,7 +339,7 @@
                         <top>10</top>
                         <width>420</width>
                         <height>206</height>
-                        <texture border="32">card-mask.png</texture>
+                        <texture>sweettv-wide-mask.png</texture>
                         <colordiffuse>FF121927</colordiffuse>
                     </control>
                     <control type="image">
@@ -346,8 +347,8 @@
                         <top>10</top>
                         <width>420</width>
                         <height>206</height>
-                        <aspectratio align="center" aligny="center">scale</aspectratio>
-                        <texture background="true" diffuse="card-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                        <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
+                        <texture background="true" diffuse="sweettv-wide-mask.png">$INFO[ListItem.Art(icon)]</texture>
                         <visible>!String.IsEmpty(ListItem.Art(icon))</visible>
                     </control>
                     <control type="label">
@@ -397,20 +398,21 @@
                 </itemlayout>
                 <focusedlayout width="444" height="292">
                     <control type="image">
-                        <left>8</left>
-                        <top>6</top>
-                        <width>428</width>
-                        <height>214</height>
-                        <texture border="32">card-mask.png</texture>
+                        <left>6</left>
+                        <top>4</top>
+                        <width>432</width>
+                        <height>218</height>
+                        <texture border="24">youtube-ring.png</texture>
                         <colordiffuse>FF14E0C8</colordiffuse>
+                        <visible>Control.HasFocus(201)</visible>
                     </control>
                     <control type="image">
                         <left>12</left>
                         <top>10</top>
                         <width>420</width>
                         <height>206</height>
-                        <aspectratio align="center" aligny="center">scale</aspectratio>
-                        <texture background="true" diffuse="card-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                        <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
+                        <texture background="true" diffuse="sweettv-wide-mask.png">$INFO[ListItem.Art(icon)]</texture>
                         <visible>!String.IsEmpty(ListItem.Art(icon))</visible>
                     </control>
                     <control type="label">
@@ -619,8 +621,8 @@
                     <top>32</top>
                     <width>300</width>
                     <height>170</height>
-                    <aspectratio align="center" aligny="center">scale</aspectratio>
-                    <texture background="true" diffuse="card-mask.png">$INFO[Window.Property(hero_art)]</texture>
+                    <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
+                    <texture background="true" diffuse="sweettv-wide-mask.png">$INFO[Window.Property(hero_art)]</texture>
                     <visible>!String.IsEmpty(Window.Property(hero_art))</visible>
                 </control>
                 <control type="label">

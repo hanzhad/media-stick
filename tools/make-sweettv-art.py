@@ -103,12 +103,27 @@ def make_logo(n, spec):
     im.save(art.track(os.path.join(DEMO, f'logo-{n}.png')), optimize=True)
 
 
+
+def make_masks():
+    """Exact-size 12px rounded-corner diffuse masks for 5x2 poster cards and 4x3 wide cards."""
+    specs = (
+        ("sweettv-poster-mask.png", 328, 356, 12),
+        ("sweettv-wide-mask.png", 420, 206, 12),
+    )
+    for name, w, h, radius in specs:
+        alpha = np.clip(art.rr_mask((w, h), (0, 0, w, h), radius) * 255, 0, 255).astype(np.uint8)
+        arr = np.full((h, w, 4), 255, dtype=np.uint8)
+        arr[..., 3] = alpha
+        Image.fromarray(arr, "RGBA").save(art.track(os.path.join(art.MEDIA, name)), optimize=True)
+
+
 def main():
     for d in (art.MEDIA, DEMO):
         os.makedirs(d, exist_ok=True)
     make_star()
     make_chip()
     make_bars()
+    make_masks()
     for n, spec in enumerate(LOGOS, 1):
         make_logo(n, spec)
     for p in art.WRITTEN:

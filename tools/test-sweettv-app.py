@@ -1053,7 +1053,7 @@ class SignedOutAndEmpty(WindowCase):
         window._look()
         self.assertEqual(window.mode, D.DATA)
         self.assertEqual(self.shown(window), ["One", "Two"])
-        self.assertEqual(window.focus, ROW)
+        self.assertEqual(window.focus, window._grid_id())
 
     def test_a_half_written_or_empty_file_is_loading_then_no_channels(self):
         write_list('{"status": "OK", "list": [{"id": 1, "na')
@@ -1205,9 +1205,9 @@ class Channels(WindowCase):
         raw = answer(*[chan(100 + n, f"C{n}", number=n + 1) for n in range(15)])
         window = self.ready(raw=raw)
         for n in range(15):
-            window.controls[ROW].selected = n
+            window.controls[window._grid_id()].selected = n
             Fake.now = NOW + n
-            window.onClick(ROW)
+            window.onClick(window._grid_id())
         self.assertEqual([e["id"] for e in window.state["recent"]], [str(100 + n) for n in range(14, 2, -1)])
         self.assertTrue(wait_for(lambda: self.saved()["last"] == "114"))
         self.assertEqual([e["id"] for e in self.saved()["recent"]], [str(100 + n) for n in range(14, 2, -1)])
@@ -1266,10 +1266,23 @@ class Channels(WindowCase):
             time.sleep(0.15)
         self.assertEqual([a[0] for a in fills], ["favourites"])
 
+
+    def test_wide_sections_focus_and_click_use_wide_row_201(self):
+        window = self.ready()
+        self.assertEqual(window.section, "channels")
+        self.assertEqual(window.getProperty("wide_grid"), "1")
+        self.assertEqual(window.focus, 201)
+        window.controls[201].selected = 1
+        self.assertEqual(window._focused_card().cid, "20")
+        window.onClick(201)
+        self.assertTrue(wait_for(lambda: Fake.rpc))
+        request = json.loads(Fake.rpc[-1])
+        self.assertEqual(request["params"]["item"]["file"], "plugin://plugin.video.sweettv/playvid/20|null")
+
     def test_ok_plays_live_through_player_open_on_a_worker_thread_and_remembers_it(self):
         window = self.ready()
-        window.controls[ROW].selected = 1
-        window.onClick(ROW)
+        window.controls[window._grid_id()].selected = 1
+        window.onClick(window._grid_id())
         self.assertTrue(wait_for(lambda: Fake.rpc))
         request = json.loads(Fake.rpc[-1])
         self.assertEqual((request["method"], request["params"]["item"]["file"]),
@@ -1289,9 +1302,9 @@ class Channels(WindowCase):
             return real(path, state)
         with mock.patch.object(S, "save_state", spy):
             window = self.ready()
-            window.controls[ROW].selected = 1
-            window.onClick(ROW)
-            window.focus = ROW
+            window.controls[window._grid_id()].selected = 1
+            window.onClick(window._grid_id())
+            window.focus = window._grid_id()
             self.press(window, 117)
             self.assertTrue(wait_for(lambda: "ch:20" in MR.fav_keys() and self.saved()["last"] == "20"))
             window.stop()
@@ -1319,13 +1332,13 @@ class Channels(WindowCase):
 
     def test_back_from_the_player_puts_the_focus_back_where_kodi_lost_it(self):
         window = self.ready()
-        window.controls[ROW].selected = 1
-        window.onClick(ROW)
+        window.controls[window._grid_id()].selected = 1
+        window.onClick(window._grid_id())
         window.focus = 0
         window.play_at -= 10
         window.onInit()
-        self.assertTrue(wait_for(lambda: window.focus == ROW))
-        self.assertEqual(window.controls[ROW].selected, 1)
+        self.assertTrue(wait_for(lambda: window.focus == window._grid_id()))
+        self.assertEqual(window.controls[window._grid_id()].selected, 1)
 
     def test_the_menu_key_toggles_the_star_and_it_survives_a_restart(self):
         window = self.ready()
@@ -1417,11 +1430,11 @@ class Channels(WindowCase):
     def test_a_catalog_that_changes_keeps_the_focused_channel_and_category(self):
         window = self.ready()
         window.onClick(404)
-        window.controls[ROW].selected = 1
+        window.controls[window._grid_id()].selected = 1
         write_list(self.raw())
         os.utime(files.channel_path(), (time.time() + 60, time.time() + 60))
         window._look()
-        self.assertEqual((self.shown(window), window.controls[ROW].selected), (["Ten", "Thirty"], 1))
+        self.assertEqual((self.shown(window), window.controls[window._grid_id()].selected), (["Ten", "Thirty"], 1))
         self.assertEqual(window.filter_key, "c:1")
         write_list(answer(chan(10, "Ten", number=10)))              # the categories are gone: back to the default
         os.utime(files.channel_path(), (time.time() + 90, time.time() + 90))
@@ -1761,12 +1774,12 @@ class PreviewVideo(WindowCase):
             window = self.open()
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
             self.assertEqual(window.getProperty("preview_video"), "1")
-            window.controls[ROW].selected = 1
+            window.controls[window._grid_id()].selected = 1
             self.press(window, KEY_RIGHT)
             self.assertTrue(wait_for(lambda: Fake.played))
             self.assertEqual(Fake.played[-1], (("plugin://plugin.video.sweettv/playvid/20|null", None, True), {}))
             Fake.playing = True
-            window.onClick(ROW)
+            window.onClick(window._grid_id())
             self.assertEqual(Fake.builtins, ["Action(FullScreen)"])
             self.assertEqual(Fake.rpc, [])
             window.play_at -= 10
@@ -1873,7 +1886,7 @@ class SearchSection(WindowCase):
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
             window.controls[MENU].selected = 0
             window.onClick(MENU)
-            self.assertTrue(wait_for(lambda: m_search.called or window.focus == ROW))
+            self.assertTrue(wait_for(lambda: m_search.called or window.section == "search"))
             if not m_search.called:
                 window.onClick(MENU)
             self.assertTrue(wait_for(lambda: m_search.called))
@@ -2255,6 +2268,22 @@ class Skin(unittest.TestCase):
             if "ListItem.Art" in (node.text or ""):
                 self.assertEqual(node.get("background"), "true")
 
+
+    def test_diffused_card_images_disable_scalediffuse_and_use_concentric_ring(self):
+        root = self.tree()
+        for img in root.findall(".//control[@type='image']"):
+            tex = img.find("texture")
+            if tex is not None and tex.get("diffuse"):
+                ar = img.find("aspectratio")
+                self.assertIsNotNone(ar, f"Missing aspectratio on diffused image {tex.text}")
+                self.assertEqual(ar.get("scalediffuse"), "false")
+        for panel_id in (200, 201):
+            panel = self.control(root, panel_id)
+            focused = panel.find("focusedlayout")
+            rings = [c for c in focused.findall("control") if c.findtext("texture") == "youtube-ring.png"]
+            self.assertEqual(len(rings), 1, f"Expected youtube-ring.png in panel {panel_id}")
+            self.assertEqual(rings[0].findtext("visible"), f"Control.HasFocus({panel_id})")
+
     def test_visible_textures_at_most_34_in_all_states(self):
         root = self.tree()
         top = [c for c in root.find("controls") if c.tag == "control"]
@@ -2406,6 +2435,9 @@ class FieldFixesAppTest(unittest.TestCase):
         self.assertEqual([r["id"] for r in sections.filter_shows(rows, "special")], ["vod:1"])
         self.assertEqual([r["id"] for r in sections.filter_shows(rows, "tv")], ["epg:2", "tv:3"])
         self.assertEqual(len(sections.filter_shows(rows, "all")), 3)
+
+
+
 
 
 if __name__ == "__main__":
