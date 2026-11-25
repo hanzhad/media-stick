@@ -1143,6 +1143,7 @@ class SweetRoutes(unittest.TestCase):
         with open(os.path.join(ROOT, "device", "skin-overlay", "plugin.video.sweettv", "resources", "lib", "sweettv.py"), encoding="utf-8") as f:
             sw_src = f.read()
         self.assertIn("def _ms_use_ffmpeg(", sw_src)
+        self.assertIn("(not end) or end <= int(time.time())", sw_src)
 
 
 if __name__ == "__main__":
