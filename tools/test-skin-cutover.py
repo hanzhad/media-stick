@@ -299,6 +299,66 @@ class TestServiceEventDrivenAndDisplayd(unittest.TestCase):
         player.onPlayBackStopped()
         player.onPlayBackEnded()
 
+
+    def test_home_monitor_wakes_launcher_immediately_on_notification(self):
+        shown = []
+
+        class RecordingLauncher:
+            def __init__(self, *args, **kwargs):
+                pass
+            def show(self):
+                shown.append(True)
+            def close(self):
+                pass
+            def window_id(self):
+                return 13000
+            def refresh_idle(self, active):
+                pass
+            def refresh_status(self):
+                pass
+
+        monitors = []
+        class FakeMonitor:
+            def __init__(self):
+                monitors.append(self)
+            def abortRequested(self):
+                return True
+            def waitForAbort(self, timeout):
+                return True
+
+        fake_xbmc = types.ModuleType("xbmc")
+        fake_xbmc.LOGINFO = fake_xbmc.LOGWARNING = fake_xbmc.LOGERROR = 0
+        fake_xbmc.log = lambda *a, **k: None
+        fake_xbmc.Monitor = FakeMonitor
+        fake_xbmc.Player = type("Player", (), {})
+        fake_xbmc.getCondVisibility = lambda expr: False
+        fake_xbmcgui = types.ModuleType("xbmcgui")
+        fake_xbmcgui.getCurrentWindowId = lambda: 13000
+        fake_xbmcgui.Window = lambda wid: types.SimpleNamespace(setProperty=lambda k, v: None)
+        fake_launcher_mod = types.ModuleType("resources.lib.launcher")
+        fake_launcher_mod.ADDON_PATH = "/tmp/addon"
+        fake_launcher_mod.Launcher = RecordingLauncher
+        fake_lang = types.ModuleType("resources.lib.lang")
+        fake_lang.reconcile = lambda: None
+        fake_resume = types.ModuleType("resources.lib.resume_recorder")
+        fake_resume.start = lambda: None
+        fake_lib = types.ModuleType("resources.lib")
+        fake_lib.launcher = fake_launcher_mod
+        fake_lib.lang = fake_lang
+        fake_lib.resume_recorder = fake_resume
+        fake_resources = types.ModuleType("resources")
+        fake_resources.lib = fake_lib
+        modules = {
+            "xbmc": fake_xbmc, "xbmcgui": fake_xbmcgui, "resources": fake_resources,
+            "resources.lib": fake_lib, "resources.lib.launcher": fake_launcher_mod,
+            "resources.lib.lang": fake_lang, "resources.lib.resume_recorder": fake_resume,
+        }
+        with mock.patch.dict(sys.modules, modules):
+            runpy.run_path(SERVICE_PY, run_name="service_under_test")
+        self.assertTrue(monitors)
+        monitors[0].onNotification("skin", "Other.home_shown", "")
+        self.assertEqual(shown, [True])
+
     def test_service_adaptive_polling_idle_vs_playing(self):
         calls = []
 

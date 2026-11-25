@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <window id="10000">
+	<onload>NotifyAll(script.media-stick.home,home_shown)</onload>
 	<defaultcontrol always="true">100</defaultcontrol>
 	<backgroundcolor>BackgroundColour</backgroundcolor>
 	<controls>
@@ -149,6 +150,7 @@
 
 		<!-- Bottom horizontal app carousel with native System.IdleTime(30) dimming -->
 		<control type="list" id="100">
+			<visible>String.IsEmpty(Window(Home).Property(launcher_ready))</visible>
 			<left>96</left>
 			<top>740</top>
 			<width>1824</width>

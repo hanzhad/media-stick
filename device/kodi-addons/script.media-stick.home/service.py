@@ -2,6 +2,7 @@
 # show() plus waitForAbort() is what lets the window's callbacks run.
 import os
 import sys
+import threading
 import time
 
 import xbmc
@@ -49,6 +50,29 @@ def _notify_displayd(playing):
             except Exception:
                 pass
 
+
+
+
+_MonitorBase = getattr(xbmc, "Monitor", object)
+
+
+class HomeMonitor(_MonitorBase):
+    """Wakes the real launcher immediately when Kodi opens Home."""
+
+    def __init__(self, on_home=None):
+        super().__init__()
+        self._on_home = on_home
+
+    def onNotification(self, sender, method, data):
+        if self._on_home is not None and "home_shown" in (method or ""):
+            self._on_home()
+
+
+def _set_home_ready(value):
+    try:
+        xbmcgui.Window(10000).setProperty("launcher_ready", value)
+    except Exception:
+        pass
 
 _PlayerBase = getattr(xbmc, "Player", object)
 
@@ -116,45 +140,62 @@ def main():
     xbmc.log(f"{LOG} service started", xbmc.LOGINFO)
     apply_language()
     watcher = start_recorder()
-    monitor = xbmc.Monitor()
+    lock = threading.RLock()
     player = PlaybackNotifier()
     launcher = None
+
+    def show_launcher():
+        nonlocal launcher
+        if xbmc.getCondVisibility(BLOCKED):
+            return False
+        with lock:
+            if launcher is None:
+                launcher = Launcher("script-media-stick-home.xml", ADDON_PATH, "default", "1080i")
+            launcher.show()
+        return True
+
+    monitor = HomeMonitor(on_home=show_launcher)
+    _set_home_ready("1")
     last_status = last_sample = time.monotonic()
-    while not monitor.abortRequested():
-        try:
-            current = xbmcgui.getCurrentWindowId()
-            blocked = xbmc.getCondVisibility(BLOCKED)
-            if current in HOME_WINDOWS and not blocked:
-                if launcher is None:
+    try:
+        while not monitor.abortRequested():
+            try:
+                current = xbmcgui.getCurrentWindowId()
+                blocked = xbmc.getCondVisibility(BLOCKED)
+                if current in HOME_WINDOWS and not blocked:
                     try:
-                        launcher = Launcher("script-media-stick-home.xml", ADDON_PATH, "default", "1080i")
+                        show_launcher()
                     except Exception as e:
                         xbmc.log(f"{LOG} cannot create the launcher window: {e!r}", xbmc.LOGERROR)
                         if monitor.waitForAbort(30):
                             break
                         continue
-                launcher.show()
-            if launcher is not None:
-                # once shown, the launcher is itself the current window, not Home: idle is judged
-                # there too, and cleared under a dialog or once the window is left
-                on_screen = current in HOME_WINDOWS or current == launcher.window_id()
-                launcher.refresh_idle(on_screen and not blocked)
-                if time.monotonic() - last_status >= STATUS_EVERY:
-                    last_status = time.monotonic()
-                    launcher.refresh_status()
-        except Exception as e:
-            xbmc.log(f"{LOG} loop error: {e!r}", xbmc.LOGERROR)
+                with lock:
+                    if launcher is not None:
+                        # once shown, the launcher is itself the current window, not Home: idle is judged
+                        # there too, and cleared under a dialog or once the window is left
+                        on_screen = current in HOME_WINDOWS or current == launcher.window_id()
+                        launcher.refresh_idle(on_screen and not blocked)
+                        if time.monotonic() - last_status >= STATUS_EVERY:
+                            last_status = time.monotonic()
+                            launcher.refresh_status()
+            except Exception as e:
+                xbmc.log(f"{LOG} loop error: {e!r}", xbmc.LOGERROR)
+                with lock:
+                    drop(launcher)
+                    launcher = None
+                monitor.waitForAbort(5)
+            if watcher is not None and time.monotonic() - last_sample >= SAMPLE_EVERY:
+                last_sample = time.monotonic()
+                sample(watcher)
+            if monitor.waitForAbort(poll_interval(player.playing)):
+                break
+    finally:
+        _set_home_ready("")
+        with lock:
             drop(launcher)
-            monitor.waitForAbort(5)
             launcher = None
-        if watcher is not None and time.monotonic() - last_sample >= SAMPLE_EVERY:
-            last_sample = time.monotonic()
-            sample(watcher)
-        if monitor.waitForAbort(poll_interval(player.playing)):
-            break
-    drop(launcher)
     del player
-    del launcher
 
 
 main()

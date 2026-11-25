@@ -308,6 +308,10 @@ class TestSkinMediaStick(unittest.TestCase):
         self.assertIn("Window(Home).Property(net)", raw)
         self.assertIn("System.IdleTime(30)", raw)
 
+        self.assertIn("<onload>NotifyAll(script.media-stick.home,home_shown)</onload>", raw)
+        list100 = next(c for c in root.findall(".//control[@id='100']"))
+        self.assertIn("Window(Home).Property(launcher_ready)", list100.findtext("visible") or "")
+
         control_ids = {
             el.attrib.get("id")
             for el in root.findall(".//control")
