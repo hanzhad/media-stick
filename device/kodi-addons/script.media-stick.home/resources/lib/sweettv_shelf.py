@@ -45,7 +45,7 @@ class Shelf:
             if visible and idx < len(chips):
                 key = chips[idx][0]
                 active = (
-                    (section == "shows" and key == self.show_filter)
+                    (section == "search" and key == getattr(self, "search_filter", "all")) or (section == "shows" and key == self.show_filter)
                     or (section == "channels" and key == self.filter_key)
                     or (section in ("movies", "series") and (
                         (key == "all" and self.genre_id == 0) or key == f"g:{self.genre_id}"))
@@ -62,7 +62,14 @@ class Shelf:
             key, _ = self.chips[idx]
             sec = self.section
         if sec == "search":
-            self._ask_search()
+            if key == "new":
+                self._ask_search()
+            else:
+                with self._lock:
+                    self.search_filter = key
+                    self._set_chips("search", sections.search_chips())
+                    self._apply_cards(sections.filter_search(self.search_cards, self.search_filter),
+                                      empty_msg=words.tr("Press OK to type what to look for."))
             return
         if sec == "shows":
             with self._lock:

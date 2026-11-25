@@ -11,6 +11,7 @@ class Find:
     def _find_setup(self):
         self.search_query = ""
         self.search_cards = []
+        self.search_filter = "all"
         self._search_gen = 0
 
     def _load_top_search(self):
@@ -37,7 +38,7 @@ class Find:
             if self._stop.is_set() or gen != self._search_gen or self.section != "search" or self.search_query:
                 return
             self.search_cards = cards
-            self._apply_cards(cards, empty_msg=words.tr("Press OK to type what to look for."))
+            self._apply_cards(sections.filter_search(cards, self.search_filter), empty_msg=words.tr("Press OK to type what to look for."))
 
     def _ask_search(self):
         with self._lock:

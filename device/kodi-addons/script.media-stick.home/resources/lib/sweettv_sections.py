@@ -212,7 +212,13 @@ def search_card(row, resume_doc=None, favs=()) -> Card:
     playable = bool(row.get("playable", True)) and row.get("available") is not False
     vod_url = str(row.get("vod_url") or "")
     art = str(row.get("image_url") or row.get("preview") or "")
-    if kind == "channel" and cid:
+    is_modal = kind in ("show_tv", "show_vod", "show_epg", "series")
+    if is_modal:
+        rid = str(row.get("id") or "")
+        fav_key = f"vod:{rid}" if (kind == "series" and rid.isdigit()) else f"show:{rid}"
+        url, pos, frac = "", 0, 0.0
+        playable = True
+    elif kind == "channel" and cid:
         url = data.play_url(cid)
         fav_key = f"ch:{cid}"
         pos, frac = 0, 0.0
@@ -378,6 +384,26 @@ def filter_channels(channels, filter_key) -> list:
         cid = filter_key[2:]
         return [ch for ch in channels if cid in ch.cats]
     return list(channels)
+
+
+def search_chips() -> list:
+    return [
+        ("new", words.tr("New search")),
+        ("all", words.tr("All items")),
+        ("shows", words.tr("Shows and series")),
+        ("movies", words.tr("Movies")),
+        ("channels", words.tr("TV Channels")),
+    ]
+
+
+def filter_search(cards, filter_key) -> list:
+    if filter_key == "shows":
+        return [c for c in cards if c.kind in ("show_tv", "show_vod", "show_epg", "series")]
+    if filter_key == "movies":
+        return [c for c in cards if c.kind == "movie"]
+    if filter_key == "channels":
+        return [c for c in cards if c.kind == "channel"]
+    return list(cards)
 
 
 def show_chips() -> list:

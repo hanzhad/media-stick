@@ -93,12 +93,15 @@ class Search(unittest.TestCase):
 
     def test_one_title_is_one_row_with_the_other_airings_counted_and_the_programmes_newest_first(self):
         programmes = rows_of(self.rows(), "programme")
-        self.assertEqual([r["epg"] for r in programmes], ["9010", "9020", "9040", "9002", "9030"])    # newest first, a title once
+        shows = rows_of(self.rows(), "show_tv")
+        self.assertEqual(len(shows), 1)
+        self.assertEqual([r["epg"] for r in shows[0]["episodes"]], ["9010", "9002"])
+        self.assertEqual([r["epg"] for r in programmes], ["9020", "9040", "9030"])
         self.assertEqual([r["start"] for r in programmes], sorted((r["start"] for r in programmes), reverse=True))
-        six = next(r for r in programmes if r["epg"] == "9002")
+        six = next(r for r in shows[0]["episodes"] if r["epg"] == "9002")
         self.assertEqual((six["repeats"], six["more"]), (2, "2 more airings"))
         self.assertEqual((six["cid"], six["channel_name"], six["start"], six["stop"]), ("15", "СТБ", 1795255200, 1795260600))
-        self.assertEqual([r["repeats"] for r in programmes if r["epg"] != "9002"], [0, 0, 0, 0])
+        self.assertEqual([r["repeats"] for r in programmes], [0, 0, 0])
 
     def test_the_airing_that_stands_for_a_title_is_the_newest_that_can_be_watched_else_the_soonest_to_come_else_the_newest(self):
         def airing(epg, start, watchable, live=False):
@@ -111,7 +114,8 @@ class Search(unittest.TestCase):
         self.assertEqual(api.collapse([airing("i", NOW - 900, False, live=True)], NOW, ENGLISH_N)[0]["more"], "")
 
     def test_the_words_of_the_count_follow_the_language(self):
-        six = next(r for r in self.rows(ml.text, ml.text_n) if r["epg"] == "9002")
+        shows_ru = rows_of(self.rows(ml.text, ml.text_n), "show_tv")
+        six = next(r for r in shows_ru[0]["episodes"] if r["epg"] == "9002")
         self.assertEqual((six["more"], six["when"]), ("ещё 2 показа", "Сб 21 ноя 10:00"))
         self.assertEqual([ml.text_n(n, api.MORE_ONE, api.MORE_MANY) for n in (1, 2, 5, 21)],
                          ["ещё 1 показ", "ещё 2 показа", "ещё 5 показов", "ещё 21 показ"])
@@ -129,7 +133,8 @@ class Search(unittest.TestCase):
             time.tzset()
 
     def test_on_now_in_the_archive_to_come_and_out_of_the_archive(self):
-        by = {r["epg"]: r for r in rows_of(self.rows(), "programme")}
+        rows_all = self.rows()
+        by = {r["epg"]: r for r in rows_of(rows_all, "programme") + rows_of(rows_all, "show_tv")[0]["episodes"]}
         live = by["9020"]
         self.assertEqual((live["live"], live["playable_in_archive"], live["playable"]), (True, True, True))
         future = by["9010"]
@@ -158,7 +163,7 @@ class Search(unittest.TestCase):
 
     def test_channels_films_and_people_follow_the_programmes_and_odd_items_are_left_out(self):
         rows = self.rows()
-        self.assertEqual([r["kind"] for r in rows], ["programme"] * 5 + ["channel", "channel", "movie", "person"])
+        self.assertEqual([r["kind"] for r in rows], ["show_tv"] + ["programme"] * 3 + ["channel", "channel", "movie", "person"])
         stb, other = rows_of(rows, "channel")
         self.assertEqual((stb["cid"], stb["title"], stb["channel_name"], stb["playable"], stb["subtitle"]),
                          ("15", "СТБ HD", "СТБ", True, "Новини, шоу"))
@@ -167,7 +172,7 @@ class Search(unittest.TestCase):
         self.assertEqual((movie["title"], movie["subtitle"], movie["playable"], movie["cid"], movie["epg"]),
                          ("Divorce Club", "2020, Comedy", True, "", ""))
         self.assertEqual((person["title"], person["playable"]), ("Іван Холостяк", False))
-        self.assertEqual(len(rows), 9)                                                               # the weird kind, bad ids, no title and no start are gone
+        self.assertEqual(len(rows), 8)                                                               # the weird kind, bad ids, no title and no start are gone
 
     def test_odd_answers_never_raise(self):
         for junk in (None, 5, "x", [], {}, {"result": None}, {"result": "x"}, {"result": [None, 1, {}, {"type": 5}]}, {"result": {"a": 1}}):
@@ -508,8 +513,8 @@ class Routes(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(sender.calls[0]["body"], {"needle": "Холостяк"})
         self.assertEqual(body["ok"], True)
-        self.assertEqual([r["kind"] for r in body["items"]], ["programme"] * 5 + ["channel", "channel", "movie", "person"])
-        self.assertEqual(body["items"][3]["more"], "ещё 2 показа")
+        self.assertEqual([r["kind"] for r in body["items"]], ["show_tv"] + ["programme"] * 3 + ["channel", "channel", "movie", "person"])
+        self.assertEqual(body["items"][0]["episodes"][1]["more"], "ещё 2 показа")
 
     def test_a_short_needle_is_an_empty_answer_and_asks_nothing(self):
         sender = self.serve(reply(SEARCH))
@@ -1065,6 +1070,24 @@ class FieldFixesTest(unittest.TestCase):
             api._hq_url("https://static.sweet.tv/cdn-cgi/image/width=400,f=auto/https://static.sweet.tv/b.jpg"),
             "https://static.sweet.tv/b.jpg",
         )
+
+
+class GroupedSearchTest(unittest.TestCase):
+    def test_search_groups_episodes_into_show_tv_and_detects_series(self):
+        ch_list = {"list": [{"id": 15, "name": "1+1", "catchup": True, "catchup_duration": 7}]}
+        now = 1750000000
+        reply = {"result": [
+            {"type": "EpgRecord", "id": "901", "sub_id": "15", "tv_show_id": 111, "text": "Холостяк. Випуск 5", "time_start": now - 7200, "time_stop": now - 3600},
+            {"type": "EpgRecord", "id": "902", "sub_id": "15", "tv_show_id": 111, "text": "Холостяк. Випуск 6", "time_start": now - 3600, "time_stop": now - 1800},
+            {"type": "Movie", "id": "500", "text": "Футурама", "genres": [1]},
+        ]}
+        rows = api.normalize_search(reply, ch_list, now=now)
+        self.assertEqual([r["kind"] for r in rows], ["series", "show_tv"])
+        self.assertEqual(rows[1]["episodes_count"], 2)
+        det = api.show_detail(rows[1]["id"], ch_list, now=now)
+        self.assertTrue(det["ok"])
+        self.assertEqual(len(det["episodes"]), 2)
+
 
 
 if __name__ == "__main__":

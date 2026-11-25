@@ -24,6 +24,7 @@ CSS = r"""
 .sw-badge{position:absolute;left:6px;top:6px;padding:2px 7px;border-radius:6px;background:rgba(12,17,27,.82);color:var(--sw-gold);font-size:11px;font-weight:700}
 .sw-fav{position:absolute;right:6px;top:6px;width:34px;height:34px;border-radius:50%;border:0;background:rgba(12,17,27,.72);color:#fff;font-size:16px;display:flex;align-items:center;justify-content:center;touch-action:manipulation}
 .sw-fav.on{color:var(--sw-acc2)}
+.wt-acts .sw-fav{position:static;width:44px;height:44px;flex:0 0 44px;background:var(--sw-card);border:1px solid rgba(255,255,255,.12)}
 .sw-cbody{padding:8px 10px 10px;display:flex;flex-direction:column;gap:3px;min-width:0}
 .sw-cbody b{font-size:14px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .sw-cbody small{font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -78,7 +79,7 @@ function swCard(o){
       pct>0?h('div',{class:'sw-pbar'},h('i',{style:'width:'+pct+'%'})):'',
       o.watched?h('small',{text:'Просмотрено'}):''))}
 function swRow(o){
-  const kids=[o.pic!==undefined?h('div',{class:'wt-ch',style:'background-image:'+picture(o.pic)}):'',
+  const kids=[o.pic?h('div',{class:'wt-ch',style:'background-image:'+picture(o.pic)}):'',
     h('div',{class:'wt-txt'},h('b',{text:o.title||'Без названия'}),(o.subs||[]).filter(Boolean).map(t=>h('span',{class:'wt-sub',text:t})),
       o.pct>0?h('div',{class:'wt-rowbar'},h('i',{style:'width:'+Math.min(100,Math.round(o.pct))+'%'})):'')];
   const cls='wt-item'+(o.dim?' wt-dim':'');
@@ -93,8 +94,8 @@ function swSheet(title,line,acts){
 
 function swOpenItem(it){
   if(it.kind==='channel'||it.cid&&!it.epg)return go({t:'swguide',cid:it.cid||it.id,title:it.title||it.name});
-  if(it.kind==='vod'||it.movie_id)return go({t:'swvod',id:String(it.movie_id||it.id),title:it.title});
-  if(it.kind==='show'||String(it.id||'').startsWith('vod:')||String(it.id||'').startsWith('epg:')||String(it.id||'').startsWith('tv:'))
+  if(it.kind==='vod'||it.kind==='series'||it.movie_id)return go({t:'swvod',id:String(it.movie_id||it.id),title:it.title});
+  if(it.kind==='show'||it.kind==='show_tv'||String(it.id||'').startsWith('vod:')||String(it.id||'').startsWith('epg:')||String(it.id||'').startsWith('tv:')||String(it.id||'').startsWith('tv_s:'))
     return go({t:'swshow',id:String(it.id),title:it.title});
   if(it.cid&&it.epg)return swPlay({cid:it.cid,epg:it.epg,at:it.pos>0?'resume':'start'});
 }
@@ -102,16 +103,19 @@ function swOpenItem(it){
 function swSearchResults(out,r,heading){
   const items=r&&r.items||[];
   if(!items.length){out.append(h('div',{class:'wt-msg',text:'Ничего не нашлось'}));return}
-  const progs=items.filter(x=>x.kind==='programme'||(x.cid&&x.epg));
+  const sShows=items.filter(x=>x.kind==='show_tv'||x.kind==='show');
+  const progs=items.filter(x=>x.kind==='programme');
   const vods=items.filter(x=>x.kind==='movie'||x.kind==='series'||x.movie_id);
-  const chs=items.filter(x=>x.kind==='channel'||(!x.epg&&x.cid&&!x.movie_id));
+  const chs=items.filter(x=>x.kind==='channel'||(!x.epg&&x.cid&&!x.movie_id&&x.kind!=='show_tv'));
   if(heading)out.append(h('h3',{class:'wt-h',text:heading}));
   const addGroup=(label,arr,make)=>{if(!arr.length)return;out.append(h('h3',{class:'wt-h',text:label}));const g=h('div',{class:'sw-grid'});arr.forEach(x=>g.append(make(x)));out.append(g)};
-  addGroup('Шоу и передачи',progs,it=>swCard({pic:it.thumb||'',title:it.title,sub:[it.channel,it.start?dayTime(it.start):''].filter(Boolean).join(' · '),
-    open:()=>swPlay({cid:it.cid,epg:it.epg,at:'start'})}));
-  addGroup('Фильмы и сериалы',vods,it=>swCard({pic:it.thumb||'',title:it.title,badge:it.imdb?String(it.imdb):'',sub:it.year?String(it.year):'',
+  addGroup('Шоу и сериалы',sShows,it=>swCard({pic:it.image_url||it.preview||it.thumb||'',title:it.title,sub:[it.subtitle,it.channel_name||it.channel].filter(Boolean).join(' · '),
+    favKey:'show:'+it.id,fav:!!it.favourite,open:()=>go({t:'swshow',id:String(it.id),title:it.title})}));
+  addGroup('Фильмы и сериалы',vods,it=>swCard({pic:it.image_url||it.poster||it.thumb||'',title:it.title,badge:it.imdb?String(it.imdb):'',sub:it.year?String(it.year):'',
     favKey:'vod:'+(it.movie_id||it.id),fav:!!it.favourite,open:()=>go({t:'swvod',id:String(it.movie_id||it.id),title:it.title})}));
-  addGroup('ТВ-каналы',chs,it=>swCard({pic:it.thumb||'',title:it.title,sub:'Канал',favKey:'ch:'+(it.cid||it.id),fav:!!it.favourite,
+  addGroup('Передачи',progs,it=>swCard({pic:it.image_url||it.thumb||'',title:it.title,sub:[it.channel_name||it.channel,it.start?dayTime(it.start):''].filter(Boolean).join(' · '),
+    open:()=>swPlay({cid:it.cid,epg:it.epg,at:'start'})}));
+  addGroup('ТВ-каналы',chs,it=>swCard({pic:it.image_url||it.thumb||'',title:it.title,sub:'Канал',favKey:'ch:'+(it.cid||it.id),fav:!!it.favourite,
     open:()=>go({t:'swguide',cid:String(it.cid||it.id),title:it.title})}));
 }
 
@@ -247,10 +251,13 @@ async function renderShow(b,d){
   const out=h('div',{class:'sw-wrap'});b.append(out);out.append(h('div',{class:'wt-msg',text:'Загружаю…'}));
   let r;try{r=await sg('show?id='+encodeURIComponent(d.id))}catch(e){if(cur()===d)out.replaceChildren(msgCard('error',render,'SWEET.TV'));return}
   if(cur()!==d)return;out.replaceChildren();
+  const artOf=(o,fb='')=>(o&&(o.preview||o.banner||o.poster||o.image_url||o.thumb))||fb;
+  const fmtMin=s=>s>=60?Math.round(s/60)+' мин':(s>0?s+' с':'');
+  const heroArt=artOf(r);
   out.append(h('div',{class:'sw-hero'},
-    r.thumb?h('div',{class:'sw-hero-img',style:'background-image:'+picture(r.thumb)}):'',
+    heroArt?h('div',{class:'sw-hero-img',style:'background-image:'+picture(heroArt)}):'',
     h('div',{class:'sw-hero-body'},h('h3',{text:r.title||d.title}),
-      h('div',{class:'wt-acts'},swFavBtn('show:'+d.id,{title:r.title||d.title,thumb:r.thumb||''},r.favourite)))));
+      h('div',{class:'wt-acts'},swFavBtn('show:'+d.id,{title:r.title||d.title,thumb:heroArt},r.favourite)))));
   const seasons=Array.isArray(r.seasons)&&r.seasons.length?r.seasons:null;
   if(seasons){
     let sIdx=0;
@@ -259,16 +266,16 @@ async function renderShow(b,d){
     const drawS=()=>{
       sp.replaceChildren(...seasons.map((s,i)=>h('button',{class:'sw-pill'+(i===sIdx?' on':''),text:s.title||('Сезон '+(s.number||i+1)),onclick:()=>{sIdx=i;drawS()}})));
       list.replaceChildren();
-      lazy(list,seasons[sIdx].episodes||[],ep=>swRow({pic:ep.thumb||r.thumb||'',title:ep.title||('Серия '+(ep.episode||'')),
-        subs:[ep.duration?tm(ep.duration):'',ep.watched?'просмотрено':''],
+      lazy(list,seasons[sIdx].episodes||[],ep=>swRow({pic:artOf(ep,heroArt),title:ep.title||('Серия '+(ep.episode||ep.number||'')),
+        subs:[fmtMin(ep.duration||0),ep.watched?'просмотрено':''].filter(Boolean),
         pct:ep.resume>0&&ep.duration>0?100*ep.resume/ep.duration:0,
-        open:()=>swPlay(ep.movie_id?{movie_id:ep.movie_id,episode_id:ep.id,owner_id:ep.owner_id||0,start:ep.resume||0}:{cid:ep.cid,epg:ep.epg,at:ep.resume>0?'resume':'start'})}))};
+        open:()=>swPlay(ep.movie_id?{movie_id:String(ep.movie_id),episode_id:ep.id,owner_id:ep.owner_id||0,start:ep.resume||0}:{cid:ep.cid,epg:ep.epg,at:ep.resume>0?'resume':'start'})}))};
     drawS();return}
   const eps=r.episodes||[];
   if(!eps.length){out.append(msgCard('empty'));return}
   const list=h('div',{class:'wt-list'});out.append(list);
-  lazy(list,eps,e=>swRow({title:e.episode>0?'Серия '+e.episode+(e.title?' · '+e.title:''):e.title||'Серия',
-    subs:[e.channel,e.start?dayTime(e.start):'',e.watched?'просмотрено':''].filter(Boolean),
+  lazy(list,eps,e=>swRow({pic:artOf(e),title:e.episode>0?'Серия '+e.episode+(e.title?' · '+e.title:''):e.title||'Серия',
+    subs:[e.channel_name||e.channel,e.when||(e.start?dayTime(e.start):''),e.watched?'просмотрено':''].filter(Boolean),
     pct:e.resume>0&&e.stop>e.start?100*e.resume/(e.stop-e.start):0,dim:e.available===false,
     open:e.available!==false?()=>swSheet(d.title,e.title||'',(e.resume>0?[['Продолжить с '+tm(e.resume),{cid:e.cid,epg:e.epg,at:'resume'}]]:[]).concat([['Смотреть с начала',{cid:e.cid,epg:e.epg,at:'start'}]])):null}))}
 
@@ -277,17 +284,22 @@ async function renderVod(b,d){
   const out=h('div',{class:'sw-wrap'});b.append(out);out.append(h('div',{class:'wt-msg',text:'Загружаю…'}));
   let r;try{r=await sg('vod?id='+encodeURIComponent(d.id))}catch(e){if(cur()===d)out.replaceChildren(msgCard('error',render,'SWEET.TV'));return}
   if(cur()!==d)return;out.replaceChildren();
-  const meta=[r.imdb?'IMDb '+r.imdb:'',r.year,r.duration?r.duration+' мин':''].filter(Boolean).join(' · ');
+  const artOf=(o,fb='')=>(o&&(o.preview||o.banner||o.poster||o.image_url||o.thumb))||fb;
+  const fmtMin=s=>s>=60?Math.round(s/60)+' мин':(s>0?s+' с':'');
+  const mid=String(r.movie_id||String(r.id||'').replace(/^vod:/,''));
+  const heroArt=artOf(r);
+  const seasons=r.seasons||[];
+  const durMeta=seasons.length?seasons.length+' сез.':fmtMin(r.duration||0);
+  const meta=[r.imdb?'IMDb '+r.imdb:'',r.year,durMeta].filter(Boolean).join(' · ');
   const acts=h('div',{class:'wt-acts'});
-  if(r.resume>0)acts.append(h('button',{class:'wt-btn pri',text:'Продолжить с '+tm(r.resume),onclick:()=>swPlay({movie_id:r.id,owner_id:r.owner_id||0,start:r.resume})}));
-  acts.append(h('button',{class:'wt-btn'+(r.resume>0?'':' pri'),text:r.resume>0?'С начала':'Смотреть',onclick:()=>swPlay({movie_id:r.id,owner_id:r.owner_id||0,start:0})}));
-  acts.append(swFavBtn('vod:'+r.id,{title:r.title||d.title,thumb:r.thumb||''},r.favourite));
+  if(r.resume>0)acts.append(h('button',{class:'wt-btn pri',text:'Продолжить с '+tm(r.resume),onclick:()=>swPlay({movie_id:mid,owner_id:r.owner_id||0,start:r.resume})}));
+  acts.append(h('button',{class:'wt-btn'+(r.resume>0?'':' pri'),text:r.resume>0?'С начала':'Смотреть',onclick:()=>swPlay({movie_id:mid,owner_id:r.owner_id||0,start:0})}));
+  acts.append(swFavBtn('vod:'+mid,{title:r.title||d.title,thumb:heroArt},r.favourite));
   out.append(h('div',{class:'sw-hero'},
-    r.thumb?h('div',{class:'sw-hero-img',style:'background-image:'+picture(r.thumb)}):'',
+    heroArt?h('div',{class:'sw-hero-img',style:'background-image:'+picture(heroArt)}):'',
     h('div',{class:'sw-hero-body'},h('h3',{text:r.title||d.title}),
       meta?h('div',{class:'sw-meta',text:meta}):'',
       r.description?h('div',{class:'sw-desc',text:r.description}):'',acts)));
-  const seasons=r.seasons||[];
   if(seasons.length){
     let sIdx=0;
     const sp=h('div',{class:'sw-pills'}),list=h('div',{class:'wt-list'});
@@ -295,10 +307,10 @@ async function renderVod(b,d){
     const drawS=()=>{
       sp.replaceChildren(...seasons.map((s,i)=>h('button',{class:'sw-pill'+(i===sIdx?' on':''),text:s.title||('Сезон '+(s.number||i+1)),onclick:()=>{sIdx=i;drawS()}})));
       list.replaceChildren();
-      lazy(list,seasons[sIdx].episodes||[],ep=>swRow({pic:ep.thumb||r.thumb||'',title:ep.title||('Серия '+(ep.number||'')),
-        subs:[ep.duration?tm(ep.duration):'',ep.watched?'просмотрено':''].filter(Boolean),
+      lazy(list,seasons[sIdx].episodes||[],ep=>swRow({pic:artOf(ep),title:ep.title||('Серия '+(ep.number||'')),
+        subs:[fmtMin(ep.duration||0),ep.watched?'просмотрено':''].filter(Boolean),
         pct:ep.resume>0&&ep.duration>0?100*ep.resume/ep.duration:0,
-        open:()=>swPlay({movie_id:r.id,episode_id:ep.id,owner_id:ep.owner_id||r.owner_id||0,start:ep.resume||0})}))};
+        open:()=>swPlay({movie_id:mid,episode_id:ep.id,owner_id:ep.owner_id||r.owner_id||0,start:ep.resume||0})}))};
     drawS();
   }}
 

@@ -1146,5 +1146,14 @@ class SweetRoutes(unittest.TestCase):
         self.assertIn("(not end) or end <= int(time.time())", sw_src)
 
 
+class MobileSweetVodTest(unittest.TestCase):
+    def test_mobile_vod_uses_numeric_movie_id_and_static_fav(self):
+        with open(os.path.join(LIB, "panel_watch_sweet_ui.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn(".wt-acts .sw-fav{position:static", src)
+        self.assertIn("String(r.movie_id||String(r.id||'').replace(/^vod:/,''))", src)
+        self.assertIn("const fmtMin=s=>s>=60?Math.round(s/60)+' мин'", src)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
