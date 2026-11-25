@@ -27,6 +27,7 @@ pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect kodi-peripher
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted
       python3-evdev lego
       uxplay gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-alsa gstreamer1.0-tools
+      pipewire wireplumber pipewire-alsa v4l-utils
       plymouth systemd-zram-generator)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done

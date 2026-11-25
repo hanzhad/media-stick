@@ -1,6 +1,6 @@
 [Unit]
 Description=Miracast receiver: Windows Win+K "Cast" to the TV (MS-MICE, Wi-Fi Display)
-After=network-online.target NetworkManager.service wpa_supplicant.service avahi-daemon.service sound.target
+After=network-online.target NetworkManager.service wpa_supplicant.service avahi-daemon.service sound.target mediastick-displayd.service
 Wants=network-online.target NetworkManager.service avahi-daemon.service
 
 [Service]

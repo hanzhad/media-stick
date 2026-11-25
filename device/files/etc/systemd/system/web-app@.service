@@ -1,8 +1,9 @@
 [Unit]
 Description=Web app %i full screen on the TV (Chromium in cage)
-# Takes the screen from Kodi; Kodi comes back when this stops, however it stops.
-Conflicts=kodi.service getty@tty1.service
-After=kodi.service
+# Display lifecycle is arbitrated by mediastick-displayd; notify it on stop so Kodi returns
+# only if this web app still owns the display.
+Conflicts=getty@tty1.service
+After=mediastick-displayd.service
 
 [Service]
 User=media
@@ -18,5 +19,5 @@ MemoryHigh=450M
 MemoryMax=580M
 OOMScoreAdjust=500
 ExecStart=/usr/local/bin/web-app %i
-ExecStopPost=+/bin/systemctl start --no-block kodi.service
+ExecStopPost=-/usr/bin/python3 -c 'import sys; sys.path.insert(0, "/usr/local/lib/media-stick"); from mediastick_display import DisplayClient; c = DisplayClient(timeout=0.5); st = c.status(); c.close(); (DisplayClient(timeout=15.0).release(force=True) if st.get("state") == "WEB_APP" and st.get("app") == sys.argv[1] else None)' %i
 Restart=no
