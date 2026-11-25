@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Post-update healthcheck gate for media-stick.
+
+Verifies managed systemd units, the phone panel HTTP endpoint, and (when Kodi
+holds the screen) Kodi JSON-RPC responsiveness and the home launcher add-on.
+Exits 0 on pass, 1 on failure.
+
+Env overrides (for testing):
+  PANEL_PORT, PANEL_URL, RUN_DIR, HEALTH_TIMEOUT_S, HEALTH_INTERVAL_S,
+  SYSTEMCTL_BIN, KODI_RPC_BIN
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+MANAGED_UNITS = (
+    "kodi.service",
+    "panel.service",
+    "airplay.service",
+    "miracast.service",
+)
+
+
+# --- Pure Core ------------------------------------------------------------------------------------
+
+
+def detect_screen_owner(airplay_flag_exists, miracast_flag_exists, webapp_active):
+    """Return who currently owns the TV screen: 'airplay', 'miracast', 'web-app', or ''."""
+    if airplay_flag_exists:
+        return "airplay"
+    if miracast_flag_exists:
+        return "miracast"
+    if webapp_active:
+        return "web-app"
+    return ""
+
+
+def evaluate_health(failed_units, panel_status_code, screen_owner, kodi_ping_ok, launcher_enabled):
+    """Evaluate collected health signals and return (ok, reasons)."""
+    reasons = []
+    for unit in failed_units:
+        reasons.append(f"failed unit: {unit}")
+    if panel_status_code != 200:
+        if panel_status_code is None:
+            reasons.append("panel /api/status unreachable")
+        else:
+            reasons.append(f"panel /api/status returned HTTP {panel_status_code}")
+    if not screen_owner:
+        if not kodi_ping_ok:
+            reasons.append("kodi JSONRPC.Ping failed")
+        if not launcher_enabled:
+            reasons.append("kodi launcher script.media-stick.home not enabled")
+    return len(reasons) == 0, reasons
+
+
+# --- Thin I/O Shell -------------------------------------------------------------------------------
+
+
+def _is_unit_active(systemctl_bin, unit):
+    try:
+        proc = subprocess.run(
+            [systemctl_bin, "is-active", "-q", unit],
+            timeout=5,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _is_unit_failed(systemctl_bin, unit):
+    try:
+        proc = subprocess.run(
+            [systemctl_bin, "is-failed", "-q", unit],
+            timeout=5,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _probe_panel(panel_url, timeout_s):
+    try:
+        with urllib.request.urlopen(panel_url, timeout=timeout_s) as resp:
+            return resp.getcode()
+    except urllib.error.HTTPError as err:
+        return err.code
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def _probe_kodi_ping(kodi_rpc_bin):
+    try:
+        proc = subprocess.run(
+            [kodi_rpc_bin, "JSONRPC.Ping"],
+            timeout=5,
+            capture_output=True,
+            text=True,
+        )
+        return proc.returncode == 0 and "pong" in proc.stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _probe_launcher_enabled(kodi_rpc_bin):
+    payload = '{"addonid":"script.media-stick.home","properties":["enabled"]}'
+    try:
+        proc = subprocess.run(
+            [kodi_rpc_bin, "Addons.GetAddonDetails", payload],
+            timeout=5,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return False
+        data = json.loads(proc.stdout)
+        addon = data.get("result", data).get("addon", {})
+        return addon.get("enabled") is True
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return False
+
+
+def _poll_panel(panel_url, deadline, interval_s):
+    code = None
+    while True:
+        remaining = deadline - time.monotonic()
+        req_timeout = min(2.0, max(0.2, remaining))
+        code = _probe_panel(panel_url, req_timeout)
+        if code == 200 or time.monotonic() >= deadline:
+            return code
+        time.sleep(min(interval_s, max(0.0, deadline - time.monotonic())))
+
+
+def _poll_kodi(kodi_rpc_bin, deadline, interval_s):
+    ping_ok = False
+    launcher_ok = False
+    while True:
+        ping_ok = _probe_kodi_ping(kodi_rpc_bin)
+        launcher_ok = _probe_launcher_enabled(kodi_rpc_bin) if ping_ok else False
+        if (ping_ok and launcher_ok) or time.monotonic() >= deadline:
+            return ping_ok, launcher_ok
+        time.sleep(min(interval_s, max(0.0, deadline - time.monotonic())))
+
+
+def main():
+    panel_port = os.environ.get("PANEL_PORT", "80")
+    panel_url = os.environ.get("PANEL_URL") or f"http://127.0.0.1:{panel_port}/api/status"
+    run_dir = os.environ.get("RUN_DIR", "/run/media-stick")
+    timeout_s = float(os.environ.get("HEALTH_TIMEOUT_S", "20"))
+    interval_s = float(os.environ.get("HEALTH_INTERVAL_S", "0.5"))
+    systemctl_bin = os.environ.get("SYSTEMCTL_BIN") or "systemctl"
+    kodi_rpc_bin = (
+        os.environ.get("KODI_RPC_BIN")
+        or shutil.which("kodi-rpc")
+        or "/usr/local/bin/kodi-rpc"
+    )
+
+    deadline = time.monotonic() + timeout_s
+
+    failed_units = [u for u in MANAGED_UNITS if _is_unit_failed(systemctl_bin, u)]
+
+    screen_owner = detect_screen_owner(
+        os.path.exists(os.path.join(run_dir, "airplay")),
+        os.path.exists(os.path.join(run_dir, "miracast")),
+        _is_unit_active(systemctl_bin, "web-app@*"),
+    )
+
+    panel_code = _poll_panel(panel_url, deadline, interval_s)
+
+    if screen_owner:
+        kodi_ping_ok = True
+        launcher_enabled = True
+    else:
+        kodi_ping_ok, launcher_enabled = _poll_kodi(kodi_rpc_bin, deadline, interval_s)
+
+    ok, reasons = evaluate_health(
+        failed_units, panel_code, screen_owner, kodi_ping_ok, launcher_enabled
+    )
+    if ok:
+        if screen_owner:
+            print(f"OK: managed units healthy, panel HTTP 200, kodi skipped ({screen_owner} active)")
+        else:
+            print("OK: managed units healthy, panel HTTP 200, kodi ping pong, launcher enabled")
+        return 0
+
+    for reason in reasons:
+        print(f"FAIL: {reason}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

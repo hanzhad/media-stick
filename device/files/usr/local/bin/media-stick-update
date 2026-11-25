@@ -1,50 +1,98 @@
 #!/bin/bash
-# Pull origin/main and apply it. Rolls back to the previous commit if bootstrap fails.
-# Skips while Kodi is playing something, someone holds the device lease (media-stick-lease), or a
-# sign-in is waiting for its code on the TV screen, unless --force.
+# Pull origin/main and apply it. Rolls back to the previous commit if bootstrap or
+# post-update healthcheck fails, and skips known bad commits unless --force.
+# Skips while Kodi is playing, AirPlay/Miracast/web-app holds the screen, someone holds
+# the device lease (media-stick-lease), or a sign-in is waiting for its code, unless --force.
 #   media-stick-update [--force]
 set -uo pipefail
-REPO=/opt/media-stick
-exec 9>/run/media-stick-update.lock
+[ -n "${REPO:-}" ] || REPO=/opt/media-stick
+STATE_DIR=${STATE_DIR:-/var/lib/media-stick}
+BAD_COMMIT=/var/lib/media-stick/bad-commit
+[ "$STATE_DIR" = /var/lib/media-stick ] || BAD_COMMIT="$STATE_DIR/bad-commit"
+RUN_DIR=${RUN_DIR:-/run/media-stick}
+LOCK_FILE=${LOCK_FILE:-/run/media-stick-update.lock}
+HEALTHCHECK_BIN=${HEALTHCHECK_BIN:-/usr/local/bin/media-stick-healthcheck}
+KODI_RPC_BIN=${KODI_RPC_BIN:-kodi-rpc}
+LEASE_BIN=${LEASE_BIN:-/usr/local/bin/media-stick-lease}
+SIGNIN_BIN=${SIGNIN_BIN:-/usr/local/lib/media-stick/mediastick_signin.py}
+SYSTEMCTL_BIN=${SYSTEMCTL_BIN:-systemctl}
+GIT_USER_WRAPPER=${GIT_USER_WRAPPER:-}
+
+exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "another update is running"; exit 0; }
-g() { HOME=/home/media setpriv --reuid=media --regid=media --init-groups git -C "$REPO" "$@"; }
+g() {
+  if [ -n "$GIT_USER_WRAPPER" ]; then
+    "$GIT_USER_WRAPPER" git -C "$REPO" "$@"
+  else
+    HOME=/home/media setpriv --reuid=media --regid=media --init-groups git -C "$REPO" "$@"
+  fi
+}
 
 g fetch -q origin main || { echo "fetch failed"; exit 1; }
 cur=$(g rev-parse HEAD); new=$(g rev-parse origin/main)
 [ "$cur" = "$new" ] && exit 0
 
-if [ "${1:-}" != --force ] && kodi-rpc Player.GetActivePlayers 2>/dev/null | grep -q '"playerid"'; then
+if [ "${1:-}" != --force ] && [ -f "$BAD_COMMIT" ]; then
+  bad_sha=$(tr -d '[:space:]' < "$BAD_COMMIT")
+  if [ "$bad_sha" = "$new" ]; then
+    echo "skipping known bad commit ${new:0:7}"; exit 0
+  fi
+fi
+
+if [ "${1:-}" != --force ] && "$KODI_RPC_BIN" Player.GetActivePlayers 2>/dev/null | grep -q '"playerid"'; then
   echo "kodi is playing; update to ${new:0:7} postponed"; exit 0
 fi
-if [ "${1:-}" != --force ] && systemctl is-active -q 'web-app@*'; then
+if [ "${1:-}" != --force ] && [ -e "$RUN_DIR/airplay" ]; then
+  echo "airplay is on screen; update to ${new:0:7} postponed"; exit 0
+fi
+if [ "${1:-}" != --force ] && [ -e "$RUN_DIR/miracast" ]; then
+  echo "miracast is on screen; update to ${new:0:7} postponed"; exit 0
+fi
+if [ "${1:-}" != --force ] && "$SYSTEMCTL_BIN" is-active -q 'web-app@*'; then
   echo "a web app is on screen; update to ${new:0:7} postponed"; exit 0
 fi
 # A live lease (rc 3) pauses the update; a lease always expires. No helper yet (an older device): go on.
-lease=$(/usr/local/bin/media-stick-lease check 2>/dev/null); lease_rc=$?
+lease=$("$LEASE_BIN" check 2>/dev/null); lease_rc=$?
 if [ "${1:-}" != --force ] && [ $lease_rc -eq 3 ]; then
   echo "$lease; update to ${new:0:7} postponed"; exit 0
 fi
 # A sign-in waiting for its code (rc 3) pauses the update too: bootstrap restarts Kodi and the next code is a
 # different one, which hurts most when it is typed into the Friendly Share page by hand for hours. It expires on its own
 # (or when the add-on stops touching it). No helper yet (an older device): go on.
-signin=$(python3 /usr/local/lib/media-stick/mediastick_signin.py waiting 2>/dev/null); signin_rc=$?
+signin=$(python3 "$SIGNIN_BIN" waiting 2>/dev/null); signin_rc=$?
 if [ "${1:-}" != --force ] && [ $signin_rc -eq 3 ]; then
   echo "$signin; update to ${new:0:7} postponed"; exit 0
 fi
 
+rollback() {
+  local rb_out rb_rc
+  g reset -q --hard "$cur"
+  rb_out=$("$REPO/device/bootstrap.sh" 2>&1); rb_rc=$?
+  [ -n "$rb_out" ] && printf '%s\n' "$rb_out"
+  [ $rb_rc -ne 0 ] && echo "rollback bootstrap failed (rc=$rb_rc)"
+  mkdir -p "$(dirname "$BAD_COMMIT")"
+  echo "$new" > "$BAD_COMMIT"
+  exit 1
+}
+
 echo "updating ${cur:0:7} -> ${new:0:7}: $(g log -1 --format=%s "$new")"
 g reset -q --hard "$new"
 out=$("$REPO/device/bootstrap.sh" 2>&1); rc=$?
-echo "$out" | grep '^\[bootstrap\]'
+echo "$out" | grep '^\[bootstrap\]' || true
 if [ $rc -ne 0 ]; then
   echo "bootstrap failed on ${new:0:7} (rc=$rc); rolling back to ${cur:0:7}"
   echo "$out" | tail -20
-  g reset -q --hard "$cur"
-  "$REPO/device/bootstrap.sh" >/dev/null 2>&1
-  echo "$new" > /var/lib/media-stick/bad-commit
-  exit 1
+  rollback
 fi
-rm -f /var/lib/media-stick/bad-commit
+if [ -x "$HEALTHCHECK_BIN" ]; then
+  hc_out=$("$HEALTHCHECK_BIN" 2>&1); hc_rc=$?
+  [ -n "$hc_out" ] && printf '%s\n' "$hc_out"
+  if [ $hc_rc -ne 0 ]; then
+    echo "healthcheck failed on ${new:0:7} (rc=$hc_rc); rolling back to ${cur:0:7}"
+    rollback
+  fi
+fi
+rm -f "$BAD_COMMIT"
 echo "updated to ${new:0:7}"
-echo "$out" | grep -q 'REBOOT NEEDED' && { echo "rebooting for boot config"; systemctl reboot; }
+echo "$out" | grep -q 'REBOOT NEEDED' && { echo "rebooting for boot config"; "$SYSTEMCTL_BIN" reboot; }
 exit 0
