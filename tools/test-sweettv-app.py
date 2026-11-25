@@ -1831,7 +1831,7 @@ class NetflixRail(WindowCase):
             window = self.open()
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
             expected_visible = {"search": True, "continue": False, "favourites": False,
-                                "shows": False, "series": True, "movies": True, "channels": True}
+                                "shows": True, "series": True, "movies": True, "channels": True}
             for idx, sec in enumerate(["search", "continue", "favourites", "shows", "series", "movies", "channels"]):
                 window.controls[MENU].selected = idx
                 window.onClick(MENU)
@@ -2361,6 +2361,40 @@ class SysPathRegressionTest(unittest.TestCase):
         with open(os.path.join(root, "device/kodi-addons/script.media-stick.home/resources/lib/sweettv_app.py"), encoding="utf-8") as f:
             app_text = f.read()
         self.assertLess(app_text.index("sys.path.insert(0,"), app_text.index("import mediastick_resume"))
+
+class FieldFixesAppTest(unittest.TestCase):
+    def test_play_url_start_and_follow_skips_seek(self):
+        self.assertEqual(data.play_url("15", "931394511", start=120), "plugin://plugin.video.sweettv/playvid/15|931394511?start=120")
+        seeks = []
+        class FakeIO:
+            def __init__(self):
+                self.n = 0
+            def playing(self):
+                self.n += 1
+                return self.n == 1
+            def position(self):
+                return (120.0, 3600.0)
+            def seek(self, s):
+                seeks.append(s)
+        ev = threading.Event()
+        reported = []
+        play.follow(play.Session("15", "931394511", "T", 0, 3600, url="u"), FakeIO(), ev, lambda s, p, t: reported.append((p, t)), seek_to=120, poll=0.0)
+        self.assertEqual(seeks, [])
+        self.assertEqual(reported, [(120.0, 3600.0)])
+
+    def test_shows_split_chips_and_filter(self):
+        from resources.lib import sweettv_sections as sections
+        chips = sections.show_chips()
+        self.assertEqual([k for k, _ in chips], ["all", "special", "tv"])
+        rows = [
+            {"id": "vod:1", "kind": "show_vod", "special": True, "title": "Orig"},
+            {"id": "epg:2", "kind": "show_epg", "special": False, "title": "Bachelor"},
+            {"id": "tv:3", "kind": "show_tv", "special": False, "title": "MasterChef"},
+        ]
+        self.assertEqual([r["id"] for r in sections.filter_shows(rows, "special")], ["vod:1"])
+        self.assertEqual([r["id"] for r in sections.filter_shows(rows, "tv")], ["epg:2", "tv:3"])
+        self.assertEqual(len(sections.filter_shows(rows, "all")), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

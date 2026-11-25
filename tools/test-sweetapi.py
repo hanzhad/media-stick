@@ -1049,5 +1049,23 @@ class VodAndCatalog(unittest.TestCase):
             self.assertEqual(sender.calls, [], bad)
 
 
+class FieldFixesTest(unittest.TestCase):
+    def test_normalize_search_list_channels_and_hq_url(self):
+        ch_list = {"list": [{"id": 15, "name": "1+1", "catchup": True, "catchup_duration": 7}]}
+        now = 1750000000
+        reply = {"result": [
+            {"type": "EpgRecord", "id": "931394511", "sub_id": "15", "text": "Холостяк", "time_start": now - 300, "time_stop": now + 300},
+            {"type": "Movie", "id": "999", "text": "Холостяк шоу"},
+        ]}
+        rows = api.normalize_search(reply, ch_list, now=now)
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(rows[0]["playable"])
+        self.assertTrue(rows[1]["playable"])
+        self.assertEqual(
+            api._hq_url("https://static.sweet.tv/cdn-cgi/image/width=400,f=auto/https://static.sweet.tv/b.jpg"),
+            "https://static.sweet.tv/b.jpg",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

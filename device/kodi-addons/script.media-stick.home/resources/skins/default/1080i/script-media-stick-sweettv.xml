@@ -200,8 +200,8 @@
                     <width>1512</width>
                     <height>552</height>
                     <aspectratio align="center" aligny="center">scale</aspectratio>
-                    <texture background="true" diffuse="card-mask.png">$INFO[Container(200).ListItem.Art(icon)]</texture>
-                    <visible>!String.IsEmpty(Container(200).ListItem.Art(icon))</visible>
+                    <texture background="true" diffuse="card-mask.png">$INFO[Window.Property(hero_art)]</texture>
+                    <visible>!String.IsEmpty(Window.Property(hero_art))</visible>
                 </control>
                 <control type="image">
                     <left>0</left>

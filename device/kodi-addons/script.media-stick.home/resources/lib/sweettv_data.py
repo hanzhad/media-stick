@@ -262,13 +262,15 @@ def time_range(programme) -> str:
     return span(programme.start, programme.stop)
 
 
-def play_url(cid, epg_id=None) -> str:
+def play_url(cid, epg_id=None, start=0) -> str:
     """What Player.Open takes: live is `<cid>|null`, an archived programme `<cid>|<epg id>`. "" when unsafe."""
     cid = str(cid)
     epg = "null" if epg_id is None else str(epg_id)
     if not ID_RE.fullmatch(cid) or not (epg == "null" or ID_RE.fullmatch(epg)):
         return ""
-    return PLAY_URL.format(cid=cid, epg=epg)
+    url = PLAY_URL.format(cid=cid, epg=epg)
+    s = int(start or 0)
+    return f"{url}?start={s}" if s > 0 else url
 
 
 # ---- what the window shows -------------------------------------------------------------------

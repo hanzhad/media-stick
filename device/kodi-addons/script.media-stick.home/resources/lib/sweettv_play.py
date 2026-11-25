@@ -76,7 +76,9 @@ def follow(session, io, stopped, report, seek_to=0, poll=None):
             seen = io.position()
             if seen:
                 pos, total = seen
-                if pending and total > seek_to + SEEK_MARGIN:
+                if pending and pos >= 15:
+                    pending = False
+                elif pending and total > seek_to + SEEK_MARGIN:
                     io.seek(seek_to)
                     pending, pos = False, float(seek_to)
         elif started:
