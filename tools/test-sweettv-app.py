@@ -97,7 +97,7 @@ class ListItem:
 class WindowXML:
     def __init__(self, *a):
         self._props, self.focus = {}, 0
-        self.controls = {100: Control(), 200: Control(), 210: Control(), 211: Control(), 212: Control(), 213: Control(),
+        self.controls = {100: Control(), 200: Control(), 201: Control(), 210: Control(), 211: Control(), 212: Control(), 213: Control(),
                          300: Control(), 301: Control(), 400: Control(), 410: Control(),
                          **{i: Control() for i in range(401, 409)}}
         self.closed = False
@@ -1658,7 +1658,7 @@ class Demo(WindowCase):
             # Shows section (index 3) -> OK opens Show Episodes modal (400 + 410)
             window.controls[MENU].selected = 3
             window.onClick(MENU)
-            self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) > 0))
+            self.assertTrue(wait_for(lambda: window.cards and window.cards[0].kind != 'skeleton'))
             window.controls[ROW].selected = 0
             window.onClick(ROW)
             self.assertTrue(wait_for(lambda: len(window.controls[400].items) > 0))
@@ -1668,7 +1668,7 @@ class Demo(WindowCase):
             window.controls[MENU].selected = 6
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) > 0))
-            window.controls[ROW].selected = 0
+            window.controls[window._grid_id()].selected = 0
             window.onClick(212)
             self.assertTrue(wait_for(lambda: len(window.controls[400].items) > 0))
             self.assertGreater(len(window.controls[410].items), 0)
@@ -1970,8 +1970,9 @@ class ShowsSection(WindowCase):
             window.controls[MENU].selected = 3
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) == 2))
-            window.focus = ROW
-            window.controls[ROW].selected = 0
+            gid = window._grid_id()
+            window.focus = gid
+            window.controls[gid].selected = 0
             window.onClick(ROW)
             self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 1))
             m_det.assert_called()
@@ -2056,17 +2057,21 @@ class CatalogSections(WindowCase):
             window.controls[MENU].selected = 5
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: self.shown(window) == ["Film A"]))
-            window.focus = ROW
-            window.controls[ROW].selected = 0
+            gid = window._grid_id()
+            window.focus = gid
+            window.controls[gid].selected = 0
             window.onClick(ROW)
+            self.assertEqual(window.getProperty('modal'), 'detail')
+            window.onClick(210)
             self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 1))
             self.assertEqual(json.loads(Fake.rpc[-1])["params"]["item"]["file"],
                              "plugin://plugin.video.sweettv/playvod/501|null|10")
             window.controls[MENU].selected = 4
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: self.shown(window) == ["Series A"]))
-            window.focus = ROW
-            window.controls[ROW].selected = 0
+            gid = window._grid_id()
+            window.focus = gid
+            window.controls[gid].selected = 0
             window.onClick(ROW)
             self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 1))
             self.assertEqual(window.controls[400].items[0].label, "Pilot")
@@ -2110,8 +2115,9 @@ class ChannelsSection(WindowCase):
             window.controls[MENU].selected = 6
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: self.shown(window) == ["Ten"]))
-            window.focus = ROW
-            window.controls[ROW].selected = 0
+            gid = window._grid_id()
+            window.focus = gid
+            window.controls[gid].selected = 0
             window.onClick(ROW)
             self.assertTrue(wait_for(lambda: len(Fake.rpc) == 1))
             self.assertEqual(json.loads(Fake.rpc[-1])["params"]["item"]["file"],
@@ -2139,8 +2145,9 @@ class HeroBanner(WindowCase):
             window.controls[MENU].selected = 5
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: self.shown(window) == ["Inception"]))
-            window.focus = ROW
-            window.controls[ROW].selected = 0
+            gid = window._grid_id()
+            window.focus = gid
+            window.controls[gid].selected = 0
             self.assertIn("Inception", window.getProperty("hero_title") or window.controls[ROW].items[0].props.get("title", ""))
             self.assertTrue(window.controls[210].getLabel() or window.getProperty("l_play") or window.getProperty("hero_play"))
             self.assertTrue(window.controls[213].getLabel() or window.getProperty("hero_fav"))
@@ -2166,12 +2173,12 @@ class Modals(WindowCase):
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) == 2))
             window.focus = ROW
-            window.controls[ROW].selected = 1
+            window.controls[window._grid_id()].selected = 1
             window.onClick(212)
             self.assertTrue(wait_for(lambda: len(window.controls[400].items) >= 1))
             self.press(window, BACK)
             self.assertFalse(window.getProperty("guide") or window.getProperty("modal"))
-            self.assertEqual((window.focus, window.controls[ROW].selected), (ROW, 1))
+            self.assertEqual((window.focus, window.controls[window._grid_id()].selected), (window._grid_id(), 1))
 
 
 class PageValues(unittest.TestCase):
@@ -2230,11 +2237,16 @@ class Skin(unittest.TestCase):
             self.assertIn(cid, types_, cid)
         self.assertEqual(types_.get(209), "grouplist")
         self.assertEqual(types_.get(409), "grouplist")
+        self.assertEqual(types_[201], "panel")
         panel = self.control(root, 200)
-        self.assertEqual(panel.findtext("orientation"), "horizontal")
+        self.assertEqual(panel.findtext("orientation"), "vertical")
         cols = int(panel.findtext("width")) // int(panel.find("itemlayout").get("width"))
         rows = int(panel.findtext("height")) // int(panel.find("itemlayout").get("height"))
-        self.assertEqual((cols, rows), (4, 1))
+        self.assertEqual((cols, rows), (5, 2))
+        wide = self.control(root, 201)
+        wcols = int(wide.findtext("width")) // int(wide.find("itemlayout").get("width"))
+        wrows = int(wide.findtext("height")) // int(wide.find("itemlayout").get("height"))
+        self.assertEqual((wcols, wrows), (4, 3))
         for ar in root.iter("aspectratio"):
             if ar.text == "scale":
                 self.assertEqual(ar.get("align"), "center")

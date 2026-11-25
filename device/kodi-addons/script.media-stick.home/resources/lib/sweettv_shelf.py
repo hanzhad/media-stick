@@ -135,7 +135,7 @@ class Shelf:
                     return
             self.shows_raw = []
             self.shows_all = []
-            self._apply_cards([], empty_msg=words.tr("Loading…"))
+            self._apply_cards(sections.skeleton_cards(5), empty_msg="")
         threading.Thread(target=self._run_shows, args=(gen, demo, raw, favs, now), daemon=True).start()
 
     def _run_shows(self, gen, demo, raw, favs, now):
@@ -206,7 +206,7 @@ class Shelf:
                             threading.Thread(target=self._revalidate_catalog,
                                              args=(gen, section, gid, sort_id, 0, ns, ckey, resume_doc, favs), daemon=True).start()
                         return
-                self._apply_cards([], empty_msg=words.tr("Loading…"))
+                self._apply_cards(sections.skeleton_cards(5), empty_msg="")
             gen = self._section_gen
             self.cat_loading = True
             need_cfg = not self.genres
@@ -345,7 +345,7 @@ class Shelf:
             if self.section == "shows":
                 if not self.cards or len(self.cards) >= len(self.shows_all):
                     return
-                pos = self.getControl(self.GRID_ID).getSelectedPosition()
+                pos = self.getControl(self._grid_id()).getSelectedPosition()
                 if pos < max(0, len(self.cards) - 10):
                     return
                 nxt = min(len(self.shows_all), len(self.cards) + PAGE_SIZE)
@@ -355,7 +355,7 @@ class Shelf:
                 return
             if len(self.cards) >= self.cat_total or not self.cards:
                 return
-            pos = self.getControl(self.GRID_ID).getSelectedPosition()
+            pos = self.getControl(self._grid_id()).getSelectedPosition()
             if pos < max(0, len(self.cards) - 10):
                 return
             sec = self.section

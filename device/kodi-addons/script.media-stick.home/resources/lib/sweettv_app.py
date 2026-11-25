@@ -22,7 +22,8 @@ from resources.lib.sweettv_shelf import CHIP_FIRST, CHIP_LAST, Shelf
 from resources.lib.sweettv_writer import StateWriter
 
 XML = "script-media-stick-sweettv.xml"
-MENU, ROW, ACTIONS, RESUME = 100, 200, 209, 210
+MENU, ROW, WIDE_ROW, ACTIONS, RESUME = 100, 200, 201, 209, 210
+WIDE_SECTIONS = frozenset(("continue", "channels"))
 BTN_ALT, BTN_FAV = 211, 213
 SIGNIN_BUTTON, RETRY = 300, 301
 ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_CONTEXT_MENU = 2, 3, 4, 117
@@ -50,6 +51,9 @@ def playing():
 class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     """Set up with setup() after construction: the Kodi window constructors take no extra arguments."""
     GRID_ID = ROW
+
+    def _grid_id(self) -> int:
+        return ROW
     MENU_ID = MENU
     DEMO_LOGOS = DEMO_LOGOS
     instance = None
@@ -295,6 +299,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if not self.section:
             has_cont = bool(sections.continue_cards(self.resume_doc, catalog, now, self.fav_keys))
             self.section = "continue" if has_cont else "channels"
+        self._prop("wide_grid", "1" if self.section in WIDE_SECTIONS else "")
+        self._prop("section_title", words.section_title(self.section))
         self._fill_menu()
         if self.section == "channels":
             if self.filter_key.startswith("c:") and self.filter_key not in self.cat_names:
@@ -396,10 +402,20 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             list_items.append(li)
         ctrl.reset()
         ctrl.addItems(list_items)
+        try:
+            wctrl = self.getControl(WIDE_ROW)
+            wctrl.reset()
+            wctrl.addItems(list(list_items))
+        except Exception:
+            pass
         if self.cards:
             pos = next((i for i, c in enumerate(self.cards) if c.key == focus_key), 0) if focus_key else min(
                 max(0, old_pos), len(self.cards) - 1)
             ctrl.selectItem(pos)
+            try:
+                self.getControl(WIDE_ROW).selectItem(pos)
+            except Exception:
+                pass
         self._prop("emptycat", "" if self.cards else empty_msg)
         self._sync_hero()
 
@@ -416,8 +432,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             return None
         return self.cards[pos] if 0 <= pos < len(self.cards) else None
 
-    def _sync_hero(self):
-        card = self._focused_card()
+    def _sync_hero(self, card=None):
+        card = card if card is not None else self._focused_card()
         banner = card.banner if card else ""
         if not banner or not self._window_props.get("hero_art"):
             self._cancel("hero_art")
@@ -437,6 +453,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def _open_section(self, key, focus_cid="", sync_menu=False):
         with self._lock:
             self.section = key
+            self._prop("wide_grid", "1" if key in WIDE_SECTIONS else "")
+            self._prop("section_title", words.section_title(key))
             self._update_menu(follow=sync_menu)
             if key == "search":
                 self._set_chips("search", sections.search_chips())
@@ -534,7 +552,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._guide_close()
             elif self.digits:
                 self._digits_clear()
-            elif self.mode == data.DATA and self._focus() in (ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV,
+            elif self.mode == data.DATA and self._focus() in (ROW, WIDE_ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV,
                                                               *range(CHIP_FIRST, CHIP_LAST + 1)):
                 self._focus_on(MENU)
             else:
@@ -558,7 +576,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                     self._cancel("menu")
                     self._apply_menu()
         super().onAction(action)
-        if self._focus() == ROW:
+        if self._focus() in (ROW, WIDE_ROW):
             self._sync_hero()
             if action_id in (ACTION_MOVE_RIGHT, ACTION_MOVE_DOWN):
                 self._maybe_paginate()
@@ -612,15 +630,21 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                     self._open_section(key)
 
     def _ok_card(self):
-        card = self._focused_card()
-        if card is None:
+        was_detail = getattr(self, "modal_kind", "") == "detail"
+        card = getattr(self, "modal_card", None) if was_detail else self._focused_card()
+        if card is None or card.kind == "skeleton":
             return
         if card.kind in ("show_vod", "show_epg", "show_tv", "series"):
             self._open_show_modal(card)
             return
+        if card.kind == "movie" and not was_detail and self.section not in WIDE_SECTIONS:
+            self._open_detail_modal(card)
+            return
         if not card.playable or not card.play_url:
             ui.notify(words.tr("This programme has not aired yet."))
             return
+        if was_detail:
+            self._guide_close()
         if card.kind == "channel":
             self._start_playback(card.play_url, cid=card.cid)
         else:
