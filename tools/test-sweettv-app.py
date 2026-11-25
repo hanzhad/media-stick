@@ -1267,6 +1267,17 @@ class Channels(WindowCase):
         self.assertEqual([a[0] for a in fills], ["favourites"])
 
 
+
+    def test_try_instant_start_continue_sets_wide_grid_and_focuses_201(self):
+        doc = MR.record(MR.empty(), "plugin://plugin.video.sweettv/playvod/501|null|10", 1200, 7200, NOW - 20, {"title": "Inception"})
+        MR.save(doc)
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        self.assertEqual(window.section, "continue")
+        self.assertEqual(window.getProperty("wide_grid"), "1")
+        self.assertTrue(window.getProperty("section_title"))
+        self.assertEqual(window.focus, 201)
+
     def test_wide_sections_focus_and_click_use_wide_row_201(self):
         window = self.ready()
         self.assertEqual(window.section, "channels")
