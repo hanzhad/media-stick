@@ -44,6 +44,11 @@ from typing import NamedTuple
 import mediastick_sweetlive as ml
 
 try:
+    import mediastick_sweetstore as store
+except ImportError:
+    store = None
+
+try:
     import mediastick_signin as signin
 except ImportError:                 # a device without it: no bearer, every call says "auth"
     signin = None
@@ -270,9 +275,10 @@ def _other_row(item, kind, channels, quality="1080p"):
                 "cid": "", "epg": "", "start": 0, "stop": 0, "channel_name": "", "when": "",
                 "live": False, "playable_in_archive": False, "playable": bool(avail and vod_url), "available": avail,
                 "vod_url": vod_url, "preview": "", "image_url": img, "repeats": 0, "more": ""}
+    ch_avail = channel is not None and channel.get("available") is not False
     return {"kind": kind, "id": ident, "title": title, "subtitle": _clean(item.get("subtext")),
             "cid": ident if kind == "channel" else "", "epg": "", "start": 0, "stop": 0, "channel_name": name, "when": "",
-            "live": False, "playable_in_archive": False, "playable": channel is not None, "available": False, "preview": "",
+            "live": False, "playable_in_archive": False, "playable": ch_avail, "available": ch_avail, "preview": "",
             "image_url": img, "repeats": 0, "more": ""}
 
 
@@ -310,7 +316,8 @@ def collapse(rows, now, tr_n=None):
     tr_n = tr_n or ml.text_n
     groups = {}
     for row in rows:
-        groups.setdefault(" ".join(row["title"].casefold().split()), []).append(row)
+        norm_title = store.strip_programme_prefix(row["title"]) if store else row["title"]
+        groups.setdefault(" ".join(norm_title.casefold().split()), []).append(row)
     out = []
     for airings in groups.values():
         row = dict(_stands_for(airings, now))
@@ -389,7 +396,7 @@ def _group_search_programmes(programmes, now, tr_n):
     return shows, collapse(singles, now, tr_n)
 
 
-def normalize_search(reply, channels, now, tr=None, tr_n=None, quality="1080p"):
+def normalize_search(reply, channels, now, tr=None, tr_n=None, quality="1080p", include_unavailable=False, needle=""):
     """The rows of a SearchService/Search.json answer: grouped shows/series first, then programmes, channels, movies, people."""
     tr = tr or ml.text
     channels = channel_map(channels)
@@ -403,10 +410,19 @@ def normalize_search(reply, channels, now, tr=None, tr_n=None, quality="1080p"):
         elif kind:
             row = _other_row(item, kind, channels, quality=quality)
             if row:
+                if not include_unavailable and row["kind"] == "channel" and not row.get("available"):
+                    continue
                 others[row["kind"]].append(row)
     grouped_shows, single_progs = _group_search_programmes(programmes, now, tr_n)
     _remember_search_shows(grouped_shows, now)
-    rows = others["series"] + grouped_shows + single_progs + others["channel"] + others["movie"] + others["person"]
+    ch_rows = others["channel"]
+    if needle:
+        q = needle.strip().casefold()
+        matched_ch = [c for c in ch_rows if q in (c.get("title") or "").casefold() or q in (c.get("channel_name") or "").casefold()]
+        rest_ch = [c for c in ch_rows if c not in matched_ch]
+        rows = matched_ch + others["series"] + grouped_shows + single_progs + rest_ch + others["movie"] + others["person"]
+    else:
+        rows = others["series"] + grouped_shows + single_progs + ch_rows + others["movie"] + others["person"]
     return rows[:MAX_ROWS]
 
 
@@ -457,9 +473,10 @@ def _day_row(p, cid, channel, now, tr):
     if not epg or start is None or stop is None or stop <= start:
         return None
     preview = https(p.get("preview_url_ext")) or https(p.get("preview_url"))
+    arch = ml.archive_ok(channel, {"time_start": start, "available": p.get("available")}, now)
     return {"epg": epg, "cid": str(cid), "title": _clean(p.get("text")) or "-", "start": start, "stop": stop,
             "when": when_text(start, now, tr), "live": start <= now < stop,
-            "playable_in_archive": ml.archive_ok(channel, {"time_start": start, "available": p.get("available")}, now),
+            "can_archive": arch, "playable_in_archive": arch, "archive": arch,
             "available": p.get("available") is not False, "preview": preview, "season": _num(p.get("season_number")) or 0, "episode": _num(p.get("episode_number")) or 0,
             "show_id": _id(p.get("tv_show_id"))}
 
@@ -594,10 +611,16 @@ def recall(cid, epg, now=None):
     now = time.time() if now is None else now
     with _known_lock:
         found = _known.get((str(cid), str(epg)))
-    return {"start": found[0], "stop": found[1], "available": found[3]} if found and 0 <= now - found[2] <= KNOWN_TTL else None
+    if found and 0 <= now - found[2] <= KNOWN_TTL:
+        return {"start": found[0], "stop": found[1], "available": found[3]}
+    if store is not None:
+        rec = store.default_store().recall_programme(epg)
+        if rec and str(rec.get("cid")) == str(cid):
+            return {"start": rec["time_start"], "stop": rec["time_stop"], "available": rec["available"]}
+    return None
 
 
-def search(needle, channels, now=None, client=None, tr=None, tr_n=None, quality="1080p"):
+def search(needle, channels, now=None, client=None, tr=None, tr_n=None, quality="1080p", include_unavailable=False):
     """{"ok": True, "query", "items": [row, ...], "count"}; with a needle shorter than MIN_NEEDLE characters nothing is asked
     ("short": True, no items); {"ok": False, "error", "message"} when SWEET.TV could not answer."""
     now = time.time() if now is None else now
@@ -607,18 +630,18 @@ def search(needle, channels, now=None, client=None, tr=None, tr_n=None, quality=
     reply = (client or _default).post(SEARCH, {"needle": query})
     if not reply.ok:
         return _failure(reply.error, tr)
-    rows = normalize_search(reply.data, channels, now, tr, tr_n, quality=quality)
+    rows = normalize_search(reply.data, channels, now, tr, tr_n, quality=quality, include_unavailable=include_unavailable, needle=query)
     _remember(rows, now)
     return {"ok": True, "query": query, "items": rows, "count": len(rows)}
 
 
-def top_search(channels, now=None, quality="1080p", client=None, tr=None, tr_n=None):
+def top_search(channels, now=None, quality="1080p", client=None, tr=None, tr_n=None, include_unavailable=False):
     """{"ok": True, "items": [row, ...]} from SearchService/GetTop.json, marking playable movies and hiding UHD."""
     now = time.time() if now is None else now
     reply = (client or _default).post(TOP_SEARCH, {})
     if not reply.ok:
         return _failure(reply.error, tr)
-    rows = normalize_search(reply.data, channels, now, tr, tr_n, quality=quality)
+    rows = normalize_search(reply.data, channels, now, tr, tr_n, quality=quality, include_unavailable=include_unavailable)
     _remember(rows, now)
     return {"ok": True, "items": rows, "count": len(rows)}
 
@@ -670,13 +693,25 @@ def day(cid, day_unix, channels, now=None, client=None, tr=None):
     code = check_day(channel, when, now)
     if code:
         return _failure(code, tr)
+    use_store_fallback = client is None
     client = client or _default
     lo, hi = _midnight(when), _midnight(when + timedelta(days=1))
     found = {}
     error = _fetch(client, cid, (lo + hi) // 2, found)
     if error:
+        if use_store_fallback and error in ("network", "service") and store is not None:
+            cached = store.default_store().channel_day(cid, when.isoformat(), now=now)
+            if cached:
+                _remember(cached, now)
+                return {"ok": True, "cid": cid, "name": _clean(channel.get("name"), 120), "date": when.isoformat(), "now": int(now),
+                        "archive_days": _archive_days(channel), "future_days": _future_days(channel), "items": cached}
         return _failure(error, tr)
     _cover(client, cid, found, lo, hi)
+    if store is not None:
+        store.default_store().upsert_epg(
+            cid, list(found.values()), now=now,
+            catchup=bool(channel.get("catchup")), catchup_duration=channel.get("catchup_duration") or 0,
+        )
     rows = normalize_day(list(found.values()), cid, channel, when, now, tr)
     _remember(rows, now)
     return {"ok": True, "cid": cid, "name": _clean(channel.get("name"), 120), "date": when.isoformat(), "now": int(now),
@@ -754,6 +789,9 @@ def _movie_card(movie):
         "duration": _num(movie.get("duration")) or 0,
         "imdb": imdb,
         "genres": genres,
+        "description": _clean(movie.get("description"), 1200),
+        "age_rating": _clean(str(movie.get("age_limit") or movie.get("age_rating") or ""), 16),
+        "countries": [_clean(str(x), 48) for x in (movie.get("countries") or ()) if _clean(str(x), 48)],
         "vod_url": ml.vod_url(mid, None, owner_id),
         "available": True,
     }
@@ -1244,15 +1282,21 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
             })
         seasons.append({
             "id": _num(s.get("id")) or 0,
+            "number": _season_number_of(s, len(seasons)),
             "title": _clean(s.get("title"), 120),
             "owner_id": s_owner,
             "episodes": eps,
         })
-    return {
+    seasons.sort(key=lambda s: s["number"])
+    res = {
         "ok": True,
         "id": "vod:%d" % mid,
         "movie_id": str(mid),
         "title": card["title"],
+        "description": card.get("description", ""),
+        "age_rating": card.get("age_rating", ""),
+        "genres": card.get("genres", []),
+        "countries": card.get("countries", []),
         "poster": card["poster"],
         "banner": card["banner"],
         "year": card["year"],
@@ -1266,6 +1310,9 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
         "seasons": seasons,
         "next_up": resolve_next_up(seasons=seasons) if seasons else None,
     }
+    if store is not None:
+        store.default_store().upsert_title_detail(res)
+    return res
 
 
 def show_detail(show_key, channels, now=None, local=None, favs=None, client=None, tr=None):

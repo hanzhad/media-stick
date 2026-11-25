@@ -54,6 +54,7 @@ CSS = r"""
 .wt-rowbar{height:3px;border-radius:2px;background:var(--line);margin:6px 0 2px;overflow:hidden}
 .wt-rowbar i{display:block;height:100%;background:#00D2C6}
 .wt .wt-btn.pri,.wt .wt-chip.on,.wt .wt-go{background:#00D2C6;color:#0C111B}
+.wt-item.wt-dim{opacity:.45}
 """
 
 JS = r"""
@@ -291,7 +292,7 @@ async function renderVod(b,d){
   const heroArt=artOf(r);
   const seasons=r.seasons||[];
   const durMeta=seasons.length?seasons.length+' сез.':fmtMin(r.duration||0);
-  const meta=[r.imdb?'IMDb '+r.imdb:'',r.year,durMeta].filter(Boolean).join(' · ');
+  const meta=[r.imdb?'IMDb '+r.imdb:'',r.year,r.age_rating,durMeta,(r.countries||[]).slice(0,2).join(', ')].filter(Boolean).join(' · ');
   const nu=seasons.length?(r.next_up||null):null;
   const acts=h('div',{class:'wt-acts'});
   if(nu){
@@ -366,9 +367,10 @@ async function renderGuide(b,d){
     try{const dr=await sg('day?cid='+encodeURIComponent(cid)+'&date='+encodeURIComponent(iso));if(cur()!==d||selDay!==iso)return;
       dayList.replaceChildren();
       const items=dr.items||[];if(!items.length){dayList.append(msgCard('empty'));return}
+      const hasArch=e=>!!(e&&(e.can_archive||e.playable_in_archive||e.archive));
       lazy(dayList,items,e=>swRow({title:e.title,subs:[hm(e.start)+'–'+hm(e.stop),e.watched?'просмотрено':''],
-        pct:e.resume>0&&e.stop>e.start?100*e.resume/(e.stop-e.start):0,dim:!e.archive,
-        open:e.archive?()=>swSheet(e.title,hm(e.start)+'–'+hm(e.stop),
+        pct:e.resume>0&&e.stop>e.start?100*e.resume/(e.stop-e.start):0,dim:!hasArch(e),
+        open:hasArch(e)?()=>swSheet(e.title,hm(e.start)+'–'+hm(e.stop),
           (e.resume>0?[['Продолжить с '+tm(e.resume),{cid,epg:e.epg||e.id,at:'resume'}]]:[]).concat([['Смотреть с начала',{cid,epg:e.epg||e.id,at:'start'}]])):null}))}
     catch(e){if(cur()===d)dayList.replaceChildren(msgCard('error',()=>loadDay(iso),'SWEET.TV'))}};
   const drawDays=()=>{
