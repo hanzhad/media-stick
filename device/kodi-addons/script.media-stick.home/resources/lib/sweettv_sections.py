@@ -455,6 +455,7 @@ def hero_info(card: Optional[Card]) -> dict:
             "hero_play": words.tr("Watch"), "hero_alt": "", "hero_guide": "",
             "hero_fav": words.tr("Add to favourites"),
             "has_play": "", "has_alt": "", "has_guide": "", "has_fav": "",
+            "hero_pbar": "", "hero_sub": "", "hero_initials": "",
         }
     is_show = card.kind in ("show_vod", "show_epg", "show_tv", "series")
     if is_show:
@@ -477,6 +478,9 @@ def hero_info(card: Optional[Card]) -> dict:
         "has_alt": "1" if alt_label else "",
         "has_guide": "1" if guide_label else "",
         "has_fav": "1" if card.fav_key else "",
+        "hero_pbar": card.pbar or "",
+        "hero_sub": card.nextline or card.resume_label or "",
+        "hero_initials": card.initials or "",
     }
 
 
@@ -492,3 +496,27 @@ def skeleton_cards(count=5) -> list:
         )
         for i in range(count)
     ]
+
+
+def filter_section_search(cards, section) -> list:
+    if section == "movies":
+        return [c for c in cards if c.kind == "movie"]
+    if section == "series":
+        return [c for c in cards if c.kind == "series"]
+    if section == "shows":
+        return [c for c in cards if c.kind in ("show_tv", "show_epg", "show_vod", "programme")]
+    if section == "channels":
+        return [c for c in cards if c.kind in ("channel", "programme")]
+    return list(cards)
+
+
+def filter_local_cards(cards, query) -> list:
+    q = (query or "").strip().lower()
+    if not q:
+        return list(cards)
+    out = []
+    for c in cards:
+        hay = " ".join((c.title, c.meta, c.desc, c.now, c.next)).lower()
+        if q in hay:
+            out.append(c)
+    return out

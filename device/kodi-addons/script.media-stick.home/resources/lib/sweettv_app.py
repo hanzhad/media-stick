@@ -18,7 +18,7 @@ from resources.lib import page_cache, quick_resume, single_instance, sweettv_dat
 from resources.lib.sweettv_find import Find
 from resources.lib.sweettv_guide import GUIDE, GUIDE_BUTTON, MODAL_TABS, Guide
 from resources.lib.sweettv_jump import DigitJump
-from resources.lib.sweettv_shelf import CHIP_FIRST, CHIP_LAST, Shelf
+from resources.lib.sweettv_shelf import CHIP_FIRST, CHIP_LAST, PAGE_SIZE, Shelf
 from resources.lib.sweettv_writer import StateWriter
 
 XML = "script-media-stick-sweettv.xml"
@@ -26,6 +26,7 @@ MENU, ROW, WIDE_ROW, ACTIONS, RESUME = 100, 200, 201, 209, 210
 WIDE_SECTIONS = frozenset(("continue", "channels"))
 BTN_ALT, BTN_FAV = 211, 213
 SIGNIN_BUTTON, RETRY = 300, 301
+PAGE_SEARCH, HERO_GUIDE = 415, 416
 ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_CONTEXT_MENU = 2, 3, 4, 117
 MENU_DELAY = 0.12
 RETURN_GRACE = 2
@@ -218,6 +219,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self.section = "continue" if has_cont else "shows"
             self._prop("wide_grid", "1" if self.section in WIDE_SECTIONS else "")
             self._prop("section_title", words.section_title(self.section))
+            self._sync_page_search_label()
             self._fill_menu()
             if self.section == "continue":
                 self._show_continue()
@@ -311,6 +313,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self.section = "continue" if has_cont else "channels"
         self._prop("wide_grid", "1" if self.section in WIDE_SECTIONS else "")
         self._prop("section_title", words.section_title(self.section))
+        self._sync_page_search_label()
         self._fill_menu()
         if self.section == "channels":
             if self.filter_key.startswith("c:") and self.filter_key not in self.cat_names:
@@ -464,11 +467,32 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     # -- section switching --
 
+    def _restore_section_view(self):
+        with self._lock:
+            sec = self.section
+            if sec == "channels":
+                self._show_channels()
+            elif sec == "continue":
+                self._show_continue()
+            elif sec == "favourites":
+                self._show_favourites()
+            elif sec == "shows":
+                filtered = sections.filter_shows(self.shows_raw, self.show_filter)
+                cards = [sections.show_card(r, self.fav_keys) for r in filtered]
+                self.shows_all = cards
+                self._apply_cards(cards[:PAGE_SIZE], empty_msg=words.tr("No shows with episodes in the archive yet."))
+            elif sec in ("series", "movies"):
+                cards = [sections.vod_card(r, kind="series" if sec == "series" else "movie",
+                                          resume_doc=self.resume_doc, favs=self.fav_keys) for r in self.cat_items]
+                self._apply_cards(cards, empty_msg=words.tr("Nothing here yet."))
+
     def _open_section(self, key, focus_cid="", sync_menu=False):
         with self._lock:
             self.section = key
+            self.page_query = ""
             self._prop("wide_grid", "1" if key in WIDE_SECTIONS else "")
             self._prop("section_title", words.section_title(key))
+            self._sync_page_search_label()
             self._update_menu(follow=sync_menu)
             if key == "search":
                 self._set_chips("search", sections.search_chips())
@@ -565,6 +589,12 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._guide_close()
             elif self.digits:
                 self._digits_clear()
+            elif self.mode == data.DATA and self._focus() in (PAGE_SEARCH, HERO_GUIDE):
+                self._focus_on(self._grid_id() if self.cards else MENU)
+            elif self.mode == data.DATA and self._focus() in (ROW, WIDE_ROW) and self.page_query:
+                self.page_query = ""
+                self._sync_page_search_label()
+                self._restore_section_view()
             elif self.mode == data.DATA and self._focus() in (ROW, WIDE_ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV,
                                                               *range(CHIP_FIRST, CHIP_LAST + 1)):
                 self._focus_on(MENU)
@@ -629,6 +659,10 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._modal_click()
             elif control_id == SIGNIN_BUTTON:
                 self._signin()
+            elif control_id == PAGE_SEARCH:
+                self._ask_page_search()
+            elif control_id == HERO_GUIDE:
+                self._guide_show()
             elif control_id == RETRY:
                 self._look_soon()
         except Exception as e:
@@ -741,7 +775,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             io.stop()
 
     def _focus_back(self):
-        if self.mode == data.DATA and self._focus() not in (MENU, ROW, WIDE_ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV, GUIDE):
+        if self.mode == data.DATA and self._focus() not in (MENU, ROW, WIDE_ROW, PAGE_SEARCH, HERO_GUIDE, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV, GUIDE):
             self._focus_on(GUIDE if self._modal_open() else self._grid_id())
 
     def _preview_start(self):

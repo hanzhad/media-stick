@@ -13,11 +13,11 @@
             <height>1080</height>
             <visible>String.IsEqual(Window.Property(mode),data) + String.IsEmpty(Window.Property(modal))</visible>
 
-            <!-- Compact Top Header (no "Signed in" clutter pill, only section title + optional DEMO/notice/jump) -->
+            <!-- Compact Top Header: section title + DEMO/notice + Top-of-page scoped Search (415) -->
             <control type="label">
                 <left>96</left>
                 <top>28</top>
-                <width>900</width>
+                <width>780</width>
                 <height>52</height>
                 <font>Med40</font>
                 <textcolor>FFFFFFFF</textcolor>
@@ -25,7 +25,7 @@
                 <label>$INFO[Window.Property(section_title)]</label>
             </control>
             <control type="group">
-                <left>1020</left>
+                <left>890</left>
                 <top>32</top>
                 <width>130</width>
                 <height>44</height>
@@ -51,9 +51,9 @@
                 </control>
             </control>
             <control type="label">
-                <left>1170</left>
+                <left>1030</left>
                 <top>32</top>
-                <width>702</width>
+                <width>390</width>
                 <height>44</height>
                 <font>Reg22</font>
                 <textcolor>FF14E0C8</textcolor>
@@ -61,6 +61,26 @@
                 <aligny>center</aligny>
                 <label>$INFO[Window.Property(notice)]</label>
                 <visible>!String.IsEmpty(Window.Property(notice))</visible>
+            </control>
+            <control type="button" id="415">
+                <left>1440</left>
+                <top>28</top>
+                <width>432</width>
+                <height>48</height>
+                <font>Reg22</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <focusedcolor>FF0C111B</focusedcolor>
+                <texturenofocus border="24" colordiffuse="FF1B263B">sweettv-chip.png</texturenofocus>
+                <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
+                <textoffsetx>24</textoffsetx>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>$INFO[Window.Property(page_search_label)]</label>
+                <onleft>100</onleft>
+                <ondown condition="!String.IsEmpty(Window.Property(filters))">409</ondown>
+                <ondown condition="String.IsEmpty(Window.Property(filters)) + !String.IsEmpty(Window.Property(wide_grid)) + !String.IsEmpty(Window.Property(has_guide))">416</ondown>
+                <ondown condition="String.IsEmpty(Window.Property(filters)) + !String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(has_guide))">201</ondown>
+                <ondown condition="String.IsEmpty(Window.Property(filters)) + String.IsEmpty(Window.Property(wide_grid))">200</ondown>
             </control>
 
             <!-- Auto-width Filter Chips Row (401..408 inside 409 grouplist) -->
@@ -74,8 +94,10 @@
                 <usecontrolcoords>false</usecontrolcoords>
                 <scrolltime>180</scrolltime>
                 <onleft>100</onleft>
+                <onup>415</onup>
                 <ondown condition="String.IsEmpty(Window.Property(wide_grid))">200</ondown>
-                <ondown condition="!String.IsEmpty(Window.Property(wide_grid))">201</ondown>
+                <ondown condition="!String.IsEmpty(Window.Property(wide_grid)) + !String.IsEmpty(Window.Property(has_guide))">416</ondown>
+                <ondown condition="!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(has_guide))">201</ondown>
                 <visible>!String.IsEmpty(Window.Property(filters))</visible>
                 <control type="button" id="401">
                     <width min="120" max="320">auto</width>
@@ -201,6 +223,7 @@
                 <scrolltime>200</scrolltime>
                 <onleft>100</onleft>
                 <onup condition="!String.IsEmpty(Window.Property(filters))">409</onup>
+                <onup condition="String.IsEmpty(Window.Property(filters))">415</onup>
                 <visible>String.IsEmpty(Window.Property(wide_grid))</visible>
                 <itemlayout width="352" height="440">
                     <control type="image">
@@ -322,18 +345,126 @@
                 </focusedlayout>
             </control>
 
-            <!-- Grid 2: Wide 16:9 Grid 4x3 (Continue Watching, TV Channels) -->
+            <!-- Hero Banner for Continue & TV Channels -->
+            <control type="group">
+                <left>96</left>
+                <top>148</top>
+                <width>1776</width>
+                <height>484</height>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat))</visible>
+                <control type="label">
+                    <left>0</left>
+                    <top>12</top>
+                    <width>1020</width>
+                    <height>56</height>
+                    <font>Med40</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(hero_title)]</label>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>76</top>
+                    <width>1020</width>
+                    <height>34</height>
+                    <font>Reg25</font>
+                    <textcolor>FF14E0C8</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(hero_meta)]</label>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>120</top>
+                    <width>1020</width>
+                    <height>136</height>
+                    <font>Reg25</font>
+                    <textcolor>FFB0BCCF</textcolor>
+                    <wrapmultiline>true</wrapmultiline>
+                    <label>$INFO[Window.Property(hero_desc)]</label>
+                </control>
+                <control type="image">
+                    <left>0</left>
+                    <top>272</top>
+                    <width>640</width>
+                    <height>6</height>
+                    <texture>$INFO[Window.Property(hero_pbar)]</texture>
+                    <colordiffuse>FF14E0C8</colordiffuse>
+                    <visible>!String.IsEmpty(Window.Property(hero_pbar))</visible>
+                </control>
+                <control type="label">
+                    <left>0</left>
+                    <top>292</top>
+                    <width>1020</width>
+                    <height>34</height>
+                    <font>Reg22</font>
+                    <textcolor>FF8594AB</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(hero_sub)]</label>
+                </control>
+                <control type="button" id="416">
+                    <left>0</left>
+                    <top>348</top>
+                    <width>320</width>
+                    <height>48</height>
+                    <font>Reg22</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <focusedcolor>FF0C111B</focusedcolor>
+                    <texturenofocus border="24" colordiffuse="FF1B263B">sweettv-chip.png</texturenofocus>
+                    <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(l_guide)]</label>
+                    <visible>!String.IsEmpty(Window.Property(has_guide))</visible>
+                    <onleft>100</onleft>
+                    <onup condition="!String.IsEmpty(Window.Property(filters))">409</onup>
+                    <onup condition="String.IsEmpty(Window.Property(filters))">415</onup>
+                    <ondown>201</ondown>
+                </control>
+                <control type="image">
+                    <left>1060</left>
+                    <top>12</top>
+                    <width>704</width>
+                    <height>396</height>
+                    <texture>sweettv-wide-mask.png</texture>
+                    <colordiffuse>FF121927</colordiffuse>
+                </control>
+                <control type="image">
+                    <left>1060</left>
+                    <top>12</top>
+                    <width>704</width>
+                    <height>396</height>
+                    <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
+                    <texture background="true" diffuse="sweettv-wide-mask.png">$INFO[Window.Property(hero_art)]</texture>
+                    <visible>!String.IsEmpty(Window.Property(hero_art))</visible>
+                </control>
+                <control type="label">
+                    <left>1060</left>
+                    <top>12</top>
+                    <width>704</width>
+                    <height>396</height>
+                    <font>Light60</font>
+                    <textcolor>FFB0BCCF</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(hero_initials)]</label>
+                    <visible>String.IsEmpty(Window.Property(hero_art))</visible>
+                </control>
+            </control>
+
+            <!-- Grid 2: Wide 16:9 Single Horizontal Row 4x1 below Hero (Continue Watching, TV Channels) -->
             <control type="panel" id="201">
                 <left>96</left>
-                <top>152</top>
+                <top>656</top>
                 <width>1776</width>
-                <height>876</height>
-                <orientation>vertical</orientation>
+                <height>344</height>
+                <orientation>horizontal</orientation>
                 <scrolltime>200</scrolltime>
                 <onleft>100</onleft>
-                <onup condition="!String.IsEmpty(Window.Property(filters))">409</onup>
+                <onup condition="!String.IsEmpty(Window.Property(has_guide))">416</onup>
+                <onup condition="String.IsEmpty(Window.Property(has_guide)) + !String.IsEmpty(Window.Property(filters))">409</onup>
+                <onup condition="String.IsEmpty(Window.Property(has_guide)) + String.IsEmpty(Window.Property(filters))">415</onup>
                 <visible>!String.IsEmpty(Window.Property(wide_grid))</visible>
-                <itemlayout width="444" height="292">
+                <itemlayout width="444" height="310">
                     <control type="image">
                         <left>12</left>
                         <top>10</top>
@@ -377,7 +508,7 @@
                         <left>14</left>
                         <top>222</top>
                         <width>416</width>
-                        <height>32</height>
+                        <height>30</height>
                         <font>Reg22</font>
                         <textcolor>FFFFFFFF</textcolor>
                         <selectedcolor>FFFFFFFF</selectedcolor>
@@ -396,7 +527,7 @@
                         <label>$INFO[ListItem.Property(now)]</label>
                     </control>
                 </itemlayout>
-                <focusedlayout width="444" height="292">
+                <focusedlayout width="444" height="310">
                     <control type="image">
                         <left>6</left>
                         <top>4</top>
@@ -441,7 +572,7 @@
                         <left>14</left>
                         <top>222</top>
                         <width>416</width>
-                        <height>32</height>
+                        <height>30</height>
                         <font>Bold25</font>
                         <textcolor>FFFFFFFF</textcolor>
                         <selectedcolor>FFFFFFFF</selectedcolor>
