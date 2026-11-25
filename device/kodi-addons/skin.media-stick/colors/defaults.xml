@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<colors>
+	<color name="BackgroundColour">ff121620</color>
+	<color name="SurfaceColour">ff1f2633</color>
+	<color name="DialogBackColour">f2121620</color>
+	<color name="DialogCardColour">e61f2633</color>
+	<color name="DialogHeadingColour">01000000</color>
+	<color name="FocusedColour">ffffffff</color>
+	<color name="NotFocusedColour">b3ffffff</color>
+	<color name="MutedColour">80ffffff</color>
+	<color name="ShadowColour">88000000</color>
+	<color name="DisabledColour">4dffffff</color>
+	<color name="InvalidColour">ffa10000</color>
+	<color name="OSDFocusColour">ffffffff</color>
+	<color name="OSDNotFocusColour">99ffffff</color>
+	<color name="SelectedColour">ffffffff</color>
+</colors>

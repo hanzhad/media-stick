@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fonts>
+	<fontset id="Default" unicode="true">
+		<!-- System default -->
+		<font>
+			<name>font13</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf</filename>
+			<size>22</size>
+		</font>
+		<!-- Regular -->
+		<font>
+			<name>Reg22</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Regular.ttf</filename>
+			<size>22</size>
+		</font>
+		<font>
+			<name>Reg25</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Regular.ttf</filename>
+			<size>25</size>
+		</font>
+		<!-- Light -->
+		<font>
+			<name>Light28</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Light.ttf</filename>
+			<size>28</size>
+		</font>
+		<font>
+			<name>Light32</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Light.ttf</filename>
+			<size>32</size>
+		</font>
+		<font>
+			<name>Light40</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Light.ttf</filename>
+			<size>40</size>
+		</font>
+		<font>
+			<name>Light60</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Light.ttf</filename>
+			<size>60</size>
+			<linespacing>1.06</linespacing>
+		</font>
+		<!-- Medium -->
+		<font>
+			<name>Med22</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf</filename>
+			<size>22</size>
+		</font>
+		<font>
+			<name>Med24</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf</filename>
+			<size>24</size>
+		</font>
+		<font>
+			<name>Med28</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf</filename>
+			<size>28</size>
+		</font>
+		<font>
+			<name>Med30</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf</filename>
+			<size>30</size>
+		</font>
+		<font>
+			<name>Med32</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf</filename>
+			<size>32</size>
+		</font>
+		<font>
+			<name>Med40</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf</filename>
+			<size>40</size>
+		</font>
+		<!-- Bold -->
+		<font>
+			<name>Bold25</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf</filename>
+			<size>25</size>
+		</font>
+		<font>
+			<name>Bold28</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf</filename>
+			<size>28</size>
+		</font>
+		<font>
+			<name>Bold34</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf</filename>
+			<size>34</size>
+		</font>
+		<font>
+			<name>MsHeading</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf</filename>
+			<size>40</size>
+		</font>
+		<font>
+			<name>MsTitle</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf</filename>
+			<size>56</size>
+		</font>
+		<!-- OSD -->
+		<font>
+			<name>OSD16</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Regular.ttf</filename>
+			<size>16</size>
+		</font>
+		<font>
+			<name>OSD20</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Regular.ttf</filename>
+			<size>20</size>
+		</font>
+		<font>
+			<name>OSD32</name>
+			<filename>/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Regular.ttf</filename>
+			<size>32</size>
+		</font>
+	</fontset>
+</fonts>

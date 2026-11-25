@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<backgroundcolor>BackgroundColour</backgroundcolor>
+	<defaultcontrol always="true">3</defaultcontrol>
+	<include>WindowFadeAnimation</include>
+	<controls>
+		<include>BackgroundImage</include>
+		<!-- Kodi writes the focused item's description into id=6 -->
+		<control id="6" type="label">
+			<include>HiddenControl</include>
+		</control>
+		<control type="label">
+			<left>96</left>
+			<top>48</top>
+			<width>1200</width>
+			<height>40</height>
+			<font>Med28</font>
+			<aligny>center</aligny>
+			<textcolor>MutedColour</textcolor>
+			<label>$LOCALIZE[5]</label>
+		</control>
+		<control type="grouplist">
+			<left>96</left>
+			<top>84</top>
+			<width>1200</width>
+			<height>80</height>
+			<orientation>horizontal</orientation>
+			<control type="label">
+				<width>auto</width>
+				<height>80</height>
+				<font>MsTitle</font>
+				<aligny>center</aligny>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$LOCALIZE[14206]</label>
+				<visible>Window.IsVisible(interfacesettings)</visible>
+			</control>
+			<control type="label">
+				<width>auto</width>
+				<height>80</height>
+				<font>MsTitle</font>
+				<aligny>center</aligny>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$LOCALIZE[14200]</label>
+				<visible>Window.IsVisible(playersettings)</visible>
+			</control>
+			<control type="label">
+				<width>auto</width>
+				<height>80</height>
+				<font>MsTitle</font>
+				<aligny>center</aligny>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$LOCALIZE[14211]</label>
+				<visible>Window.IsVisible(mediasettings)</visible>
+			</control>
+			<control type="label">
+				<width>auto</width>
+				<height>80</height>
+				<font>MsTitle</font>
+				<aligny>center</aligny>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$LOCALIZE[13000]</label>
+				<visible>Window.IsVisible(systemsettings)</visible>
+			</control>
+			<control type="label">
+				<width>auto</width>
+				<height>80</height>
+				<font>MsTitle</font>
+				<aligny>center</aligny>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$LOCALIZE[14036]</label>
+				<visible>Window.IsVisible(servicesettings)</visible>
+			</control>
+			<control type="label">
+				<width>auto</width>
+				<height>80</height>
+				<font>MsTitle</font>
+				<aligny>center</aligny>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$LOCALIZE[15016]</label>
+				<visible>Window.IsVisible(gamesettings)</visible>
+			</control>
+			<control type="label">
+				<width>auto</width>
+				<height>80</height>
+				<font>MsTitle</font>
+				<aligny>center</aligny>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$LOCALIZE[19180]</label>
+				<visible>Window.IsVisible(pvrsettings)</visible>
+			</control>
+		</control>
+		<!-- Left: sections -->
+		<control id="3" type="grouplist">
+			<left>72</left>
+			<top>200</top>
+			<width>520</width>
+			<height>624</height>
+			<itemgap>0</itemgap>
+			<onleft>Back</onleft>
+			<onright>5</onright>
+			<onup>noop</onup>
+			<ondown>20</ondown>
+			<scrolltime tween="cubic" easing="out">200</scrolltime>
+		</control>
+		<control id="10" type="button">
+			<width>520</width>
+			<height>88</height>
+			<textoffsetx>32</textoffsetx>
+			<textwidth>456</textwidth>
+			<aligny>center</aligny>
+			<font>Med32</font>
+			<textcolor>NotFocusedColour</textcolor>
+			<focusedcolor>ff000000</focusedcolor>
+			<texturefocus border="33">ms-pill.png</texturefocus>
+			<texturenofocus/>
+			<onclick>SetFocus(5)</onclick>
+			<pulseonselect>false</pulseonselect>
+		</control>
+		<!-- Settings level button -->
+		<control type="label">
+			<left>104</left>
+			<top>840</top>
+			<width>456</width>
+			<height>32</height>
+			<font>Light28</font>
+			<aligny>center</aligny>
+			<textcolor>MutedColour</textcolor>
+			<label>$LOCALIZE[10037]</label>
+		</control>
+		<control id="20" type="button">
+			<left>72</left>
+			<top>876</top>
+			<width>520</width>
+			<height>88</height>
+			<textoffsetx>32</textoffsetx>
+			<textwidth>456</textwidth>
+			<aligny>center</aligny>
+			<font>Med32</font>
+			<textcolor>NotFocusedColour</textcolor>
+			<focusedcolor>ff000000</focusedcolor>
+			<texturefocus border="33">ms-pill.png</texturefocus>
+			<texturenofocus/>
+			<onup>3</onup>
+			<ondown>noop</ondown>
+			<onleft>Back</onleft>
+			<onright>5</onright>
+			<onclick>SettingsLevelChange</onclick>
+			<pulseonselect>false</pulseonselect>
+		</control>
+		<!-- Right: settings list card -->
+		<control type="image">
+			<left>640</left>
+			<top>184</top>
+			<width>1224</width>
+			<height>856</height>
+			<texture border="47" colordiffuse="661f2633">ms-card.png</texture>
+		</control>
+		<control id="5" type="grouplist">
+			<left>656</left>
+			<top>200</top>
+			<width>1192</width>
+			<height>720</height>
+			<itemgap>0</itemgap>
+			<onleft>3</onleft>
+			<onright>noop</onright>
+			<onup>noop</onup>
+			<ondown>noop</ondown>
+			<onback>3</onback>
+			<scrolltime tween="cubic" easing="out">200</scrolltime>
+			<usecontrolcoords>true</usecontrolcoords>
+		</control>
+		<control type="textbox">
+			<left>688</left>
+			<top>936</top>
+			<width>1128</width>
+			<height>92</height>
+			<font>Light28</font>
+			<aligny>top</aligny>
+			<textcolor>99ffffff</textcolor>
+			<label>$INFO[Control.GetLabel(6)]</label>
+		</control>
+		<!-- Templates Kodi copies into id=5 -->
+		<control id="7" type="button">
+			<width>1192</width>
+			<height>80</height>
+			<font>Light32</font>
+			<textoffsetx>32</textoffsetx>
+			<aligny>center</aligny>
+			<textcolor>e6ffffff</textcolor>
+			<focusedcolor>ff000000</focusedcolor>
+			<disabledcolor>DisabledColour</disabledcolor>
+			<texturefocus border="33">ms-pill.png</texturefocus>
+			<texturenofocus/>
+		</control>
+		<control id="8" type="radiobutton">
+			<width>1192</width>
+			<height>80</height>
+			<font>Light32</font>
+			<textwidth>950</textwidth>
+			<textoffsetx>32</textoffsetx>
+			<aligny>center</aligny>
+			<textcolor>e6ffffff</textcolor>
+			<focusedcolor>ff000000</focusedcolor>
+			<disabledcolor>DisabledColour</disabledcolor>
+			<radiowidth>72</radiowidth>
+			<radioheight>40</radioheight>
+			<radioposx>1088</radioposx>
+			<textureradioonfocus>ms-toggle-on-fo.png</textureradioonfocus>
+			<textureradioonnofocus>ms-toggle-on-nf.png</textureradioonnofocus>
+			<textureradioondisabled colordiffuse="66ffffff">ms-toggle-on-nf.png</textureradioondisabled>
+			<textureradioofffocus>ms-toggle-off-fo.png</textureradioofffocus>
+			<textureradiooffnofocus>ms-toggle-off-nf.png</textureradiooffnofocus>
+			<textureradiooffdisabled colordiffuse="66ffffff">ms-toggle-off-nf.png</textureradiooffdisabled>
+			<texturefocus border="33">ms-pill.png</texturefocus>
+			<texturenofocus/>
+		</control>
+		<control id="9" type="spincontrolex">
+			<width>1192</width>
+			<height>80</height>
+			<font>Light32</font>
+			<textoffsetx>32</textoffsetx>
+			<aligny>center</aligny>
+			<textcolor>e6ffffff</textcolor>
+			<focusedcolor>ff000000</focusedcolor>
+			<disabledcolor>DisabledColour</disabledcolor>
+			<selectedcolor>SelectedColour</selectedcolor>
+			<texturefocus border="33">ms-pill.png</texturefocus>
+			<texturenofocus/>
+			<reverse>yes</reverse>
+		</control>
+		<control id="11" type="image">
+			<height>16</height>
+			<texture/>
+		</control>
+		<control id="13" type="sliderex">
+			<width>1192</width>
+			<height>80</height>
+			<font>Light32</font>
+			<textwidth>800</textwidth>
+			<textoffsetx>32</textoffsetx>
+			<textcolor>e6ffffff</textcolor>
+			<focusedcolor>ff000000</focusedcolor>
+			<disabledcolor>DisabledColour</disabledcolor>
+			<texturefocus border="33">ms-pill.png</texturefocus>
+			<texturenofocus/>
+			<sliderwidth>200</sliderwidth>
+			<sliderheight>12</sliderheight>
+			<texturesliderbar colordiffuse="4dffffff">white.png</texturesliderbar>
+			<texturesliderbardisabled colordiffuse="DisabledColour">white.png</texturesliderbardisabled>
+			<textureslidernib colordiffuse="b3ffffff">white.png</textureslidernib>
+			<textureslidernibdisabled colordiffuse="DisabledColour">white.png</textureslidernibdisabled>
+			<textureslidernibfocus colordiffuse="ffffffff">white.png</textureslidernibfocus>
+		</control>
+		<control id="14" type="label">
+			<left>32</left>
+			<width>1160</width>
+			<height>64</height>
+			<font>Med28</font>
+			<aligny>bottom</aligny>
+			<textcolor>MutedColour</textcolor>
+		</control>
+		<control id="15" type="colorbutton">
+			<width>1192</width>
+			<height>80</height>
+			<font>Light32</font>
+			<textoffsetx>32</textoffsetx>
+			<aligny>center</aligny>
+			<textcolor>e6ffffff</textcolor>
+			<focusedcolor>ff000000</focusedcolor>
+			<disabledcolor>DisabledColour</disabledcolor>
+			<texturefocus border="33">ms-pill.png</texturefocus>
+			<texturenofocus/>
+		</control>
+	</controls>
+</window>

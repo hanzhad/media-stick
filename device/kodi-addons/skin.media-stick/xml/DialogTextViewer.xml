@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<defaultcontrol always="true">5</defaultcontrol>
+	<controls>
+		<include>DialogBackgroundImage</include>
+		<control type="group">
+			<include>DialogAnimation</include>
+			<centerleft>50%</centerleft>
+			<centertop>50%</centertop>
+			<width>1180</width>
+			<height>780</height>
+			<control type="image">
+				<width>1180</width>
+				<height>780</height>
+				<texture border="47" colordiffuse="DialogBackColour">ms-card.png</texture>
+			</control>
+			<control id="1" type="label">
+				<left>48</left>
+				<top>32</top>
+				<width>1084</width>
+				<height>52</height>
+				<font>MsHeading</font>
+				<textcolor>FFFFFFFF</textcolor>
+			</control>
+			<control id="5" type="textbox">
+				<left>48</left>
+				<top>104</top>
+				<width>1084</width>
+				<height>628</height>
+				<align>left</align>
+				<font>Reg25</font>
+				<textcolor>NotFocusedColour</textcolor>
+				<autoscroll>false</autoscroll>
+				<onleft>Close</onleft>
+				<onright>Close</onright>
+			</control>
+		</control>
+	</controls>
+</window>

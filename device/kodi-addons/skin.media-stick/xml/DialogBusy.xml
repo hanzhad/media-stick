@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<controls>
+		<control type="group">
+			<include>DialogAnimation</include>
+			<centerleft>50%</centerleft>
+			<centertop>50%</centertop>
+			<width>240</width>
+			<height>84</height>
+			<control type="image">
+				<width>240</width>
+				<height>84</height>
+				<texture border="33" colordiffuse="DialogBackColour">ms-pill.png</texture>
+			</control>
+			<control type="label">
+				<width>240</width>
+				<height>84</height>
+				<align>center</align>
+				<aligny>center</aligny>
+				<font>Med24</font>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$LOCALIZE[15107]</label>
+			</control>
+			<control id="10" type="progress">
+				<left>32</left>
+				<top>64</top>
+				<width>176</width>
+				<height>6</height>
+				<visible>!String.IsEmpty(Control.GetLabel(10))</visible>
+			</control>
+		</control>
+	</controls>
+</window>

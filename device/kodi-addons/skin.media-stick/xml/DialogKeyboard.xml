@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<onload>Setfocus(300)</onload>
+	<controls>
+		<include>DialogBackgroundImage</include>
+		<control type="group">
+			<include>DialogAnimation</include>
+			<centerleft>50%</centerleft>
+			<centertop>50%</centertop>
+			<width>1100</width>
+			<height>840</height>
+			<!-- Compact card when phone keyboard mode is active -->
+			<control type="image">
+				<width>1100</width>
+				<height>380</height>
+				<texture border="47" colordiffuse="DialogBackColour">ms-card.png</texture>
+				<visible>!Skin.HasSetting(ms_tvkeys)</visible>
+			</control>
+			<!-- Expanded card when on-screen key grid is shown -->
+			<control type="image">
+				<width>1100</width>
+				<height>840</height>
+				<texture border="47" colordiffuse="DialogBackColour">ms-card.png</texture>
+				<visible>Skin.HasSetting(ms_tvkeys)</visible>
+			</control>
+			<control type="group">
+				<left>56</left>
+				<top>44</top>
+				<control id="311" type="label">
+					<width>988</width>
+					<height>40</height>
+					<font>Med28</font>
+					<textcolor>FFFFFFFF</textcolor>
+				</control>
+				<control id="312" type="edit">
+					<top>64</top>
+					<width>988</width>
+					<height>56</height>
+					<ondown condition="Skin.HasSetting(ms_tvkeys)">1000</ondown>
+					<ondown condition="!Skin.HasSetting(ms_tvkeys)">7000</ondown>
+					<font>Med28</font>
+					<textcolor>ffd8d8d8</textcolor>
+					<focusedcolor>ffffffff</focusedcolor>
+					<hinttext/>
+				</control>
+				<control type="image">
+					<top>126</top>
+					<width>988</width>
+					<height>2</height>
+					<texture colordiffuse="4dffffff">white.png</texture>
+				</control>
+				<control type="label">
+					<top>148</top>
+					<width>988</width>
+					<height>44</height>
+					<font>Reg25</font>
+					<textcolor>MutedColour</textcolor>
+					<label>Type on your phone: the remote shows a text box</label>
+					<visible>!Skin.HasSetting(ms_tvkeys)</visible>
+				</control>
+				<control type="group">
+					<top>148</top>
+					<control id="1000" type="grouplist">
+						<visible>Skin.HasSetting(ms_tvkeys)</visible>
+						<width>988</width>
+						<height>72</height>
+						<itemgap>8</itemgap>
+						<onup>312</onup>
+						<onleft>1000</onleft>
+						<onright>1000</onright>
+						<orientation>horizontal</orientation>
+						<control id="100" type="button"><ondown>120</ondown><include>KeyboardButtons</include></control>
+						<control id="101" type="button"><ondown>121</ondown><include>KeyboardButtons</include></control>
+						<control id="102" type="button"><ondown>122</ondown><include>KeyboardButtons</include></control>
+						<control id="103" type="button"><ondown>123</ondown><include>KeyboardButtons</include></control>
+						<control id="104" type="button"><ondown>124</ondown><include>KeyboardButtons</include></control>
+						<control id="105" type="button"><ondown>125</ondown><include>KeyboardButtons</include></control>
+						<control id="106" type="button"><ondown>126</ondown><include>KeyboardButtons</include></control>
+						<control id="107" type="button"><ondown>127</ondown><include>KeyboardButtons</include></control>
+						<control id="108" type="button"><ondown>128</ondown><include>KeyboardButtons</include></control>
+						<control id="109" type="button"><ondown>129</ondown><include>KeyboardButtons</include></control>
+						<control id="110" type="button"><ondown>130</ondown><include>KeyboardButtons</include></control>
+						<control id="111" type="button"><ondown>131</ondown><include>KeyboardButtons</include></control>
+					</control>
+					<control id="2000" type="grouplist">
+						<visible>Skin.HasSetting(ms_tvkeys)</visible>
+						<top>84</top>
+						<width>988</width>
+						<height>72</height>
+						<itemgap>8</itemgap>
+						<onleft>2000</onleft>
+						<onright>2000</onright>
+						<orientation>horizontal</orientation>
+						<control id="120" type="button"><onup>100</onup><ondown>140</ondown><include>KeyboardButtons</include></control>
+						<control id="121" type="button"><onup>101</onup><ondown>141</ondown><include>KeyboardButtons</include></control>
+						<control id="122" type="button"><onup>102</onup><ondown>142</ondown><include>KeyboardButtons</include></control>
+						<control id="123" type="button"><onup>103</onup><ondown>143</ondown><include>KeyboardButtons</include></control>
+						<control id="124" type="button"><onup>104</onup><ondown>144</ondown><include>KeyboardButtons</include></control>
+						<control id="125" type="button"><onup>105</onup><ondown>145</ondown><include>KeyboardButtons</include></control>
+						<control id="126" type="button"><onup>106</onup><ondown>146</ondown><include>KeyboardButtons</include></control>
+						<control id="127" type="button"><onup>107</onup><ondown>147</ondown><include>KeyboardButtons</include></control>
+						<control id="128" type="button"><onup>108</onup><ondown>148</ondown><include>KeyboardButtons</include></control>
+						<control id="129" type="button"><onup>109</onup><ondown>149</ondown><include>KeyboardButtons</include></control>
+						<control id="130" type="button"><onup>110</onup><ondown>150</ondown><include>KeyboardButtons</include></control>
+						<control id="131" type="button"><onup>111</onup><ondown>151</ondown><include>KeyboardButtons</include></control>
+					</control>
+					<control id="3000" type="grouplist">
+						<visible>Skin.HasSetting(ms_tvkeys)</visible>
+						<top>168</top>
+						<width>988</width>
+						<height>72</height>
+						<itemgap>8</itemgap>
+						<onleft>3000</onleft>
+						<onright>3000</onright>
+						<orientation>horizontal</orientation>
+						<control id="140" type="button"><onup>120</onup><ondown>160</ondown><include>KeyboardButtons</include></control>
+						<control id="141" type="button"><onup>121</onup><ondown>161</ondown><include>KeyboardButtons</include></control>
+						<control id="142" type="button"><onup>122</onup><ondown>162</ondown><include>KeyboardButtons</include></control>
+						<control id="143" type="button"><onup>123</onup><ondown>163</ondown><include>KeyboardButtons</include></control>
+						<control id="144" type="button"><onup>124</onup><ondown>164</ondown><include>KeyboardButtons</include></control>
+						<control id="145" type="button"><onup>125</onup><ondown>165</ondown><include>KeyboardButtons</include></control>
+						<control id="146" type="button"><onup>126</onup><ondown>166</ondown><include>KeyboardButtons</include></control>
+						<control id="147" type="button"><onup>127</onup><ondown>167</ondown><include>KeyboardButtons</include></control>
+						<control id="148" type="button"><onup>128</onup><ondown>168</ondown><include>KeyboardButtons</include></control>
+						<control id="149" type="button"><onup>129</onup><ondown>169</ondown><include>KeyboardButtons</include></control>
+						<control id="150" type="button"><onup>130</onup><ondown>170</ondown><include>KeyboardButtons</include></control>
+						<control id="151" type="button"><onup>131</onup><ondown>171</ondown><include>KeyboardButtons</include></control>
+					</control>
+					<control id="4000" type="grouplist">
+						<visible>Skin.HasSetting(ms_tvkeys)</visible>
+						<top>252</top>
+						<width>988</width>
+						<height>72</height>
+						<itemgap>8</itemgap>
+						<onleft>4000</onleft>
+						<onright>4000</onright>
+						<orientation>horizontal</orientation>
+						<control id="160" type="button"><onup>140</onup><ondown>32</ondown><include>KeyboardButtons</include></control>
+						<control id="161" type="button"><onup>141</onup><ondown>32</ondown><include>KeyboardButtons</include></control>
+						<control id="162" type="button"><onup>142</onup><ondown>32</ondown><include>KeyboardButtons</include></control>
+						<control id="163" type="button"><onup>143</onup><ondown>32</ondown><include>KeyboardButtons</include></control>
+						<control id="164" type="button"><onup>144</onup><ondown>32</ondown><include>KeyboardButtons</include></control>
+						<control id="165" type="button"><onup>145</onup><ondown>8</ondown><include>KeyboardButtons</include></control>
+						<control id="166" type="button"><onup>146</onup><ondown>8</ondown><include>KeyboardButtons</include></control>
+						<control id="167" type="button"><onup>147</onup><ondown>8</ondown><include>KeyboardButtons</include></control>
+						<control id="168" type="button"><onup>148</onup><ondown>305</ondown><include>KeyboardButtons</include></control>
+						<control id="169" type="button"><onup>149</onup><ondown>306</ondown><include>KeyboardButtons</include></control>
+						<control id="170" type="button"><onup>150</onup><ondown>306</ondown><include>KeyboardButtons</include></control>
+						<control id="171" type="button"><onup>151</onup><ondown>306</ondown><include>KeyboardButtons</include></control>
+					</control>
+					<control id="5000" type="grouplist">
+						<visible>Skin.HasSetting(ms_tvkeys)</visible>
+						<top>336</top>
+						<width>988</width>
+						<height>72</height>
+						<itemgap>8</itemgap>
+						<onleft>5000</onleft>
+						<onright>5000</onright>
+						<orientation>horizontal</orientation>
+						<control id="32" type="button">
+							<onup>160</onup>
+							<ondown>302</ondown>
+							<width>440</width>
+							<label>20182</label>
+							<include>KeyboardButtons</include>
+						</control>
+						<control id="8" type="button">
+							<onup>165</onup>
+							<ondown>303</ondown>
+							<width>260</width>
+							<label>20181</label>
+							<include>KeyboardButtons</include>
+						</control>
+						<control id="305" type="button">
+							<onup>168</onup>
+							<ondown>304</ondown>
+							<width>132</width>
+							<label>&lt;</label>
+							<include>KeyboardButtons</include>
+						</control>
+						<control id="306" type="button">
+							<onup>169</onup>
+							<ondown>307</ondown>
+							<width>132</width>
+							<label>&gt;</label>
+							<include>KeyboardButtons</include>
+						</control>
+					</control>
+					<control id="6000" type="grouplist">
+						<visible>Skin.HasSetting(ms_tvkeys)</visible>
+						<top>420</top>
+						<width>988</width>
+						<height>72</height>
+						<itemgap>8</itemgap>
+						<onleft>6000</onleft>
+						<onright>6000</onright>
+						<orientation>horizontal</orientation>
+						<control id="302" type="button">
+							<width>300</width>
+							<onup>32</onup>
+							<ondown>9101</ondown>
+							<label>20178</label>
+							<include>KeyboardButtons</include>
+						</control>
+						<control id="303" type="button">
+							<width>300</width>
+							<onup>8</onup>
+							<ondown>301</ondown>
+							<label>20179</label>
+							<include>KeyboardButtons</include>
+						</control>
+						<control id="304" type="button">
+							<width>184</width>
+							<onup>305</onup>
+							<ondown>300</ondown>
+							<label>20180</label>
+							<include>KeyboardButtons</include>
+						</control>
+						<control id="307" type="button">
+							<width>180</width>
+							<onup>306</onup>
+							<ondown>300</ondown>
+							<label>19006</label>
+							<include>KeyboardButtons</include>
+						</control>
+					</control>
+					<control id="7000" type="grouplist">
+						<top>516</top>
+						<animation effect="slide" start="0,0" end="0,-432" time="0" condition="!Skin.HasSetting(ms_tvkeys)">Conditional</animation>
+						<width>988</width>
+						<height>72</height>
+						<itemgap>12</itemgap>
+						<onleft>7000</onleft>
+						<onright>7000</onright>
+						<orientation>horizontal</orientation>
+						<control id="9101" type="togglebutton">
+							<width>260</width>
+							<onup condition="Skin.HasSetting(ms_tvkeys)">302</onup>
+							<onup condition="!Skin.HasSetting(ms_tvkeys)">312</onup>
+							<onclick>Skin.ToggleSetting(ms_tvkeys)</onclick>
+							<label>Keyboard</label>
+							<altlabel>Hide keys</altlabel>
+							<usealttexture>Skin.HasSetting(ms_tvkeys)</usealttexture>
+							<include>KeyboardButtons</include>
+						</control>
+						<control id="309" type="button">
+							<visible>Skin.HasSetting(ms_tvkeys)</visible>
+							<width>260</width>
+							<onup>302</onup>
+							<include>KeyboardButtons</include>
+							<label>20177</label>
+						</control>
+						<control id="301" type="button">
+							<width>220</width>
+							<onup condition="Skin.HasSetting(ms_tvkeys)">303</onup>
+							<onup condition="!Skin.HasSetting(ms_tvkeys)">312</onup>
+							<include>KeyboardButtons</include>
+							<label>222</label>
+						</control>
+						<control id="300" type="button">
+							<width>212</width>
+							<onup condition="Skin.HasSetting(ms_tvkeys)">307</onup>
+							<onup condition="!Skin.HasSetting(ms_tvkeys)">312</onup>
+							<include>KeyboardButtons</include>
+							<label>20177</label>
+						</control>
+					</control>
+				</control>
+			</control>
+		</control>
+	</controls>
+</window>

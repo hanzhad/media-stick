@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<defaultcontrol always="true">10</defaultcontrol>
+	<controls>
+		<include>DialogBackgroundImage</include>
+		<control type="group">
+			<include>DialogAnimation</include>
+			<centerleft>50%</centerleft>
+			<centertop>50%</centertop>
+			<width>880</width>
+			<height>420</height>
+			<control type="image">
+				<width>880</width>
+				<height>420</height>
+				<texture border="47" colordiffuse="DialogBackColour">ms-card.png</texture>
+			</control>
+			<control id="1" type="label">
+				<left>48</left>
+				<top>36</top>
+				<width>784</width>
+				<height>52</height>
+				<font>MsHeading</font>
+				<textcolor>FFFFFFFF</textcolor>
+			</control>
+			<control id="9" type="textbox">
+				<left>48</left>
+				<top>112</top>
+				<width>784</width>
+				<height>180</height>
+				<font>Light28</font>
+				<textcolor>NotFocusedColour</textcolor>
+				<autoscroll>false</autoscroll>
+			</control>
+			<control id="20" type="progress">
+				<left>48</left>
+				<top>274</top>
+				<width>784</width>
+				<height>12</height>
+				<info>System.Progressbar</info>
+				<visible>Window.IsVisible(progressdialog)</visible>
+			</control>
+			<control type="grouplist">
+				<left>48</left>
+				<top>316</top>
+				<width>784</width>
+				<height>68</height>
+				<itemgap>16</itemgap>
+				<align>center</align>
+				<orientation>horizontal</orientation>
+				<control id="10" type="button">
+					<width>240</width>
+					<height>66</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<font>Med28</font>
+				</control>
+				<control id="11" type="button">
+					<width>240</width>
+					<height>66</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<font>Med28</font>
+				</control>
+				<control id="12" type="button">
+					<width>240</width>
+					<height>66</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<font>Med28</font>
+				</control>
+			</control>
+		</control>
+	</controls>
+</window>

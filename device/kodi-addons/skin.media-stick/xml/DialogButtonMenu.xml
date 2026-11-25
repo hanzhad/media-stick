@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<defaultcontrol always="true">6000</defaultcontrol>
+	<controls>
+		<include>DialogBackgroundImage</include>
+		<control type="group">
+			<include>DialogAnimation</include>
+			<centerleft>50%</centerleft>
+			<centertop>50%</centertop>
+			<width>760</width>
+			<height>380</height>
+			<control type="image">
+				<width>760</width>
+				<height>380</height>
+				<texture border="47" colordiffuse="DialogBackColour">ms-card.png</texture>
+			</control>
+			<control type="label">
+				<left>48</left>
+				<top>32</top>
+				<width>664</width>
+				<height>52</height>
+				<align>center</align>
+				<font>Light60</font>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$INFO[System.Time(hh:mm)]</label>
+			</control>
+			<control id="6000" type="list">
+				<left>38</left>
+				<top>124</top>
+				<width>684</width>
+				<height>216</height>
+				<scrolltime>160</scrolltime>
+				<orientation>horizontal</orientation>
+				<itemlayout height="216" width="228">
+					<control type="image">
+						<left>16</left>
+						<top>16</top>
+						<width>196</width>
+						<height>184</height>
+						<texture border="33" colordiffuse="1affffff">ms-pill.png</texture>
+					</control>
+					<control type="image">
+						<left>82</left>
+						<top>44</top>
+						<width>64</width>
+						<height>64</height>
+						<aspectratio>keep</aspectratio>
+						<colordiffuse>b3ffffff</colordiffuse>
+						<texture>$INFO[ListItem.Icon]</texture>
+					</control>
+					<control type="label">
+						<left>24</left>
+						<top>124</top>
+						<width>180</width>
+						<height>56</height>
+						<align>center</align>
+						<font>Med24</font>
+						<textcolor>NotFocusedColour</textcolor>
+						<label>$INFO[ListItem.Label]</label>
+					</control>
+				</itemlayout>
+				<focusedlayout height="216" width="228">
+					<control type="image">
+						<left>16</left>
+						<top>16</top>
+						<width>196</width>
+						<height>184</height>
+						<texture border="33">ms-pill.png</texture>
+					</control>
+					<control type="image">
+						<left>82</left>
+						<top>44</top>
+						<width>64</width>
+						<height>64</height>
+						<aspectratio>keep</aspectratio>
+						<colordiffuse>ff000000</colordiffuse>
+						<texture>$INFO[ListItem.Icon]</texture>
+					</control>
+					<control type="label">
+						<left>24</left>
+						<top>124</top>
+						<width>180</width>
+						<height>56</height>
+						<align>center</align>
+						<font>Med24</font>
+						<textcolor>ff000000</textcolor>
+						<label>$INFO[ListItem.Label]</label>
+					</control>
+				</focusedlayout>
+				<content>
+					<item>
+						<label>Restart Kodi</label>
+						<icon>icon-power.png</icon>
+						<onclick>Dialog.Close(shutdownmenu)</onclick>
+						<onclick>System.Exec("sudo -n /bin/systemctl restart kodi.service")</onclick>
+					</item>
+					<item>
+						<label>Reboot</label>
+						<icon>icon-power.png</icon>
+						<onclick>Dialog.Close(shutdownmenu)</onclick>
+						<onclick>System.Exec("sudo -n /bin/systemctl reboot")</onclick>
+					</item>
+					<item>
+						<label>Power off</label>
+						<icon>icon-power.png</icon>
+						<onclick>Dialog.Close(shutdownmenu)</onclick>
+						<onclick>System.Exec("sudo -n /bin/systemctl poweroff")</onclick>
+					</item>
+				</content>
+			</control>
+		</control>
+	</controls>
+</window>

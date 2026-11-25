@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<controls>
+		<control type="group">
+			<include>DialogAnimation</include>
+			<right>48</right>
+			<top>48</top>
+			<width>360</width>
+			<height>68</height>
+			<control type="image">
+				<width>360</width>
+				<height>68</height>
+				<texture border="33" colordiffuse="DialogBackColour">ms-pill.png</texture>
+			</control>
+			<control type="label">
+				<left>24</left>
+				<top>0</top>
+				<width>110</width>
+				<height>68</height>
+				<font>Med22</font>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$LOCALIZE[13376]</label>
+			</control>
+			<control type="progress" id="1">
+				<left>136</left>
+				<top>29</top>
+				<width>196</width>
+				<height>10</height>
+				<info>Player.Volume</info>
+			</control>
+		</control>
+	</controls>
+</window>
