@@ -460,7 +460,7 @@ def hero_info(card: Optional[Card]) -> dict:
     if is_show:
         play_label = words.tr("Seasons and episodes")
         alt_label = ""
-        guide_label = words.tr("Episodes")
+        guide_label = ""
     else:
         play_label = card.resume_label if card.resume_label else words.tr("Watch")
         alt_label = words.tr("From start") if card.alt_url else ""
@@ -478,3 +478,17 @@ def hero_info(card: Optional[Card]) -> dict:
         "has_guide": "1" if guide_label else "",
         "has_fav": "1" if card.fav_key else "",
     }
+
+
+def skeleton_cards(count=5) -> list:
+    return [
+        Card(
+            kind="skeleton", key=f"skel:{i}", fav_key="", title="",
+            art="", banner="", meta="", desc="", play_url="", alt_url="",
+            cid="", epg="", start=0, stop=0, resume_pos=0, bar="", pbar="",
+            fav=False, catchup=False, playable=False, dim=False, num="",
+            initials="", plate="", plate_hi="", bg="", tint="", now="",
+            nowline="", next="", nextline="", resume_label="", small=False,
+        )
+        for i in range(count)
+    ]

@@ -40,14 +40,32 @@ class Guide:
             self.getControl(GUIDE).reset()
             self.getControl(MODAL_TABS).reset()
         self._select_grid(pos)
-        self._focus_on(self.GRID_ID)
+        self._focus_on(self._grid_id())
+
+    def _open_detail_modal(self, card: sections.Card):
+        with self._lock:
+            self.modal_gen += 1
+            self.modal_kind = "detail"
+            self.modal_card = card
+            self.modal_return_pos = max(0, self.getControl(self._grid_id()).getSelectedPosition())
+            self.modal_show_title = card.title
+            self.modal_rows = []
+            self.modal_tabs = []
+            self.modal_seasons = []
+            self._prop("modal", "detail")
+            self._prop("guide", "")
+            self._prop("guide_title", card.title)
+            self._sync_hero(card)
+            self.getControl(GUIDE).reset()
+            self.getControl(MODAL_TABS).reset()
+        self._focus_on(210)
 
     def _open_show_modal(self, card: sections.Card):
         with self._lock:
             self.modal_gen += 1
             gen = self.modal_gen
             self.modal_kind = "show"
-            self.modal_return_pos = max(0, self.getControl(self.GRID_ID).getSelectedPosition())
+            self.modal_return_pos = max(0, self.getControl(self._grid_id()).getSelectedPosition())
             self.modal_show_title = card.title
             self.modal_rows = []
             self.modal_tabs = []
@@ -138,7 +156,7 @@ class Guide:
             gen = self.modal_gen
             self.modal_kind = "guide"
             self.modal_channel = ch
-            self.modal_return_pos = max(0, self.getControl(self.GRID_ID).getSelectedPosition())
+            self.modal_return_pos = max(0, self.getControl(self._grid_id()).getSelectedPosition())
             now = self._now()
             tabs = sections.day_tabs(ch.days if ch.catchup else 0, 3, now)
             today_idx = min(len(tabs) - 1, ch.days if ch.catchup else 0)

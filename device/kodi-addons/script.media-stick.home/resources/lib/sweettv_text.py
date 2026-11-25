@@ -26,6 +26,21 @@ def section_hint(kind) -> str:
     return "        ".join(f"[COLOR {ACCENT}]{key}[/COLOR]  {text}" for key, text in (("OK", what), (tr("Back"), tr("Go back"))))
 
 
+SECTION_NAMES = {
+    "search": "Search",
+    "continue": "Continue",
+    "favourites": "Favourites",
+    "shows": "Shows",
+    "series": "Series",
+    "movies": "Movies",
+    "channels": "TV Channels",
+}
+
+
+def section_title(section) -> str:
+    return tr(SECTION_NAMES.get(section, "SWEET.TV"))
+
+
 def chip(demo, signed) -> str:
     """The account chip top left. "Demo" only when the screen runs as the demo."""
     return tr("Demo") if demo else tr("Signed in") if signed else tr("Sign in")
