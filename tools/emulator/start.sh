@@ -68,14 +68,20 @@ if [ "$MODE" = "live" ]; then
     echo "Staging live SWEET.TV state from media@$HOST into ephemeral tmpfs..."
     scp -i "$KEY" -o ConnectTimeout=5 -q "media@$HOST:.kodi/userdata/addon_data/plugin.video.sweettv/settings.xml" "$CRED_DIR/settings.xml"
     scp -i "$KEY" -o ConnectTimeout=5 -q "media@$HOST:.kodi/temp/channelList.json" "$CRED_DIR/channelList.json" || true
-    scp -i "$KEY" -o ConnectTimeout=5 -q "media@$HOST:/var/lib/media-stick/resume/resume.json" "$CRED_DIR/resume.json" || true
-    scp -i "$KEY" -o ConnectTimeout=5 -q "media@$HOST:/var/lib/media-stick/resume/favourites.json" "$CRED_DIR/favourites.json" || true
-    chmod 600 "$CRED_DIR"/*
+    if ssh -i "$KEY" -o ConnectTimeout=5 -o BatchMode=yes "media@$HOST" "test -f /var/lib/media-stick/resume/state.db"; then
+        ssh -i "$KEY" -o ConnectTimeout=5 -o BatchMode=yes "media@$HOST" \
+            "python3 -c 'import sqlite3; s=sqlite3.connect(\"/var/lib/media-stick/resume/state.db\"); d=sqlite3.connect(\"/tmp/emu-state.db\"); s.backup(d); d.close(); s.close()' && cat /tmp/emu-state.db && rm -f /tmp/emu-state.db" \
+            > "$CRED_DIR/state.db" || rm -f "$CRED_DIR/state.db"
+    fi
+    scp -i "$KEY" -o ConnectTimeout=5 -q "media@$HOST:/var/lib/media-stick/resume/positions.json" "$CRED_DIR/positions.json" || true
+    scp -i "$KEY" -o ConnectTimeout=5 -q "media@$HOST:/var/lib/media-stick/resume/sweettv-favourites.json" "$CRED_DIR/sweettv-favourites.json" || true
+    chmod 600 "$CRED_DIR"/* 2>/dev/null || true
     DOCKER_ARGS+=(-v "$CRED_DIR:/emu-creds:ro")
     [ -f "$CRED_DIR/settings.xml" ] && DOCKER_ARGS+=(-e SWEETTV_SETTINGS=/emu-creds/settings.xml)
     [ -f "$CRED_DIR/channelList.json" ] && DOCKER_ARGS+=(-e SWEETTV_CHANNELS=/emu-creds/channelList.json)
-    [ -f "$CRED_DIR/resume.json" ] && DOCKER_ARGS+=(-e SWEETTV_RESUME=/emu-creds/resume.json)
-    [ -f "$CRED_DIR/favourites.json" ] && DOCKER_ARGS+=(-e SWEETTV_FAVS=/emu-creds/favourites.json)
+    [ -s "$CRED_DIR/state.db" ] && DOCKER_ARGS+=(-e SWEETTV_STATE_DB=/emu-creds/state.db)
+    [ -f "$CRED_DIR/positions.json" ] && DOCKER_ARGS+=(-e SWEETTV_RESUME=/emu-creds/positions.json)
+    [ -f "$CRED_DIR/sweettv-favourites.json" ] && DOCKER_ARGS+=(-e SWEETTV_FAVS=/emu-creds/sweettv-favourites.json)
 fi
 
 if [ "$HEADLESS" = "1" ] || [ ! -d /tmp/.X11-unix ]; then

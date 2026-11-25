@@ -65,11 +65,15 @@ fi
 if [ -n "${SWEETTV_CHANNELS:-}" ] && [ -f "$SWEETTV_CHANNELS" ]; then
     cp "$SWEETTV_CHANNELS" "$KODI_HOME/temp/channelList.json"
 fi
+if [ -n "${SWEETTV_STATE_DB:-}" ] && [ -f "$SWEETTV_STATE_DB" ]; then
+    cp "$SWEETTV_STATE_DB" /var/lib/media-stick/resume/state.db
+    chmod 600 /var/lib/media-stick/resume/state.db
+fi
 if [ -n "${SWEETTV_RESUME:-}" ] && [ -f "$SWEETTV_RESUME" ]; then
-    cp "$SWEETTV_RESUME" /var/lib/media-stick/resume/resume.json
+    cp "$SWEETTV_RESUME" /var/lib/media-stick/resume/positions.json
 fi
 if [ -n "${SWEETTV_FAVS:-}" ] && [ -f "$SWEETTV_FAVS" ]; then
-    cp "$SWEETTV_FAVS" /var/lib/media-stick/resume/favourites.json
+    cp "$SWEETTV_FAVS" /var/lib/media-stick/resume/sweettv-favourites.json
 fi
 
 # Suppress YouTube first-run setup wizard in emulator
@@ -108,7 +112,9 @@ if [ -x /usr/local/bin/kodi-settings ]; then
         screensaver.mode= \
         input.enablemouse=true \
         addons.unknownsources=true \
-        "videoscreen.screenmode=$SCREEN_MODE" >/dev/null
+        "videoscreen.screenmode=$SCREEN_MODE" \
+        window.width=1920 \
+        window.height=1080 >/dev/null
 fi
 
 # Enable JSON-RPC on :9090 (disable webserver to avoid passwordless-webserver dialog)
@@ -170,6 +176,24 @@ try:
         rpc("Input.Left")
         time.sleep(0.2)
         rpc("Input.Select")
+except Exception:
+    pass
+for _ in range(10):
+    try:
+        win = json.loads(rpc("GUI.GetProperties", {"properties": ["currentwindow"]}) or "{}")
+        wid = ((win.get("result") or {}).get("currentwindow") or {}).get("id", 0)
+        if wid >= 10100:
+            rpc("Input.Back")
+            time.sleep(0.3)
+        else:
+            break
+    except Exception:
+        break
+try:
+    win = json.loads(rpc("GUI.GetProperties", {"properties": ["currentwindow"]}) or "{}")
+    wid = ((win.get("result") or {}).get("currentwindow") or {}).get("id", 0)
+    if wid in (10000, 10025):
+        rpc("Addons.ExecuteAddon", {"addonid": "script.media-stick.home"})
 except Exception:
     pass
 PYEOF

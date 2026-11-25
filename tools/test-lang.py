@@ -268,7 +268,7 @@ class Applier(unittest.TestCase):
     def test_the_service_reconciles_once_at_start(self):
         text = open(os.path.join(ADDON, "service.py"), encoding="utf-8").read()
         self.assertEqual(text.count("apply_language()"), 2)             # its definition and one call, before the loop
-        self.assertLess(text.index("    apply_language()\n"), text.index("monitor = xbmc.Monitor()"))
+        self.assertLess(text.index("    apply_language()\n"), text.index("monitor = HomeMonitor("))
         self.assertIn("lang.reconcile()", text)
 
 
