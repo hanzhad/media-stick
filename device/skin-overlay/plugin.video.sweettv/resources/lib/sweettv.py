@@ -811,7 +811,7 @@ def _ms_use_ffmpeg(cid, epg, protocol, drm):
     if protocol != 'hls' or not epg:
         return False
     _, _, begin, end = _ms_names(cid, epg)
-    return bool(begin and end and end <= int(time.time()))
+    return (not end) or end <= int(time.time())
 
 
 def _ms_name_the_item(cid, epg, offset=0):

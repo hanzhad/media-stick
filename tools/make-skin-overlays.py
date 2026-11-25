@@ -345,7 +345,7 @@ OVERLAYS = [
          "    if protocol != 'hls' or not epg:\n"
          "        return False\n"
          "    _, _, begin, end = _ms_names(cid, epg)\n"
-         "    return bool(begin and end and end <= int(time.time()))\n\n\n"
+         "    return (not end) or end <= int(time.time())\n\n\n"
          "def _ms_name_the_item(cid, epg, offset=0):\n"
          "    \"\"\"Wraps setResolvedUrl until the returned function is called: names the item, sets ResumeTime/TotalTime/DVR,\n"
          "    and applies the device's inputstream.adaptive max_resolution cap.\"\"\"\n"
