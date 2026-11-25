@@ -97,6 +97,10 @@ while IFS= read -r line; do
     && changed_units+=("$(basename "$rel").service")
 done <<< "$os_apply_out"
 systemd-tmpfiles --create /etc/tmpfiles.d/media-stick.conf
+if [ -e /run/media-stick/airplay.log ] && [ "$(stat -c %U /run/media-stick/airplay.log 2>/dev/null)" != media ]; then
+  chown media:media /run/media-stick/airplay.log
+  changed_units+=(airplay.service)
+fi
 [ "${sysctl_changed:-0}" = 1 ] && { sysctl --system >/dev/null || true; }
 [ "${journald_changed:-0}" = 1 ] && { systemctl restart systemd-journald || true; }
 if systemctl list-unit-files dphys-swapfile.service >/dev/null 2>&1; then

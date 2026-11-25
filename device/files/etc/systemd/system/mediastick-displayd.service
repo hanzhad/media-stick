@@ -5,13 +5,14 @@ After=local-fs.target systemd-tmpfiles-setup.service
 
 [Service]
 Type=simple
+Group=media
 ExecStart=/usr/bin/python3 /usr/local/bin/mediastick-displayd
 Restart=always
 RestartSec=2
 OOMScoreAdjust=-200
 RuntimeDirectory=media-stick
 RuntimeDirectoryPreserve=yes
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=1775
 StandardOutput=journal
 StandardError=journal
 
