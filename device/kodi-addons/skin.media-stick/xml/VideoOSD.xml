@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<defaultcontrol always="true">100</defaultcontrol>
+	<controls>
+		<control type="group">
+			<include>DialogAnimation</include>
+			<!-- Bottom dark gradient -->
+			<control type="image">
+				<left>0</left>
+				<top>620</top>
+				<width>1920</width>
+				<height>460</height>
+				<texture>gradient-bottom.png</texture>
+			</control>
+			<!-- Title and stream info -->
+			<control type="label">
+				<left>96</left>
+				<top>790</top>
+				<width>1320</width>
+				<height>48</height>
+				<font>Bold34</font>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$INFO[VideoPlayer.Title]</label>
+			</control>
+			<control type="label">
+				<left>96</left>
+				<top>842</top>
+				<width>1320</width>
+				<height>34</height>
+				<font>Reg22</font>
+				<textcolor>NotFocusedColour</textcolor>
+				<label>$INFO[VideoPlayer.TVShowTitle]</label>
+				<visible>!String.IsEmpty(VideoPlayer.TVShowTitle)</visible>
+			</control>
+			<!-- Time -->
+			<control type="label">
+				<left>1464</left>
+				<top>796</top>
+				<width>360</width>
+				<height>42</height>
+				<align>right</align>
+				<font>Med24</font>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$INFO[Player.Time] / $INFO[Player.Duration]</label>
+			</control>
+			<!-- Progress bar -->
+			<control type="progress" id="400">
+				<left>96</left>
+				<top>892</top>
+				<width>1728</width>
+				<height>10</height>
+				<info>Player.Progress</info>
+			</control>
+			<!-- Controls -->
+			<control type="grouplist" id="100">
+				<left>96</left>
+				<top>932</top>
+				<width>1728</width>
+				<height>72</height>
+				<itemgap>16</itemgap>
+				<orientation>horizontal</orientation>
+				<control type="button" id="201">
+					<width>160</width>
+					<height>60</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<label>$LOCALIZE[31355]</label>
+					<onclick>PlayerControl(Rewind)</onclick>
+				</control>
+				<control type="button" id="202">
+					<width>180</width>
+					<height>60</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<label>$LOCALIZE[12021]</label>
+					<onclick>PlayerControl(Play)</onclick>
+				</control>
+				<control type="button" id="203">
+					<width>150</width>
+					<height>60</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<label>$LOCALIZE[13170]</label>
+					<onclick>PlayerControl(Stop)</onclick>
+				</control>
+				<control type="button" id="204">
+					<width>170</width>
+					<height>60</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<label>$LOCALIZE[31356]</label>
+					<onclick>PlayerControl(Forward)</onclick>
+				</control>
+				<control type="button" id="205">
+					<width>190</width>
+					<height>60</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<label>$LOCALIZE[292]</label>
+					<onclick>ActivateWindow(osdaudiosettings)</onclick>
+				</control>
+				<control type="button" id="206">
+					<width>200</width>
+					<height>60</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<label>$LOCALIZE[287]</label>
+					<onclick>ActivateWindow(osdsubtitlesettings)</onclick>
+				</control>
+				<control type="button" id="207">
+					<width>190</width>
+					<height>60</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<label>$LOCALIZE[291]</label>
+					<onclick>ActivateWindow(osdvideosettings)</onclick>
+				</control>
+			</control>
+		</control>
+	</controls>
+</window>

@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<backgroundcolor>BackgroundColour</backgroundcolor>
+	<onload>Dialog.Close(all,true)</onload>
+	<defaultcontrol always="true">9000</defaultcontrol>
+	<include>WindowFadeAnimation</include>
+	<controls>
+		<include>BackgroundImage</include>
+		<control type="label">
+			<left>96</left>
+			<top>56</top>
+			<width>1200</width>
+			<height>100</height>
+			<font>MsTitle</font>
+			<aligny>center</aligny>
+			<textcolor>FFFFFFFF</textcolor>
+			<label>$LOCALIZE[5]</label>
+		</control>
+		<control id="9000" type="list">
+			<left>72</left>
+			<top>200</top>
+			<width>480</width>
+			<height>768</height>
+			<onup>9000</onup>
+			<ondown>9000</ondown>
+			<onleft>noop</onleft>
+			<onright>noop</onright>
+			<orientation>vertical</orientation>
+			<scrolltime tween="cubic" easing="out">200</scrolltime>
+			<itemlayout height="96" width="480">
+				<control type="image">
+					<left>32</left>
+					<top>24</top>
+					<width>48</width>
+					<height>48</height>
+					<aspectratio>keep</aspectratio>
+					<texture>$INFO[ListItem.Icon]</texture>
+					<colordiffuse>b3ffffff</colordiffuse>
+				</control>
+				<control type="label">
+					<left>108</left>
+					<width>350</width>
+					<height>96</height>
+					<font>Med32</font>
+					<aligny>center</aligny>
+					<textcolor>NotFocusedColour</textcolor>
+					<label>$INFO[ListItem.Label]</label>
+				</control>
+			</itemlayout>
+			<focusedlayout height="96" width="480">
+				<control type="image">
+					<width>480</width>
+					<height>96</height>
+					<texture border="33">ms-pill.png</texture>
+					<visible>Control.HasFocus(9000)</visible>
+				</control>
+				<control type="image">
+					<left>32</left>
+					<top>24</top>
+					<width>48</width>
+					<height>48</height>
+					<aspectratio>keep</aspectratio>
+					<texture>$INFO[ListItem.Icon]</texture>
+					<colordiffuse>ff000000</colordiffuse>
+				</control>
+				<control type="label">
+					<left>108</left>
+					<width>350</width>
+					<height>96</height>
+					<font>Med32</font>
+					<aligny>center</aligny>
+					<textcolor>ff000000</textcolor>
+					<selectedcolor>ff000000</selectedcolor>
+					<label>$INFO[ListItem.Label]</label>
+				</control>
+			</focusedlayout>
+			<content>
+				<item>
+					<label>14206</label>
+					<label2>$LOCALIZE[31115]</label2>
+					<icon>icon-settings.png</icon>
+					<onclick>ActivateWindow(interfacesettings)</onclick>
+				</item>
+				<item>
+					<label>14200</label>
+					<label2>$LOCALIZE[31117]</label2>
+					<icon>icon-settings.png</icon>
+					<onclick>ActivateWindow(playersettings)</onclick>
+				</item>
+				<item>
+					<label>14211</label>
+					<label2>$LOCALIZE[31118]</label2>
+					<icon>icon-settings.png</icon>
+					<onclick>ActivateWindow(mediasettings)</onclick>
+				</item>
+				<item>
+					<label>13000</label>
+					<label2>$LOCALIZE[31121]</label2>
+					<icon>icon-settings.png</icon>
+					<onclick>ActivateWindow(systemsettings)</onclick>
+				</item>
+				<item>
+					<label>14036</label>
+					<label2>$LOCALIZE[31122]</label2>
+					<icon>icon-settings.png</icon>
+					<onclick>ActivateWindow(servicesettings)</onclick>
+				</item>
+				<item>
+					<label>24001</label>
+					<label2>$LOCALIZE[31116]</label2>
+					<icon>icon-settings.png</icon>
+					<onclick>ActivateWindow(addonbrowser,addons://)</onclick>
+				</item>
+				<item>
+					<label>130</label>
+					<label2>$LOCALIZE[31127]</label2>
+					<icon>icon-settings.png</icon>
+					<onclick>ActivateWindow(systeminfo)</onclick>
+				</item>
+			</content>
+		</control>
+		<!-- Right info card -->
+		<control type="image">
+			<left>640</left>
+			<top>184</top>
+			<width>1224</width>
+			<height>840</height>
+			<texture border="47" colordiffuse="661f2633">ms-card.png</texture>
+		</control>
+		<control type="image">
+			<left>700</left>
+			<top>232</top>
+			<width>180</width>
+			<height>180</height>
+			<aspectratio align="left" aligny="top">keep</aspectratio>
+			<texture>$INFO[Container(9000).ListItem.Icon]</texture>
+			<colordiffuse>59ffffff</colordiffuse>
+		</control>
+		<control type="label">
+			<left>700</left>
+			<top>440</top>
+			<width>1080</width>
+			<height>60</height>
+			<font>MsHeading</font>
+			<textcolor>FFFFFFFF</textcolor>
+			<label>$INFO[Container(9000).ListItem.Label]</label>
+		</control>
+		<control type="textbox">
+			<left>700</left>
+			<top>520</top>
+			<width>1080</width>
+			<height>220</height>
+			<font>Light28</font>
+			<textcolor>NotFocusedColour</textcolor>
+			<label>$INFO[Container(9000).ListItem.Label2]</label>
+		</control>
+	</controls>
+</window>

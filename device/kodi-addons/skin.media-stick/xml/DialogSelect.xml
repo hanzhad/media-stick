@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<defaultcontrol always="true">3</defaultcontrol>
+	<controls>
+		<include>DialogBackgroundImage</include>
+		<control type="group">
+			<include>DialogAnimation</include>
+			<centerleft>50%</centerleft>
+			<centertop>50%</centertop>
+			<width>880</width>
+			<height>720</height>
+			<control type="image">
+				<width>880</width>
+				<height>720</height>
+				<texture border="47" colordiffuse="DialogBackColour">ms-card.png</texture>
+			</control>
+			<control id="1" type="label">
+				<left>48</left>
+				<top>32</top>
+				<width>784</width>
+				<height>52</height>
+				<font>MsHeading</font>
+				<textcolor>FFFFFFFF</textcolor>
+			</control>
+			<!-- Simple list -->
+			<control id="3" type="list">
+				<left>36</left>
+				<top>104</top>
+				<width>808</width>
+				<height>500</height>
+				<onleft>5</onleft>
+				<onright>5</onright>
+				<onup>3</onup>
+				<ondown>3</ondown>
+				<scrolltime tween="cubic" easing="out">180</scrolltime>
+				<itemlayout height="68" width="808">
+					<control type="label">
+						<left>24</left>
+						<width>760</width>
+						<height>68</height>
+						<font>Med28</font>
+						<textcolor>NotFocusedColour</textcolor>
+						<label>$INFO[ListItem.Label]</label>
+					</control>
+				</itemlayout>
+				<focusedlayout height="68" width="808">
+					<control type="image">
+						<width>808</width>
+						<height>68</height>
+						<texture border="33">ms-pill.png</texture>
+						<visible>Control.HasFocus(3)</visible>
+					</control>
+					<control type="label">
+						<left>24</left>
+						<width>760</width>
+						<height>68</height>
+						<font>Med28</font>
+						<textcolor>ff000000</textcolor>
+						<label>$INFO[ListItem.Label]</label>
+					</control>
+				</focusedlayout>
+			</control>
+			<!-- Detailed list with icons -->
+			<control id="6" type="list">
+				<left>36</left>
+				<top>104</top>
+				<width>808</width>
+				<height>500</height>
+				<onleft>5</onleft>
+				<onright>5</onright>
+				<onup>6</onup>
+				<ondown>6</ondown>
+				<scrolltime tween="cubic" easing="out">180</scrolltime>
+				<itemlayout height="80" width="808">
+					<control type="image">
+						<left>18</left>
+						<top>14</top>
+						<width>52</width>
+						<height>52</height>
+						<aspectratio>keep</aspectratio>
+						<texture>$INFO[ListItem.Icon]</texture>
+					</control>
+					<control type="label">
+						<left>88</left>
+						<top>8</top>
+						<width>696</width>
+						<height>36</height>
+						<font>Med28</font>
+						<textcolor>NotFocusedColour</textcolor>
+						<label>$INFO[ListItem.Label]</label>
+					</control>
+					<control type="label">
+						<left>88</left>
+						<top>44</top>
+						<width>696</width>
+						<height>28</height>
+						<font>Reg22</font>
+						<textcolor>MutedColour</textcolor>
+						<label>$INFO[ListItem.Label2]</label>
+					</control>
+				</itemlayout>
+				<focusedlayout height="80" width="808">
+					<control type="image">
+						<width>808</width>
+						<height>80</height>
+						<texture border="33">ms-pill.png</texture>
+						<visible>Control.HasFocus(6)</visible>
+					</control>
+					<control type="image">
+						<left>18</left>
+						<top>14</top>
+						<width>52</width>
+						<height>52</height>
+						<aspectratio>keep</aspectratio>
+						<texture>$INFO[ListItem.Icon]</texture>
+					</control>
+					<control type="label">
+						<left>88</left>
+						<top>8</top>
+						<width>696</width>
+						<height>36</height>
+						<font>Med28</font>
+						<textcolor>ff000000</textcolor>
+						<label>$INFO[ListItem.Label]</label>
+					</control>
+					<control type="label">
+						<left>88</left>
+						<top>44</top>
+						<width>696</width>
+						<height>28</height>
+						<font>Reg22</font>
+						<textcolor>ff333333</textcolor>
+						<label>$INFO[ListItem.Label2]</label>
+					</control>
+				</focusedlayout>
+			</control>
+			<!-- Bottom buttons -->
+			<control type="grouplist">
+				<left>48</left>
+				<top>624</top>
+				<width>784</width>
+				<height>68</height>
+				<itemgap>16</itemgap>
+				<align>right</align>
+				<orientation>horizontal</orientation>
+				<control id="5" type="button">
+					<width>200</width>
+					<height>64</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<label>$LOCALIZE[222]</label>
+				</control>
+				<control id="7" type="button">
+					<width>200</width>
+					<height>64</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<label>$LOCALIZE[186]</label>
+				</control>
+				<control id="8" type="button">
+					<width>200</width>
+					<height>64</height>
+					<align>center</align>
+					<textoffsetx>0</textoffsetx>
+					<label>$LOCALIZE[220]</label>
+				</control>
+			</control>
+		</control>
+	</controls>
+</window>

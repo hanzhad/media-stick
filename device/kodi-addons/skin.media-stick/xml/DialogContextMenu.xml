@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<defaultcontrol always="true">996</defaultcontrol>
+	<controls>
+		<include>DialogBackgroundImage</include>
+		<control type="group">
+			<include>DialogAnimation</include>
+			<centerleft>50%</centerleft>
+			<centertop>50%</centertop>
+			<width>560</width>
+			<height>720</height>
+			<control type="image" id="999">
+				<width>560</width>
+				<height>720</height>
+				<texture border="47" colordiffuse="DialogBackColour">ms-card.png</texture>
+			</control>
+			<control type="grouplist" id="996">
+				<left>24</left>
+				<top>24</top>
+				<width>512</width>
+				<height max="672">auto</height>
+				<itemgap>4</itemgap>
+				<orientation>vertical</orientation>
+			</control>
+			<control type="button" id="1000">
+				<width>512</width>
+				<height>72</height>
+				<align>left</align>
+				<aligny>center</aligny>
+				<font>Med28</font>
+				<textoffsetx>28</textoffsetx>
+				<textwidth>456</textwidth>
+				<textcolor>NotFocusedColour</textcolor>
+				<focusedcolor>ff000000</focusedcolor>
+				<texturefocus border="33">ms-pill.png</texturefocus>
+				<texturenofocus/>
+				<pulseonselect>false</pulseonselect>
+			</control>
+		</control>
+	</controls>
+</window>

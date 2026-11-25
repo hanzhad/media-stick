@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<defaultcontrol/>
+	<controls>
+		<!-- Buffering indicator -->
+		<control type="group">
+			<visible>Player.Caching + !Window.IsActive(videoosd) + !Window.IsActive(DialogSeekBar.xml)</visible>
+			<centerleft>50%</centerleft>
+			<centertop>50%</centertop>
+			<width>240</width>
+			<height>88</height>
+			<control type="image">
+				<width>240</width>
+				<height>88</height>
+				<texture border="33" colordiffuse="DialogBackColour">ms-pill.png</texture>
+			</control>
+			<control type="label">
+				<width>240</width>
+				<height>88</height>
+				<align>center</align>
+				<aligny>center</aligny>
+				<font>Med24</font>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$LOCALIZE[15107] $INFO[Player.CacheLevel]%</label>
+			</control>
+		</control>
+	</controls>
+</window>

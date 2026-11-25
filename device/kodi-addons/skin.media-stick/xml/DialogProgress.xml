@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<defaultcontrol always="true">10</defaultcontrol>
+	<controls>
+		<include>DialogBackgroundImage</include>
+		<control type="group">
+			<include>DialogAnimation</include>
+			<centerleft>50%</centerleft>
+			<centertop>50%</centertop>
+			<width>840</width>
+			<height>340</height>
+			<control type="image">
+				<width>840</width>
+				<height>340</height>
+				<texture border="47" colordiffuse="DialogBackColour">ms-card.png</texture>
+			</control>
+			<control id="1" type="label">
+				<left>48</left>
+				<top>32</top>
+				<width>744</width>
+				<height>48</height>
+				<font>MsHeading</font>
+				<textcolor>FFFFFFFF</textcolor>
+			</control>
+			<control id="9" type="textbox">
+				<left>48</left>
+				<top>96</top>
+				<width>744</width>
+				<height>96</height>
+				<font>Reg25</font>
+				<textcolor>NotFocusedColour</textcolor>
+				<autoscroll>false</autoscroll>
+			</control>
+			<control id="20" type="progress">
+				<left>48</left>
+				<top>204</top>
+				<width>744</width>
+				<height>12</height>
+				<info>System.Progressbar</info>
+			</control>
+			<control id="10" type="button">
+				<left>300</left>
+				<top>244</top>
+				<width>240</width>
+				<height>64</height>
+				<align>center</align>
+				<textoffsetx>0</textoffsetx>
+				<font>Med28</font>
+				<label>$LOCALIZE[222]</label>
+			</control>
+		</control>
+	</controls>
+</window>

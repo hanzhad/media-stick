@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<zorder>2</zorder>
+	<controls>
+		<control type="group">
+			<visible>!String.Contains(Control.GetLabel(401),CEC)</visible>
+			<include>DialogAnimation</include>
+			<right>48</right>
+			<bottom>48</bottom>
+			<width>580</width>
+			<height>120</height>
+			<control type="image">
+				<width>580</width>
+				<height>120</height>
+				<texture border="33" colordiffuse="DialogBackColour">ms-pill.png</texture>
+			</control>
+			<control type="image">
+				<left>24</left>
+				<top>24</top>
+				<width>72</width>
+				<height>72</height>
+				<texture>DefaultIconInfo.png</texture>
+				<visible>String.IsEmpty(Control.GetLabel(400))</visible>
+			</control>
+			<control id="400" type="image">
+				<left>24</left>
+				<top>24</top>
+				<width>72</width>
+				<height>72</height>
+				<aspectratio>keep</aspectratio>
+			</control>
+			<control id="401" type="label">
+				<left>116</left>
+				<top>22</top>
+				<width>432</width>
+				<height>40</height>
+				<font>Med28</font>
+				<textcolor>FFFFFFFF</textcolor>
+			</control>
+			<control id="402" type="label">
+				<left>116</left>
+				<top>62</top>
+				<width>432</width>
+				<height>34</height>
+				<font>Reg22</font>
+				<scrollsuffix/>
+				<textcolor>NotFocusedColour</textcolor>
+			</control>
+		</control>
+	</controls>
+</window>

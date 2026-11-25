@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<defaultcontrol always="true">50</defaultcontrol>
+	<backgroundcolor>BackgroundColour</backgroundcolor>
+	<views>50</views>
+	<include>WindowFadeAnimation</include>
+	<controls>
+		<include>BackgroundImage</include>
+		<!-- Title -->
+		<control type="label">
+			<left>96</left>
+			<top>48</top>
+			<width>1400</width>
+			<height>72</height>
+			<font>MsTitle</font>
+			<textcolor>FFFFFFFF</textcolor>
+			<label>$INFO[Container.FolderName]</label>
+		</control>
+		<control type="label">
+			<left>1520</left>
+			<top>64</top>
+			<width>304</width>
+			<height>44</height>
+			<align>right</align>
+			<font>Reg25</font>
+			<textcolor>MutedColour</textcolor>
+			<label>$INFO[Container.NumItems,, items]</label>
+		</control>
+		<!-- Left filter / sort menu -->
+		<control type="grouplist" id="9000">
+			<left>72</left>
+			<top>168</top>
+			<width>340</width>
+			<height>760</height>
+			<itemgap>10</itemgap>
+			<onright>50</onright>
+			<orientation>vertical</orientation>
+			<control type="button" id="3">
+				<width>340</width>
+				<height>70</height>
+				<label>$LOCALIZE[103]</label>
+			</control>
+			<control type="button" id="4">
+				<width>340</width>
+				<height>70</height>
+				<label>$LOCALIZE[31051]</label>
+			</control>
+			<control type="button" id="8">
+				<width>340</width>
+				<height>70</height>
+				<label>$LOCALIZE[137]</label>
+			</control>
+			<control type="radiobutton" id="19">
+				<width>340</width>
+				<height>70</height>
+				<label>$LOCALIZE[587]</label>
+			</control>
+		</control>
+		<!-- Item list -->
+		<control type="image">
+			<left>440</left>
+			<top>160</top>
+			<width>960</width>
+			<height>848</height>
+			<texture border="47" colordiffuse="661f2633">ms-card.png</texture>
+		</control>
+		<control type="list" id="50">
+			<left>460</left>
+			<top>180</top>
+			<width>920</width>
+			<height>808</height>
+			<onleft>9000</onleft>
+			<onright>noop</onright>
+			<onup>50</onup>
+			<ondown>50</ondown>
+			<scrolltime tween="cubic" easing="out">200</scrolltime>
+			<itemlayout height="76" width="920">
+				<control type="image">
+					<left>20</left>
+					<top>14</top>
+					<width>48</width>
+					<height>48</height>
+					<aspectratio>keep</aspectratio>
+					<texture>$INFO[ListItem.Icon]</texture>
+				</control>
+				<control type="label">
+					<left>84</left>
+					<width>640</width>
+					<height>76</height>
+					<font>Med28</font>
+					<textcolor>NotFocusedColour</textcolor>
+					<label>$INFO[ListItem.Label]</label>
+				</control>
+				<control type="label">
+					<left>736</left>
+					<width>160</width>
+					<height>76</height>
+					<align>right</align>
+					<font>Reg22</font>
+					<textcolor>MutedColour</textcolor>
+					<label>$INFO[ListItem.Label2]</label>
+				</control>
+			</itemlayout>
+			<focusedlayout height="76" width="920">
+				<control type="image">
+					<width>920</width>
+					<height>76</height>
+					<texture border="33">ms-pill.png</texture>
+					<visible>Control.HasFocus(50)</visible>
+				</control>
+				<control type="image">
+					<left>20</left>
+					<top>14</top>
+					<width>48</width>
+					<height>48</height>
+					<aspectratio>keep</aspectratio>
+					<texture>$INFO[ListItem.Icon]</texture>
+				</control>
+				<control type="label">
+					<left>84</left>
+					<width>640</width>
+					<height>76</height>
+					<font>Med28</font>
+					<textcolor>ff000000</textcolor>
+					<label>$INFO[ListItem.Label]</label>
+				</control>
+				<control type="label">
+					<left>736</left>
+					<width>160</width>
+					<height>76</height>
+					<align>right</align>
+					<font>Reg22</font>
+					<textcolor>ff333333</textcolor>
+					<label>$INFO[ListItem.Label2]</label>
+				</control>
+			</focusedlayout>
+		</control>
+		<!-- Right preview panel -->
+		<control type="image">
+			<left>1432</left>
+			<top>160</top>
+			<width>416</width>
+			<height>848</height>
+			<texture border="47" colordiffuse="661f2633">ms-card.png</texture>
+		</control>
+		<control type="image">
+			<left>1464</left>
+			<top>196</top>
+			<width>352</width>
+			<height>320</height>
+			<aspectratio>keep</aspectratio>
+			<texture fallback="app-fallback.png">$INFO[ListItem.Art(thumb)]</texture>
+		</control>
+		<control type="textbox">
+			<left>1464</left>
+			<top>540</top>
+			<width>352</width>
+			<height>432</height>
+			<font>Reg22</font>
+			<textcolor>NotFocusedColour</textcolor>
+			<label>$INFO[ListItem.Plot]</label>
+		</control>
+	</controls>
+</window>

@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<defaultcontrol always="true">401</defaultcontrol>
+	<visible>[Window.IsVisible(visualisation) | VideoPlayer.IsFullscreen] + [Player.Seeking | Player.HasPerformedSeek(3) | Player.Paused | Player.Forwarding | Player.Rewinding]</visible>
+	<visible>!Player.HasGame</visible>
+	<visible>!Player.FrameAdvance</visible>
+	<controls>
+		<control type="group">
+			<visible>!Window.IsActive(videoosd) + !Window.IsActive(musicosd) + !Window.IsActive(subtitlesearch)</visible>
+			<!-- Bottom gradient -->
+			<control type="image">
+				<left>0</left>
+				<top>660</top>
+				<width>1920</width>
+				<height>420</height>
+				<texture>gradient-bottom.png</texture>
+			</control>
+			<!-- Paused / Seek / Speed badge -->
+			<control type="group">
+				<visible>Player.Paused + !Player.Forwarding + !Player.Rewinding</visible>
+				<animation condition="System.IdleTime(3) + !Player.Caching" reversible="true" type="Conditional">
+					<effect type="fade" start="100" end="0" time="200"/>
+				</animation>
+				<control type="image">
+					<centerleft>50%</centerleft>
+					<centertop>50%</centertop>
+					<width>200</width>
+					<height>76</height>
+					<texture border="33" colordiffuse="DialogBackColour">ms-pill.png</texture>
+				</control>
+				<control type="label">
+					<centerleft>50%</centerleft>
+					<centertop>50%</centertop>
+					<width>200</width>
+					<height>76</height>
+					<align>center</align>
+					<font>Med28</font>
+					<textcolor>FFFFFFFF</textcolor>
+					<label>$LOCALIZE[112]</label>
+				</control>
+			</control>
+			<!-- Title & time -->
+			<control type="label">
+				<left>96</left>
+				<top>840</top>
+				<width>1240</width>
+				<height>46</height>
+				<font>Bold34</font>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$INFO[VideoPlayer.Title]</label>
+			</control>
+			<control type="label">
+				<left>1364</left>
+				<top>844</top>
+				<width>460</width>
+				<height>42</height>
+				<align>right</align>
+				<font>Med24</font>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$INFO[Player.Time] / $INFO[Player.Duration]</label>
+			</control>
+			<control type="label">
+				<left>1624</left>
+				<top>916</top>
+				<width>200</width>
+				<height>34</height>
+				<align>right</align>
+				<font>Med22</font>
+				<textcolor>NotFocusedColour</textcolor>
+				<label>$INFO[Player.SeekOffset]</label>
+				<visible>!String.IsEmpty(Player.SeekOffset)</visible>
+			</control>
+			<!-- Progress and seek slider -->
+			<control type="progress" id="400">
+				<left>96</left>
+				<top>900</top>
+				<width>1728</width>
+				<height>10</height>
+				<info>Player.Progress</info>
+			</control>
+			<control type="slider" id="401">
+				<left>96</left>
+				<top>898</top>
+				<width>1728</width>
+				<height>14</height>
+				<texturesliderbar colordiffuse="00ffffff">white.png</texturesliderbar>
+				<textureslidernib colordiffuse="ffffffff">white.png</textureslidernib>
+				<textureslidernibfocus colordiffuse="ffffffff">white.png</textureslidernibfocus>
+				<visible>!Player.Forwarding + !Player.Rewinding + Player.Seeking</visible>
+			</control>
+		</control>
+	</controls>
+</window>
