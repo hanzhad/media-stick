@@ -43,7 +43,7 @@
 			<control type="label">
 				<left>96</left>
 				<top>840</top>
-				<width>1240</width>
+				<width>1140</width>
 				<height>46</height>
 				<font>Bold34</font>
 				<textcolor>FFFFFFFF</textcolor>
@@ -58,6 +58,29 @@
 				<font>Med24</font>
 				<textcolor>FFFFFFFF</textcolor>
 				<label>$INFO[Player.Time] / $INFO[Player.Duration]</label>
+				<visible>String.IsEmpty(Window(home).Property(ms.tv_osd))</visible>
+			</control>
+			<control type="label">
+				<left>1264</left>
+				<top>844</top>
+				<width>560</width>
+				<height>42</height>
+				<align>right</align>
+				<font>Med24</font>
+				<textcolor>FFFFFFFF</textcolor>
+				<label>$INFO[Window(home).Property(ms.tv_time_label)]</label>
+				<visible>!String.IsEmpty(Window(home).Property(ms.tv_osd))</visible>
+			</control>
+			<control type="label">
+				<left>1264</left>
+				<top>806</top>
+				<width>560</width>
+				<height>34</height>
+				<align>right</align>
+				<font>Reg22</font>
+				<textcolor>NotFocusedColour</textcolor>
+				<label>$INFO[Window(home).Property(ms.tv_sublabel)]</label>
+				<visible>!String.IsEmpty(Window(home).Property(ms.tv_osd)) + !String.IsEmpty(Window(home).Property(ms.tv_sublabel))</visible>
 			</control>
 			<control type="label">
 				<left>1624</left>
@@ -77,6 +100,7 @@
 				<width>1728</width>
 				<height>10</height>
 				<info>Player.Progress</info>
+				<visible>String.IsEmpty(Window(home).Property(ms.tv_osd))</visible>
 			</control>
 			<control type="slider" id="401">
 				<left>96</left>
@@ -86,7 +110,26 @@
 				<texturesliderbar colordiffuse="00ffffff">white.png</texturesliderbar>
 				<textureslidernib colordiffuse="ffffffff">white.png</textureslidernib>
 				<textureslidernibfocus colordiffuse="ffffffff">white.png</textureslidernibfocus>
-				<visible>!Player.Forwarding + !Player.Rewinding + Player.Seeking</visible>
+				<visible>String.IsEmpty(Window(home).Property(ms.tv_osd)) + !Player.Forwarding + !Player.Rewinding + Player.Seeking</visible>
+			</control>
+			<control type="group">
+				<visible>!String.IsEmpty(Window(home).Property(ms.tv_osd))</visible>
+				<control type="image">
+					<left>96</left>
+					<top>900</top>
+					<width>1728</width>
+					<height>10</height>
+					<texture colordiffuse="33ffffff">white.png</texture>
+				</control>
+				<control type="image">
+					<left>96</left>
+					<top>900</top>
+					<width>1728</width>
+					<height>10</height>
+					<texture colordiffuse="ffffffff">white.png</texture>
+					<visible>!String.IsEmpty(Window(home).Property(ms.tv_progress)) + !String.IsEqual(Window(home).Property(ms.tv_progress),0)</visible>
+					<include>MsTvProgressZoom</include>
+				</control>
 			</control>
 		</control>
 	</controls>
