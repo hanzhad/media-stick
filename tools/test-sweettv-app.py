@@ -98,7 +98,7 @@ class WindowXML:
     def __init__(self, *a):
         self._props, self.focus = {}, 0
         self.controls = {100: Control(), 200: Control(), 201: Control(), 210: Control(), 211: Control(), 212: Control(), 213: Control(),
-                         300: Control(), 301: Control(), 400: Control(), 410: Control(),
+                         300: Control(), 301: Control(), 400: Control(), 410: Control(), 415: Control(), 416: Control(),
                          **{i: Control() for i in range(401, 409)}}
         self.closed = False
 
@@ -1278,6 +1278,69 @@ class Channels(WindowCase):
         self.assertTrue(window.getProperty("section_title"))
         self.assertEqual(window.focus, 201)
 
+
+    def test_page_search_channels_filters_locally_and_back_restores(self):
+        window = self.ready()
+        self.assertIn("TV Channels", window.getProperty("page_search_label"))
+        Fake.typed = "Twenty"
+        window.onClick(415)
+        self.assertEqual(window.section, "channels")
+        self.assertEqual(self.shown(window), ["Twenty"])
+        self.assertEqual(window.getProperty("page_search_label"), "Twenty [x]")
+        window.focus = 201
+        self.press(window, 10)
+        self.assertEqual(window.page_query, "")
+        self.assertEqual(len(self.shown(window)), 3)
+
+    def test_page_search_movies_filters_to_movies_only(self):
+        write_list(answer(chan(10, "Ten", number=10)))
+        Fake.typed = "Matrix"
+        found = {"ok": True, "query": "Matrix", "items": [
+            {"kind": "movie", "id": "500", "title": "Matrix Film", "subtitle": "1999", "cid": "", "epg": "",
+             "start": 0, "stop": 0, "channel_name": "", "when": "", "live": False, "playable_in_archive": False,
+             "playable": True, "available": True, "vod_url": "plugin://plugin.video.sweettv/playvod/500|null|0",
+             "preview": "", "image_url": "", "repeats": 0, "more": ""},
+            {"kind": "channel", "id": "10", "title": "Matrix TV", "subtitle": "", "cid": "10", "epg": "",
+             "start": 0, "stop": 0, "channel_name": "Matrix TV", "when": "", "live": False,
+             "playable_in_archive": False, "playable": True, "available": False, "preview": "", "image_url": "",
+             "repeats": 0, "more": ""},
+        ], "count": 2}
+        with mock.patch.object(sweettv_app.Shelf, "_load_catalog", lambda *a, **k: None),                 mock.patch.object(API, "search", return_value=found) as m_search:
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            window._open_section("movies")
+            window.onClick(415)
+            self.assertTrue(wait_for(lambda: m_search.called and len(window.cards) == 1))
+            self.assertEqual([c.kind for c in window.cards], ["movie"])
+            self.assertEqual(window.cards[0].title, "Matrix Film")
+
+    def test_page_search_shows_filters_to_shows_only(self):
+        write_list(answer(chan(10, "Ten", number=10)))
+        Fake.typed = "Master"
+        found = {"ok": True, "query": "Master", "items": [
+            {"kind": "show_tv", "id": "tv:1", "title": "MasterChef", "subtitle": "10 ep", "cid": "10", "epg": "1",
+             "start": NOW - 3600, "stop": NOW - 1800, "channel_name": "Ten", "when": "", "live": False,
+             "playable_in_archive": True, "playable": True, "available": True, "preview": "", "image_url": "",
+             "repeats": 0, "more": "", "episodes_count": 10, "episodes": []},
+            {"kind": "movie", "id": "99", "title": "Master Film", "subtitle": "", "cid": "", "epg": "",
+             "start": 0, "stop": 0, "channel_name": "", "when": "", "live": False, "playable_in_archive": False,
+             "playable": True, "available": True, "vod_url": "plugin://plugin.video.sweettv/playvod/99|null|0",
+             "preview": "", "image_url": "", "repeats": 0, "more": ""},
+        ], "count": 2}
+        with mock.patch.object(API, "shows", return_value={"ok": True, "items": []}),                 mock.patch.object(API, "search", return_value=found) as m_search:
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            window._open_section("shows")
+            window.onClick(415)
+            self.assertTrue(wait_for(lambda: m_search.called and len(window.cards) == 1))
+            self.assertEqual(window.cards[0].kind, "show_tv")
+
+    def test_hero_guide_button_416_opens_guide_modal(self):
+        window = self.ready()
+        window.onClick(416)
+        self.assertTrue(window._modal_open())
+        self.assertEqual(window.getProperty("modal"), "guide")
+
     def test_wide_sections_focus_and_click_use_wide_row_201(self):
         window = self.ready()
         self.assertEqual(window.section, "channels")
@@ -2270,7 +2333,11 @@ class Skin(unittest.TestCase):
         wide = self.control(root, 201)
         wcols = int(wide.findtext("width")) // int(wide.find("itemlayout").get("width"))
         wrows = int(wide.findtext("height")) // int(wide.find("itemlayout").get("height"))
-        self.assertEqual((wcols, wrows), (4, 3))
+        self.assertEqual(wide.findtext("orientation"), "horizontal")
+        self.assertEqual((wcols, wrows), (4, 1))
+        self.assertEqual(types_.get(415), "button")
+        self.assertEqual(types_.get(416), "button")
+        self.assertEqual(self.control(root, 415).findtext("label"), "$INFO[Window.Property(page_search_label)]")
         for ar in root.iter("aspectratio"):
             if ar.text == "scale":
                 self.assertEqual(ar.get("align"), "center")

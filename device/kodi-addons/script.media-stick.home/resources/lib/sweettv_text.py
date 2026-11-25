@@ -37,6 +37,21 @@ SECTION_NAMES = {
 }
 
 
+
+def page_search_label(section, query="") -> str:
+    q = (query or "").strip()
+    if q:
+        return f"{q} [x]"
+    if section == "search":
+        return tr("Search everything")
+    return f"{tr('Search')}: {section_title(section)}"
+
+
+def page_search_prompt(section) -> str:
+    if section == "search":
+        return tr("Search programmes and channels")
+    return tr("Search in {section}").format(section=section_title(section))
+
 def section_title(section) -> str:
     return tr(SECTION_NAMES.get(section, "SWEET.TV"))
 
@@ -321,6 +336,8 @@ TEXT = {
     "Watched": {"ru": "Просмотрено", "uk": "Переглянуто"},
     "Nothing in Continue yet.": {"ru": "Пока нет начатых просмотров.", "uk": "Поки немає розпочатих переглядів."},
     "No favourites yet.": {"ru": "Избранного пока нет.", "uk": "Обраного поки немає."},
+    "Search everything": {"ru": "Поиск по всему", "uk": "Пошук по всьому"},
+    "Search in {section}": {"ru": "Поиск: {section}", "uk": "Пошук: {section}"},
     "OK plays. Back closes.": {"ru": "OK воспроизводит. Назад закрывает.", "uk": "OK відтворює. Назад закриває."},
 }
 
