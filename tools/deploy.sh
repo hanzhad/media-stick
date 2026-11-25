@@ -16,7 +16,7 @@ gate() { require_fresh_base "$here/.."; require_lease; }
 case "${1:-}" in
   --local)
     gate
-    rsync -az --delete --exclude .git --exclude '*.local' --exclude secrets.env \
+    rsync -az --delete --exclude .git --exclude '*.local' --exclude secrets.env --exclude '__pycache__/' --exclude '*.pyc' --exclude '.devcontainer/' --exclude '.claude/' --exclude 'project.env' --exclude 'tools/emulator/.state/' --exclude '.github/' \
       "${RSYNC_E[@]}" "$here/../" "media@$HOST:$DEST/"
     "${SSH[@]}" "sudo $DEST/device/bootstrap.sh"
     ;;
