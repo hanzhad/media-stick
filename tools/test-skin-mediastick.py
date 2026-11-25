@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Contract tests for the native 1080p Kodi skin (device/kodi-addons/skin.media-stick)."""
 import os
+import shutil
 import subprocess
 import unittest
 import xml.etree.ElementTree as ET
@@ -97,16 +98,19 @@ class TestSkinMediaStick(unittest.TestCase):
             0,
             f"Expected XML files under {SKIN_DIR}, found none",
         )
-        res = subprocess.run(
-            ["xmllint", "--noout", *xmls],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(
-            res.returncode,
-            0,
-            f"xmllint failed:\n{res.stderr}\n{res.stdout}",
-        )
+        for path in xmls:
+            ET.parse(path)
+        if shutil.which("xmllint"):
+            res = subprocess.run(
+                ["xmllint", "--noout", *xmls],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                res.returncode,
+                0,
+                f"xmllint failed:\n{res.stderr}\n{res.stdout}",
+            )
 
     def test_addon_xml_metadata_1080p_and_zero_third_party_deps(self):
         addon_xml = os.path.join(SKIN_DIR, "addon.xml")
