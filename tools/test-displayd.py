@@ -547,13 +547,16 @@ class SystemdUnitTests(unittest.TestCase):
         text = open(SERVICE_PATH, encoding="utf-8").read()
         for directive in (
             "Type=simple",
+            "Group=media",
             "Restart=always",
             "OOMScoreAdjust=-200",
             "RuntimeDirectory=media-stick",
             "RuntimeDirectoryPreserve=yes",
+            "RuntimeDirectoryMode=1775",
             "ExecStart=/usr/bin/python3 /usr/local/bin/mediastick-displayd",
         ):
             self.assertIn(directive, text)
+        self.assertNotIn("RuntimeDirectoryMode=0755", text)
 
 
 if __name__ == "__main__":

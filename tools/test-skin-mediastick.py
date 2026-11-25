@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Contract tests for the native 1080p Kodi skin (device/kodi-addons/skin.media-stick)."""
 import os
+import shutil
 import subprocess
 import unittest
 import xml.etree.ElementTree as ET
@@ -73,6 +74,7 @@ REQUIRED_WINDOW_XMLS = (
     "MyVideoNav.xml",
     "FileBrowser.xml",
     "DialogProgress.xml",
+    "DialogExtendedProgressBar.xml",
     "DialogTextViewer.xml",
 )
 
@@ -96,16 +98,19 @@ class TestSkinMediaStick(unittest.TestCase):
             0,
             f"Expected XML files under {SKIN_DIR}, found none",
         )
-        res = subprocess.run(
-            ["xmllint", "--noout", *xmls],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(
-            res.returncode,
-            0,
-            f"xmllint failed:\n{res.stderr}\n{res.stdout}",
-        )
+        for path in xmls:
+            ET.parse(path)
+        if shutil.which("xmllint"):
+            res = subprocess.run(
+                ["xmllint", "--noout", *xmls],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                res.returncode,
+                0,
+                f"xmllint failed:\n{res.stderr}\n{res.stdout}",
+            )
 
     def test_addon_xml_metadata_1080p_and_zero_third_party_deps(self):
         addon_xml = os.path.join(SKIN_DIR, "addon.xml")
@@ -175,6 +180,27 @@ class TestSkinMediaStick(unittest.TestCase):
             os.path.join(SKIN_XML_DIR, "Pointer.xml"), encoding="utf-8"
         ).read()
         self.assertIn("ms-pointer.png", pointer_raw)
+
+    def test_extended_progress_bar_toast_conventions(self):
+        ext_xml = os.path.join(SKIN_XML_DIR, "DialogExtendedProgressBar.xml")
+        self.assertTrue(os.path.isfile(ext_xml), f"Missing {ext_xml}")
+        raw = open(ext_xml, encoding="utf-8").read()
+        self.assertIn("ms-card.png", raw)
+        self.assertIn("DialogBackColour", raw)
+        self.assertIn("MsHeading", raw)
+        self.assertIn("Reg25", raw)
+        root = ET.parse(ext_xml).getroot()
+        control_ids = {
+            el.attrib.get("id")
+            for el in root.findall(".//control")
+            if el.attrib.get("id")
+        }
+        for req_id in ("30", "31", "32"):
+            self.assertIn(
+                req_id,
+                control_ids,
+                f"DialogExtendedProgressBar.xml missing required control id={req_id!r}",
+            )
 
     def test_font_xml_defines_all_home_addon_and_required_fonts(self):
         font_xml = os.path.join(SKIN_XML_DIR, "Font.xml")

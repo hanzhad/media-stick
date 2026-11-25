@@ -14,7 +14,7 @@ chk "kodi.service active"        "systemctl is-active -q kodi.service"
 chk "ssh password login off"     "sudo sshd -T | grep -qx 'passwordauthentication no'"
 t=$(vcgencmd get_throttled | cut -d= -f2); [ "$t" = 0x0 ] && ok "power/throttle $t" || bad "power/throttle $t (undervoltage or heat)"
 echo "      temp $(vcgencmd measure_temp | cut -d= -f2)  mem $(free -m | awk '/Mem/{print $7" MB free"}')  disk $(df -h / | awk 'NR==2{print $4" free"}')"
-if swapon --show=NAME --noheadings 2>/dev/null | grep -q zram0; then
+if grep -q zram0 /proc/swaps 2>/dev/null; then
   ok "zram0 swap active"
 else
   warn "zram0 swap inactive"
