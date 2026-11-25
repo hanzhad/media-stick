@@ -73,6 +73,7 @@ REQUIRED_WINDOW_XMLS = (
     "MyVideoNav.xml",
     "FileBrowser.xml",
     "DialogProgress.xml",
+    "DialogExtendedProgressBar.xml",
     "DialogTextViewer.xml",
 )
 
@@ -175,6 +176,27 @@ class TestSkinMediaStick(unittest.TestCase):
             os.path.join(SKIN_XML_DIR, "Pointer.xml"), encoding="utf-8"
         ).read()
         self.assertIn("ms-pointer.png", pointer_raw)
+
+    def test_extended_progress_bar_toast_conventions(self):
+        ext_xml = os.path.join(SKIN_XML_DIR, "DialogExtendedProgressBar.xml")
+        self.assertTrue(os.path.isfile(ext_xml), f"Missing {ext_xml}")
+        raw = open(ext_xml, encoding="utf-8").read()
+        self.assertIn("ms-card.png", raw)
+        self.assertIn("DialogBackColour", raw)
+        self.assertIn("MsHeading", raw)
+        self.assertIn("Reg25", raw)
+        root = ET.parse(ext_xml).getroot()
+        control_ids = {
+            el.attrib.get("id")
+            for el in root.findall(".//control")
+            if el.attrib.get("id")
+        }
+        for req_id in ("30", "31", "32"):
+            self.assertIn(
+                req_id,
+                control_ids,
+                f"DialogExtendedProgressBar.xml missing required control id={req_id!r}",
+            )
 
     def test_font_xml_defines_all_home_addon_and_required_fonts(self):
         font_xml = os.path.join(SKIN_XML_DIR, "Font.xml")

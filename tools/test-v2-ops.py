@@ -153,6 +153,8 @@ class TestDoctorV2Checks(unittest.TestCase):
         self.assertIn("skin.media-stick", text)
         self.assertIn("kodi-rpc", text)
         self.assertIn("zram0", text)
+        self.assertIn("/proc/swaps", text)
+        self.assertNotIn("swapon", text, "doctor.sh must read /proc/swaps instead of /usr/sbin/swapon")
         self.assertIn("media-stick-healthcheck", text)
         self.assertIn("/manifest.webmanifest", text)
 

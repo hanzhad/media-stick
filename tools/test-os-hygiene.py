@@ -116,6 +116,29 @@ class TestZramSysctlJournaldTmpfiles(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn(path, text)
 
+    def test_tmpfiles_conf_shared_sticky_modes_and_z_reapply_rules(self):
+        self.assertTrue(os.path.exists(TMPFILES_CONF), f"missing {TMPFILES_CONF}")
+        text = _strip_comments(_read_text(TMPFILES_CONF))
+        expected_entries = (
+            ("/run/media-stick", "1775", "root", "media"),
+            ("/run/media-stick/shots", "0775", "media", "media"),
+            ("/run/media-stick/signin", "0755", "media", "media"),
+            ("/run/media-stick/resume", "0755", "media", "media"),
+            ("/run/media-stick/page-cache", "0755", "media", "media"),
+            ("/tmp/chromium-cache", "0755", "media", "media"),
+            ("/var/cache/media-stick", "1775", "root", "media"),
+            ("/var/lib/media-stick", "1775", "root", "media"),
+        )
+        for path, mode, owner, group in expected_entries:
+            for kind in ("d", "z"):
+                with self.subTest(kind=kind, path=path):
+                    pattern = rf"(?m)^{kind}\s+{re.escape(path)}\s+{mode}\s+{owner}\s+{group}\s+-"
+                    self.assertRegex(
+                        text,
+                        pattern,
+                        f"tmpfiles.d missing '{kind} {path} {mode} {owner} {group} -'",
+                    )
+
 
 class TestSudoersAndWebappStop(unittest.TestCase):
     """Verify least-privilege sudoers allowlist and media-stick-webapp-stop."""
@@ -176,6 +199,10 @@ class TestSystemdGuardrailsAndWebApp(unittest.TestCase):
             with self.subTest(service=os.path.basename(svc)):
                 text = _strip_comments(_read_text(svc))
                 self.assertRegex(text, r"(?m)^OOMScoreAdjust=-200\b")
+
+    def test_panel_service_has_systemd_journal_group(self):
+        text = _strip_comments(_read_text(PANEL_SERVICE))
+        self.assertRegex(text, r"(?m)^SupplementaryGroups=systemd-journal\b")
 
     def test_webapp_script_chromium_cache_and_no_cage_debug(self):
         text = _strip_comments(_read_text(WEBAPP_BIN))
@@ -436,6 +463,12 @@ class TestBootstrapIntegration(unittest.TestCase):
         self.assertIn("/run/media-stick/airplay", guard_window)
         self.assertIn("/run/media-stick/miracast", guard_window)
         self.assertIn("web-app@", guard_window)
+
+    def test_bootstrap_fixes_airplay_log_ownership_and_restarts_airplay(self):
+        text = _strip_comments(_read_text(BOOTSTRAP_SH))
+        self.assertIn("/run/media-stick/airplay.log", text)
+        self.assertIn("chown media:media /run/media-stick/airplay.log", text)
+        self.assertIn("airplay.service", text)
 
 
 if __name__ == "__main__":
