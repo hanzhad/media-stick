@@ -1059,20 +1059,140 @@ def _fav_set(favs):
     return set()
 
 
-def _local_resume(local, key):
+def _local_resume_info(local, key):
     if not isinstance(local, dict) or not isinstance(local.get("items"), dict):
-        return 0, False
+        return 0, False, 0
     e = local["items"].get(key)
     if not isinstance(e, dict):
-        return 0, False
+        return 0, False, 0
     done = e.get("done") is True
     pos = _num(e.get("pos")) or 0
-    return (0 if done else max(0, pos)), done
+    at = _num(e.get("at")) or 0
+    return (0 if done else max(0, pos)), done, max(0, int(at))
+
+
+def _local_resume(local, key):
+    pos, done, _ = _local_resume_info(local, key)
+    return pos, done
+
+
+def _vod_resume_info(local, movie_id, episode_id=None):
+    key = "sw:vod:%s|%s" % (movie_id, episode_id) if episode_id else "sw:vod:%s" % movie_id
+    return _local_resume_info(local, key)
 
 
 def _vod_resume(local, movie_id, episode_id=None):
-    key = "sw:vod:%s|%s" % (movie_id, episode_id) if episode_id else "sw:vod:%s" % movie_id
-    return _local_resume(local, key)
+    pos, done, _ = _vod_resume_info(local, movie_id, episode_id)
+    return pos, done
+
+
+def _season_number_of(season, idx):
+    num = _num(season.get("number")) if isinstance(season, dict) else None
+    if num and num > 0:
+        return int(num)
+    title = str(season.get("title") or "") if isinstance(season, dict) else ""
+    m = re.search(r"(\d+)", title)
+    return int(m.group(1)) if m else idx + 1
+
+
+def _next_up_payload(s_idx, e_idx, s_num, s_title, ep, mode):
+    ep_num = _num(ep.get("number")) or (e_idx + 1)
+    return {
+        "season_index": s_idx,
+        "episode_index": e_idx,
+        "season_number": s_num,
+        "episode_number": int(ep_num),
+        "season_title": s_title,
+        "episode_id": _num(ep.get("episode_id") or ep.get("id")) or 0,
+        "owner_id": _num(ep.get("owner_id")) or 0,
+        "cid": str(ep.get("cid") or ""),
+        "epg": str(ep.get("epg") or ""),
+        "title": str(ep.get("title") or ""),
+        "vod_url": str(ep.get("vod_url") or ""),
+        "url": str(ep.get("vod_url") or ep.get("url") or ""),
+        "resume": int(_num(ep.get("resume")) or 0) if mode == "resume" else 0,
+        "mode": mode,
+    }
+
+
+def resolve_next_up(seasons=None, episodes=None):
+    """Single source of truth for picking the active season and episode to resume or watch next."""
+    if seasons:
+        non_empty = [(si, s) for si, s in enumerate(seasons) if isinstance(s, dict) and s.get("episodes")]
+        if not non_empty:
+            return None
+        unfinished = []
+        watched = []
+        for si, s in non_empty:
+            eps = s["episodes"]
+            for ei, ep in enumerate(eps):
+                res = int(_num(ep.get("resume")) or 0)
+                done = bool(ep.get("watched"))
+                at = int(_num(ep.get("resume_at")) or 0)
+                if res > 0 and not done:
+                    unfinished.append(((at, si, ei), si, ei, ep))
+                elif done:
+                    watched.append(((at, si, ei), si, ei, ep))
+        if unfinished:
+            _, si, ei, ep = max(unfinished, key=lambda x: x[0])
+            s = seasons[si]
+            return _next_up_payload(si, ei, _season_number_of(s, si), str(s.get("title") or ""), ep, "resume")
+        if watched:
+            _, s_last, e_last, ep_last = max(watched, key=lambda x: x[0])
+            for si in range(s_last, len(seasons)):
+                eps = seasons[si].get("episodes") or ()
+                start_ei = e_last + 1 if si == s_last else 0
+                for ei in range(start_ei, len(eps)):
+                    ep = eps[ei]
+                    if not ep.get("watched"):
+                        s = seasons[si]
+                        return _next_up_payload(si, ei, _season_number_of(s, si), str(s.get("title") or ""), ep, "next")
+            s = seasons[s_last]
+            return _next_up_payload(s_last, e_last, _season_number_of(s, s_last), str(s.get("title") or ""), ep_last, "watched")
+        si, s = non_empty[0]
+        return _next_up_payload(si, 0, _season_number_of(s, si), str(s.get("title") or ""), s["episodes"][0], "start")
+
+    if episodes:
+        # Flat TV show episodes are ordered newest-first (index 0 is newest).
+        unfinished = []
+        watched = []
+        for ei, ep in enumerate(episodes):
+            res = int(_num(ep.get("resume")) or 0)
+            done = bool(ep.get("watched"))
+            at = int(_num(ep.get("resume_at")) or 0)
+            if res > 0 and not done:
+                unfinished.append(((at, -ei), ei, ep))
+            elif done:
+                watched.append(((at, -ei), ei, ep))
+        if unfinished:
+            _, ei, ep = max(unfinished, key=lambda x: x[0])
+            return _next_up_payload(0, ei, 1, "", ep, "resume")
+        if watched:
+            _, last_ei, last_ep = max(watched, key=lambda x: x[0])
+            for ei in range(last_ei - 1, -1, -1):
+                ep = episodes[ei]
+                if not ep.get("watched"):
+                    return _next_up_payload(0, ei, 1, "", ep, "next")
+            return _next_up_payload(0, last_ei, 1, "", last_ep, "watched")
+        return _next_up_payload(0, 0, 1, "", episodes[0], "start")
+    return None
+
+
+def apply_progress_to_seasons(seasons, local, movie_id=""):
+    """Refresh episode resume/watched/resume_at in-place from a fresh local resume document."""
+    mid = str(movie_id or "")
+    for s in seasons or ():
+        for ep in s.get("episodes") or ():
+            eid = ep.get("episode_id") or ep.get("id")
+            if mid and eid:
+                res, done, at = _vod_resume_info(local, mid, eid)
+            elif ep.get("cid") and ep.get("epg"):
+                res, done, at = _local_resume_info(local, "sw:%s|%s" % (ep["cid"], ep["epg"]))
+            else:
+                continue
+            ep["resume"] = res
+            ep["watched"] = done
+            ep["resume_at"] = at
 
 
 def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
@@ -1108,7 +1228,7 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
             eid = _num(ep.get("id"))
             if not eid:
                 continue
-            ep_res, ep_done = _vod_resume(local, mid, eid)
+            ep_res, ep_done, ep_at = _vod_resume_info(local, mid, eid)
             eps.append({
                 "id": eid,
                 "episode_id": eid,
@@ -1120,6 +1240,7 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
                 "vod_url": ml.vod_url(mid, eid, s_owner),
                 "resume": ep_res,
                 "watched": ep_done,
+                "resume_at": ep_at,
             })
         seasons.append({
             "id": _num(s.get("id")) or 0,
@@ -1143,6 +1264,7 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
         "watched": m_watched,
         "vod_url": card["vod_url"],
         "seasons": seasons,
+        "next_up": resolve_next_up(seasons=seasons) if seasons else None,
     }
 
 
@@ -1209,7 +1331,7 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         if not epg or not cid or start is None or stop is None or stop <= start:
             continue
         ch = _known_channel(ch_map, cid)
-        ep_res, ep_done = _local_resume(local, "sw:%s|%s" % (cid, epg))
+        ep_res, ep_done, ep_at = _local_resume_info(local, "sw:%s|%s" % (cid, epg))
         airings.append({
             "epg": epg,
             "cid": cid,
@@ -1225,6 +1347,7 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
             "playable": bool(ch) and (start <= now < stop or ml.archive_ok(ch, r, now)),
             "resume": ep_res,
             "watched": ep_done,
+            "resume_at": ep_at,
             "url": ml.url(cid, epg, 0),
         })
     grouped = {}
@@ -1243,6 +1366,7 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         "title": title,
         "favourite": ("show:" + show_key) in fav_keys,
         "episodes": episodes,
+        "next_up": resolve_next_up(episodes=episodes) if episodes else None,
     }
 
 

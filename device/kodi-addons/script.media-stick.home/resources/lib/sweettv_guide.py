@@ -1,6 +1,7 @@
 """SWEET.TV app: unified modal overlay (400 list + 410 season/day tabs) for Show/Series episodes and 7-day Channel Guide."""
 import threading
 
+import mediastick_resume as mr
 import mediastick_sweetapi as sweetapi
 from resources.lib import sweettv_data as data, sweettv_demo, sweettv_items as items, sweettv_play as play, \
     sweettv_sections as sections, sweettv_text as words, ui
@@ -8,17 +9,22 @@ from resources.lib import sweettv_data as data, sweettv_demo, sweettv_items as i
 GUIDE = 400
 MODAL_TABS = 410
 GUIDE_BUTTON = 212
+RESUME_BUTTON = 210
 
 
 class Guide:
     def _guide_setup(self):
-        self.modal_kind = ""        # "" | "show" | "guide"
+        self.modal_kind = ""        # "" | "show" | "guide" | "detail"
         self.modal_gen = 0
         self.modal_tabs = []        # [(value, label), ...]
         self.modal_tab_idx = 0
         self.modal_seasons = []     # for show/series: [{"title": ..., "episodes": [...]}, ...]
         self.modal_rows = []        # current rows in 400
         self.modal_channel = None   # Channel for guide mode
+        self.modal_card = None
+        self.modal_movie_id = ""
+        self.modal_next_up = None
+        self.modal_flat_tv = False
         self.modal_show_title = ""
         self.modal_return_pos = 0
 
@@ -34,6 +40,10 @@ class Guide:
             self.modal_rows = []
             self.modal_tabs = []
             self.modal_seasons = []
+            self.modal_card = None
+            self.modal_movie_id = ""
+            self.modal_next_up = None
+            self.modal_flat_tv = False
             self._prop("modal", "")
             self._prop("guide", "")
             self._prop("guide_title", "")
@@ -58,13 +68,40 @@ class Guide:
             self._sync_hero(card)
             self.getControl(GUIDE).reset()
             self.getControl(MODAL_TABS).reset()
-        self._focus_on(210)
+        self._focus_on(RESUME_BUTTON)
+
+    def _sync_show_cta(self, next_up):
+        if not next_up:
+            label = words.tr("Watch")
+        elif next_up.get("mode") == "resume" and int(next_up.get("resume") or 0) > 0:
+            label = words.tr("Continue S{s} E{e} from {time}").format(
+                s=next_up.get("season_number") or 1,
+                e=next_up.get("episode_number") or 1,
+                time=sections.fmt_mmss(int(next_up["resume"])),
+            )
+        else:
+            label = words.tr("Watch S{s} E{e}").format(
+                s=next_up.get("season_number") or 1,
+                e=next_up.get("episode_number") or 1,
+            )
+        try:
+            self.getControl(RESUME_BUTTON).setLabel(label)
+        except Exception:
+            pass
+        self._prop("hero_play", label)
+        self._prop("has_play", "1")
 
     def _open_show_modal(self, card: sections.Card):
         with self._lock:
+            if not self.demo:
+                self.resume_doc = mr.load()
             self.modal_gen += 1
             gen = self.modal_gen
             self.modal_kind = "show"
+            self.modal_card = card
+            self.modal_movie_id = card.key if card.kind == "series" else ""
+            self.modal_next_up = None
+            self.modal_flat_tv = False
             self.modal_return_pos = max(0, self.getControl(self._grid_id()).getSelectedPosition())
             self.modal_show_title = card.title
             self.modal_rows = []
@@ -104,7 +141,8 @@ class Guide:
             if not detail.get("ok"):
                 self._prop("guide_title", f"{card.title}  ·  {words.tr('This show has no episodes to show.')}")
                 return
-            if "seasons" in detail and detail["seasons"]:
+            has_seasons = bool(detail.get("seasons"))
+            if has_seasons:
                 seasons = [
                     {"title": s.get("title") or words.tr("Season {n}").format(n=i + 1),
                      "episodes": s.get("episodes") or []}
@@ -113,13 +151,23 @@ class Guide:
             else:
                 eps = detail.get("episodes") or []
                 seasons = [{"title": words.tr("Episodes"), "episodes": eps}] if eps else []
+            self.modal_movie_id = str(detail.get("movie_id") or self.modal_movie_id or "")
+            self.modal_flat_tv = not has_seasons
             self.modal_seasons = seasons
             self.modal_tabs = [(i, s["title"]) for i, s in enumerate(seasons)]
-            self.modal_tab_idx = 0
-            self._render_show_tab(0)
+            nu = detail.get("next_up") or (
+                sweetapi.resolve_next_up(episodes=seasons[0]["episodes"]) if (self.modal_flat_tv and seasons)
+                else sweetapi.resolve_next_up(seasons=seasons)
+            )
+            self.modal_next_up = nu
+            self._sync_show_cta(nu)
+            s_idx = int(nu["season_index"]) if nu else 0
+            e_idx = int(nu["episode_index"]) if nu else 0
+            self.modal_tab_idx = s_idx
+            self._render_show_tab(s_idx, select_ep=e_idx)
         self._focus_on(GUIDE)
 
-    def _render_show_tab(self, idx):
+    def _render_show_tab(self, idx, select_ep=0):
         if not self.modal_seasons:
             self.modal_rows = []
             self.getControl(GUIDE).reset()
@@ -137,7 +185,22 @@ class Guide:
         list_ctl.reset()
         list_ctl.addItems(items.episode_items(eps))
         if eps:
-            list_ctl.selectItem(0)
+            list_ctl.selectItem(max(0, min(int(select_ep or 0), len(eps) - 1)))
+
+    def _refresh_show_modal_progress(self):
+        with self._lock:
+            if self.modal_kind != "show" or not self.modal_seasons:
+                return
+            if not self.demo:
+                self.resume_doc = mr.load()
+            sweetapi.apply_progress_to_seasons(self.modal_seasons, self.resume_doc, movie_id=self.modal_movie_id)
+            nu = sweetapi.resolve_next_up(episodes=self.modal_seasons[0]["episodes"]) if self.modal_flat_tv else sweetapi.resolve_next_up(seasons=self.modal_seasons)
+            self.modal_next_up = nu
+            self._sync_show_cta(nu)
+            if nu:
+                self._render_show_tab(int(nu["season_index"]), select_ep=int(nu["episode_index"]))
+            else:
+                self._render_show_tab(self.modal_tab_idx)
 
     def _guide_show(self):
         card = self._focused_card()
@@ -222,6 +285,50 @@ class Guide:
                 now = self._now()
                 threading.Thread(target=self._load_guide_day, args=(gen, ch, day_unix, demo, raw, now), daemon=True).start()
 
+    def _play_modal_row(self, row, season_num=0):
+        url = row.get("vod_url") or row.get("url") or ""
+        if not url:
+            return
+        resume = int(row.get("resume") or 0)
+        if resume > 0 and "start=" not in url:
+            url = f"{url}{'&' if '?' in url else '?'}start={resume}"
+        ep_title = str(row.get("title") or "").strip()
+        show_title = str(self.modal_show_title or "").strip()
+        if show_title and ep_title and show_title.lower() not in ep_title.lower():
+            full_title = f"{show_title} · {ep_title}"
+        else:
+            full_title = ep_title or show_title
+        thumb = str(row.get("preview") or (self.modal_card.art if self.modal_card else "") or "")
+        ep_num = int(row.get("number") or 0)
+        if row.get("epg") and row.get("cid"):
+            session = play.Session(str(row["cid"]), str(row["epg"]), full_title,
+                                   int(row.get("start") or 0), int(row.get("stop") or 0),
+                                   url=url, season=season_num, episode=ep_num, thumb=thumb)
+        else:
+            session = play.Session("", "", full_title, 0, 0,
+                                   url=url, season=season_num, episode=ep_num, thumb=thumb)
+        self._start_playback(url, session=session, seek_to=resume)
+
+    def _play_next_up(self):
+        with self._lock:
+            if self.modal_kind != "show" or not self.modal_seasons:
+                return
+            nu = self.modal_next_up
+            if nu is None:
+                return
+            si = int(nu.get("season_index") or 0)
+            ei = int(nu.get("episode_index") or 0)
+            if not (0 <= si < len(self.modal_seasons)):
+                return
+            eps = self.modal_seasons[si].get("episodes") or ()
+            if not (0 <= ei < len(eps)):
+                return
+            row = dict(eps[ei])
+            if nu.get("mode") != "resume":
+                row["resume"] = 0
+            s_num = int(nu.get("season_number") or (si + 1))
+        self._play_modal_row(row, season_num=s_num)
+
     def _modal_click(self):
         with self._lock:
             pos = self.getControl(GUIDE).getSelectedPosition()
@@ -230,20 +337,10 @@ class Guide:
             row = self.modal_rows[pos]
             kind = self.modal_kind
             ch = self.modal_channel
-            title = self.modal_show_title
+            tab_idx = self.modal_tab_idx
+            s_num = tab_idx + 1 if kind == "show" else 0
         if kind == "show":
-            url = row.get("vod_url") or row.get("url") or ""
-            if not url:
-                return
-            resume = int(row.get("resume") or 0)
-            if resume > 0 and "start=" not in url:
-                url = f"{url}{'&' if '?' in url else '?'}start={resume}"
-            if row.get("epg") and row.get("cid"):
-                session = play.Session(str(row["cid"]), str(row["epg"]), str(row.get("title") or title),
-                                       int(row.get("start") or 0), int(row.get("stop") or 0), url=url)
-            else:
-                session = play.Session("", "", str(row.get("title") or title), 0, 0, url=url)
-            self._start_playback(url, session=session, seek_to=resume)
+            self._play_modal_row(row, season_num=s_num)
         elif kind == "guide" and ch is not None:
             if row.get("live"):
                 url = data.play_url(ch.cid)

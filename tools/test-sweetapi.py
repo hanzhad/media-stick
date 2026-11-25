@@ -1090,5 +1090,48 @@ class GroupedSearchTest(unittest.TestCase):
 
 
 
+
+
+class NextUpResolverTest(unittest.TestCase):
+    def test_resolve_next_up_seasons_table(self):
+        seasons = [
+            {"id": 1, "title": "Сезон 1", "episodes": [
+                {"id": 101, "episode_id": 101, "number": 1, "title": "S1E1", "resume": 0, "watched": False, "resume_at": 0, "vod_url": "u1"},
+                {"id": 102, "episode_id": 102, "number": 2, "title": "S1E2", "resume": 0, "watched": False, "resume_at": 0, "vod_url": "u2"},
+            ]},
+            {"id": 2, "title": "Сезон 2", "episodes": [
+                {"id": 201, "episode_id": 201, "number": 1, "title": "S2E1", "resume": 0, "watched": False, "resume_at": 0, "vod_url": "u3"},
+                {"id": 202, "episode_id": 202, "number": 2, "title": "S2E2", "resume": 0, "watched": False, "resume_at": 0, "vod_url": "u4"},
+            ]},
+        ]
+        # 1. Unwatched -> S1E1 start
+        nu = api.resolve_next_up(seasons=seasons)
+        self.assertEqual((nu["season_index"], nu["episode_index"], nu["mode"]), (0, 0, "start"))
+        # 2. S1E2 watched -> advances to S2E1 next (season boundary!)
+        seasons[0]["episodes"][1]["watched"] = True
+        seasons[0]["episodes"][1]["resume_at"] = 100
+        nu = api.resolve_next_up(seasons=seasons)
+        self.assertEqual((nu["season_index"], nu["episode_index"], nu["mode"]), (1, 0, "next"))
+        # 3. Unfinished S2E2 -> resumes S2E2
+        seasons[1]["episodes"][1]["resume"] = 450
+        seasons[1]["episodes"][1]["resume_at"] = 200
+        nu = api.resolve_next_up(seasons=seasons)
+        self.assertEqual((nu["season_index"], nu["episode_index"], nu["mode"], nu["resume"]), (1, 1, "resume", 450))
+        # 4. Finale watched -> stays on S2E2 watched
+        seasons[1]["episodes"][1]["resume"] = 0
+        seasons[1]["episodes"][1]["watched"] = True
+        seasons[1]["episodes"][1]["resume_at"] = 300
+        nu = api.resolve_next_up(seasons=seasons)
+        self.assertEqual((nu["season_index"], nu["episode_index"], nu["mode"]), (1, 1, "watched"))
+
+    def test_resolve_next_up_flat_tv_newest_first(self):
+        eps = [
+            {"cid": "15", "epg": "3", "title": "Ep 3", "resume": 0, "watched": False, "resume_at": 0, "url": "u3"},
+            {"cid": "15", "epg": "2", "title": "Ep 2", "resume": 0, "watched": True, "resume_at": 500, "url": "u2"},
+            {"cid": "15", "epg": "1", "title": "Ep 1", "resume": 0, "watched": True, "resume_at": 100, "url": "u1"},
+        ]
+        nu = api.resolve_next_up(episodes=eps)
+        self.assertEqual((nu["episode_index"], nu["mode"]), (0, "next"))
+
 if __name__ == "__main__":
     unittest.main()

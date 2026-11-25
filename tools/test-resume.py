@@ -729,5 +729,25 @@ def ml_url(cid, epg, offset):
     return mediastick_sweetlive.url(cid, epg, offset)
 
 
+
+
+class VodSeasonEpisode(Base):
+    def test_vod_episode_preserves_season_episode_and_thumb(self):
+        import mediastick_resume as R
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, "pos.json")
+            d = R.empty()
+            d = R.record(d, "plugin://plugin.video.sweettv/playvod/500|102|10", 315, 1400, 1750000000,
+                         {"title": "Futurama · E2", "season": 2, "episode": 4, "show_id": "vod:500", "thumb": "https://img/p.jpg"})
+            # Subsequent recorder tick without meta preserves season/episode/thumb
+            d = R.record(d, "plugin://plugin.video.sweettv/playvod/500|102|10", 420, 1400, 1750000030, {})
+            self.assertTrue(R.save(d, p))
+            loaded = R.load(p)
+            e = loaded["items"]["sw:vod:500|102"]
+            self.assertEqual(e["season"], 2)
+            self.assertEqual(e["episode"], 4)
+            self.assertEqual(e["show_id"], "vod:500")
+            self.assertEqual(e["thumb"], "https://img/p.jpg")
+
 if __name__ == "__main__":
     unittest.main()

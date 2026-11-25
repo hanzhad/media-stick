@@ -644,7 +644,10 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                     if self.cards:
                         self._focus_on(self._grid_id())
             elif control_id == RESUME:
-                self._ok_card()
+                if getattr(self, "modal_kind", "") == "show":
+                    self._play_next_up()
+                else:
+                    self._ok_card()
             elif control_id == BTN_ALT:
                 self._alt_action()
             elif control_id == GUIDE_BUTTON:
@@ -749,8 +752,14 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self.session = None
             now = self._now()
             if session.url:
-                self.resume_doc = mr.record(self.resume_doc, session.url, pos, total, now,
-                                            {"title": session.title, "start": session.start, "stop": session.stop})
+                meta = {"title": session.title, "start": session.start, "stop": session.stop}
+                if getattr(session, "season", 0) > 0:
+                    meta["season"] = session.season
+                if getattr(session, "episode", 0) > 0:
+                    meta["episode"] = session.episode
+                if getattr(session, "thumb", ""):
+                    meta["thumb"] = session.thumb
+                self.resume_doc = mr.record(self.resume_doc, session.url, pos, total, now, meta)
                 mr.save(self.resume_doc)
             if session.cid and session.epg:
                 self.state = saved.record_position(self.state, session.cid, session.programme(), pos, total, now)
@@ -775,6 +784,10 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             io.stop()
 
     def _focus_back(self):
+        if self.modal_kind == "show":
+            self._refresh_show_modal_progress()
+        elif self.section == "continue" and not self._modal_open():
+            self._show_continue()
         if self.mode == data.DATA and self._focus() not in (MENU, ROW, WIDE_ROW, PAGE_SEARCH, HERO_GUIDE, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV, GUIDE):
             self._focus_on(GUIDE if self._modal_open() else self._grid_id())
 

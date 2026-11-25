@@ -1155,5 +1155,13 @@ class MobileSweetVodTest(unittest.TestCase):
         self.assertIn("const fmtMin=s=>s>=60?Math.round(s/60)+' мин'", src)
 
 
+
+    def test_mobile_vod_uses_next_up_season_and_episode(self):
+        with open(os.path.join(LIB, "panel_watch_sweet_ui.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("const nu=seasons.length?(r.next_up||null):null;", src)
+        self.assertIn("nu.season_index", src)
+        self.assertIn("episode_id:nu.episode_id", src)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
