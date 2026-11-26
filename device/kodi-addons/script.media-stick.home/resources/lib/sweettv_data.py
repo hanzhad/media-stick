@@ -5,8 +5,8 @@ SweetStore reconstructs the normalized answer of TvService/GetChannels.json from
 recent and upcoming programmes per channel). What is read from it:
 
   status                       "OK"
-  list[]                       id, name, number, icon_v2_url (icon_url), category[] (ids), catchup,
-                               catchup_duration (days), available, epg[]
+  list[]                       id, name, number, icon_v2_url (icon_url), banner_url, category[] (ids),
+                               catchup, catchup_duration (days), available, epg[]
   list[].epg[]                 id, time_start, time_stop (seconds), text, available, description
   categories[]                 id, caption
 
@@ -64,6 +64,7 @@ class Channel(NamedTuple):
     epg: Tuple[Programme, ...]
     days: int = 0               # days of archive behind a catch-up channel; 0: no archive
     fast: bool = False          # 24/7 FAST marathon channel (is_fast_channel)
+    banner: str = ""            # 16:9 channel banner URL (banner_url)
 
 
 class Catalog(NamedTuple):
@@ -188,7 +189,8 @@ def parse_channel(raw, now) -> Optional[Channel]:
                    number if number and number > 0 else 0,
                    logo_of(raw.get("icon_v2_url"), raw.get("icon_url")),
                    tuple(dict.fromkeys(str(k) for k in keys if k is not None)),
-                   catchup, parse_epg(raw.get("epg"), now, days), days, bool(raw.get("is_fast_channel")))
+                   catchup, parse_epg(raw.get("epg"), now, days), days, bool(raw.get("is_fast_channel")),
+                   logo_of(raw.get("banner_url")))
 
 
 def parse_catalog(raw, now) -> Catalog:

@@ -38,6 +38,7 @@ STALE_NOTICE = "The channel list is out of date. Refreshing…"
 
 PREVIEW_VIDEO = False
 PREVIEW_DELAY = 1.5
+_UNSET = object()
 
 
 def clock():
@@ -206,10 +207,24 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def _demo_raw(self, now):
         return sweettv_demo.demo_data(now, DEMO_LOGOS)
 
+    def _continue_cards(self, catalog=_UNSET, now=None) -> list:
+        cat = self.catalog if catalog is _UNSET else catalog
+        ts = self._now() if now is None else now
+        if self.demo:
+            return sections.continue_cards(self.resume_doc, cat, ts, self.fav_keys)
+        return sections.continue_cards(
+            self.resume_doc,
+            cat,
+            ts,
+            self.fav_keys,
+            recall_prog=lambda cid, epg, t=ts: files.recall_programme(cid, epg, now=t),
+            recall_title=files.recall_title_detail,
+        )
+
     def _try_instant_start(self, now) -> bool:
         if self.demo or not files.signed_in():
             return False
-        has_cont = bool(sections.continue_cards(self.resume_doc, None, now, self.fav_keys))
+        has_cont = bool(self._continue_cards(None, now))
         ns = pages.namespace()
         ckey = pages.catalog_key("shows") if ns else None
         shows_hit = bool(ns and ckey and page_cache.get(ns, ckey, ttl=pages.PAGE_TTL, max_age=pages.PAGE_MAX_AGE))
@@ -314,7 +329,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self.numbered = any(c.number for c in catalog.channels)
         self.archive_any = any(c.catchup for c in catalog.channels)
         if not self.section:
-            has_cont = bool(sections.continue_cards(self.resume_doc, catalog, now, self.fav_keys))
+            has_cont = bool(self._continue_cards(catalog, now))
             self.section = "continue" if has_cont else "channels"
         self._prop("wide_grid", "1" if self.section in WIDE_SECTIONS else "")
         self._prop("section_title", words.section_title(self.section))
@@ -334,6 +349,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def _refresh_channels(self, now):
         cards = [sections.channel_card(c, self.cat_names, now, self.resume_doc, self.fav_keys) for c in self.shown]
         for cid in (ROW, WIDE_ROW):
+            is_wide = cid == WIDE_ROW
             try:
                 ctrl = self.getControl(cid)
             except Exception:
@@ -342,7 +358,9 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             for idx, card in enumerate(cards):
                 if idx < size:
                     item = ctrl.getListItem(idx) if hasattr(ctrl, "getListItem") else ctrl.items[idx]
-                    self._shown_props[card.key] = items.apply_card(item, card, self._shown_props.get(card.key))
+                    self._shown_props[(cid, idx)] = items.apply_card(
+                        item, card, self._shown_props.get((cid, idx)), wide=is_wide
+                    )
         self.cards = cards
         self._sync_hero()
 
@@ -390,7 +408,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         return False
 
     def _section_counts(self):
-        cont = len(sections.continue_cards(self.resume_doc, self.catalog, self._now(), self.fav_keys))
+        cont = len(self._continue_cards())
         favs = len(self.fav_keys)
         chans = len(self.catalog.channels) if self.catalog else 0
         return {"continue": cont or None, "favourites": favs or None, "channels": chans or None}
@@ -414,20 +432,25 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     def _apply_cards(self, cards, focus_key="", empty_msg="", keep_pos=False):
         ctrl = self.getControl(ROW)
-        old_pos = ctrl.getSelectedPosition() if keep_pos else 0
+        old_pos = self._active_grid_pos() if keep_pos else 0
         self.cards = list(cards)
         self._shown_props = {}
         list_items = []
-        for c in self.cards:
-            li = items.card_item(c)
-            self._shown_props[c.key] = dict(li.props) if hasattr(li, "props") else items.card_props(c)
+        for idx, c in enumerate(self.cards):
+            li = items.card_item(c, wide=False)
+            self._shown_props[(ROW, idx)] = dict(li.props) if hasattr(li, "props") else items.card_props(c, wide=False)
             list_items.append(li)
         ctrl.reset()
         ctrl.addItems(list_items)
         try:
             wctrl = self.getControl(WIDE_ROW)
+            wide_items = []
+            for idx, c in enumerate(self.cards):
+                wli = items.card_item(c, wide=True)
+                self._shown_props[(WIDE_ROW, idx)] = dict(wli.props) if hasattr(wli, "props") else items.card_props(c, wide=True)
+                wide_items.append(wli)
             wctrl.reset()
-            wctrl.addItems(list(list_items))
+            wctrl.addItems(wide_items)
         except Exception:
             pass
         if self.cards:
@@ -575,7 +598,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def _show_continue(self):
         if not self.demo:
             self.resume_doc = mr.load()
-        cards = sections.continue_cards(self.resume_doc, self.catalog, self._now(), self.fav_keys)
+        cards = self._continue_cards()
         self._apply_cards(cards, empty_msg=words.tr("Nothing in Continue yet."))
 
     def _show_favourites(self):
@@ -978,9 +1001,13 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             elif 0 <= pos < len(self.cards) and self.cards[pos].key == card.key:
                 self.cards[pos] = updated
                 for cid in (ROW, WIDE_ROW):
+                    is_wide = cid == WIDE_ROW
                     try:
-                        li = self.getControl(cid).items[pos]
-                        self._shown_props[card.key] = items.apply_card(li, updated, self._shown_props.get(card.key))
+                        ctrl = self.getControl(cid)
+                        li = ctrl.getListItem(pos) if hasattr(ctrl, "getListItem") else ctrl.items[pos]
+                        self._shown_props[(cid, pos)] = items.apply_card(
+                            li, updated, self._shown_props.get((cid, pos)), wide=is_wide
+                        )
                     except Exception:
                         pass
                 if not in_modal:

@@ -1192,6 +1192,12 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None)
             if not (live or ml.archive_ok(ch, p, now)):
                 continue
             title = _base_show_title(p.get("text"))
+            prog_img = https(p.get("image_url"))
+            ch_icon = https(ch.get("icon_v2_url") or ch.get("icon_url"))
+            poster = prog_img or ch_icon
+            art_mode = "logo" if (not prog_img and ch_icon) else ""
+            wide_art = _hq_url(p.get("preview_url_ext") or p.get("preview_url") or ch.get("banner_url"))
+            banner = wide_art or poster
             _add_item({
                 "kind": "show_tv",
                 "id": "tv:%d" % sid,
@@ -1199,8 +1205,10 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None)
                 "channel_ids": [cid] if cid else [],
                 "curated_epg_ids": [],
                 "title": title,
-                "poster": https(p.get("image_url")),
-                "banner": _hq_url(p.get("preview_url_ext") or p.get("preview_url")),
+                "poster": poster,
+                "banner": banner,
+                "wide_art": wide_art,
+                "art_mode": art_mode,
                 "special": False,
             })
     res = {"ok": True, "items": items}

@@ -40,7 +40,10 @@ class Shelf:
         self._prop("filters", "1" if visible else "")
         for idx, cid in enumerate(range(CHIP_FIRST, CHIP_LAST + 1)):
             label = chips[idx][1] if (visible and idx < len(chips)) else ""
-            self.getControl(cid).setLabel(label)
+            try:
+                self.getControl(cid).setLabel(label)
+            except RuntimeError:
+                pass
             self._prop(f"chip_{cid}", label)
             if visible and idx < len(chips):
                 key = chips[idx][0]

@@ -53,7 +53,7 @@ def _item_ok(item) -> bool:
     title = item.get("title")
     if not _text(title, 200) or not title:
         return False
-    for key in ("poster", "banner", "image_url", "preview"):
+    for key in ("poster", "banner", "wide_art", "image_url", "preview"):
         val = item.get(key)
         if val is not None:
             if not _text(val, MAX_ICON):

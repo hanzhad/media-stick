@@ -65,6 +65,22 @@ def channel_day(cid, day_key: str, now=None, tr=None) -> list:
     return out
 
 
+def recall_programme(cid, epg, now=None) -> Optional[dict]:
+    """Stored programme metadata for `(cid, epg)` from SweetStore, or None when absent/unreadable."""
+    try:
+        return sweetstore.default_store().recall_programme(epg, cid=cid, now=now)
+    except Exception:
+        return None
+
+
+def recall_title_detail(title_key) -> Optional[dict]:
+    """Stored VOD/show detail for `title_key` from SweetStore, or None when absent/unreadable."""
+    try:
+        return sweetstore.default_store().get_title_detail(str(title_key or ""))
+    except Exception:
+        return None
+
+
 def clear_store() -> None:
     """Wipe cached SWEET.TV catalog data on sign-out."""
     try:
