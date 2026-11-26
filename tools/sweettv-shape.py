@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Print the key structure of the SWEET.TV plugin's channel list: names, types and counts, never values.
+"""Print the key structure of the SWEET.TV channel list (SweetStore SQLite DB or JSON): names, types and counts, never values.
 
-Usage: python3 tools/sweettv-shape.py [/home/media/.kodi/temp/channelList.json]
+Usage: python3 tools/sweettv-shape.py [/var/cache/media-stick/sweettv/sweettv.db | /home/media/.kodi/temp/channelList.json]
 
-Run it on the device (or on a copy of the file) once SWEET.TV is signed in, and compare with what
+Run it on the device (or on a copy of the DB/file) once SWEET.TV is signed in, and compare with what
 device/kodi-addons/script.media-stick.home/resources/lib/sweettv_data.py reads (its header): the lines marked
 "not seen" are fields the app reads when present but whose existence is only a guess."""
 import json
@@ -13,6 +13,7 @@ import sys
 import time
 from collections import Counter
 
+DEFAULT_DB = "/var/cache/media-stick/sweettv/sweettv.db"
 DEFAULT = "/home/media/.kodi/temp/channelList.json"
 # what sweettv_data reads: (path, key, sure) - "sure" means the plugin's own source uses it
 READ = [("top", "status", True), ("top", "list", True), ("top", "categories", True),
@@ -44,16 +45,32 @@ def describe(label, items, out):
     return keys
 
 
+def _load_payload(path):
+    if path.endswith(".db"):
+        lib_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "device", "files", "usr", "local", "lib", "media-stick"))
+        for candidate in ("/usr/local/lib/media-stick", lib_dir):
+            if os.path.isdir(candidate) and candidate not in sys.path:
+                sys.path.insert(0, candidate)
+        import mediastick_sweetstore as sweetstore
+        st = sweetstore.SweetStore(path)
+        try:
+            data = st.get_channels_payload()
+        finally:
+            st.close()
+        return os.path.getsize(path), data
+    with open(path, "rb") as f:
+        raw = f.read()
+    return len(raw), json.loads(raw)
+
+
 def main(path):
     out = []
     try:
-        with open(path, "rb") as f:
-            raw = f.read()
-        data = json.loads(raw)
+        size_bytes, data = _load_payload(path)
     except (OSError, ValueError) as e:
         sys.exit(f"cannot read {path}: {e}")
     age = time.time() - os.stat(path).st_mtime
-    out.append(f"{path}: {len(raw)} bytes, written {int(age)} s ago")
+    out.append(f"{path}: {size_bytes} bytes, written {int(age)} s ago")
     if not isinstance(data, dict):
         sys.exit(f"top level is a {type_name(data)}, expected an object")
     out.append("top level: " + ", ".join(f"{k} ({type_name(v)}{f' x{len(v)}' if isinstance(v, (list, dict)) else ''})"
@@ -83,4 +100,5 @@ def main(path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else DEFAULT)
+    default_target = DEFAULT_DB if os.path.exists(DEFAULT_DB) else DEFAULT
+    main(sys.argv[1] if len(sys.argv) > 1 else default_target)

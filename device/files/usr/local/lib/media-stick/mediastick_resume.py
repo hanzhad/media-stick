@@ -387,8 +387,7 @@ def due(last_write, now) -> bool:
 
 
 def programme_meta(raw, cid, epg):
-    """{"title", "start", "stop"} of programme `epg` of channel `cid` in the add-on's channelList.json (already parsed), {}
-    when it is not there."""
+    """{"title", "start", "stop"} of programme `epg` of channel `cid` in a parsed channel payload, {} when absent."""
     for c in raw.get("list", ()) if isinstance(raw, dict) and isinstance(raw.get("list"), list) else ():
         if isinstance(c, dict) and str(c.get("id")) == str(cid):
             for p in c.get("epg", ()) if isinstance(c.get("epg"), list) else ():

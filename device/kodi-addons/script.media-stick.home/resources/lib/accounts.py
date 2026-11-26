@@ -143,6 +143,12 @@ def sign_out(service):
     if not addon_ready(service):
         return False
     page_cache.drop_service(service)         # the account's cached pages go with it
+    if service == "sweettv":
+        try:
+            import mediastick_sweetstore as sweetstore
+            sweetstore.default_store().clear()
+        except Exception as e:
+            ui.log(f"sweetstore clear on signout failed: {e!r}", xbmc.LOGWARNING)
     xbmc.executebuiltin(f"RunPlugin({SIGNOUT[service]})")
     return True
 

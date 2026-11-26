@@ -23,6 +23,16 @@ except Exception:  # not a media-stick device: the add-on behaves as upstream
     _ms = None
 # media-stick end
 
+# media-stick begin: canonical SweetStore SQLite ACL for channels, EPG, and sign-out cleanup
+try:
+    import sys as _ms_sys
+    if '/usr/local/lib/media-stick' not in _ms_sys.path:
+        _ms_sys.path.insert(0, '/usr/local/lib/media-stick')
+    import mediastick_sweetstore as _ms_store
+except Exception:  # not a media-stick device: the add-on behaves as upstream
+    _ms_store = None
+# media-stick end
+
 urllib3.disable_warnings()
 
 from .helper import Helper
@@ -230,11 +240,23 @@ def refreshChannelList():
             f = xbmcvfs.File(helper.channelListPath, 'wb')
             f.write(jsdata_content)
             f.close()
+            # media-stick begin: mirror channel list and inline EPG into SweetStore SQLite ACL
+            if _ms_store is not None:
+                try:
+                    _ms_store.default_store().upsert_channels(jsdata, now=timestamp)
+                except Exception:
+                    pass
+            # media-stick end
     else:
         xbmc.log("Failed to update channel list", xbmc.LOGERROR)
         # media-stick begin: the cause without DEBUG logging: the status the API answered with (never the body, never a token)
         xbmc.log('media-stick: SWEET.TV channel list not updated: status=%s (authorization sent: %s)'
                  % (_ms_status(jsdata), 'authorization' in helper.headers), xbmc.LOGWARNING)
+        if _ms_store is not None and isinstance(jsdata, dict) and isinstance(jsdata.get('status'), (str, int)):
+            try:
+                _ms_store.default_store().record_sync_error(str(jsdata.get('status'))[:40], now=timestamp)
+            except Exception:
+                pass
         # media-stick end
         xbmc.log("Failed to update channel list " + str(jsdata), xbmc.LOGDEBUG)
 
@@ -295,30 +317,41 @@ def refreshToken():
         json_data = helper.json_data
         json_data.update({"refresh_token": helper.get_setting('refresh_token')})
 
-        jsdata = helper.request_sess(helper.token_url, 'post', headers=helper.headers, data=json_data, json=True,
-                                     json_data=True)
-
-        if jsdata is None:
+        # media-stick begin: preserve logged/refresh_token across transient network/5xx errors, rotate refresh_token,
+        # and only clear logged='false' on explicit auth revocation
+        try:
+            jsdata = helper.request_sess(helper.token_url, 'post', headers=helper.headers, data=json_data, json=True,
+                                         json_data=True)
+        except Exception as e:
+            xbmc.log('media-stick: SWEET.TV token refresh transient error: ' + repr(e)[:120], xbmc.LOGWARNING)
             return
 
-        xbmc.log("refresh " + str(jsdata), xbmc.LOGDEBUG)
+        if not isinstance(jsdata, dict):
+            return
 
         if jsdata.get("access_token", None):
             xbmc.log("Token refresh success", xbmc.LOGDEBUG)
             helper.set_setting('bearer', 'Bearer ' + str(jsdata.get("access_token")))
             helper.headers.update({'authorization': helper.get_setting('bearer')})
-
+            new_rt = jsdata.get("refresh_token")
+            if isinstance(new_rt, str) and new_rt and new_rt != 'None':
+                helper.set_setting('refresh_token', new_rt)
             helper.set_setting('access_token_last_update', str(int(time.time())))
-
-            access_token_lifetime = int(jsdata.get("expires_in"))
+            access_token_lifetime = int(jsdata.get("expires_in") or 3600)
             helper.set_setting('access_token_lifetime', str(access_token_lifetime))
-
             return True
-        else:
+
+        _ms_revoked = {'UNAUTHORIZED', 'UNAUTHENTICATED', 'FORBIDDEN', 'INVALID_TOKEN',
+                       'INVALID_GRANT', 'TOKEN_EXPIRED', 'REFRESH_TOKEN_EXPIRED',
+                       'AUTH_ERROR', 'NOT_AUTHORIZED', 'SESSION_EXPIRED'}
+        _ms_auth_codes = {str(jsdata.get(k)).strip().upper() for k in ('status', 'result', 'error')
+                          if isinstance(jsdata.get(k), str) and jsdata.get(k)}
+        if (_ms_auth_codes & _ms_revoked) or jsdata.get('code') in (401, 403):
             xbmc.log("Token refresh failed", xbmc.LOGERROR)
             helper.set_setting('logged', 'false')
-
             return False
+        return
+        # media-stick end
 
     return True
 
@@ -454,6 +487,13 @@ def logout():
                             json_data=True)
         helper.set_setting('bearer', '')
         helper.set_setting('logged', 'false')
+        # media-stick begin: wipe cached catalog data on confirmed sign-out
+        if _ms_store is not None:
+            try:
+                _ms_store.default_store().clear()
+            except Exception:
+                pass
+        # media-stick end
         helper.refresh()
 
 

@@ -21,11 +21,12 @@ Media Stick turns a Raspberry Pi 3B+ (1 GB RAM, Raspberry Pi OS Lite 64-bit / De
 - **PipeWire + WirePlumber**: `device/files/etc/pipewire/pipewire.conf.d/10-media-stick.conf` locks a 48 kHz clock (`quantum = 1024`) for `vc4hdmi`, while `device/files/etc/wireplumber/wireplumber.conf.d/50-media-stick-no-bt.conf` disables Bluetooth, V4L2, and libcamera monitors to keep audio daemon RSS minimal.
 - **AirPlay (`airplay.service`)**: `device/files/usr/local/bin/airplay` wraps `uxplay`, acquires `CAST_AIRPLAY` from `mediastick-displayd`, and supports both screen mirroring and audio-only AirPlay streaming without touching Kodi until release.
 
-## Shared Store, Quick Resume & Prefetch (`mediastick_store.py`)
+## Shared Store, SweetStore ACL, Quick Resume & Prefetch (`mediastick_store.py`, `mediastick_sweetstore.py`)
 
-- **SQLite WAL Store**: `device/files/usr/local/lib/media-stick/mediastick_store.py` provides two WAL-mode SQLite databases (stdlib-only, zero `xbmc` imports) with `SecretRefused` guards:
+- **SQLite WAL Stores**: `device/files/usr/local/lib/media-stick/mediastick_store.py` and `mediastick_sweetstore.py` provide WAL-mode SQLite databases (stdlib-only, zero `xbmc` imports) with `SecretRefused` guards:
   - `StateStore` (`/var/lib/media-stick/state.db`): durable `resume`, `favourites`, `app_recent`, and `prefs` tables with idempotent migration from legacy JSON files.
-  - `CacheStore` (`/var/cache/media-stick/cache.db`): `pages` and `api_cache` SWR caches bounded by a combined 8 MB LRU eviction budget, plus `ui_snapshots` (`MAX_SNAPSHOT_BYTES = 65536`) for Quick Resume.
+  - `CacheStore` (`/var/cache/media-stick/cache.db`): `pages` SWR cache bounded by an 8 MB LRU eviction budget, plus `ui_snapshots` (`MAX_SNAPSHOT_BYTES = 65536`) for Quick Resume.
+  - `SweetStore` (`/var/cache/media-stick/sweettv/sweettv.db`): canonical disk-backed Anti-Corruption Layer for SWEET.TV channels, categories, EPG programmes, VOD/show titles, sorted seasons & episodes, search index, and `swr_cache` (wiping all catalog tables on sign-out).
 - **Quick Resume & Playback-Gated Prefetch**: `quick_resume.py` saves debounced UI snapshots (`nav_stack`, section, filter, focused index/key, cards, `media_ref`) per app/profile so reopening YouTube or SWEET.TV restores state immediately. `prefetch.py` warms initial pages serially in one low-priority thread and pauses whenever Kodi is playing or `airplay`/`miracast`/`webapp` flags exist; `service.py` uses adaptive polling (`IDLE_POLL = 1.0s`, `PLAYING_POLL = 5.0s`).
 
 ## Native 1080p Skin (`skin.media-stick`)

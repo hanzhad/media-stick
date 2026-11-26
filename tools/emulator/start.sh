@@ -73,9 +73,20 @@ if [ "$MODE" = "live" ]; then
             "python3 -c 'import sqlite3; s=sqlite3.connect(\"/var/lib/media-stick/resume/state.db\"); d=sqlite3.connect(\"/tmp/emu-state.db\"); s.backup(d); d.close(); s.close()' && cat /tmp/emu-state.db && rm -f /tmp/emu-state.db" \
             > "$CRED_DIR/state.db" || rm -f "$CRED_DIR/state.db"
     fi
+    if ssh -i "$KEY" -o ConnectTimeout=5 -o BatchMode=yes "media@$HOST" "test -f /var/cache/media-stick/sweettv/sweettv.db"; then
+        mkdir -p "$CRED_DIR/sweettv"
+        ssh -i "$KEY" -o ConnectTimeout=5 -o BatchMode=yes "media@$HOST" \
+            "python3 -c 'import sqlite3; s=sqlite3.connect(\"/var/cache/media-stick/sweettv/sweettv.db\"); d=sqlite3.connect(\"/tmp/emu-sweettv.db\"); s.backup(d); d.close(); s.close()' && cat /tmp/emu-sweettv.db && rm -f /tmp/emu-sweettv.db" \
+            > "$CRED_DIR/sweettv/sweettv.db" || rm -rf "$CRED_DIR/sweettv"
+    fi
     scp -i "$KEY" -o ConnectTimeout=5 -q "media@$HOST:/var/lib/media-stick/resume/positions.json" "$CRED_DIR/positions.json" || true
     scp -i "$KEY" -o ConnectTimeout=5 -q "media@$HOST:/var/lib/media-stick/resume/sweettv-favourites.json" "$CRED_DIR/sweettv-favourites.json" || true
     chmod 600 "$CRED_DIR"/* 2>/dev/null || true
+    if [ -d "$CRED_DIR/sweettv" ] && [ -s "$CRED_DIR/sweettv/sweettv.db" ]; then
+        chmod 755 "$CRED_DIR/sweettv"
+        chmod 644 "$CRED_DIR/sweettv/sweettv.db"
+        DOCKER_ARGS+=(-v "$CRED_DIR/sweettv:/var/cache/media-stick/sweettv")
+    fi
     DOCKER_ARGS+=(-v "$CRED_DIR:/emu-creds:ro")
     [ -f "$CRED_DIR/settings.xml" ] && DOCKER_ARGS+=(-e SWEETTV_SETTINGS=/emu-creds/settings.xml)
     [ -f "$CRED_DIR/channelList.json" ] && DOCKER_ARGS+=(-e SWEETTV_CHANNELS=/emu-creds/channelList.json)
