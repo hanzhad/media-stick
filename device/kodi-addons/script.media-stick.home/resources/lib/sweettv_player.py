@@ -28,6 +28,9 @@ LOG = "[script.media-stick.home]"
 RESUME_CHECKPOINT_EVERY = 30.0
 INITIAL_SEEK_RETRY = 3.0
 INITIAL_SEEK_MAX_TRIES = 5
+STARTUP_GRACE = 30.0
+SEEK_GRACE = 15.0
+INITIAL_SEEK_SETTLE = 2.0
 
 _PlayerBase = getattr(xbmc, "Player", object)
 
@@ -64,6 +67,11 @@ class SweetPlayerController(_PlayerBase):
         self._paused = False
         self._reopening = False
         self._playback_seen = False
+        self._av_started = False
+        self._av_started_mono: float | None = None
+        self._session_start_mono: float = float(self._mono())
+        self._seek_grace_until: float = 0.0
+        self._watchdog_exhausted = False
         self._last_pos = 0.0
         self._last_total = 0.0
         self._last_checkpoint_mono = 0.0
@@ -298,6 +306,11 @@ class SweetPlayerController(_PlayerBase):
         self._initial_seek_done = True
         self._paused = False
         self._playback_seen = False
+        self._av_started = False
+        self._av_started_mono = None
+        self._session_start_mono = float(self._mono())
+        self._seek_grace_until = 0.0
+        self._watchdog_exhausted = False
         sp.clear_active_session(self._session_path)
         self._clear_osd()
 
@@ -396,12 +409,21 @@ class SweetPlayerController(_PlayerBase):
 
         for prop_k, prop_v in sel["properties"].items():
             li.setProperty(prop_k, prop_v)
+        total_sec = 0
+        if kind == "epg" and slot_stop > slot_start and slot_stop <= now_i:
+            total_sec = slot_stop - slot_start
+        elif kind == "vod" and duration > 0:
+            total_sec = duration
+        if total_sec > 0:
+            li.setProperty("TotalTime", str(total_sec))
         if kind in ("epg", "vod") and start_offset > 0:
             li.setProperty("ResumeTime", str(start_offset))
-        if kind == "epg" and slot_stop > slot_start and slot_stop <= now_i:
-            li.setProperty("TotalTime", str(slot_stop - slot_start))
-        elif kind == "vod" and duration > 0:
-            li.setProperty("TotalTime", str(duration))
+            li.setProperty("StartOffset", str(start_offset))
+            if hasattr(li, "getVideoInfoTag"):
+                try:
+                    li.getVideoInfoTag().setResumePoint(float(start_offset), float(total_sec))
+                except Exception:
+                    pass
 
         session_doc = {
             "kind": kind,
@@ -442,6 +464,11 @@ class SweetPlayerController(_PlayerBase):
         self._last_initial_seek_mono = None
         self._paused = False
         self._playback_seen = False
+        self._av_started = False
+        self._av_started_mono = None
+        self._session_start_mono = mono
+        self._seek_grace_until = 0.0
+        self._watchdog_exhausted = False
         self._last_pos = float(start_offset) if kind in ("epg", "vod") else 0.0
         self._last_total = float(duration) if duration > 0 else 0.0
         self._last_checkpoint_mono = mono
@@ -480,6 +507,14 @@ class SweetPlayerController(_PlayerBase):
         in_progress = bool(sess.get("kind") == "epg" and slot_start and slot_stop and slot_start <= now_i < slot_stop)
         if not in_progress and not from_start and offset > 0 and pos >= offset - sp.SEEK_TOLERANCE:
             self._initial_seek_done = True
+            return
+        if (
+            not from_start
+            and offset > 0
+            and pos < sp.SEEK_TOLERANCE
+            and self._av_started_mono is not None
+            and mono - self._av_started_mono < INITIAL_SEEK_SETTLE
+        ):
             return
         action, target = sp.compute_initial_seek(
             offset,
@@ -521,11 +556,13 @@ class SweetPlayerController(_PlayerBase):
             try:
                 self.seekTime(target)
                 self._last_pos = target
+                mono = float(self._mono())
+                self._seek_grace_until = mono + SEEK_GRACE
                 if self._watchdog_state:
                     self._watchdog_state = {
                         **self._watchdog_state,
                         "last_pos": target,
-                        "last_advance_mono": float(self._mono()),
+                        "last_advance_mono": self._seek_grace_until,
                         "last_good_pos": max(0, int(target)),
                     }
             except Exception as exc:
@@ -627,7 +664,26 @@ class SweetPlayerController(_PlayerBase):
                     return
                 pos = self._last_pos
 
-            if playing and self._session is not None:
+            if (
+                not self._av_started
+                and playing
+                and total >= sp.MIN_TOTAL
+                and (pos >= 0.5 or (self._initial_seek_done and pos > 0))
+            ):
+                self._av_started = True
+                if self._av_started_mono is None:
+                    self._av_started_mono = mono
+
+            if (
+                playing
+                and self._session is not None
+                and not self._watchdog_exhausted
+                and (
+                    (self._av_started and self._initial_seek_done)
+                    or (mono - self._session_start_mono >= STARTUP_GRACE)
+                )
+                and mono >= self._seek_grace_until
+            ):
                 wd = sp.evaluate_watchdog(
                     self._watchdog_state,
                     pos=pos,
@@ -641,9 +697,8 @@ class SweetPlayerController(_PlayerBase):
                     self._failover_reopen(wd["resume_pos"])
                     return
                 if wd["action"] == "give_up":
+                    self._watchdog_exhausted = True
                     self._persist_resume(force_done=False, allow_done=False)
-                    self._cleanup_session()
-                    return
 
             self._update_osd(pos=self._last_pos)
 
@@ -657,9 +712,18 @@ class SweetPlayerController(_PlayerBase):
         with self._lock:
             if self._session is None:
                 return
+            mono = float(self._mono())
+            self._av_started = True
+            if self._av_started_mono is None:
+                self._av_started_mono = mono
+            if self._watchdog_state:
+                self._watchdog_state = {
+                    **self._watchdog_state,
+                    "last_advance_mono": mono,
+                }
             playing, pos, total = self._read_player_times()
             if playing and not self._initial_seek_done:
-                self._step_initial_seek(pos, total, float(self._mono()))
+                self._step_initial_seek(pos, total, mono)
             self._update_osd(pos=self._last_pos)
 
     def onPlayBackPaused(self) -> None:
