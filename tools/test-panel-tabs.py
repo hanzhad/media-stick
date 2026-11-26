@@ -214,9 +214,10 @@ class Page(unittest.TestCase):
 
     def test_the_buttons_mode_rows(self):
         rows = [re.findall(r'(?:data-a|id)="([\w-]+)"', g) for g in self.rc().split('<div class="grp">')[1:]]
-        self.assertEqual(rows, [["back", "home", "contextmenu", "txt-open"], ["volumedown", "mute", "volumeup"]])
+        self.assertEqual(rows, [["back", "home", "contextmenu", "txt-open", "shot-save-rc"], ["volumedown", "mute", "volumeup"]])
         self.assertIn('data-a="contextmenu" aria-label="Ещё"', self.rc())
         self.assertIn('id="txt-open" aria-label="Текст"', self.rc())
+        self.assertIn('id="shot-save-rc" type="button" aria-label="Скриншот"', self.rc())
         for gone in ("rewind", "fastforward", "playpause", '"stop"', '"info"', '"osd"', "Инфо", "Панель"):
             self.assertNotIn(gone, self.rc())
         self.assertIn('data-a="select"', self.rc())                  # the D-pad stays

@@ -1,14 +1,15 @@
-"""Unified TV screen capture for `/shot.jpg` (960x540 JPEG q75 via Pillow).
+"""Unified TV screen capture for `/shot.jpg` (960x540 JPEG q75) and `/shot.png` (full-res PNG).
 
 Pure Core:
   - resize_png_to_jpeg(png_bytes, max_width=960, max_height=540, quality=75)
 
 Thin I/O Shell:
   - capture_jpeg(owner, kodi_shot_fn=None, run_cmd=None, ...)
+  - capture_png(owner, kodi_shot_fn=None, run_cmd=None, ...)
     Routes:
       - airplay / miracast -> fast ScreenUnavailable(owner=..., status=409)
-      - web-app            -> `grim -t jpeg -q 70 -s 0.5 -`
-      - kodi / ""          -> Kodi screenshot + Pillow resize/JPEG
+      - web-app            -> `grim` (`-t jpeg -q 70 -s 0.5 -` or `-t png -`)
+      - kodi / ""          -> Kodi screenshot (+ Pillow resize/JPEG for capture_jpeg)
 """
 import glob
 import io
@@ -73,6 +74,34 @@ def _default_run_bytes(cmd, env=None, timeout=10) -> tuple[int, bytes]:
         return 124, b""
 
 
+def _capture_grim(cmd: list[str], magic: bytes, run_cmd=None, env=None) -> bytes:
+    runner = run_cmd or _default_run_bytes
+    rc, data = runner(cmd, env=env if env is not None else _wayland_env())
+    if rc != 0 or not isinstance(data, (bytes, bytearray)) or not bytes(data).startswith(magic):
+        raise ScreenUnavailable(owner="web-app", status=503, message="grim capture failed")
+    return bytes(data)
+
+
+def _capture_raw_png(
+    owner: str,
+    grim_cmd: list[str],
+    grim_magic: bytes,
+    kodi_shot_fn=None,
+    run_cmd=None,
+    env=None,
+) -> tuple[bool, bytes]:
+    if owner in CAST_OWNERS:
+        raise ScreenUnavailable(owner=owner, status=409, message=f"TV busy with {owner}")
+
+    if owner == "web-app":
+        return True, _capture_grim(grim_cmd, grim_magic, run_cmd=run_cmd, env=env)
+
+    if kodi_shot_fn is None:
+        raise ScreenUnavailable(owner=owner or "kodi", status=503, message="no screenshot source")
+
+    return False, bytes(kodi_shot_fn())
+
+
 def capture_jpeg(
     owner: str,
     kodi_shot_fn=None,
@@ -83,21 +112,32 @@ def capture_jpeg(
     quality: int = DEFAULT_QUALITY,
 ) -> bytes:
     """Capture current TV picture as JPEG bytes according to active screen owner."""
-    if owner in CAST_OWNERS:
-        raise ScreenUnavailable(owner=owner, status=409, message=f"TV busy with {owner}")
+    from_grim, data = _capture_raw_png(
+        owner,
+        ["grim", "-t", "jpeg", "-q", "70", "-s", "0.5", "-"],
+        b"\xff\xd8",
+        kodi_shot_fn=kodi_shot_fn,
+        run_cmd=run_cmd,
+        env=env,
+    )
+    if from_grim:
+        return data
+    return resize_png_to_jpeg(data, max_width=max_width, max_height=max_height, quality=quality)
 
-    if owner == "web-app":
-        runner = run_cmd or _default_run_bytes
-        rc, data = runner(
-            ["grim", "-t", "jpeg", "-q", "70", "-s", "0.5", "-"],
-            env=env if env is not None else _wayland_env(),
-        )
-        if rc != 0 or not isinstance(data, (bytes, bytearray)) or not bytes(data).startswith(b"\xff\xd8"):
-            raise ScreenUnavailable(owner="web-app", status=503, message="grim capture failed")
-        return bytes(data)
 
-    if kodi_shot_fn is None:
-        raise ScreenUnavailable(owner=owner or "kodi", status=503, message="no screenshot source")
-
-    png = kodi_shot_fn()
-    return resize_png_to_jpeg(png, max_width=max_width, max_height=max_height, quality=quality)
+def capture_png(
+    owner: str,
+    kodi_shot_fn=None,
+    run_cmd=None,
+    env=None,
+) -> bytes:
+    """Capture current TV picture as full-resolution PNG bytes according to active screen owner."""
+    _, data = _capture_raw_png(
+        owner,
+        ["grim", "-t", "png", "-"],
+        b"\x89PNG\r\n\x1a\n",
+        kodi_shot_fn=kodi_shot_fn,
+        run_cmd=run_cmd,
+        env=env,
+    )
+    return data

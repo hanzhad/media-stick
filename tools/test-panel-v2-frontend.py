@@ -243,6 +243,13 @@ class TestStaticRoutesServed(_PanelServerMixin, unittest.TestCase):
         self.assertIn("Ищу приставку…", src)
         self.assertIn("/static/", src)
 
+    def test_service_worker_cache_version_bumped(self):
+        code, _, raw = self._get("/sw.js")
+        self.assertEqual(code, 200)
+        src = raw.decode("utf-8")
+        self.assertIn("ms-panel-v2-2", src)
+        self.assertNotIn("ms-panel-v2-1", src)
+
     def test_gzip_etag_304_and_immutable_cache_headers(self):
         code, hdrs, raw = self._get("/static/ws-client.js?v=test123", headers={"Accept-Encoding": "gzip"})
         self.assertEqual(code, 200)
@@ -337,6 +344,21 @@ class TestStaticEsModules(_PanelServerMixin, unittest.TestCase):
         self.assertIn("Вернуться в Kodi", src)
         self.assertIn("document.hidden", src)
 
+    def test_screen_v2_screenshot_share_and_sheet(self):
+        src = self._fetch_js("screen-v2.js")
+        for token in (
+            "/shot.png",
+            "fresh=1",
+            "takeScreenshot",
+            "saveBusy",
+            "canShare",
+            "navigator.share",
+            "AbortError",
+            "NotAllowedError",
+            "mediastick-",
+        ):
+            self.assertIn(token, src, f"screen-v2.js missing {token!r}")
+
     def test_diagnostics_logs_and_lan_pin_modal(self):
         src = self._fetch_js("diagnostics.js")
         self.assertIn("/api/logs", src)
@@ -350,6 +372,21 @@ class TestStaticEsModules(_PanelServerMixin, unittest.TestCase):
             self.assertIn(mod, src, f"v2-boot.js must import {mod}")
         self.assertIn("serviceWorker", src)
         self.assertIn("/sw.js", src)
+
+    def test_v2_boot_wires_screenshot_buttons_and_sheet(self):
+        src = self._fetch_js("v2-boot.js")
+        for elem_id in (
+            "shot-save-rc",
+            "shot-save-btn",
+            "f-shot",
+            "shot-sheet",
+            "shot-sheet-back",
+            "shot-sheet-img",
+            "shot-sheet-share",
+            "shot-sheet-dl",
+            "shot-sheet-close",
+        ):
+            self.assertIn(elem_id, src, f"v2-boot.js must wire {elem_id!r}")
 
 
 # ---- 4. panel GET / HTML & gzip/ETag integration ----
@@ -393,6 +430,25 @@ class TestPanelRootPageV2(_PanelServerMixin, unittest.TestCase):
         self.assertRegex(html, r"standby|Standby|Питание|ТВ", "missing Standby/Wake UI in panel HTML")
         self.assertRegex(html, r"diag|logs|Журнал|Логи", "missing Diagnostics UI in panel HTML")
         self.assertRegex(html, r"pin|PIN|ПИН", "missing LAN PIN UI in panel HTML")
+
+    def test_root_contains_screenshot_buttons_icon_and_sheet(self):
+        code, _, raw = self._get("/")
+        self.assertEqual(code, 200)
+        html = raw.decode("utf-8")
+
+        self.assertRegex(html, r'<symbol[^>]+id="i-cam"[^>]+viewBox="0 0 24 24"')
+        for elem_id in (
+            "shot-save-rc",
+            "shot-save-btn",
+            "f-shot",
+            "shot-sheet",
+            "shot-sheet-back",
+            "shot-sheet-img",
+            "shot-sheet-share",
+            "shot-sheet-dl",
+            "shot-sheet-close",
+        ):
+            self.assertIn(f'id="{elem_id}"', html, f"panel HTML missing id={elem_id!r}")
 
 
 if __name__ == "__main__":
