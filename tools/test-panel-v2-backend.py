@@ -201,9 +201,9 @@ class TestKodiBus(unittest.TestCase):
             pending.append((conn, req))
             if len(pending) == 2:
                 # Reply to second request BEFORE first request
+                ready.set()
                 for c, r in reversed(pending):
                     self.srv.send_json(c, {"jsonrpc": "2.0", "id": r["id"], "result": {"echo": r["method"]}})
-                ready.set()
 
         self.srv.on_request = handler
         bus = kb_mod.KodiBus(host="127.0.0.1", port=self.srv.port, timeout=3.0)
