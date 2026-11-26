@@ -655,6 +655,144 @@ class VodAndCatalog(unittest.TestCase):
         self.assertEqual(len(sender.calls), 2)
         self.assertEqual(sender.calls[0]["url"], "https://api.sweet.tv/MovieService/GetConfiguration.json")
 
+    def test_configuration_reads_live_title_or_name_filters_blank_sort_modes_and_parses_countries(self):
+        live_cfg = {
+            "status": "OK",
+            "genres": [
+                {"id": 61, "title": "Все фильмы"},
+                {"id": 4, "title": "  Комедии  "},
+                {"id": 14, "name": "Боевики"},
+                {"id": 15, "title": "", "name": "Драмы"},
+                {"id": 16, "title": "Триллеры", "name": "Legacy"},
+                {"id": 20, "title": "   "},
+                {"id": 21},
+                {"title": "Без ID"},
+                None,
+                5,
+            ],
+            "sort_modes": [
+                {"id": 1, "title": "По умолчанию"},
+                {"id": 2, "name": "По рейтингу"},
+                {"id": 3, "title": "   "},
+                {"id": 5, "title": "", "name": "Недавно добавленные"},
+                {"id": 6},
+                {"id": 99, "title": "Неизвестный"},
+            ],
+            "countries": [
+                {"id": 47, "title": "США"},
+                {"id": "18", "name": "Великобритания"},
+                {"id": 33, "title": "  Франція  "},
+                {"id": 90, "title": "   "},
+                {"title": "Без ID"},
+                None,
+            ],
+        }
+        c_live, _ = client(reply(live_cfg))
+        res = api.configuration(client=c_live)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["genres"], [
+            {"id": 61, "name": "Все фильмы"},
+            {"id": 4, "name": "Комедии"},
+            {"id": 14, "name": "Боевики"},
+            {"id": 15, "name": "Драмы"},
+            {"id": 16, "name": "Триллеры"},
+        ])
+        self.assertEqual(res["sort_modes"], [
+            {"id": 1, "name": "По умолчанию"},
+            {"id": 2, "name": "По рейтингу"},
+            {"id": 5, "name": "Недавно добавленные"},
+        ])
+        self.assertEqual(res["countries"], [
+            {"id": 47, "name": "США"},
+            {"id": 18, "name": "Великобритания"},
+            {"id": 33, "name": "Франція"},
+        ])
+
+        c_name, _ = client(reply(CONFIG))
+        legacy = api.configuration(client=c_name)
+        self.assertTrue(legacy["ok"])
+        self.assertEqual(legacy["countries"], [])
+        self.assertEqual([g["name"] for g in legacy["genres"]], ["Фильмы", "Сериалы", "Шоу", "Комедия", "Ultra HD"])
+
+    def test_vod_detail_maps_numeric_country_ids_via_live_configuration_and_preserves_strings(self):
+        live_cfg = {
+            "status": "OK",
+            "genres": [
+                {"id": 4, "title": "Комедии"},
+                {"id": 14, "title": "Боевики"},
+            ],
+            "sort_modes": [{"id": 1, "title": "По умолчанию"}],
+            "countries": [
+                {"id": 47, "title": "США"},
+                {"id": 18, "title": "Великобритания"},
+                {"id": 33, "name": "Франція"},
+            ],
+        }
+
+        def make_by(movie_doc):
+            def by(call):
+                if call["url"].endswith("GetConfiguration.json"):
+                    return reply(live_cfg)
+                if call["url"].endswith("GetMovieInfo.json"):
+                    return reply({"status": "OK", "movies": [movie_doc]})
+                return reply({"status": "OK"})
+            return by
+
+        with tempfile.TemporaryDirectory() as td:
+            st = sweetstore.SweetStore(os.path.join(td, "countries.db"))
+            self.addCleanup(st.close)
+
+            # 1. Live genres + mixed numeric and non-numeric countries (47 -> США, "33" -> Франція, "Україна" unchanged)
+            c1, s1 = client(by=make_by({
+                "id": 7101,
+                "title": "Поліцейська академія",
+                "genres": [4, 14],
+                "countries": [47, "33", "Україна"],
+                "availability_info": {"available": True},
+                "seasons": [],
+            }))
+            det1 = api.vod_detail(7101, client=c1, tr=ENGLISH, store=st)
+            self.assertTrue(det1["ok"])
+            self.assertEqual(
+                (det1["genre_names"], det1["countries"]),
+                (["Комедии", "Боевики"], ["США", "Франція", "Україна"]),
+            )
+
+            c_off, _ = client((0, b""))
+            det1_cached = api.vod_detail(7101, client=c_off, tr=ENGLISH, store=st)
+            self.assertTrue(det1_cached["ok"])
+            self.assertEqual(det1_cached["genre_names"], ["Комедии", "Боевики"])
+            self.assertEqual(det1_cached["countries"], ["США", "Франція", "Україна"])
+
+            # 2. Boundary: empty genres=[] with numeric countries still fetches GetConfiguration.json
+            c2, s2 = client(by=make_by({
+                "id": 7102,
+                "title": "Іноземний фільм",
+                "genres": [],
+                "countries": ["47", 18],
+                "availability_info": {"available": True},
+                "seasons": [],
+            }))
+            det2 = api.vod_detail(7102, client=c2, tr=ENGLISH, store=st)
+            self.assertTrue(det2["ok"])
+            self.assertEqual(det2["genre_names"], [])
+            self.assertEqual(det2["countries"], ["США", "Великобритания"])
+            self.assertTrue(any(c["url"].endswith("GetConfiguration.json") for c in s2.calls))
+
+            # 3. Adjacent negative: empty genres=[] and only non-numeric countries keeps strings without extra config call
+            c3, s3 = client(by=make_by({
+                "id": 7103,
+                "title": "Локальний фільм",
+                "genres": [],
+                "countries": ["Україна", "Польща"],
+                "availability_info": {"available": True},
+                "seasons": [],
+            }))
+            det3 = api.vod_detail(7103, client=c3, tr=ENGLISH, store=st)
+            self.assertTrue(det3["ok"])
+            self.assertEqual(det3["countries"], ["Україна", "Польща"])
+            self.assertFalse(any(c["url"].endswith("GetConfiguration.json") for c in s3.calls))
+
     def test_catalog_page_movies_filters_tvod_uhd_and_ignores_watch_info(self):
         def by(call):
             if call["url"].endswith("GetGenreMovies.json"):
