@@ -142,6 +142,23 @@ def make_masks():
         Image.fromarray(arr, "RGBA").save(art.track(os.path.join(art.MEDIA, name)), optimize=True)
 
 
+def make_fades():
+    """White RGBA hero fade masks tinted at render time by Kodi <colordiffuse>."""
+    rng = np.random.default_rng(11)
+
+    t_left = (np.arange(512, dtype=np.float32) / 511.0)[None, :] * np.ones((16, 1), dtype=np.float32)
+    alpha_left = np.where(t_left <= 0.22, 1.0, 1.0 - art.smooth((t_left - 0.22) / 0.78))
+    art.save_rgba(os.path.join(art.MEDIA, "sweettv-fade-left.png"), alpha_left, dither=rng)
+
+    t_bot = (np.arange(512, dtype=np.float32) / 511.0)[:, None] * np.ones((1, 16), dtype=np.float32)
+    alpha_bot = np.where(t_bot >= 0.78, 1.0, art.smooth(t_bot / 0.78))
+    art.save_rgba(os.path.join(art.MEDIA, "sweettv-fade-bottom.png"), alpha_bot, dither=rng)
+
+    t_top = (np.arange(256, dtype=np.float32) / 255.0)[:, None] * np.ones((1, 16), dtype=np.float32)
+    alpha_top = 0.72 * (1.0 - art.smooth(t_top)) ** 1.3
+    art.save_rgba(os.path.join(art.MEDIA, "sweettv-fade-top.png"), alpha_top, dither=rng)
+
+
 def main():
     for d in (art.MEDIA, DEMO):
         os.makedirs(d, exist_ok=True)
@@ -151,6 +168,7 @@ def main():
     make_burger()
     make_bars()
     make_masks()
+    make_fades()
     for n, spec in enumerate(LOGOS, 1):
         make_logo(n, spec)
     for p in art.WRITTEN:

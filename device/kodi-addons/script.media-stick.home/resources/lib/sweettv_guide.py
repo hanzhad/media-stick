@@ -101,34 +101,98 @@ class Guide:
         except Exception as e:
             ui.log(f"SWEET.TV detail modal failed: {e!r}")
             detail = {"ok": False}
+        promote = False
         with self._lock:
             if self._stop.is_set() or gen != self.modal_gen or self.modal_kind != "detail":
                 return
             if not detail.get("ok"):
                 return
-            meta, desc = sections.detail_meta_and_desc(detail, card)
-            banner = str(detail.get("banner") or card.banner or card.art or "")
-            art = str(detail.get("poster") or card.art or "")
-            vod_url = str(detail.get("vod_url") or card.play_url or "")
-            pos = int(detail.get("resume") or card.resume_pos or 0)
-            resume_label = words.tr("Continue from {time}").format(time=sections.fmt_mmss(pos)) if pos else ""
-            updated = card._replace(
-                title=str(detail.get("title") or card.title),
-                art=art,
-                banner=banner,
-                meta=meta,
-                desc=desc,
-                play_url=vod_url,
-                alt_url=vod_url if pos else card.alt_url,
-                resume_pos=pos,
-                resume_label=resume_label,
-                fav=bool(detail.get("favourite", card.fav)),
-                playable=bool(vod_url),
+            if detail.get("seasons"):
+                self._apply_show_detail(card, detail)
+                promote = True
+            else:
+                meta, desc = sections.detail_meta_and_desc(detail, card)
+                banner = str(detail.get("banner") or card.banner or card.art or "")
+                art = str(detail.get("poster") or card.art or "")
+                vod_url = str(detail.get("vod_url") or card.play_url or "")
+                pos = int(detail.get("resume") or card.resume_pos or 0)
+                resume_label = words.tr("Continue from {time}").format(time=sections.fmt_mmss(pos)) if pos else ""
+                updated = card._replace(
+                    title=str(detail.get("title") or card.title),
+                    art=art,
+                    banner=banner,
+                    meta=meta,
+                    desc=desc,
+                    play_url=vod_url,
+                    alt_url=vod_url if pos else card.alt_url,
+                    resume_pos=pos,
+                    resume_label=resume_label,
+                    fav=bool(detail.get("favourite", card.fav)),
+                    playable=bool(vod_url),
+                )
+                self.modal_card = updated
+                self._prop("guide_title", updated.title)
+                self._sync_hero(updated, immediate=True)
+                self._prop("has_guide", "")
+        if promote:
+            self._focus_on(SHOW_EPISODES)
+
+    def _apply_show_detail(self, card: sections.Card, detail: dict):
+        self.modal_kind = "show"
+        self._prop("modal", "show")
+        self._prop("guide", "1")
+        has_seasons = bool(detail.get("seasons"))
+        if has_seasons:
+            raw_seasons = sorted(
+                detail["seasons"],
+                key=lambda s: (int(s.get("number") or 0), int(s.get("id") or 0)),
             )
-            self.modal_card = updated
-            self._prop("guide_title", updated.title)
-            self._sync_hero(updated, immediate=True)
-            self._prop("has_guide", "")
+            seasons = []
+            for i, s in enumerate(raw_seasons):
+                s_num = int(s.get("number") or (i + 1))
+                raw_title = str(s.get("title") or "").strip()
+                s_title = raw_title if raw_title else words.tr("{n} season").format(n=s_num)
+                eps = sorted(
+                    list(s.get("episodes") or ()),
+                    key=lambda ep: (int(ep.get("number") or 0), int(ep.get("episode_id") or ep.get("id") or 0)),
+                )
+                capped, seen_soon = [], False
+                for ep in eps:
+                    if ep.get("coming_soon") or ep.get("playable") is False:
+                        if seen_soon:
+                            continue
+                        seen_soon = True
+                    capped.append(ep)
+                seasons.append({"number": s_num, "title": s_title, "episodes": capped})
+            nu = sweetapi.resolve_next_up(seasons=seasons)
+        else:
+            eps = detail.get("episodes") or []
+            seasons = [{"number": 1, "title": words.tr("Episodes"), "episodes": eps}] if eps else []
+            nu = detail.get("next_up") or (sweetapi.resolve_next_up(episodes=eps) if eps else None)
+        meta, desc = sections.detail_meta_and_desc(detail, card)
+        banner = str(detail.get("banner") or card.banner or card.art or "")
+        wide_art = str(detail.get("wide_art") or card.wide_art or banner or "")
+        updated_card = card._replace(
+            title=str(detail.get("title") or card.title),
+            banner=banner,
+            wide_art=wide_art,
+            meta=meta,
+            desc=desc,
+            fav=bool(detail.get("favourite", card.fav)),
+        )
+        self.modal_card = updated_card
+        self._prop("guide_title", updated_card.title)
+        self._sync_hero(updated_card, immediate=True)
+        self.modal_movie_id = str(detail.get("movie_id") or self.modal_movie_id or card.key or "")
+        self.modal_flat_tv = not has_seasons
+        self.modal_seasons = seasons
+        self.modal_tabs = [(i, s["title"]) for i, s in enumerate(seasons)]
+        self.modal_next_up = nu
+        self._sync_show_cta(nu)
+        s_idx = int(nu["season_index"]) if nu else 0
+        e_idx = int(nu["episode_index"]) if nu else 0
+        self.modal_tab_idx = s_idx
+        self._render_show_tab(s_idx, select_ep=e_idx)
 
     def _sync_show_cta(self, next_up):
         if not next_up:
@@ -209,58 +273,7 @@ class Guide:
             if not detail.get("ok"):
                 self._prop("guide_title", f"{card.title}  ·  {words.tr('This show has no episodes to show.')}")
                 return
-            has_seasons = bool(detail.get("seasons"))
-            if has_seasons:
-                raw_seasons = sorted(
-                    detail["seasons"],
-                    key=lambda s: (int(s.get("number") or 0), int(s.get("id") or 0)),
-                )
-                seasons = []
-                for i, s in enumerate(raw_seasons):
-                    s_num = int(s.get("number") or (i + 1))
-                    raw_title = str(s.get("title") or "").strip()
-                    s_title = raw_title if raw_title else words.tr("{n} season").format(n=s_num)
-                    eps = sorted(
-                        list(s.get("episodes") or ()),
-                        key=lambda ep: (int(ep.get("number") or 0), int(ep.get("episode_id") or ep.get("id") or 0)),
-                    )
-                    capped, seen_soon = [], False
-                    for ep in eps:
-                        if ep.get("coming_soon") or ep.get("playable") is False:
-                            if seen_soon:
-                                continue
-                            seen_soon = True
-                        capped.append(ep)
-                    seasons.append({"number": s_num, "title": s_title, "episodes": capped})
-                nu = sweetapi.resolve_next_up(seasons=seasons)
-            else:
-                eps = detail.get("episodes") or []
-                seasons = [{"number": 1, "title": words.tr("Episodes"), "episodes": eps}] if eps else []
-                nu = detail.get("next_up") or (sweetapi.resolve_next_up(episodes=eps) if eps else None)
-            meta, desc = sections.detail_meta_and_desc(detail, card)
-            banner = str(detail.get("banner") or card.banner or card.art or "")
-            wide_art = str(detail.get("wide_art") or card.wide_art or banner or "")
-            updated_card = card._replace(
-                title=str(detail.get("title") or card.title),
-                banner=banner,
-                wide_art=wide_art,
-                meta=meta,
-                desc=desc,
-                fav=bool(detail.get("favourite", card.fav)),
-            )
-            self.modal_card = updated_card
-            self._prop("guide_title", updated_card.title)
-            self._sync_hero(updated_card, immediate=True)
-            self.modal_movie_id = str(detail.get("movie_id") or self.modal_movie_id or "")
-            self.modal_flat_tv = not has_seasons
-            self.modal_seasons = seasons
-            self.modal_tabs = [(i, s["title"]) for i, s in enumerate(seasons)]
-            self.modal_next_up = nu
-            self._sync_show_cta(nu)
-            s_idx = int(nu["season_index"]) if nu else 0
-            e_idx = int(nu["episode_index"]) if nu else 0
-            self.modal_tab_idx = s_idx
-            self._render_show_tab(s_idx, select_ep=e_idx)
+            self._apply_show_detail(card, detail)
         self._focus_on(SHOW_EPISODES)
 
     def _render_show_tab(self, idx, select_ep=0):

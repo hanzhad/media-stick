@@ -262,6 +262,9 @@ def _programme_row(item, channels, now, tr):
             "available": True, "preview": "", "image_url": https(item.get("image_url")), "repeats": 0, "more": ""}
 
 
+_SERIES_SUBTEXT_RE = re.compile(r"(?:сериал|серіал|series|передачи и шоу|передачі та шоу|телешоу)", re.I)
+
+
 def _other_row(item, kind, channels, quality="1080p"):
     ident, title = _id(item.get("id")), _clean(item.get("text"))
     if not ident or not title:
@@ -274,18 +277,24 @@ def _other_row(item, kind, channels, quality="1080p"):
             return None
     name = (_clean(channel.get("name"), 120) if channel else title) if kind == "channel" else ""
     img = https(item.get("image_url"))
+    subtext = _clean(item.get("subtext"))
     if kind == "movie":
         avail_info = item.get("availability_info")
         avail = (not isinstance(avail_info, dict) or avail_info.get("available") is not False) and item.get("available") is not False
         vod_url = ml.vod_url(ident, None, 0) if avail else ""
         genres = item.get("genres") if isinstance(item.get("genres"), list) else ()
-        is_series = bool(item.get("is_serial") or (item.get("seasons_count") or 0) > 0 or any(_num(g) == 1 for g in genres))
-        return {"kind": "series" if is_series else kind, "id": ident, "title": title, "subtitle": _clean(item.get("subtext")),
+        is_series = bool(
+            item.get("is_serial")
+            or (item.get("seasons_count") or 0) > 0
+            or any(_num(g) == 1 for g in genres)
+            or _SERIES_SUBTEXT_RE.search(subtext)
+        )
+        return {"kind": "series" if is_series else kind, "id": ident, "title": title, "subtitle": subtext,
                 "cid": "", "epg": "", "start": 0, "stop": 0, "channel_name": "", "when": "",
                 "live": False, "can_archive": False, "playable_in_archive": False, "playable": bool(avail and vod_url), "available": avail,
                 "vod_url": vod_url, "preview": "", "image_url": img, "repeats": 0, "more": ""}
     ch_avail = channel is not None and channel.get("available") is not False
-    return {"kind": kind, "id": ident, "title": title, "subtitle": _clean(item.get("subtext")),
+    return {"kind": kind, "id": ident, "title": title, "subtitle": subtext,
             "cid": ident if kind == "channel" else "", "epg": "", "start": 0, "stop": 0, "channel_name": name, "when": "",
             "live": False, "can_archive": False, "playable_in_archive": False, "playable": ch_avail, "available": ch_avail, "preview": "",
             "image_url": img, "repeats": 0, "more": ""}
@@ -1345,23 +1354,27 @@ def extract_release_date(ep) -> str:
 
 def filter_season_episodes(raw_episodes, playable_ids=None, mid=0, s_owner=0, local=None) -> list[dict]:
     """Normalize season episodes, keeping all released episodes and at most one coming_soon stub."""
-    playable_set = {_num(x) for x in (playable_ids or ()) if _num(x)}
     candidates = []
-    for ep in raw_episodes if isinstance(raw_episodes, (list, tuple)) else ():
+    has_explicit_number = False
+    for orig_idx, ep in enumerate(raw_episodes if isinstance(raw_episodes, (list, tuple)) else ()):
         if not isinstance(ep, dict) or ep.get("available") is False:
             continue
         eid = _num(ep.get("id"))
         if not eid or eid <= 0:
             continue
         ep_num = _num(ep.get("number")) or 0
-        candidates.append((ep_num, eid, ep))
-    candidates.sort(key=lambda item: (item[0], item[1]))
+        if ep_num > 0:
+            has_explicit_number = True
+        candidates.append((ep_num, orig_idx, eid, ep))
+    if has_explicit_number:
+        candidates.sort(key=lambda item: (item[0], item[1]))
 
     out = []
     soon_added = False
-    for ep_num, eid, ep in candidates:
+    for idx, (ep_num, _orig_idx, eid, ep) in enumerate(candidates):
         dur = max(0, _num(ep.get("duration")) or 0)
-        is_released = dur > 0 and (not playable_set or eid in playable_set)
+        is_released = dur > 0
+        num = ep_num if ep_num > 0 else (idx + 1)
         preview = https(ep.get("preview_url") or ep.get("image_url"))
         title = _clean(ep.get("title"), 120)
         if is_released:
@@ -1369,7 +1382,7 @@ def filter_season_episodes(raw_episodes, playable_ids=None, mid=0, s_owner=0, lo
             out.append({
                 "id": eid,
                 "episode_id": eid,
-                "number": ep_num,
+                "number": num,
                 "title": title,
                 "duration": dur,
                 "preview": preview,
@@ -1387,7 +1400,7 @@ def filter_season_episodes(raw_episodes, playable_ids=None, mid=0, s_owner=0, lo
             out.append({
                 "id": eid,
                 "episode_id": eid,
-                "number": ep_num,
+                "number": num,
                 "title": title,
                 "duration": 0,
                 "preview": preview,

@@ -2226,9 +2226,12 @@ class CatalogSections(WindowCase):
                       {"id": 6011, "episode_id": 6011, "number": 1, "title": "Pilot", "duration": 2400,
                        "preview": "", "owner_id": 10, "vod_url": "plugin://plugin.video.sweettv/playvod/601|6011|10",
                        "resume": 0, "watched": False}]}]}
+        detail_movie = {"ok": True, "id": "vod:501", "movie_id": "501", "title": "Film A",
+                        "duration": 5400, "owner_id": 10,
+                        "vod_url": "plugin://plugin.video.sweettv/playvod/501|null|10"}
         with mock.patch.object(API, "configuration", return_value=_sample_config()), \
                 mock.patch.object(API, "catalog_page", side_effect=lambda sec, **kw: series if sec == "series" else movies), \
-                mock.patch.object(API, "vod_detail", return_value=detail):
+                mock.patch.object(API, "vod_detail", side_effect=lambda k, **kw: detail_movie if "501" in str(k) else detail):
             window = self.open()
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
             window.controls[MENU].selected = 5
@@ -2888,7 +2891,7 @@ class Skin(unittest.TestCase):
         browse_hero_imgs = [
             c for c in main_group.findall(".//control[@type='image']")
             if "Window.Property(hero_art)" in (c.findtext("texture") or "")
-            or (c.findtext("texture") or "").strip() in ("gradient-left.png", "gradient-bottom.png", "gradient-top.png")
+            or (c.findtext("texture") or "").strip() in ("sweettv-fade-left.png", "sweettv-fade-bottom.png", "sweettv-fade-top.png")
         ]
         hero_group = next(
             (g for g in main_group.findall("control[@type='group']")
@@ -2906,13 +2909,13 @@ class Skin(unittest.TestCase):
             c for c in browse_hero_imgs
             if "Window.Property(hero_art)" in (c.findtext("texture") or "")
         ]
-        grad_left = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "gradient-left.png"]
-        grad_bottom = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "gradient-bottom.png"]
-        grad_top = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "gradient-top.png"]
+        grad_left = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "sweettv-fade-left.png"]
+        grad_bottom = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "sweettv-fade-bottom.png"]
+        grad_top = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "sweettv-fade-top.png"]
         self.assertGreaterEqual(len(hero_art_imgs), 2, "Expected keep logo and scale still hero_art branches")
-        self.assertGreaterEqual(len(grad_left), 1, "Expected gradient-left.png in Full-Bleed Browse Hero")
-        self.assertGreaterEqual(len(grad_bottom), 1, "Expected gradient-bottom.png in Full-Bleed Browse Hero")
-        self.assertGreaterEqual(len(grad_top), 1, "Expected gradient-top.png in Full-Bleed Browse Hero")
+        self.assertGreaterEqual(len(grad_left), 1, "Expected sweettv-fade-left.png in Full-Bleed Browse Hero")
+        self.assertGreaterEqual(len(grad_bottom), 1, "Expected sweettv-fade-bottom.png in Full-Bleed Browse Hero")
+        self.assertGreaterEqual(len(grad_top), 1, "Expected sweettv-fade-top.png in Full-Bleed Browse Hero")
 
         props_logo = {"mode": "data", "modal": "", "wide_grid": "1", "emptycat": "", "hero_art": "https://img/l.png", "hero_is_logo": "1"}
         props_still = {"mode": "data", "modal": "", "wide_grid": "1", "emptycat": "", "hero_art": "https://img/s.jpg", "hero_is_logo": ""}
@@ -2930,12 +2933,12 @@ class Skin(unittest.TestCase):
         self.assertEqual(
             (int(vis_still[0].findtext("left")), int(vis_still[0].findtext("top")),
              int(vis_still[0].findtext("width")), int(vis_still[0].findtext("height"))),
-            (560, 0, 1360, 765),
+            (520, 0, 1400, 788),
         )
         for g_list, exp_geom, exp_col in (
-            (grad_left, (560, 0, 720, 765), "FF0C111B"),
-            (grad_bottom, (560, 340, 1360, 425), "FF0C111B"),
-            (grad_top, (560, 0, 1360, 160), "B30C111B"),
+            (grad_left, (520, 0, 880, 788), "FF0C111B"),
+            (grad_bottom, (520, 320, 1400, 468), "FF0C111B"),
+            (grad_top, (520, 0, 1400, 160), "FF0C111B"),
         ):
             self.assertFalse(any(_eval_kodi_cond(c.findtext("visible") or "", props_logo, focus_id=201) for c in g_list))
             vis_g = [c for c in g_list if _eval_kodi_cond(c.findtext("visible") or "", props_still, focus_id=201)]
@@ -4239,7 +4242,11 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
     def test_skin_full_bleed_hero_labels_hub_meta_and_horizontal_421_panel(self):
         root = ET.parse(os.path.join(SKIN, "script-media-stick-sweettv.xml")).getroot()
 
-        # Part 1.3: Browse Hero text labels widened (left=96, width=1060) and 419 at (left=96, top=512, width=1320, itemgap=12)
+        # Issue #84: 3 deterministic fade PNGs must exist in resources/skins/default/media/
+        for fname in ("sweettv-fade-left.png", "sweettv-fade-bottom.png", "sweettv-fade-top.png"):
+            self.assertTrue(os.path.isfile(os.path.join(MEDIA, fname)), f"Missing fade asset {fname}")
+
+        # Browse Hero: 419 at (96, 512, 1320, 56, itemgap=12); labels narrowed to width=780; fade textures
         row_419 = next(c for c in root.iter("control") if c.get("id") == "419")
         self.assertEqual(
             (int(row_419.findtext("left")), int(row_419.findtext("top")),
@@ -4250,6 +4257,10 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
             g for g in root.find("controls").findall("control[@type='group']")
             if "String.IsEmpty(Window.Property(modal))" in (g.findtext("visible") or "")
         )
+        main_xml = ET.tostring(main_group, encoding="unicode")
+        for tex in ("sweettv-fade-left.png", "sweettv-fade-bottom.png", "sweettv-fade-top.png"):
+            self.assertIn(tex, main_xml)
+        self.assertIn("330C111B", main_xml)
         for prop_expr in (
             "$INFO[Window.Property(hero_title)]",
             "$INFO[Window.Property(hero_meta)]",
@@ -4259,13 +4270,17 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
             lbl = next((c for c in main_group.findall(".//control[@type='label']") if c.findtext("label") == prop_expr), None)
             self.assertIsNotNone(lbl, f"Missing browse label {prop_expr}")
             self.assertEqual(int(lbl.findtext("left")), 96, prop_expr)
-            self.assertEqual(int(lbl.findtext("width")), 1060, prop_expr)
+            self.assertEqual(int(lbl.findtext("width")), 780, prop_expr)
 
-        # Part 1.4: Full-Screen Hub hero_meta widened to (left=96, top=120, width=1280)
+        # Unified Full-Screen Hero Hub: fade textures, wash, meta (96, 132, 900), and bottom-anchored 421 at top=680
         modal_group = next(
             g for g in root.find("controls").findall("control[@type='group']")
             if "!String.IsEmpty(Window.Property(modal))" in (g.findtext("visible") or "")
         )
+        modal_xml = ET.tostring(modal_group, encoding="unicode")
+        for tex in ("sweettv-fade-left.png", "sweettv-fade-bottom.png"):
+            self.assertIn(tex, modal_xml)
+        self.assertIn("380C111B", modal_xml)
         hub_meta = next(
             (c for c in modal_group.findall(".//control[@type='label']")
              if c.findtext("label") == "$INFO[Window.Property(hero_meta)]"),
@@ -4274,11 +4289,16 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
         self.assertIsNotNone(hub_meta, "Missing hero_meta label in Full-Screen Hub")
         self.assertEqual(
             (int(hub_meta.findtext("left")), int(hub_meta.findtext("top")), int(hub_meta.findtext("width"))),
-            (96, 120, 1280),
+            (96, 132, 900),
         )
 
-        # Part 3.1-3.4: 400 gated to modal=guide; 421 horizontal 444x310 panel gated to modal=show; 410 conditional ondown
+        # 400 gated to modal=guide at (96, 504, 1728, 512); 421 horizontal 444x310 panel gated to modal=show at (96, 680, 1776, 344)
         list_400 = next(c for c in root.iter("control") if c.get("id") == "400")
+        self.assertEqual(
+            (int(list_400.findtext("left")), int(list_400.findtext("top")),
+             int(list_400.findtext("width")), int(list_400.findtext("height"))),
+            (96, 504, 1728, 512),
+        )
         vis_400 = list_400.findtext("visible") or ""
         self.assertTrue(_eval_kodi_cond(vis_400, {"mode": "data", "modal": "guide", "guide": "1"}, focus_id=400))
         self.assertFalse(_eval_kodi_cond(vis_400, {"mode": "data", "modal": "show", "guide": "1"}, focus_id=421))
@@ -4291,7 +4311,7 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
         self.assertEqual(
             (int(panel_421.findtext("left")), int(panel_421.findtext("top")),
              int(panel_421.findtext("width")), int(panel_421.findtext("height"))),
-            (96, 448, 1776, 344),
+            (96, 680, 1776, 344),
         )
         vis_421 = panel_421.findtext("visible") or ""
         self.assertTrue(_eval_kodi_cond(vis_421, {"mode": "data", "modal": "show", "guide": "1"}, focus_id=421))
@@ -4310,6 +4330,11 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
             self.assertIn("ListItem.Property(when)", xml_str, layout_name)
 
         tabs_410 = next(c for c in root.iter("control") if c.get("id") == "410")
+        self.assertEqual(
+            (int(tabs_410.findtext("left")), int(tabs_410.findtext("top")),
+             int(tabs_410.findtext("width")), int(tabs_410.findtext("height"))),
+            (96, 432, 1728, 56),
+        )
         ondowns = [(od.get("condition") or "", (od.text or "").strip()) for od in tabs_410.findall("ondown")]
         self.assertTrue(
             any("show" in cond and target == "421" for cond, target in ondowns),
@@ -4319,6 +4344,17 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
             any("guide" in cond and target == "400" for cond, target in ondowns),
             f"410 must have <ondown> to 400 for modal=guide, got {ondowns}",
         )
+
+        # 209 base (96, 352, 1120, 56) with modal=show and modal=detail conditional slides
+        grp_209 = next(c for c in root.iter("control") if c.get("id") == "209")
+        self.assertEqual(
+            (int(grp_209.findtext("left")), int(grp_209.findtext("top")),
+             int(grp_209.findtext("width")), int(grp_209.findtext("height"))),
+            (96, 352, 1120, 56),
+        )
+        grp_209_xml = ET.tostring(grp_209, encoding="unicode")
+        self.assertIn("0,140", grp_209_xml)
+        self.assertIn("0,-132", grp_209_xml)
 
     def test_favourites_wide_section_and_banner_wide_art_persistence(self):
         self.assertIn("favourites", sweettv_app.WIDE_SECTIONS)
@@ -4455,6 +4491,54 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
 
             window._guide_close()
             self.assertEqual(window.controls[421].items, [])
+
+    def test_detail_modal_promotes_to_show_when_vod_detail_has_seasons(self):
+        # Opening a kind="movie" card (e.g. from Search) whose vod_detail() returns seasons
+        # must promote the open modal from "detail" to "show", populate 410 & 421, and focus 421.
+        Fake.now = NOW
+        write_list(answer(chan(15, "СТБ HD", number=1)))
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        detail = {
+            "ok": True,
+            "id": "vod:33871",
+            "movie_id": "33871",
+            "title": "Зрадники",
+            "description": "Реалити-шоу с интригами.",
+            "banner": "https://img/33871-ban.jpg",
+            "seasons": [
+                {
+                    "id": 2,
+                    "number": 2,
+                    "title": "Сезон 2",
+                    "episodes": [
+                        {
+                            "id": 201, "episode_id": 201, "number": 1, "title": "Выпуск 1",
+                            "duration": 3720, "owner_id": 69,
+                            "vod_url": "plugin://plugin.video.sweettv/playvod/33871|201|69",
+                            "resume": 0, "watched": False,
+                        },
+                        {
+                            "id": 202, "episode_id": 202, "number": 2, "title": "Выпуск 2",
+                            "duration": 4000, "owner_id": 69,
+                            "vod_url": "plugin://plugin.video.sweettv/playvod/33871|202|69",
+                            "resume": 0, "watched": False,
+                        },
+                    ],
+                },
+            ],
+        }
+        movie_card = sweettv_app.sections.vod_card(
+            {"id": 33871, "title": "Зрадники", "vod_url": "plugin://plugin.video.sweettv/playvod/33871|null|0"},
+            "movie",
+        )
+        with mock.patch.object(API, "vod_detail", return_value=detail):
+            window._open_detail_modal(movie_card)
+            self.assertTrue(wait_for(lambda: window.getProperty("modal") == "show"))
+        self.assertEqual(window.getProperty("guide"), "1")
+        self.assertEqual(len(window.controls[410].items), 1)
+        self.assertEqual(len(window.controls[421].items), 2)
+        self.assertEqual(window.focus, 421)
 
     def test_epg_programme_image_parsing_cards_and_nonblocking_worker_hydration(self):
         # Part 4.1: Programme.image default & parse_programme extraction
