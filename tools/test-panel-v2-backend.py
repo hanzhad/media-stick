@@ -525,6 +525,54 @@ class TestScreenCap(unittest.TestCase):
             self.assertEqual(ctx.exception.owner, owner)
             self.assertEqual(ctx.exception.status, 409)
 
+    def test_capture_png_kodi_returns_full_png(self):
+        sc_mod = _require_module(self, "panel_core.screen_cap")
+        self.assertTrue(hasattr(sc_mod, "capture_png"), "panel_core.screen_cap.capture_png is not implemented")
+        png = self._png_bytes(1920, 1080)
+        for owner in ("kodi", ""):
+            out = sc_mod.capture_png(owner, kodi_shot_fn=lambda: png)
+            self.assertEqual(out, png)
+            im = Image.open(io.BytesIO(out))
+            self.assertEqual(im.format, "PNG")
+            self.assertEqual(im.size, (1920, 1080))
+
+        with self.assertRaises(sc_mod.ScreenUnavailable) as ctx:
+            sc_mod.capture_png("kodi", kodi_shot_fn=None)
+        self.assertEqual(ctx.exception.status, 503)
+
+    def test_capture_png_webapp_invokes_grim_and_validates_header(self):
+        sc_mod = _require_module(self, "panel_core.screen_cap")
+        self.assertTrue(hasattr(sc_mod, "capture_png"), "panel_core.screen_cap.capture_png is not implemented")
+        png = self._png_bytes(1280, 720)
+        seen_cmds = []
+
+        def fake_run(cmd, **_kw):
+            seen_cmds.append(list(cmd))
+            return 0, png
+
+        out = sc_mod.capture_png("web-app", run_cmd=fake_run)
+        self.assertTrue(out.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual(seen_cmds, [["grim", "-t", "png", "-"]])
+
+        for bad_rc, bad_data in ((1, png), (0, b"\xff\xd8\xff\xe0"), (0, b"")):
+            with self.assertRaises(sc_mod.ScreenUnavailable) as ctx:
+                sc_mod.capture_png("web-app", run_cmd=lambda _cmd, **_kw: (bad_rc, bad_data))
+            self.assertEqual(ctx.exception.owner, "web-app")
+            self.assertEqual(ctx.exception.status, 503)
+
+    def test_capture_png_cast_owners_raise_409_immediately(self):
+        sc_mod = _require_module(self, "panel_core.screen_cap")
+        self.assertTrue(hasattr(sc_mod, "capture_png"), "panel_core.screen_cap.capture_png is not implemented")
+        for owner in ("airplay", "miracast"):
+            with self.assertRaises(sc_mod.ScreenUnavailable) as ctx:
+                sc_mod.capture_png(
+                    owner,
+                    kodi_shot_fn=lambda: self.fail("must not call kodi_shot_fn for cast"),
+                    run_cmd=lambda *a, **k: self.fail("must not fork grim for cast"),
+                )
+            self.assertEqual(ctx.exception.owner, owner)
+            self.assertEqual(ctx.exception.status, 409)
+
 
 # ---- 5. ws_hub ----
 
@@ -818,6 +866,57 @@ class TestPanelV2Routes(unittest.TestCase):
         with mock.patch.object(panel, "screen_owner", return_value="airplay"):
             code, _, _ = self._req("GET", "/shot.jpg")
             self.assertEqual(code, 409)
+
+    def test_shot_png_fresh_download_and_unavailable_routes(self):
+        buf = io.BytesIO()
+        Image.new("RGB", (1920, 1080), (5, 6, 7)).save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        forget_calls = []
+        orig_forget = panel.forget_shot
+
+        def spy_forget():
+            forget_calls.append(1)
+            return orig_forget()
+
+        with mock.patch.object(panel, "screen_owner", return_value="kodi"), \
+                mock.patch.object(panel, "screenshot", return_value=png_bytes), \
+                mock.patch.object(panel, "forget_shot", side_effect=spy_forget):
+            code, hdrs, raw = self._req("GET", "/shot.png?fresh=1&download=1")
+            self.assertEqual(code, 200)
+            self.assertEqual(hdrs.get("Content-Type"), "image/png")
+            self.assertEqual(raw, png_bytes)
+            self.assertEqual(len(forget_calls), 1, "fresh=1 must call forget_shot()")
+            cd = hdrs.get("Content-Disposition", "")
+            self.assertRegex(
+                cd,
+                r'^attachment; filename="mediastick-\d{8}-\d{6}\.png"$',
+                f"unexpected Content-Disposition: {cd!r}",
+            )
+
+            forget_calls.clear()
+            code, hdrs, raw = self._req("GET", "/shot.png")
+            self.assertEqual(code, 200)
+            self.assertEqual(forget_calls, [], "plain /shot.png must not call forget_shot()")
+            self.assertFalse(
+                any(k.lower() == "content-disposition" for k in hdrs),
+                "plain /shot.png must not set Content-Disposition",
+            )
+
+        for owner in ("airplay", "miracast"):
+            with mock.patch.object(panel, "screen_owner", return_value=owner):
+                code, hdrs, raw = self._req("GET", "/shot.png")
+                self.assertEqual(code, 409)
+                self.assertEqual(hdrs.get("Content-Type"), "application/json")
+                payload = json.loads(raw.decode("utf-8"))
+                self.assertEqual(payload.get("owner"), owner)
+                self.assertIn("error", payload)
+
+        with mock.patch.object(panel, "screen_owner", return_value="web-app"), \
+                mock.patch.object(panel, "_run_bytes", return_value=(1, b"")):
+            code, hdrs, _ = self._req("GET", "/shot.png")
+            self.assertEqual(code, 503)
+            self.assertIn("text/plain", hdrs.get("Content-Type", ""))
 
     def test_api_power_routes(self):
         class FakeClient:
