@@ -12,6 +12,14 @@ CHIP_REMOTE_DELAY = 0.28
 ACTION_CHIPS = frozenset(("new", "sort"))
 
 
+def _page_cursor(src, offset, count, total):
+    raw_next = src.get("next_offset") if isinstance(src, dict) else None
+    next_off = raw_next if (isinstance(raw_next, int) and not isinstance(raw_next, bool) and raw_next >= 0) else (offset + count)
+    raw_more = src.get("has_more") if isinstance(src, dict) else None
+    has_more = raw_more if isinstance(raw_more, bool) else (count > 0 and next_off < total)
+    return next_off, has_more
+
+
 class Shelf:
     def _shelf_setup(self):
         self.section = ""
@@ -25,6 +33,8 @@ class Shelf:
         self._pending_chip_key = ""
         self.cat_items = []
         self.cat_total = 0
+        self.cat_next_offset = 0
+        self.cat_has_more = False
         self.cat_loading = False
         self.cards = []
         self.show_filter = "all"
@@ -33,6 +43,7 @@ class Shelf:
         self._sec_cache = {}
         self._section_gen = 0
         self._warm_handle = None
+        self._warm_started = False
 
     def _cancel_warm(self):
         if self._warm_handle is not None:
@@ -152,6 +163,8 @@ class Shelf:
                     self._sync_page_search_label()
                     self.cat_items = []
                     self.cat_total = 0
+                    self.cat_next_offset = 0
+                    self.cat_has_more = False
                     self._set_chips(sec, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
                 elif key == "all" or key.startswith("g:"):
                     gid = 0 if key == "all" else int(key[2:])
@@ -162,6 +175,8 @@ class Shelf:
                     self._sync_page_search_label()
                     self.cat_items = []
                     self.cat_total = 0
+                    self.cat_next_offset = 0
+                    self.cat_has_more = False
                     self._set_chips(sec, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
                 else:
                     return
@@ -220,7 +235,8 @@ class Shelf:
                 ns = pages.namespace()
                 ckey = pages.catalog_key("shows") if ns else None
                 if ns and ckey:
-                    page_cache.put(ns, ckey, pages.to_value("shows", rows[:pages.MAX_SLICE], len(rows)))
+                    sliced = list(rows)[:pages.MAX_SLICE]
+                    page_cache.put(ns, ckey, pages.to_value("shows", sliced, len(sliced)))
         except Exception as e:
             ui.log(f"SWEET.TV shows failed: {e!r}")
             rows = []
@@ -251,9 +267,13 @@ class Shelf:
                 self._section_gen += 1
                 self.cat_items = []
                 self.cat_total = 0
+                self.cat_next_offset = 0
+                self.cat_has_more = False
                 mem = self._sec_cache.get((section, gid, sort_id))
                 if mem and now - mem[0] < 600:
                     self.cat_items, self.cat_total = list(mem[1]), mem[2]
+                    self.cat_next_offset = mem[3] if len(mem) > 3 else len(self.cat_items)
+                    self.cat_has_more = mem[4] if len(mem) > 4 else (len(self.cat_items) < self.cat_total)
                     cards = [sections.vod_card(x, kind, resume_doc, favs) for x in self.cat_items]
                     self._apply_cards(cards, empty_msg=words.tr("No films in the archive yet."))
                     if not self.genres:
@@ -267,8 +287,10 @@ class Shelf:
                     parsed = pages.from_value(section, hit.value)
                     if parsed:
                         _, items, total = parsed
+                        next_off, has_more = _page_cursor(hit.value, 0, len(items), total)
                         self.cat_items, self.cat_total = list(items), total
-                        self._sec_cache[(section, gid, sort_id)] = (now, list(items), total)
+                        self.cat_next_offset, self.cat_has_more = next_off, has_more
+                        self._sec_cache[(section, gid, sort_id)] = (now, list(items), total, next_off, has_more)
                         cards = [sections.vod_card(x, kind, resume_doc, favs) for x in self.cat_items]
                         self._apply_cards(cards, empty_msg=words.tr("No films in the archive yet."))
                         gen = self._section_gen
@@ -302,6 +324,7 @@ class Shelf:
         ns = None if demo else pages.namespace()
         ckey = pages.catalog_key(section, gid, sort_id, offset)
         cached = None
+        cached_raw = None
         hit_stale = False
         if ns and ckey:
             hit = page_cache.get(ns, ckey, ttl=pages.PAGE_TTL, max_age=pages.PAGE_MAX_AGE)
@@ -309,15 +332,18 @@ class Shelf:
                 parsed = pages.from_value(section, hit.value)
                 if parsed:
                     cached = parsed
+                    cached_raw = hit.value
                     hit_stale = bool(hit.stale)
                 elif isinstance(hit.value, dict) and hit.value.get("lang") != words.LANG:
                     parsed = pages.from_value(section, {**hit.value, "lang": words.LANG})
                     if parsed:
                         cached = parsed
+                        cached_raw = hit.value
                         hit_stale = True
         if cached is not None:
             _, items, total = cached
             ok = True
+            next_off, has_more = _page_cursor(cached_raw, offset, len(items), total)
         else:
             try:
                 res = (sweettv_demo.demo_catalog_page(section, gid, sort_id, offset, PAGE_SIZE, self.DEMO_LOGOS)
@@ -326,11 +352,12 @@ class Shelf:
                 ok = bool(res.get("ok"))
                 items = list(res.get("items") or ()) if ok else []
                 total = int(res.get("total") or len(items)) if ok else 0
+                next_off, has_more = _page_cursor(res, offset, len(items), total) if ok else (offset, False)
                 if ok and items and ns and ckey and len(items) <= pages.MAX_SLICE:
-                    page_cache.put(ns, ckey, pages.to_value(section, items, total))
+                    page_cache.put(ns, ckey, pages.to_value(section, items, total, next_offset=next_off, has_more=has_more))
             except Exception as e:
                 ui.log(f"SWEET.TV catalog failed: {e!r}")
-                ok, items, total = False, [], 0
+                ok, items, total, next_off, has_more = False, [], 0, offset, False
 
         with self._lock:
             self.cat_loading = False
@@ -341,19 +368,31 @@ class Shelf:
             if cfg_modes:
                 self.sort_modes = cfg_modes
             self._set_chips(section, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
+            kind = "series" if section == "series" else "movie"
             if offset == 0:
                 self.cat_items = items
+                self.cat_total = total
+                self.cat_next_offset = next_off
+                self.cat_has_more = has_more
                 if ok and items:
-                    self._sec_cache[(section, gid, sort_id)] = (self._now(), list(items), total)
+                    self._sec_cache[(section, gid, sort_id)] = (self._now(), list(items), total, next_off, has_more)
+                cards = [sections.vod_card(x, kind, resume_doc, favs) for x in self.cat_items]
+                msg = "" if cards else (words.tr("No films in the archive yet.") if ok
+                                        else words.tr("The list could not be loaded. Try again in a minute."))
+                self._apply_cards(cards, empty_msg=msg, keep_pos=False)
             else:
-                seen = {str(x.get("id")) for x in self.cat_items}
-                self.cat_items.extend(x for x in items if str(x.get("id")) not in seen)
-            self.cat_total = total
-            kind = "series" if section == "series" else "movie"
-            cards = [sections.vod_card(x, kind, resume_doc, favs) for x in self.cat_items]
-            msg = "" if cards else (words.tr("No films in the archive yet.") if ok
-                                    else words.tr("The list could not be loaded. Try again in a minute."))
-            self._apply_cards(cards, empty_msg=msg, keep_pos=(offset > 0))
+                if ok:
+                    self.cat_total = total
+                    self.cat_next_offset = next_off
+                    self.cat_has_more = has_more
+                    seen = {str(x.get("id")) for x in self.cat_items}
+                    added = [x for x in items if str(x.get("id")) not in seen]
+                    if added:
+                        self.cat_items.extend(added)
+                        self._sec_cache[(section, gid, sort_id)] = (self._now(), list(self.cat_items), total, next_off, has_more)
+                        self._append_cards([sections.vod_card(x, kind, resume_doc, favs) for x in added])
+                else:
+                    self.cat_has_more = False
         if hit_stale:
             t = threading.Timer(
                 0.01,
@@ -373,8 +412,9 @@ class Shelf:
                 return
             items = list(res.get("items") or ())
             total = int(res.get("total") or len(items))
+            next_off, has_more = _page_cursor(res, offset, len(items), total)
             if items and len(items) <= pages.MAX_SLICE:
-                page_cache.put(ns, ckey, pages.to_value(section, items, total))
+                page_cache.put(ns, ckey, pages.to_value(section, items, total, next_offset=next_off, has_more=has_more))
             if offset != 0 or not items:
                 return
             with self._lock:
@@ -382,7 +422,9 @@ class Shelf:
                     return
                 self.cat_items = items
                 self.cat_total = total
-                self._sec_cache[(section, gid, sort_id)] = (self._now(), list(items), total)
+                self.cat_next_offset = next_off
+                self.cat_has_more = has_more
+                self._sec_cache[(section, gid, sort_id)] = (self._now(), list(items), total, next_off, has_more)
                 kind = "series" if section == "series" else "movie"
                 cards = [sections.vod_card(x, kind, resume_doc, favs) for x in self.cat_items]
                 self._apply_cards(cards, keep_pos=True)
@@ -393,22 +435,47 @@ class Shelf:
         return not self._stop.is_set() and not self.cat_loading and not self._playing()
 
     def _start_warm(self):
-        if self.demo or not getattr(self, "signed", False):
+        if self.demo or not getattr(self, "signed", False) or getattr(self, "_warm_started", False):
             return
         ns = pages.namespace()
         if not ns:
             return
+        self._warm_started = True
         jobs = []
-        for sec in ("movies", "series"):
+
+        shows_key = pages.catalog_key("shows")
+        if shows_key:
+            def _fetch_shows():
+                res = sweetapi.shows(self.raw_catalog or {}, now=self._now(), tr=words.tr)
+                if res.get("ok") and res.get("items"):
+                    sliced = list(res["items"])[:pages.MAX_SLICE]
+                    return pages.to_value("shows", sliced, len(sliced))
+                return None
+            jobs.append((shows_key, _fetch_shows))
+
+        for sec in ("series", "movies"):
             ckey = pages.catalog_key(sec, 0, 1, 0)
             if ckey:
                 def _fetch(s=sec):
                     res = sweetapi.catalog_page(s, genre_id=0, sort_mode_id=1, offset=0, limit=PAGE_SIZE, tr=words.tr)
                     if res.get("ok") and res.get("items"):
-                        items = list(res["items"])
-                        return pages.to_value(s, items, int(res.get("total") or len(items)))
+                        items_list = list(res["items"])[:pages.MAX_SLICE]
+                        total = int(res.get("total") or len(items_list))
+                        next_off, has_more = _page_cursor(res, 0, len(items_list), total)
+                        return pages.to_value(s, items_list, total, next_offset=next_off, has_more=has_more)
                     return None
                 jobs.append((ckey, _fetch))
+
+        top_key = pages.catalog_key("top_search")
+        if top_key:
+            def _fetch_top():
+                res = sweetapi.top_search(self.raw_catalog or {}, now=self._now(), tr=words.tr, tr_n=words.tr_n)
+                if res.get("ok") and res.get("items"):
+                    sliced = list(res["items"])[:pages.MAX_SLICE]
+                    return pages.to_value("top_search", sliced, len(sliced))
+                return None
+            jobs.append((top_key, _fetch_top))
+
         if jobs:
             self._warm_handle = prefetch.warm(ns, jobs, ttl=pages.PAGE_TTL, idle=self._shelf_idle)
 
@@ -421,17 +488,17 @@ class Shelf:
                 if pos < max(0, len(self.cards) - 10):
                     return
                 nxt = min(len(self.shows_all), len(self.cards) + PAGE_SIZE)
-                self._apply_cards(self.shows_all[:nxt], empty_msg="", keep_pos=True)
+                self._append_cards(self.shows_all[len(self.cards):nxt])
                 return
             if self.section not in ("movies", "series") or self.cat_loading:
                 return
-            if len(self.cards) >= self.cat_total or not self.cards:
+            if not self.cards or not self.cat_has_more:
                 return
             pos = self.getControl(self._grid_id()).getSelectedPosition()
             if pos < max(0, len(self.cards) - 10):
                 return
             sec = self.section
-            offset = len(self.cat_items)
+            offset = self.cat_next_offset
         self._load_catalog(sec, offset=offset)
 
     def _refresh_catalog_meta(self, gen, section, demo):

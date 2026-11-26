@@ -13,6 +13,7 @@ MODAL_TABS = 410
 GUIDE_BUTTON = 212
 RESUME_BUTTON = 210
 ALT_BUTTON = 211
+BTN_FAV = 213
 
 
 class Guide:
@@ -102,13 +103,14 @@ class Guide:
             ui.log(f"SWEET.TV detail modal failed: {e!r}")
             detail = {"ok": False}
         promote = False
+        focus_eps = True
         with self._lock:
             if self._stop.is_set() or gen != self.modal_gen or self.modal_kind != "detail":
                 return
             if not detail.get("ok"):
                 return
             if detail.get("seasons"):
-                self._apply_show_detail(card, detail)
+                focus_eps = self._apply_show_detail(card, detail)
                 promote = True
             else:
                 meta, desc = sections.detail_meta_and_desc(detail, card)
@@ -135,9 +137,9 @@ class Guide:
                 self._sync_hero(updated, immediate=True)
                 self._prop("has_guide", "")
         if promote:
-            self._focus_on(SHOW_EPISODES)
+            self._focus_on(SHOW_EPISODES if focus_eps else BTN_FAV)
 
-    def _apply_show_detail(self, card: sections.Card, detail: dict):
+    def _apply_show_detail(self, card: sections.Card, detail: dict) -> bool:
         self.modal_kind = "show"
         self._prop("modal", "show")
         self._prop("guide", "1")
@@ -169,7 +171,10 @@ class Guide:
             eps = detail.get("episodes") or []
             seasons = [{"number": 1, "title": words.tr("Episodes"), "episodes": eps}] if eps else []
             nu = detail.get("next_up") or (sweetapi.resolve_next_up(episodes=eps) if eps else None)
+        has_episodes = any(s.get("episodes") for s in seasons)
         meta, desc = sections.detail_meta_and_desc(detail, card)
+        if not has_episodes:
+            meta = words.tr("Coming soon – no episodes yet")
         banner = str(detail.get("banner") or card.banner or card.art or "")
         wide_art = str(detail.get("wide_art") or card.wide_art or banner or "")
         updated_card = card._replace(
@@ -185,16 +190,33 @@ class Guide:
         self._sync_hero(updated_card, immediate=True)
         self.modal_movie_id = str(detail.get("movie_id") or self.modal_movie_id or card.key or "")
         self.modal_flat_tv = not has_seasons
-        self.modal_seasons = seasons
-        self.modal_tabs = [(i, s["title"]) for i, s in enumerate(seasons)]
-        self.modal_next_up = nu
+        self.modal_seasons = seasons if has_episodes else []
+        self.modal_tabs = [(i, s["title"]) for i, s in enumerate(self.modal_seasons)]
+        self.modal_next_up = nu if has_episodes else None
+        if not has_episodes:
+            self._sync_show_cta(None)
+            self._prop("hero_meta", meta)
+            self._render_show_tab(0)
+            return False
         self._sync_show_cta(nu)
         s_idx = int(nu["season_index"]) if nu else 0
         e_idx = int(nu["episode_index"]) if nu else 0
         self.modal_tab_idx = s_idx
         self._render_show_tab(s_idx, select_ep=e_idx)
+        return True
 
     def _sync_show_cta(self, next_up):
+        if not self.modal_seasons:
+            try:
+                self.getControl(RESUME_BUTTON).setLabel("")
+            except Exception:
+                pass
+            self._prop("hero_play", "")
+            self._prop("has_play", "")
+            self._prop("has_alt", "")
+            self._prop("has_guide", "")
+            self._prop("guide", "")
+            return
         if not next_up:
             label = words.tr("Watch")
         elif next_up.get("mode") == "resume" and int(next_up.get("resume") or 0) > 0:
@@ -273,8 +295,8 @@ class Guide:
             if not detail.get("ok"):
                 self._prop("guide_title", f"{card.title}  ·  {words.tr('This show has no episodes to show.')}")
                 return
-            self._apply_show_detail(card, detail)
-        self._focus_on(SHOW_EPISODES)
+            focus_eps = self._apply_show_detail(card, detail)
+        self._focus_on(SHOW_EPISODES if focus_eps else BTN_FAV)
 
     def _render_show_tab(self, idx, select_ep=0):
         if not self.modal_seasons:

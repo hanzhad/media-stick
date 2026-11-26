@@ -153,9 +153,10 @@ def channel_card(ch, cat_names, now, resume_doc=None, favs=()) -> Card:
         alt_url = data.play_url(ch.cid, current.epg_id)
     initials, plate, plate_hi, bg, tint = _palette(ch.name)
     fav_key = f"ch:{ch.cid}"
+    prog_hero = current.hero_image if current else ""
     prog_image = current.image if current else ""
-    wide_art = prog_image or ch.banner
-    banner = prog_image or ch.banner or ch.logo
+    wide_art = prog_hero or ch.banner or prog_image
+    banner = prog_hero or ch.banner or prog_image or ch.logo
     return Card(
         kind="channel", key=ch.cid, fav_key=fav_key, title=ch.name,
         art=ch.logo, banner=banner, meta=meta, desc=desc,
@@ -246,7 +247,13 @@ def search_card(row, resume_doc=None, favs=()) -> Card:
     stop = int(row.get("stop") or 0)
     playable = bool(row.get("playable", True)) and row.get("available") is not False
     vod_url = str(row.get("vod_url") or "")
-    art = str(row.get("image_url") or row.get("preview") or "")
+    row_img = data.logo_of(row.get("image_url"))
+    row_prev = data.logo_of(row.get("preview"))
+    art = row_img or row_prev or str(row.get("image_url") or row.get("preview") or "")
+    row_banner = data.logo_of(row.get("banner_url"), row.get("banner")) or str(row.get("banner_url") or row.get("banner") or "")
+    row_wide = data.logo_of(row.get("wide_art")) or str(row.get("wide_art") or "")
+    wide_art = row_wide or row_banner
+    banner = (row_banner or row_wide or art) if kind == "channel" else (row_img or row_banner or row_wide or art)
     is_modal = kind in ("show_tv", "show_vod", "show_epg", "series")
     if is_modal:
         rid = str(row.get("id") or "")
@@ -277,7 +284,7 @@ def search_card(row, resume_doc=None, favs=()) -> Card:
     initials, plate, plate_hi, bg, tint = _palette(title)
     return Card(
         kind=kind or "movie", key=str(row.get("id") or cid or title), fav_key=fav_key, title=title,
-        art=art, banner=art, meta="  ·  ".join(meta_parts), desc="",
+        art=art, banner=banner, meta="  ·  ".join(meta_parts), desc="",
         play_url=url if playable else "", alt_url=url if (playable and pos) else "",
         cid=cid, epg=epg, start=start, stop=stop, resume_pos=pos,
         bar=_bar_from_fraction(frac), pbar=_bar_from_fraction(frac, wide=True),
@@ -286,7 +293,7 @@ def search_card(row, resume_doc=None, favs=()) -> Card:
         num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
         now="", nowline="", next="", nextline="",
         resume_label=words.tr("Continue from {time}").format(time=fmt_mmss(pos)) if pos else "",
-        small=len(title) > 22, art_mode=art_mode,
+        small=len(title) > 22, art_mode=art_mode, wide_art=wide_art,
     )
 
 
@@ -368,7 +375,10 @@ def _continue_epg_card(e: dict, ch, now, pos: int, bar: str, pbar: str, resume_l
         start = int((epg_prog.start if epg_prog else 0) or ((rec.get("start") or rec.get("time_start")) if rec else 0) or 0)
     if stop <= 0:
         stop = int((epg_prog.stop if epg_prog else 0) or ((rec.get("stop") or rec.get("time_stop")) if rec else 0) or 0)
-    prog_preview = data.logo_of(rec.get("preview") or rec.get("image_url")) if rec else ""
+    prog_hero = data.logo_of(rec.get("image_url") if rec else "", e.get("image_url"),
+                             epg_prog.hero_image if epg_prog else "")
+    prog_prev = data.logo_of(rec.get("preview") if rec else "", e.get("preview"),
+                             epg_prog.image if epg_prog else "")
     ch_name = ch.name if ch else ""
     if not raw_title or (ch_name and raw_title == ch_name) or raw_title == f"Channel {cid}":
         prog_title = (epg_prog.title if epg_prog and epg_prog.title != "Programme" else "") or (
@@ -390,8 +400,9 @@ def _continue_epg_card(e: dict, ch, now, pos: int, bar: str, pbar: str, resume_l
     url = data.play_url(cid, epg, start=pos) if pos > 0 else base_url
     fav_key = f"ch:{cid}"
     art = ch.logo if ch else str(e.get("thumb") or "")
-    wide_art = prog_preview or (ch.banner if ch else "")
-    banner = wide_art or art
+    ch_banner = ch.banner if ch else ""
+    wide_art = prog_hero or prog_prev or ch_banner
+    banner = prog_hero or ch_banner or prog_prev or art
     initials, plate, plate_hi, bg, tint = _palette(title)
     return Card(
         kind="programme", key=f"{cid}|{epg}", fav_key=fav_key,

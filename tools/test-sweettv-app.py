@@ -60,7 +60,7 @@ class Control:
         self.items, self.selected = [], 0
 
     def addItems(self, items):
-        self.items = list(items)
+        self.items.extend(items)
 
     def selectItem(self, i):
         self.selected = i
@@ -4143,7 +4143,7 @@ class SectionSwitchWideGridAndHydrationTests(WindowCase):
         self.assertEqual(hydrated["15|555"].title, "Супермама")
         self.assertEqual((hydrated["15|555"].start, hydrated["15|555"].stop), (NOW - 7200, NOW - 3600))
         self.assertEqual((hydrated["15|555"].wide_art, hydrated["15|555"].banner),
-                         ("https://img/555-prev.jpg", "https://img/555-prev.jpg"))
+                         ("https://img/555-prev.jpg", "https://img/15-ban.jpg"))
         self.assertEqual(hydrated["15|555"].now, "СТБ HD  ·  Continue from 15:00")
 
         self.assertEqual(hydrated["501|"].title, "Дюна")
@@ -4841,6 +4841,353 @@ class Issue103FilterListTaxonomyDebounceAndMenuKeyTests(WindowCase):
         w2.focus = MENU
         self.press(w2, 117)
         self.assertEqual(w2.focus, 415)
+
+
+class Issue108PaginationWarmEmptyShowAndHeroArtTests(WindowCase):
+    """Issue #108: incremental addItems pagination, startup warm + top_search cache,
+    empty-show 38838 focus & Coming soon badge, and high-res TV Hero art."""
+
+    def test_pages_optional_next_offset_and_has_more_with_v4_compat(self):
+        items = [_sample_movie(i, f"Film {i}") for i in range(1, 11)]
+        val_with_meta = PG.to_value("Movies", items, 100, next_offset=25, has_more=True)
+        self.assertEqual(val_with_meta["v"], PG.VERSION)
+        self.assertEqual(val_with_meta["next_offset"], 25)
+        self.assertIs(val_with_meta["has_more"], True)
+        self.assertEqual(PG.from_value("movies", val_with_meta), ("Movies", items, 100))
+
+        val_legacy = PG.to_value("Movies", items, 100)
+        self.assertNotIn("next_offset", val_legacy)
+        self.assertNotIn("has_more", val_legacy)
+        self.assertEqual(PG.from_value("movies", val_legacy), ("Movies", items, 100))
+
+    def test_incremental_additems_pagination_without_reset_or_selection_loss(self):
+        p1 = [_sample_movie(100 + i, f"Page1 {i}") for i in range(20)]
+        p2 = [_sample_movie(200 + i, f"Page2 {i}") for i in range(15)]
+        offsets = []
+
+        def fake_catalog(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, tr=None):
+            offsets.append(offset)
+            if offset == 0:
+                return {"ok": True, "section": section, "items": p1, "total": 90,
+                        "next_offset": 45, "has_more": True}
+            if offset == 45:
+                return {"ok": True, "section": section, "items": p2, "total": 90,
+                        "next_offset": 60, "has_more": False}
+            return {"ok": True, "section": section, "items": [], "total": 90,
+                    "next_offset": offset, "has_more": False}
+
+        write_list(answer(chan(10, "Ten", number=10)))
+        with mock.patch.object(API, "configuration", return_value=_sample_config()), \
+             mock.patch.object(API, "catalog_page", side_effect=fake_catalog):
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            window.controls[MENU].selected = 5  # movies
+            window.onClick(MENU)
+            self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) == 20))
+            self.assertEqual(window.cat_next_offset, 45)
+            self.assertIs(window.cat_has_more, True)
+
+            ctrl = window.controls[ROW]
+            ctrl.selectItem(17)
+            with mock.patch.object(ctrl, "reset", wraps=ctrl.reset) as m_reset, \
+                 mock.patch.object(ctrl, "addItems", wraps=ctrl.addItems) as m_add:
+                window._maybe_paginate()
+                self.assertTrue(wait_for(lambda: len(ctrl.items) == 35))
+                m_reset.assert_not_called()
+                m_add.assert_called_once()
+                self.assertEqual(len(m_add.call_args[0][0]), 15)
+
+            self.assertEqual(offsets, [0, 45], "Second page must request next_offset=45, not len(cat_items)=20")
+            self.assertEqual(ctrl.getSelectedPosition(), 17)
+            self.assertEqual(window.cat_next_offset, 60)
+            self.assertIs(window.cat_has_more, False)
+
+            # Boundary: has_more=False must stop further pagination even when len(items) < total
+            window._maybe_paginate()
+            time.sleep(0.05)
+            self.assertEqual(offsets, [0, 45])
+
+            # Empty append is a safe no-op
+            with mock.patch.object(ctrl, "reset", wraps=ctrl.reset) as m_reset:
+                window._append_cards([])
+                m_reset.assert_not_called()
+                self.assertEqual(ctrl.getSelectedPosition(), 17)
+
+    def test_startup_warm_order_auth_gating_playback_pause_and_50_slice_cap(self):
+        write_list(answer(chan(10, "Ten", number=10)))
+        warm_calls = []
+
+        def capture_warm(ns, tasks, idle=None, **kw):
+            warm_calls.append((ns, list(tasks), idle))
+            return mock.Mock()
+
+        many_shows = [{"id": f"s{i}", "kind": "show_vod", "title": f"Show {i}",
+                       "poster": f"https://img/s{i}.jpg"} for i in range(65)]
+        many_top = [{"kind": "movie", "id": str(500 + i), "title": f"Top {i}",
+                     "subtitle": "2024", "cid": "", "epg": "", "start": 0, "stop": 0,
+                     "channel_name": "", "when": "", "live": False,
+                     "playable_in_archive": False, "playable": True, "available": True,
+                     "vod_url": f"plugin://plugin.video.sweettv/playvod/{500 + i}|null|0",
+                     "preview": "", "image_url": f"https://img/t{i}.jpg",
+                     "repeats": 0, "more": ""} for i in range(65)]
+
+        with mock.patch.object(prefetch, "warm", side_effect=capture_warm), \
+             mock.patch.object(API, "shows", return_value={"ok": True, "items": many_shows}), \
+             mock.patch.object(API, "catalog_page", return_value={"ok": True, "items": [_sample_movie()], "total": 1}), \
+             mock.patch.object(API, "top_search", return_value={"ok": True, "items": many_top, "count": 65}):
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            self.assertTrue(wait_for(lambda: len(warm_calls) == 1))
+
+            # Calling _start_warm() again must not duplicate startup warm
+            window._start_warm()
+            self.assertEqual(len(warm_calls), 1)
+
+            ns, tasks, idle_fn = warm_calls[0]
+            self.assertEqual(ns, NS)
+            self.assertEqual(
+                [k for k, _ in tasks],
+                [PG.catalog_key("shows"), PG.catalog_key("series", 0, 1, 0),
+                 PG.catalog_key("movies", 0, 1, 0), PG.catalog_key("top_search")],
+            )
+
+            # Playback pauses warming
+            Fake.playing = False
+            self.assertTrue(idle_fn())
+            Fake.playing = True
+            self.assertFalse(idle_fn())
+            Fake.playing = False
+
+            # shows and top_search tasks slice to MAX_SLICE (50) with total=50 so from_value accepts them
+            task_map = dict(tasks)
+            shows_val = task_map[PG.catalog_key("shows")]()
+            self.assertEqual(len(shows_val["items"]), PG.MAX_SLICE)
+            self.assertEqual(shows_val["total"], PG.MAX_SLICE)
+            self.assertIsNotNone(PG.from_value("shows", shows_val))
+
+            top_val = task_map[PG.catalog_key("top_search")]()
+            self.assertEqual(len(top_val["items"]), PG.MAX_SLICE)
+            self.assertEqual(top_val["total"], PG.MAX_SLICE)
+            self.assertIsNotNone(PG.from_value("top_search", top_val))
+
+        # Negative: demo mode and signed-out state must not start warm
+        warm_calls.clear()
+        with mock.patch.object(prefetch, "warm", side_effect=capture_warm):
+            w_demo = self.open(demo=True)
+            self.assertTrue(wait_for(lambda: w_demo.mode == D.DATA))
+            w_demo._start_warm()
+            self.assertEqual(warm_calls, [])
+
+            sign(False)
+            w_out = self.open(demo=False)
+            self.assertTrue(wait_for(lambda: w_out.mode == D.SIGNIN))
+            w_out._start_warm()
+            self.assertEqual(warm_calls, [])
+
+    def test_top_search_page_cache_hit_swr_and_skeletons(self):
+        write_list(answer(chan(10, "Ten", number=10)))
+        cached_row = {"kind": "movie", "id": "701", "title": "Cached Top", "subtitle": "2024",
+                      "cid": "", "epg": "", "start": 0, "stop": 0, "channel_name": "", "when": "",
+                      "live": False, "playable_in_archive": False, "playable": True, "available": True,
+                      "vod_url": "plugin://plugin.video.sweettv/playvod/701|null|0",
+                      "preview": "", "image_url": "https://img/701.jpg", "repeats": 0, "more": ""}
+        fresh_row = dict(cached_row, id="702", title="Fresh Top", image_url="https://img/702.jpg")
+
+        # 1. Fresh cache hit renders without calling API.top_search
+        page_cache.put(NS, PG.catalog_key("top_search"), PG.to_value("top_search", [cached_row], 1), now=time.time())
+        with mock.patch.object(API, "top_search", side_effect=AssertionError("fresh cache must not hit API")):
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            window.controls[MENU].selected = 0  # search
+            window.onClick(MENU)
+            self.assertTrue(wait_for(lambda: self.shown(window) == ["Cached Top"]))
+
+        # 2. Stale cache hit (SWR) renders stale immediately and refreshes in background
+        stale_ts = time.time() - (PG.PAGE_TTL + 30)
+        page_cache.put(NS, PG.catalog_key("top_search"), PG.to_value("top_search", [cached_row], 1), now=stale_ts)
+        refreshed = threading.Event()
+
+        def fake_swr_top(*_a, **_kw):
+            refreshed.set()
+            return {"ok": True, "items": [fresh_row], "count": 1}
+
+        with mock.patch.object(API, "top_search", side_effect=fake_swr_top):
+            window.stop()
+            sweettv_app.quick_resume.drop_snapshots("sweettv")
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            window.controls[MENU].selected = 0
+            window.onClick(MENU)
+            self.assertTrue(wait_for(lambda: self.shown(window) == ["Cached Top"]))
+            self.assertTrue(refreshed.wait(1.5))
+            self.assertTrue(wait_for(
+                lambda: (page_cache.get(NS, PG.catalog_key("top_search"),
+                                        ttl=PG.PAGE_TTL, max_age=PG.PAGE_MAX_AGE) or mock.Mock(value={})
+                         ).value.get("items", [{}])[0].get("id") == "702"
+            ))
+
+        # 3. Uncached miss shows skeleton cards while loading, then caches <= MAX_SLICE
+        page_cache.drop_namespace(NS)
+        gate = threading.Event()
+        many_top = [dict(cached_row, id=str(800 + i), title=f"Top {i}") for i in range(60)]
+
+        def slow_top(*_a, **_kw):
+            gate.wait(2.0)
+            return {"ok": True, "items": many_top, "count": 60}
+
+        with mock.patch.object(API, "top_search", side_effect=slow_top):
+            window.stop()
+            sweettv_app.quick_resume.drop_snapshots("sweettv")
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            window.controls[MENU].selected = 0
+            window.onClick(MENU)
+            self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) > 0 and window.cards[0].key.startswith("skel:")))
+            gate.set()
+            self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) == 60))
+            hit = page_cache.get(NS, PG.catalog_key("top_search"), ttl=PG.PAGE_TTL, max_age=PG.PAGE_MAX_AGE)
+            self.assertIsNotNone(hit)
+            parsed = PG.from_value("top_search", hit.value)
+            self.assertIsNotNone(parsed)
+            self.assertEqual((len(parsed[1]), parsed[2]), (PG.MAX_SLICE, PG.MAX_SLICE))
+
+    def test_empty_show_38838_focus_fav_coming_soon_badge_and_movie_detail_untouched(self):
+        # Text dictionary must have symmetric ru/uk strings with TV-font-safe en-dash U+2013
+        ru_str = W.TEXT["Coming soon \u2013 no episodes yet"]["ru"]
+        uk_str = W.TEXT["Coming soon \u2013 no episodes yet"]["uk"]
+        self.assertEqual(ru_str, "Скоро \u2013 серий пока нет")
+        self.assertEqual(uk_str, "Незабаром \u2013 серій ще немає")
+
+        # Skin XML: 209 <ondown> must guard Container(410).NumItems > 0
+        root = ET.parse(XML).getroot()
+        grp_209 = next(c for c in root.iter("control") if c.get("id") == "209")
+        ondown_cond = grp_209.find("ondown").get("condition") or ""
+        self.assertIn("Container(410).NumItems", ondown_cond)
+        self.assertFalse(_eval_kodi_cond(ondown_cond, {"guide": "1"}, container_counts={410: 0}))
+        self.assertTrue(_eval_kodi_cond(ondown_cond, {"guide": "1"}, container_counts={410: 2}))
+        self.assertFalse(_eval_kodi_cond(ondown_cond, {"guide": ""}, container_counts={410: 2}))
+
+        write_list(answer(chan(10, "Ten", number=10)))
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+
+        # Empty show 38838 (released=False, seasons=[] and seasons=[{"episodes": []}])
+        for seasons in ([], [{"id": 1, "number": 1, "title": "S1", "episodes": []}]):
+            detail_38838 = {
+                "ok": True, "id": "vod:38838", "movie_id": "38838",
+                "title": "Танцюють всі", "released": False, "seasons": seasons,
+            }
+            card = sweettv_app.sections.vod_card(
+                {"id": 38838, "title": "Танцюють всі", "poster": "https://img/38838.jpg"}, "series",
+            )
+            for lang, expected_badge in (("ru", ru_str), ("uk", uk_str)):
+                W.set_language(lang)
+                with mock.patch.object(API, "vod_detail", return_value=detail_38838):
+                    window._open_show_modal(card)
+                    self.assertTrue(wait_for(lambda: window.focus == 213))
+                    self.assertEqual(window.getProperty("has_play"), "")
+                    self.assertEqual(window.getProperty("hero_play"), "")
+                    self.assertEqual(window.getProperty("has_alt"), "")
+                    self.assertEqual(window.getProperty("has_guide"), "")
+                    self.assertEqual(window.getProperty("guide"), "")
+                    self.assertEqual(window.getProperty("hero_meta"), expected_badge)
+
+        # Regular Movie Detail (modal == "detail" with vod_url) stays untouched
+        movie_detail = {
+            "ok": True, "id": "vod:501", "movie_id": "501", "title": "Inception",
+            "year": 2010, "duration": 8880, "imdb_rating": 8.8, "description": "Dream",
+            "vod_url": "plugin://plugin.video.sweettv/playvod/501|null|10",
+        }
+        m_card = sweettv_app.sections.vod_card(_sample_movie(501, "Inception"), "movie")
+        with mock.patch.object(API, "vod_detail", return_value=movie_detail):
+            window._open_detail_modal(m_card)
+            self.assertTrue(wait_for(lambda: window.getProperty("has_play") == "1" and window.focus == 210))
+
+    def test_high_res_hero_art_cdn_cgi_strip_priority_continue_and_search(self):
+        # 1. logo_of strips /cdn-cgi/image/.../ wrapper while keeping plain URLs
+        self.assertEqual(
+            D.logo_of("https://static.sweet.tv/cdn-cgi/image/width=340,height=160/https://static.sweet.tv/epg/1.jpg"),
+            "https://static.sweet.tv/epg/1.jpg",
+        )
+        self.assertEqual(
+            D.logo_of("https://static.sweet.tv/cdn-cgi/image/f=auto,w=340/epg/2.png"),
+            "https://static.sweet.tv/epg/2.png",
+        )
+        self.assertEqual(D.logo_of("https://static.sweet.tv/plain.jpg"), "https://static.sweet.tv/plain.jpg")
+
+        # 2. Programme.hero_image uses image_url only while Programme.image is preserved
+        ch_both = D.parse_channel(chan(
+            1, "One", number=1,
+            icon_v2_url="https://img/logo1.png",
+            banner_url="https://img/banner1.jpg",
+            epg=[{"id": 11, "time_start": NOW - 600, "time_stop": NOW + 600, "text": "Live",
+                  "available": True,
+                  "image_url": "https://img/hero_960.jpg",
+                  "preview_url_ext": "https://static.sweet.tv/cdn-cgi/image/w=340/https://img/prev_340.jpg"}],
+        ), NOW)
+        self.assertEqual(ch_both.epg[0].hero_image, "https://img/hero_960.jpg")
+        self.assertTrue(ch_both.epg[0].image)
+
+        ch_no_img_url = D.parse_channel(chan(
+            2, "Two", number=2,
+            icon_v2_url="https://img/logo2.png",
+            banner_url="https://img/banner2.jpg",
+            epg=[{"id": 12, "time_start": NOW - 600, "time_stop": NOW + 600, "text": "Live2",
+                  "available": True, "preview_url_ext": "https://img/prev2.jpg"}],
+        ), NOW)
+        self.assertEqual(ch_no_img_url.epg[0].hero_image, "")
+        self.assertEqual(ch_no_img_url.epg[0].image, "https://img/prev2.jpg")
+
+        # 3. channel_card banner priority: image_url > banner_url > preview_url_ext > logo
+        self.assertEqual(sweettv_app.sections.channel_card(ch_both, {}, NOW).banner, "https://img/hero_960.jpg")
+        self.assertEqual(sweettv_app.sections.channel_card(ch_no_img_url, {}, NOW).banner, "https://img/banner2.jpg")
+
+        ch_prev_only = D.parse_channel(chan(
+            3, "Three", number=3, icon_v2_url="https://img/logo3.png",
+            epg=[{"id": 13, "time_start": NOW - 600, "time_stop": NOW + 600, "text": "Live3",
+                  "available": True, "preview_url_ext": "https://img/prev3.jpg"}],
+        ), NOW)
+        self.assertEqual(sweettv_app.sections.channel_card(ch_prev_only, {}, NOW).banner, "https://img/prev3.jpg")
+
+        ch_logo_only = D.parse_channel(chan(4, "Four", number=4, icon_v2_url="https://img/logo4.png", epg=[]), NOW)
+        self.assertEqual(sweettv_app.sections.channel_card(ch_logo_only, {}, NOW).banner, "https://img/logo4.png")
+
+        # 4. _continue_epg_card prefers image_url > ch.banner > preview
+        cat = D.parse_catalog(answer(
+            chan(10, "Ten", number=10, catchup=True, catchup_duration=3, icon_v2_url="https://img/l10.png", banner_url="https://img/b10.jpg"),
+            chan(11, "Eleven", number=11, catchup=True, catchup_duration=3, icon_v2_url="https://img/l11.png"),
+        ), NOW)
+        resume_doc = {
+            "v": 1,
+            "items": {
+                "sw:10|901": {"cid": "10", "epg": "901", "pos": 120, "total": 1800, "done": False,
+                              "at": NOW - 10, "title": "With Image", "start": NOW - 3000, "stop": NOW - 1200,
+                              "image_url": "https://img/epg_960.jpg", "preview": "https://img/epg_340.jpg"},
+                "sw:10|902": {"cid": "10", "epg": "902", "pos": 120, "total": 1800, "done": False,
+                              "at": NOW - 20, "title": "With Ch Banner", "start": NOW - 3000, "stop": NOW - 1200,
+                              "preview": "https://img/epg_340.jpg"},
+                "sw:11|903": {"cid": "11", "epg": "903", "pos": 120, "total": 1800, "done": False,
+                              "at": NOW - 30, "title": "Preview Fallback", "start": NOW - 3000, "stop": NOW - 1200,
+                              "preview": "https://img/epg_340.jpg"},
+            },
+        }
+        cont = sweettv_app.sections.continue_cards(resume_doc, cat, NOW)
+        by_title = {c.title: c for c in cont}
+        self.assertEqual(by_title["With Image"].banner, "https://img/epg_960.jpg")
+        self.assertEqual(by_title["With Ch Banner"].banner, "https://img/b10.jpg")
+        self.assertEqual(by_title["Preview Fallback"].banner, "https://img/epg_340.jpg")
+
+        # 5. search_card propagates banner_url / wide_art on search channel cards
+        sc = sweettv_app.sections.search_card({
+            "kind": "channel", "id": "10", "title": "Ten", "subtitle": "HD",
+            "cid": "10", "epg": "", "start": 0, "stop": 0, "channel_name": "Ten",
+            "when": "", "live": True, "playable_in_archive": False, "playable": True,
+            "available": True, "preview": "https://img/logo10.png",
+            "banner_url": "https://img/ch_banner10.jpg", "wide_art": "https://img/ch_wide10.jpg",
+            "image_url": "", "repeats": 0, "more": "",
+        })
+        self.assertEqual(sc.banner, "https://img/ch_banner10.jpg")
+        self.assertEqual(sc.wide_art, "https://img/ch_wide10.jpg")
 
 if __name__ == "__main__":
     unittest.main()

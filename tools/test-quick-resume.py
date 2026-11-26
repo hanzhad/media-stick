@@ -54,7 +54,7 @@ class Control:
         self.items, self.selected = [], 0
 
     def addItems(self, items):
-        self.items = list(items)
+        self.items.extend(items)
 
     def selectItem(self, i):
         self.selected = i
