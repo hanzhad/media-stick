@@ -20,13 +20,26 @@ everything else and drawing the mark, the word and a quiet line. It comes down w
 whatever that card is (an error is never hidden), and in SPLASH_CAP seconds whatever happens. A warm start, and the demo
 (but for its `loading` card), have none.
 """
+import json
 import os
+import sys
 import threading
 import time
 import zlib
 
 import xbmc
 import xbmcgui
+
+_LIB_DIR = "/usr/local/lib/media-stick"
+if os.path.isdir(_LIB_DIR) and _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+
+try:
+    import mediastick_ui_context  # noqa: E402
+    import panel_ui_context  # noqa: E402
+except ImportError:
+    mediastick_ui_context = None
+    panel_ui_context = None
 
 from resources.lib import (onboarding_view, profiles, single_instance, sweettv_text, ui, youtube_cards as cards, youtube_data as data,
                            youtube_demo, youtube_files as files, youtube_state as saved)
@@ -58,6 +71,134 @@ NO_THUMB = os.path.join(ui.MEDIA, data.NO_THUMB)
 DEMO_ART = f"{ui.ADDON_PATH}/resources/media/demo"
 DEMO_NOTICE = "Demo: nothing is played."
 DEMO_PICK_NOTICE = "Demo: no profile is switched."
+
+_SECTION_LABELS = {
+    "rec": "Рекомендации",
+    "subs": "Подписки",
+    "later": "Смотреть позже",
+    "history": "История",
+    "lists": "Плейлисты",
+    "trend": "В тренде",
+    data.SEARCH: "Поиск",
+}
+_KIND_LABELS = {
+    data.KIND_VIDEO: "Видео",
+    data.KIND_CHANNEL: "Каналы",
+    data.KIND_PLAYLIST: "Плейлисты",
+    data.KIND_LIVE: "Трансляции",
+}
+_SEARCH_HINT = "Поиск на YouTube"
+_UI_CMD_METHOD = "Other.mediastick.ui_cmd"
+_MonitorBase = getattr(xbmc, "Monitor", object)
+
+
+def _build_ui_context(section: str, query: str, kind: str, searching: bool) -> dict:
+    """Build the Pure Core UI context dict for YouTube."""
+    sections = [{"id": s.key, "label": _SECTION_LABELS.get(s.key, s.name)} for s in data.SECTIONS]
+    chips = (
+        [{"id": k.key, "label": _KIND_LABELS.get(k.key, k.name), "active": k.key == kind} for k in data.KINDS]
+        if searching
+        else []
+    )
+    return {
+        "app": "youtube",
+        "view": "section",
+        "section": section,
+        "sections": sections,
+        "chips": chips,
+        "can_search": True,
+        "search_query": query,
+        "search_hint": _SEARCH_HINT,
+        "modal": None,
+    }
+
+
+def _decode_ui_cmd(raw_data):
+    """Parse and validate a Phone -> TV `ui_cmd` payload for YouTube; None when ignored or invalid."""
+    if mediastick_ui_context is None:
+        return None
+    try:
+        if isinstance(raw_data, str):
+            if not raw_data.strip():
+                return None
+            payload = json.loads(raw_data)
+            if isinstance(payload, str) and payload.strip():
+                payload = json.loads(payload)
+        elif isinstance(raw_data, dict):
+            payload = raw_data
+        else:
+            return None
+        cmd = mediastick_ui_context.validate_cmd(payload)
+    except (ValueError, TypeError):
+        return None
+    return cmd if cmd.get("app") == "youtube" else None
+
+
+def _notify_ui_context():
+    """Emit optional wakeup JSONRPC.NotifyAll on a daemon thread only when xbmc.Monitor exists."""
+    if getattr(xbmc, "Monitor", None) is None:
+        return
+
+    def _send():
+        try:
+            files.rpc("JSONRPC.NotifyAll", {
+                "sender": "script.media-stick.home",
+                "message": "mediastick.ui_context",
+                "data": {},
+            })
+        except Exception:
+            pass
+
+    threading.Thread(target=_send, daemon=True).start()
+
+
+def _write_ui_context(doc: dict) -> None:
+    """Write `doc` to ui-context.json guarding missing module/directory/OSError, waking panel when changed."""
+    if panel_ui_context is None or mediastick_ui_context is None:
+        return
+    try:
+        changed = panel_ui_context.write_context(doc)
+    except (OSError, ValueError, TypeError) as e:
+        ui.log(f"ui-context write failed: {e!r}", xbmc.LOGWARNING)
+        return
+    if changed:
+        _notify_ui_context()
+
+
+def _clear_ui_context() -> None:
+    if mediastick_ui_context is None:
+        return
+    _write_ui_context(mediastick_ui_context.empty_context())
+
+
+class _UiCmdMonitor(_MonitorBase):
+    """Persistent Monitor listener for Phone -> TV `Other.mediastick.ui_cmd` notifications."""
+
+    def __init__(self, window):
+        super().__init__()
+        self._window = window
+
+    def onNotification(self, sender, method, data):
+        window = self._window
+        if window is not None and method == _UI_CMD_METHOD:
+            window._on_ui_cmd(data)
+
+
+def _make_cmd_monitor(window):
+    base = getattr(xbmc, "Monitor", None)
+    if base is not None and base is not _MonitorBase:
+        class _BoundUiCmdMonitor(base):
+            def __init__(self, target):
+                super().__init__()
+                self._window = target
+
+            def onNotification(self, sender, method, data):
+                target = self._window
+                if target is not None and method == _UI_CMD_METHOD:
+                    target._on_ui_cmd(data)
+
+        return _BoundUiCmdMonitor(window)
+    return _UiCmdMonitor(window)
 
 
 def clock():
@@ -108,14 +249,18 @@ class YouTube(xbmcgui.WindowXML):
         self.refresh_token = 0                   # the token of the view whose page was shown from the disk cache and is asked for again
         self.warming = None                      # the prefetch run (prefetch.Handle) of this profile
         self.splash = False                      # the launch splash is up (window property splash): a cold start, until the first page or card
+        self._cmd_monitor = None
 
     def onInit(self):
         if self.instance is not None:
             self.instance.bind(xbmcgui.getCurrentWindowId())
+        if self._cmd_monitor is None:
+            self._cmd_monitor = _make_cmd_monitor(self)
         self._prop("demo", "1" if self.demo else "")
         self._prop("splash", "")
         if self.started:
             self._after_player()
+            self._publish_ui_context()
             return
         self.started = True
         select = 0
@@ -178,6 +323,9 @@ class YouTube(xbmcgui.WindowXML):
     def stop(self):
         self._save_quick_resume(immediate=True)
         self._stop.set()
+        if self._cmd_monitor is not None:
+            self._cmd_monitor._window = None
+            self._cmd_monitor = None
         self._cancel_warm()
         for timer in list(self._timers.values()):
             timer.cancel()
@@ -262,11 +410,13 @@ class YouTube(xbmcgui.WindowXML):
         if shown:
             if focus or dropped:
                 self._focus_content()
+            self._publish_ui_context()
             if stored is not None and stored[1]:
                 threading.Thread(target=self._load, args=(token, view, False, select, stored[0]), daemon=True).start()
             else:
                 self._more_when_near()
             return
+        self._publish_ui_context()
         threading.Thread(target=self._load, args=(token, view, focus, select), daemon=True).start()
 
     def _load(self, token, view, focus, select, shown=None):
@@ -558,6 +708,60 @@ class YouTube(xbmcgui.WindowXML):
             self._start_keys_watch()
         else:
             self._show_step(None)                # the wizard's block is only for its own card
+
+    def _publish_ui_context(self):
+        if self._stop.is_set() or panel_ui_context is None or mediastick_ui_context is None:
+            return
+        with self._lock:
+            if self._stop.is_set():
+                return
+            root_view = self.stack[0][0] if self.stack else self.view
+            section = root_view.key if root_view is not None else self.state.get("section", data.DEFAULT_SECTION)
+            if section == data.FOLDER_KEY:
+                section = self.state.get("section", data.DEFAULT_SECTION)
+            searching = self._searching()
+            query = self.state.get("query", "")
+            kind = self.view.kind if searching and self.view is not None else self.state.get("kind", data.DEFAULT_KIND)
+        _write_ui_context(_build_ui_context(section, query, kind, searching))
+
+    def _on_ui_cmd(self, raw_data):
+        if self._stop.is_set():
+            return
+        cmd = _decode_ui_cmd(raw_data)
+        if cmd is None:
+            return
+        threading.Thread(target=self._dispatch_ui_cmd, args=(cmd,), daemon=True).start()
+
+    def _dispatch_ui_cmd(self, cmd):
+        with self._lock:
+            if self._stop.is_set():
+                return
+            action = cmd.get("cmd")
+            if action == "set_section":
+                section = cmd.get("section", "")
+                if section not in data.SECTION_KEYS:
+                    return
+                self.stack = []
+                self.state = saved.remember_section(self.state, section)
+                view = data.section_view(section, self.routes, self.state["query"], self.state["kind"])
+                if not self.demo:
+                    saved.save_state(files.state_path(), self.state)
+                self._navigate(view, focus=True)
+            elif action == "set_filter":
+                kind = cmd.get("id", "")
+                if kind not in data.KIND_KEYS:
+                    return
+                self._choose_kind(kind)
+            elif action == "search":
+                self._run_search(cmd.get("query", ""))
+            elif action == "play":
+                entry = self._selected()
+                if entry is not None:
+                    if entry.kind == data.VIDEO:
+                        self._play(entry)
+                    elif entry.kind == data.FOLDER:
+                        self.stack.append((self.view, self.getControl(GRID).getSelectedPosition()))
+                        self._navigate(data.folder_view(entry), focus=True)
 
     def _show_card(self, mode, keys=None, detail=""):
         """Everything that is not a list: the grid is emptied and the card says why."""
@@ -856,16 +1060,22 @@ class YouTube(xbmcgui.WindowXML):
             if playing():
                 xbmc.Player().stop()
 
-    def _search(self):
-        text = data.clean_query(xbmcgui.Dialog().input("Search YouTube", defaultt=self.state["query"]))
+    def _run_search(self, raw_query):
+        text = data.clean_query(raw_query)
         if not text:
             return
         with self._lock:
+            if self._stop.is_set():
+                return
             self.stack = []
             self.state = saved.record_query(self.state, text)
+            view = data.section_view(data.SEARCH, query=text, kind=self.state["kind"])
         if not self.demo:
             saved.save_state(files.state_path(), self.state)
-        self._navigate(data.section_view(data.SEARCH, query=text, kind=self.state["kind"]), focus=True)
+        self._navigate(view, focus=True)
+
+    def _search(self):
+        self._run_search(xbmcgui.Dialog().input("Search YouTube", defaultt=self.state["query"]))
 
     def _searching(self):
         """Whether the search is what the window shows (its row of choices is there); a folder opened from it is not."""
@@ -950,14 +1160,19 @@ def main(args):
     instance = single_instance.claim(xbmcgui.Window(ui.HOME), RUNNING)
     if instance is None:
         return False                             # already open (a double press on the card)
+    window = None
     try:
         demo = bool(args) and args[0] == "demo"
         window = ui.load(YouTube, XML)
         window.instance = instance
         window.setup(demo=demo, scenario=args[1] if demo and len(args) > 1 else "")
         window.doModal()
-        window.stop()
-        del window
     finally:
+        if window is not None:
+            try:
+                window.stop()
+            finally:
+                window._cmd_monitor = None
+        _clear_ui_context()
         instance.release()
     return True

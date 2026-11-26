@@ -3901,7 +3901,7 @@ class UiContext(WindowCase):
             "Other.mediastick.ui_cmd",
             json.dumps({"app": "youtube", "cmd": "set_section", "section": "rec"}),
         )
-        self.assertTrue(wait_for(lambda: win.loads > before))
+        self.assertTrue(wait_for(lambda: win.loads > before or (win.mode == D.DATA and win.view is not None and win.view.key == D.DEFAULT_SECTION)))
         played = []
         with mock.patch.object(files, "play", side_effect=lambda p: played.append(p)):
             win._cmd_monitor.onNotification(

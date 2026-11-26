@@ -20,6 +20,13 @@ try:
 except Exception:
     DisplayClient = None
 
+try:
+    import mediastick_ui_context  # noqa: E402
+    import panel_ui_context  # noqa: E402
+except ImportError:
+    mediastick_ui_context = None
+    panel_ui_context = None
+
 LOG = "[script.media-stick.home]"
 HOME_WINDOWS = (10000,)
 STATUS_EVERY = 5                     # seconds between IP / network refreshes
@@ -54,6 +61,18 @@ def _notify_displayd(playing):
 
 
 
+def _clear_ui_context():
+    """Clear stale app UI context when Kodi is back on Home without active video."""
+    if panel_ui_context is None or mediastick_ui_context is None:
+        return
+    try:
+        panel_ui_context.write_context(mediastick_ui_context.empty_context())
+    except OSError as e:
+        xbmc.log(f"{LOG} ui-context clear skipped: {e!r}", xbmc.LOGWARNING)
+    except Exception as e:
+        xbmc.log(f"{LOG} ui-context clear failed: {e!r}", xbmc.LOGWARNING)
+
+
 _MonitorBase = getattr(xbmc, "Monitor", object)
 
 
@@ -67,8 +86,10 @@ class HomeMonitor(_MonitorBase):
 
     def onNotification(self, sender, method, data):
         m = method or ""
-        if self._on_home is not None and "home_shown" in m:
-            self._on_home()
+        if "home_shown" in m:
+            _clear_ui_context()
+            if self._on_home is not None:
+                self._on_home()
             return
         if self._sweet_player is None:
             return
@@ -209,14 +230,16 @@ def main():
                             break
                         continue
                 with lock:
+                    on_home = current in HOME_WINDOWS or (launcher is not None and current == launcher.window_id())
                     if launcher is not None:
                         # once shown, the launcher is itself the current window, not Home: idle is judged
                         # there too, and cleared under a dialog or once the window is left
-                        on_screen = current in HOME_WINDOWS or current == launcher.window_id()
-                        launcher.refresh_idle(on_screen and not blocked)
+                        launcher.refresh_idle(on_home and not blocked)
                         if time.monotonic() - last_status >= STATUS_EVERY:
                             last_status = time.monotonic()
                             launcher.refresh_status()
+                if on_home and not xbmc.getCondVisibility("Player.HasVideo"):
+                    _clear_ui_context()
             except Exception as e:
                 xbmc.log(f"{LOG} loop error: {e!r}", xbmc.LOGERROR)
                 with lock:
