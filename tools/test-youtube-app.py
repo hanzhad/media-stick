@@ -186,6 +186,8 @@ sys.path.insert(0, LIB)
 from resources.lib import (accounts, apps, page_cache, prefetch, profiles, store, youtube_app, youtube_cards as C,  # noqa: E402
                            youtube_data as D, youtube_demo as demo, youtube_files as files, youtube_pages as P,
                            youtube_state as S)
+import mediastick_ui_context  # noqa: E402
+import panel_ui_context  # noqa: E402
 
 R = D.ROOT
 REAL_KEYS_POLL = youtube_app.KEYS_POLL            # the window tests make it short
@@ -3782,6 +3784,202 @@ class MenuKey(WindowCase):
         self.press(window, self.menu_id())
         self.assertEqual(window.focus, RAIL)
 
+
+
+class UiContext(WindowCase):
+    def setUp(self):
+        super().setUp()
+        self.ctx_path = os.path.join(TMP, "ui-context.json")
+        if os.path.exists(self.ctx_path):
+            os.unlink(self.ctx_path)
+        self.ctx_writes = []
+        real_write = panel_ui_context.write_context
+
+        def record_write(doc, path=None):
+            self.ctx_writes.append(doc)
+            return real_write(doc, path=self.ctx_path)
+
+        patch = mock.patch.object(panel_ui_context, "write_context", side_effect=record_write)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def read_ctx(self):
+        return panel_ui_context.read_context(self.ctx_path)
+
+    def test_publishes_ui_context_on_open_and_preserves_fake_rpc(self):
+        self.rec(vid(1, "One"))
+        win = self.open()
+        ctx = self.read_ctx()
+        self.assertEqual(ctx["app"], "youtube")
+        self.assertEqual(ctx["view"], "section")
+        self.assertEqual(ctx["section"], D.DEFAULT_SECTION)
+        self.assertTrue(ctx["can_search"])
+        self.assertEqual(ctx["search_query"], "")
+        self.assertEqual(ctx["search_hint"], "Поиск на YouTube")
+        self.assertIsNone(ctx["modal"])
+        self.assertEqual([s["id"] for s in ctx["sections"]], list(D.SECTION_KEYS))
+        for sec, raw_sec in zip(ctx["sections"], D.SECTIONS):
+            self.assertTrue(re.search(r"[\u0400-\u04ff]", sec["label"]), f"expected Russian label for {sec}")
+            self.assertNotEqual(sec["label"], raw_sec.name)
+        self.assertEqual(ctx["chips"], [])
+        self.assertEqual(Fake.rpc, [])
+        self.assertIsNotNone(win)
+
+    def test_publishes_updated_context_on_section_search_and_kind_changes(self):
+        self.rec(vid(1, "One"))
+        self.site.routes[D.SECTIONS[5].route] = answer(vid(2, "Trend"))
+        self.site.routes[D.search_route("cats", D.KIND_VIDEO)] = answer(vid(3, "Cat Video"))
+        self.site.routes[D.search_route("cats", D.KIND_CHANNEL)] = answer(folder(R + "channel/c1/", "Cat Channel"))
+        win = self.open()
+
+        self.go(win, "trend")
+        ctx = self.read_ctx()
+        self.assertEqual(ctx["section"], "trend")
+        self.assertEqual(ctx["chips"], [])
+
+        Fake.typed.append("cats")
+        before = win.loads
+        self.go(win, D.SEARCH)
+        self.assertTrue(wait_for(lambda: win.loads > before))
+        ctx = self.read_ctx()
+        self.assertEqual(ctx["section"], D.SEARCH)
+        self.assertEqual(ctx["search_query"], "cats")
+        self.assertEqual([c["id"] for c in ctx["chips"]], list(D.KIND_KEYS))
+        self.assertEqual([c["id"] for c in ctx["chips"] if c.get("active")], [D.KIND_VIDEO])
+
+        before = win.loads
+        win.onClick(KIND_IDS[1])
+        self.assertTrue(wait_for(lambda: win.loads > before))
+        ctx = self.read_ctx()
+        self.assertEqual(ctx["section"], D.SEARCH)
+        self.assertEqual(ctx["search_query"], "cats")
+        self.assertEqual([c["id"] for c in ctx["chips"] if c.get("active")], [D.KIND_CHANNEL])
+
+    def test_ui_cmd_set_section_set_filter_search_and_play(self):
+        self.rec(vid(1, "One"))
+        self.site.routes[D.SECTIONS[5].route] = answer(vid(2, "Trend"))
+        self.site.routes[D.search_route("jazz", D.KIND_VIDEO)] = answer(vid(3, "Jazz"))
+        self.site.routes[D.search_route("jazz", D.KIND_PLAYLIST)] = answer(folder(R + "playlist/p1/", "Jazz Mix"))
+        win = self.open()
+        self.assertIsNotNone(getattr(win, "_cmd_monitor", None))
+
+        before = win.loads
+        win._cmd_monitor.onNotification(
+            "media-stick.panel",
+            "Other.mediastick.ui_cmd",
+            json.dumps({"app": "youtube", "cmd": "set_section", "section": "trend"}),
+        )
+        self.assertTrue(wait_for(lambda: win.loads > before))
+        self.assertEqual(self.read_ctx()["section"], "trend")
+
+        with mock.patch.object(Dialog, "input", side_effect=AssertionError("Dialog.input must not be called")):
+            before = win.loads
+            win._cmd_monitor.onNotification(
+                "media-stick.panel",
+                "Other.mediastick.ui_cmd",
+                json.dumps({"app": "youtube", "cmd": "search", "query": "jazz"}),
+            )
+            self.assertTrue(wait_for(lambda: win.loads > before))
+        ctx = self.read_ctx()
+        self.assertEqual(ctx["section"], D.SEARCH)
+        self.assertEqual(ctx["search_query"], "jazz")
+        self.assertEqual(self.shown(win), ["Jazz"])
+
+        before = win.loads
+        win._cmd_monitor.onNotification(
+            "media-stick.panel",
+            "Other.mediastick.ui_cmd",
+            json.dumps({"app": "youtube", "cmd": "set_filter", "id": "playlist", "active": True}),
+        )
+        self.assertTrue(wait_for(lambda: win.loads > before))
+        ctx = self.read_ctx()
+        self.assertEqual([c["id"] for c in ctx["chips"] if c.get("active")], ["playlist"])
+
+        before = win.loads
+        win._cmd_monitor.onNotification(
+            "media-stick.panel",
+            "Other.mediastick.ui_cmd",
+            json.dumps({"app": "youtube", "cmd": "set_section", "section": "rec"}),
+        )
+        self.assertTrue(wait_for(lambda: win.loads > before or (win.mode == D.DATA and win.view is not None and win.view.key == D.DEFAULT_SECTION)))
+        played = []
+        with mock.patch.object(files, "play", side_effect=lambda p: played.append(p)):
+            win._cmd_monitor.onNotification(
+                "media-stick.panel",
+                "Other.mediastick.ui_cmd",
+                json.dumps({"app": "youtube", "cmd": "play"}),
+            )
+            self.assertTrue(wait_for(lambda: len(played) == 1))
+        self.assertEqual(played, [R + "play/?video_id=v1"])
+
+    def test_ui_cmd_ignores_wrong_app_wrong_method_and_invalid_payloads(self):
+        self.rec(vid(1, "One"))
+        win = self.open()
+        self.assertIsNotNone(getattr(win, "_cmd_monitor", None))
+        for method, data in (
+            ("Other.mediastick.other", json.dumps({"app": "youtube", "cmd": "set_section", "section": "trend"})),
+            ("Other.mediastick.ui_cmd", json.dumps({"app": "sweettv", "cmd": "set_section", "section": "tv"})),
+            ("Other.mediastick.ui_cmd", "{not-json"),
+            ("Other.mediastick.ui_cmd", json.dumps({"app": "youtube", "cmd": "unknown_cmd"})),
+            ("Other.mediastick.ui_cmd", json.dumps({"app": "youtube", "cmd": "set_section"})),
+            ("Other.mediastick.ui_cmd", json.dumps({"app": "youtube", "cmd": "set_section", "section": "nonexistent"})),
+        ):
+            win._cmd_monitor.onNotification("media-stick.panel", method, data)
+        time.sleep(0.05)
+        self.assertEqual(win.view.key, D.DEFAULT_SECTION)
+        self.assertEqual(self.read_ctx()["section"], D.DEFAULT_SECTION)
+
+    def test_wakeup_notify_emitted_only_when_xbmc_monitor_exists(self):
+        self.rec(vid(1, "One"))
+        DummyMonitor = type("DummyMonitor", (), {})
+        with mock.patch.object(xbmc, "Monitor", DummyMonitor, create=True):
+            self.open()
+            self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 1))
+            req = json.loads(Fake.rpc[0])
+            self.assertEqual(req["method"], "JSONRPC.NotifyAll")
+            self.assertEqual(req["params"]["sender"], "script.media-stick.home")
+            self.assertEqual(req["params"]["message"], "mediastick.ui_context")
+
+    def test_oserror_and_missing_module_are_guarded(self):
+        self.rec(vid(1, "One"))
+        with mock.patch.object(panel_ui_context, "write_context", side_effect=OSError("read-only")):
+            win = self.open()
+            self.go(win, "trend")
+        with mock.patch.object(youtube_app, "panel_ui_context", None, create=True):
+            win2 = self.open()
+            self.assertEqual(win2.view.key, D.DEFAULT_SECTION)
+
+    def test_main_clears_ui_context_in_finally_and_on_exception(self):
+        created = []
+
+        def fake_load(cls, xml):
+            win = cls()
+            created.append(win)
+            return win
+
+        def fake_do_modal(win):
+            win.onInit()
+            self.assertTrue(wait_for(lambda: win.loads >= 1))
+            self.assertEqual(self.read_ctx()["app"], "youtube")
+
+        with mock.patch.object(xbmcgui, "getCurrentWindowId", lambda: 13001, create=True), \
+                mock.patch.object(youtube_app.ui, "load", side_effect=fake_load), \
+                mock.patch.object(youtube_app.YouTube, "doModal", fake_do_modal):
+            self.assertTrue(youtube_app.main(["demo"]))
+        self.assertEqual(self.read_ctx(), mediastick_ui_context.empty_context())
+        self.assertIsNone(getattr(created[-1], "_cmd_monitor", None))
+
+        def failing_do_modal(win):
+            win.onInit()
+            self.assertTrue(wait_for(lambda: win.loads >= 1))
+            raise RuntimeError("boom")
+
+        with mock.patch.object(xbmcgui, "getCurrentWindowId", lambda: 13001, create=True), \
+                mock.patch.object(youtube_app.ui, "load", side_effect=fake_load), \
+                mock.patch.object(youtube_app.YouTube, "doModal", failing_do_modal):
+            with self.assertRaises(RuntimeError):
+                youtube_app.main(["demo"])
+        self.assertEqual(self.read_ctx(), mediastick_ui_context.empty_context())
 
 if __name__ == "__main__":
     unittest.main()

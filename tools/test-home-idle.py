@@ -20,6 +20,7 @@ from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 ADDON = os.path.join(ROOT, "device", "kodi-addons", "script.media-stick.home")
+LIB = os.path.join(ROOT, "device", "files", "usr", "local", "lib", "media-stick")
 SKIN = os.path.join(ADDON, "resources", "skins", "default")
 HOME_XML = os.path.join(SKIN, "1080i", "script-media-stick-home.xml")
 MEDIA = os.path.join(SKIN, "media")
@@ -108,7 +109,10 @@ xbmcgui.getCurrentWindowId = lambda: loop.ticks[min(loop.tick, len(loop.ticks) -
 xbmcgui.WindowXMLDialog = type("WindowXMLDialog", (), {})
 sys.modules.update(xbmc=xbmc, xbmcvfs=xbmcvfs, xbmcaddon=xbmcaddon, xbmcgui=xbmcgui)
 sys.path.insert(0, ADDON)
+sys.path.insert(0, LIB)
 
+import mediastick_ui_context  # noqa: E402
+import panel_ui_context  # noqa: E402
 from resources.lib import launcher  # noqa: E402
 
 launcher.time = types.SimpleNamespace(monotonic=lambda: now[0])
@@ -353,6 +357,54 @@ class Service(unittest.TestCase):
         self.run_service((HOME, False), (OWN, False))
         self.assertEqual(loop.stops, 1)
         self.assertEqual(self.calls.count("show"), 1)
+
+    def test_clears_stale_ui_context_immediately_on_home_without_video(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx_path = os.path.join(tmp, "ui-context.json")
+            panel_ui_context.write_context({"app": "youtube", "view": "section", "section": "rec"}, path=ctx_path)
+            real_write = panel_ui_context.write_context
+            with mock.patch.object(panel_ui_context, "write_context", side_effect=lambda doc, path=None: real_write(doc, path=ctx_path)):
+                loop.video = False
+                self.run_service((HOME, False), (OWN, False))
+            self.assertEqual(panel_ui_context.read_context(ctx_path), mediastick_ui_context.empty_context())
+
+    def test_does_not_clear_ui_context_while_video_plays_or_in_other_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx_path = os.path.join(tmp, "ui-context.json")
+            stale = {"app": "youtube", "view": "section", "section": "rec"}
+            panel_ui_context.write_context(stale, path=ctx_path)
+            real_write = panel_ui_context.write_context
+            with mock.patch.object(panel_ui_context, "write_context", side_effect=lambda doc, path=None: real_write(doc, path=ctx_path)):
+                loop.video = True
+                loop.fullscreen_video = True
+                self.run_service((OWN, False), (OWN, False))
+            self.assertEqual(panel_ui_context.read_context(ctx_path)["app"], "youtube")
+
+            loop.video = False
+            loop.fullscreen_video = False
+            with mock.patch.object(panel_ui_context, "write_context", side_effect=lambda doc, path=None: real_write(doc, path=ctx_path)):
+                self.run_service((OTHER, False), (OTHER, False))
+            self.assertEqual(panel_ui_context.read_context(ctx_path)["app"], "youtube")
+
+    def test_home_monitor_clears_ui_context_on_home_shown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx_path = os.path.join(tmp, "ui-context.json")
+            panel_ui_context.write_context({"app": "youtube", "view": "section", "section": "rec"}, path=ctx_path)
+            real_write = panel_ui_context.write_context
+            with mock.patch.object(panel_ui_context, "write_context", side_effect=lambda doc, path=None: real_write(doc, path=ctx_path)):
+                ns = runpy.run_path(os.path.join(ADDON, "service.py"), run_name="service_mod_test")
+                mon = ns["HomeMonitor"](on_home=lambda: None)
+                mon.onNotification("panel", "Other.home_shown", "")
+            self.assertEqual(panel_ui_context.read_context(ctx_path), mediastick_ui_context.empty_context())
+
+    def test_ui_context_clear_guards_oserror(self):
+        with mock.patch.object(panel_ui_context, "write_context", side_effect=OSError("read-only")):
+            loop.video = False
+            self.run_service((HOME, False), (OWN, False))
+            self.assertEqual(self.calls.count("show"), 1)
+            ns = runpy.run_path(os.path.join(ADDON, "service.py"), run_name="service_mod_test")
+            mon = ns["HomeMonitor"](on_home=lambda: None)
+            mon.onNotification("panel", "home_shown", "")
 
 
 class IdleSkin(unittest.TestCase):
