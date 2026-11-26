@@ -38,12 +38,14 @@ class Shelf:
         self.chips = list(chips)
         visible = section in sections.FILTERED_SECTIONS
         self._prop("filters", "1" if visible else "")
+        has_controls = hasattr(self, "controls")
         for idx, cid in enumerate(range(CHIP_FIRST, CHIP_LAST + 1)):
             label = chips[idx][1] if (visible and idx < len(chips)) else ""
-            try:
-                self.getControl(cid).setLabel(label)
-            except RuntimeError:
-                pass
+            if has_controls:
+                try:
+                    self.getControl(cid).setLabel(label)
+                except RuntimeError:
+                    pass
             self._prop(f"chip_{cid}", label)
             if visible and idx < len(chips):
                 key = chips[idx][0]
@@ -226,7 +228,7 @@ class Shelf:
                 cfg = sweettv_demo.demo_config() if demo else sweetapi.configuration(tr=words.tr)
                 if cfg.get("ok"):
                     cfg_genres = cfg.get("genres") or []
-                    cfg_modes = cfg.get("sort_modes") or list(sections.SORT_MODES_DEFAULT)
+                    cfg_modes = sections.valid_sort_modes(cfg.get("sort_modes"))
             except Exception as e:
                 ui.log(f"SWEET.TV config failed: {e!r}")
 
@@ -371,7 +373,7 @@ class Shelf:
             if not cfg.get("ok"):
                 return
             cfg_genres = cfg.get("genres") or []
-            cfg_modes = cfg.get("sort_modes") or list(sections.SORT_MODES_DEFAULT)
+            cfg_modes = sections.valid_sort_modes(cfg.get("sort_modes"))
         except Exception:
             return
         with self._lock:

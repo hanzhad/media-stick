@@ -2256,6 +2256,48 @@ class CatalogSections(WindowCase):
             self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 1))
             self.assertEqual(window.controls[400].items[0].label, "Pilot")
 
+    def test_catalog_chips_skips_umbrella_genre_ids_and_falls_back_on_empty_sort_modes(self):
+        live_genres = [
+            {"id": 61, "name": "Все фильмы"},
+            {"id": 1, "name": "Сериалы"},
+            {"id": 3, "name": "Шоу"},
+            {"id": 57, "name": "4K UHD"},
+            {"id": 2, "name": "Драмы"},
+            {"id": 4, "name": "Комедии"},
+            {"id": 56, "name": "Боевики"},
+            {"id": 58, "name": "Триллеры"},
+            {"id": 60, "name": "Фантастика"},
+            {"id": 62, "name": "Приключения"},
+            {"id": 70, "name": "Семейные"},
+        ]
+        chips = sweettv_app.sections.catalog_chips(live_genres, [{"id": 1, "name": "По умолчанию"}], 0)
+        self.assertEqual(
+            chips,
+            [
+                ("all", "All items"),
+                ("sort", "По умолчанию"),
+                ("g:2", "Драмы"),
+                ("g:4", "Комедии"),
+                ("g:56", "Боевики"),
+                ("g:58", "Триллеры"),
+                ("g:60", "Фантастика"),
+                ("g:62", "Приключения"),
+            ],
+        )
+
+        # Fallback to SORT_MODES_DEFAULT when sort_modes is empty or has no non-empty mode name
+        for empty_modes in ([], None, [{"id": 1, "name": ""}, {"id": 2, "name": "   "}], [{"id": 1}]):
+            c0 = sweettv_app.sections.catalog_chips(live_genres[:5], empty_modes, 0)
+            c1 = sweettv_app.sections.catalog_chips(live_genres[:5], empty_modes, 1)
+            self.assertEqual(c0[1], ("sort", "Popular"), empty_modes)
+            self.assertEqual(c1[1], ("sort", "IMDb Rating"), empty_modes)
+            self.assertEqual([k for k, _ in c0[2:]], ["g:2"], empty_modes)
+
+        # Valid non-empty sort_modes still cycle normally
+        valid_modes = [{"id": 1, "name": "По умолчанию"}, {"id": 2, "name": "По рейтингу"}]
+        self.assertEqual(sweettv_app.sections.catalog_chips([], valid_modes, 0)[1], ("sort", "По умолчанию"))
+        self.assertEqual(sweettv_app.sections.catalog_chips([], valid_modes, 1)[1], ("sort", "По рейтингу"))
+
 
 class ChannelsSection(WindowCase):
     """Channels section: all playable channels, 24/7 FAST chip, Hero 211/212, and 0-9 jump."""
@@ -2872,6 +2914,58 @@ class Skin(unittest.TestCase):
         self.assertEqual((vis_still[0].findtext("aspectratio") or "").strip(), "scale")
         self.assertFalse(any(_eval_kodi_cond(c.findtext("visible") or "", props_logo, focus_id=201) for c in scrim_imgs))
         self.assertTrue(any(_eval_kodi_cond(c.findtext("visible") or "", props_still, focus_id=201) for c in scrim_imgs))
+
+    def test_rail_100_label2_width_and_browse_hero_419_button_geometry(self):
+        root = self.tree()
+        rail = self.control(root, 100)
+        for layout_name in ("itemlayout", "focusedlayout"):
+            layout = rail.find(layout_name)
+            self.assertIsNotNone(layout, layout_name)
+            rail_w = int(layout.get("width"))
+            lbl1 = next(c for c in layout.findall("control[@type='label']") if c.findtext("label") == "$INFO[ListItem.Label]")
+            lbl2 = next(c for c in layout.findall("control[@type='label']") if c.findtext("label") == "$INFO[ListItem.Label2]")
+            left1 = int(lbl1.findtext("left"))
+            w1 = int(lbl1.findtext("width"))
+            left2 = int(lbl2.findtext("left"))
+            w2 = int(lbl2.findtext("width"))
+            self.assertEqual(w1, 168, layout_name)
+            self.assertEqual(left2, 192, layout_name)
+            self.assertGreaterEqual(w2, 68, layout_name)
+            self.assertEqual(w2, 72, layout_name)
+            self.assertLessEqual(left1 + w1, left2, layout_name)
+            self.assertLessEqual(left2 + w2, rail_w, layout_name)
+
+        row_419 = self.control(root, 419)
+        w_419 = int(row_419.findtext("width"))
+        self.assertGreaterEqual(w_419, 980)
+        self.assertEqual(w_419, 984)
+        self.assertEqual(int(row_419.findtext("itemgap")), 10)
+
+        btn_416 = self.control(root, 416)
+        w_416 = btn_416.find("width")
+        self.assertIsNotNone(w_416)
+        self.assertEqual((w_416.text or "").strip(), "auto")
+        self.assertEqual((int(w_416.get("min")), int(w_416.get("max"))), (180, 340))
+
+        for cid in (417, 418, 416, 420):
+            btn = self.control(root, cid)
+            self.assertEqual(int(btn.findtext("textoffsetx")), 18, cid)
+
+        chip_props = {f"chip_{c}": f"Chip {c}" for c in range(401, 409)}
+        chip_props["chip_active_401"] = "1"
+        hero_props = {
+            "mode": "data", "modal": "", "wide_grid": "1", "filters": "1", "emptycat": "",
+            "hero_art": "https://img/bg.jpg", "hero_is_logo": "", "hero_pbar": "sweettv-pbar-10.png",
+            "has_play": "1", "has_alt": "1", "has_guide": "1", "has_fav": "1",
+            **chip_props,
+        }
+        wide_items = {
+            100: [({"title": f"Sec {i}"}, "") for i in range(7)],
+            201: [({"title": f"Ch {i}", "now": "Live", "bar": "sweettv-bar-10.png"}, f"https://img/{i}.png") for i in range(4)],
+        }
+        vis_419 = count_visible_textures(root, hero_props, 419, container_items=wide_items)
+        self.assertGreater(vis_419, 0)
+        self.assertLessEqual(vis_419, 34, f"Browse Hero 419 state exceeded 34 GPU textures: {vis_419}")
 
     def test_unified_fullscreen_hero_hubs_and_strict_single_focus_410_400(self):
         root = self.tree()
@@ -4076,6 +4170,48 @@ class SectionSwitchWideGridAndHydrationTests(WindowCase):
                          ("https://img/888-prev.jpg", "", "СТБ HD  ·  Continue from 10:00"))
         self.assertEqual((w_items[1].art.get("icon"), w_items[1].getProperty("art_mode"), w_items[1].getProperty("now")),
                          ("https://img/dune-b.jpg", "", "Continue from 15:00"))
+
+    def test_set_chips_skips_get_control_when_window_lacks_controls_attr(self):
+        window = self.make()
+        # 1. Offline test harness (has .controls) still updates Control.setLabel()
+        self.assertTrue(hasattr(window, "controls"))
+        window.genre_id = 4
+        window._set_chips("movies", [("all", "All items"), ("sort", "Popular"), ("g:4", "Комедии")])
+        self.assertEqual(window.controls[401].getLabel(), "All items")
+        self.assertEqual(window.controls[402].getLabel(), "Popular")
+        self.assertEqual(window.controls[403].getLabel(), "Комедии")
+        self.assertEqual(window.controls[404].getLabel(), "")
+
+        # 2. Real Kodi WindowXML (no .controls attr) never calls getControl(401..408)
+        saved_controls = window.controls
+        del window.controls
+        self.addCleanup(setattr, window, "controls", saved_controls)
+        self.assertFalse(hasattr(window, "controls"))
+
+        toggle_calls = []
+
+        def spy_get_control(cid):
+            if 401 <= cid <= 408:
+                toggle_calls.append(cid)
+            return saved_controls[cid]
+
+        window.getControl = spy_get_control
+        window.genre_id = 4
+        window._set_chips("movies", [("all", "All items"), ("sort", "По умолчанию"), ("g:4", "Комедии")])
+        self.assertEqual(toggle_calls, [], "Real Kodi window without .controls must not call getControl(401..408)")
+        self.assertEqual(window.getProperty("filters"), "1")
+        self.assertEqual(window.getProperty("chip_401"), "All items")
+        self.assertEqual(window.getProperty("chip_402"), "По умолчанию")
+        self.assertEqual(window.getProperty("chip_403"), "Комедии")
+        self.assertEqual(window.getProperty("chip_404"), "")
+        self.assertEqual(window.getProperty("chip_active_401"), "")
+        self.assertEqual(window.getProperty("chip_active_403"), "1")
+
+        window._set_chips("continue", [("all", "All items")])
+        self.assertEqual(toggle_calls, [])
+        self.assertEqual(window.getProperty("filters"), "")
+        self.assertEqual(window.getProperty("chip_401"), "")
+        self.assertEqual(window.getProperty("chip_active_403"), "")
 
 
 if __name__ == "__main__":
