@@ -1111,7 +1111,11 @@ class SweetRoutes(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertTrue(body["ok"])
         self.assertTrue(any(c["id"] == "5" and c["favourite"] for c in body["channels"]))
-        self.assertIn("categories", body)
+        self.assertEqual(body.get("default_tab"), "main")
+        self.assertTrue(body["categories"])
+        self.assertTrue(all("id" in cat and "caption" in cat for cat in body["categories"]))
+        self.assertEqual(body["categories"][-1]["id"], "all")
+        self.assertTrue(all("tabs" in ch and isinstance(ch["tabs"], list) for ch in body["channels"]))
         with mock.patch.object(self.ps.api, "top_search", return_value={"ok": True, "items": []}):
             self.assertEqual(self.ps.get(self.ps.PREFIX + "top", self.rpc)[1], 200)
         with mock.patch.object(self.ps.api, "search", return_value={"ok": True, "items": []}):
@@ -1574,6 +1578,39 @@ class MobileSweetVodTest(unittest.TestCase):
         self.assertIn("const nu=seasons.length?(r.next_up||null):null;", src)
         self.assertIn("nu.season_index", src)
         self.assertIn("episode_id:nu.episode_id", src)
+
+    def test_sweet_default_cat_is_main(self):
+        with open(os.path.join(LIB, "panel_watch_ui.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertRegex(src, r"plugin\.video\.sweettv'\)go\(\{t:'sweet',cat:'main'")
+        self.assertNotRegex(src, r"plugin\.video\.sweettv'\)go\(\{t:'sweet',cat:'all'")
+
+    def test_sw_channels_uses_backend_tabs_and_default_tab_fallback(self):
+        with open(os.path.join(LIB, "panel_watch_sweet_ui.py"), encoding="utf-8") as f:
+            src = f.read()
+        fn = src[src.index("async function swChannels"):src.index("async function renderShow")]
+        self.assertNotIn("{id:'all',name:'Все'}", fn)
+        self.assertNotIn("{id:'fast',name:'24/7'}", fn)
+        self.assertIn("r.categories", fn)
+        self.assertRegex(fn, r"c\.caption\s*\|\|\s*c\.name")
+        self.assertIn("r.default_tab", fn)
+        self.assertRegex(fn, r"\(c\.tabs\s*\|\|\s*\[\]\)\.includes\(d\.cat\)")
+
+    def test_sw_catalog_uses_next_offset(self):
+        with open(os.path.join(LIB, "panel_watch_sweet_ui.py"), encoding="utf-8") as f:
+            src = f.read()
+        fn = src[src.index("async function swCatalog"):src.index("async function swChannels")]
+        self.assertIn("r.next_offset", fn)
+        self.assertRegex(fn, r"r\.next_offset\s*!==\s*undefined\s*\?\s*r\.next_offset\s*:\s*\(?\s*offset\s*\+\s*items\.length")
+
+    def test_render_vod_high_res_art_and_unreleased_skoro_badge(self):
+        with open(os.path.join(LIB, "panel_watch_sweet_ui.py"), encoding="utf-8") as f:
+            src = f.read()
+        vod_fn = src[src.index("async function renderVod"):src.index("async function renderGuide")]
+        self.assertRegex(vod_fn, r"o\.banner\s*\|\|\s*o\.image_url\s*\|\|\s*o\.poster\s*\|\|\s*o\.preview")
+        self.assertIn("Скоро", vod_fn)
+        self.assertRegex(vod_fn, r"r\.vod_url|r\.released\s*===\s*false")
+        self.assertIn("disabled", vod_fn)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

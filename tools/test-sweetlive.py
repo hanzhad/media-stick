@@ -853,6 +853,83 @@ class Panel(unittest.TestCase):
         self.assertEqual(calls[0][1].get("banner"), "https://img/501-bg.jpg")
         self.assertEqual(calls[0][1].get("wide_art"), "https://img/501-wide.jpg")
 
+    def test_channels_view_returns_curated_9tab_categories_default_tab_and_channel_tabs(self):
+        raw = {
+            "categories": [
+                {"id": "20", "caption": "Основные"},
+                {"id": "30", "caption": "Кино"},
+                {"id": "9", "caption": "Познавательные"},
+                {"id": "2", "caption": "Детские"},
+                {"id": "16", "caption": "Спорт"},
+                {"id": "8", "caption": "Новости"},
+                {"id": "6", "caption": "Музыка"},
+                {"id": "15", "caption": "Региональные"},
+            ],
+            "list": [
+                {"id": 1, "name": "1+1", "number": 1, "category": ["20"], "available": True, "epg": []},
+                {"id": 2, "name": "1+1 HD", "number": 2, "category": ["20", "30"], "catchup": True,
+                 "icon_v2_url": "https://cdn.sweet.tv/1p1.png", "available": True, "epg": [SHOW]},
+                {"id": 3, "name": "Кино 4K", "number": 3, "category": ["20"], "available": True, "epg": []},
+                {"id": 4, "name": "Мульт", "number": 4, "category": ["2"], "available": True, "epg": []},
+                {"id": 5, "name": "Спорт 1", "number": 5, "category": ["16"], "available": True, "epg": []},
+                {"id": 6, "name": "Новости 24", "number": 6, "category": ["8"], "available": True, "epg": []},
+                {"id": 7, "name": "Музыка", "number": 7, "category": ["6"], "available": True, "epg": []},
+                {"id": 8, "name": "Наука", "number": 8, "category": ["9"], "available": True, "epg": []},
+                {"id": 9, "name": "Регион", "number": 9, "category": ["15"], "available": True, "epg": []},
+                {"id": 10, "name": "FAST Хиты", "number": 10, "category": ["20"], "is_fast_channel": True,
+                 "available": True, "epg": []},
+                {"id": 11, "name": "Скрытый", "number": 11, "category": ["20"], "available": False, "epg": []},
+            ],
+        }
+        with mock.patch("panel_lang.current", return_value="ru"):
+            res = ps.channels_view(raw, NOW, favs_data={"v": 1, "items": {"ch:2": {"at": NOW}}})
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["default_tab"], "main")
+        cat_ids = [c["id"] for c in res["categories"]]
+        self.assertEqual(cat_ids[0], "main")
+        self.assertEqual(cat_ids[-2:], ["fast", "all"])
+        self.assertEqual(cat_ids, ["main", "g:cinema", "g:knowledge", "g:kids", "g:sport", "g:news", "g:music", "fast", "all"])
+        for cat in res["categories"]:
+            self.assertEqual(set(cat.keys()), {"id", "caption"})
+            self.assertTrue(cat["caption"])
+        by_id = {c["id"]: c for c in res["channels"]}
+        self.assertNotIn("11", by_id)
+        # SD twin & 4K excluded from main, present in all
+        self.assertEqual(by_id["1"]["tabs"], ["all"])
+        self.assertEqual(by_id["3"]["tabs"], ["all"])
+        # Main HD + cinema
+        self.assertEqual(by_id["2"]["tabs"], ["main", "g:cinema", "all"])
+        self.assertTrue(by_id["2"]["favourite"])
+        self.assertTrue(by_id["2"]["can_archive"])
+        self.assertIsNotNone(by_id["2"]["now"])
+        # Existing fields preserved
+        for field in ("id", "name", "icon", "cats", "is_fast_channel", "can_archive", "favourite", "now", "next", "tabs"):
+            self.assertIn(field, by_id["2"])
+        # FAST only in fast + all
+        self.assertEqual(by_id["10"]["tabs"], ["fast", "all"])
+        self.assertTrue(by_id["10"]["is_fast_channel"])
+        # Excluded cat 15 only in all
+        self.assertEqual(by_id["9"]["tabs"], ["all"])
+
+    def test_channels_view_uses_panel_lang_and_non_curated_fallback(self):
+        raw_non_curated = {
+            "categories": [{"id": "99", "caption": "Локальные"}],
+            "list": [{"id": 1, "name": "Канал 1", "category": ["99"], "available": True, "epg": []}],
+        }
+        with mock.patch("panel_lang.current", return_value="uk"):
+            res = ps.channels_view(raw_non_curated, NOW)
+        self.assertEqual(res["default_tab"], "main")
+        self.assertEqual(res["categories"][0], {"id": "main", "caption": "Основні"})
+        self.assertEqual(res["categories"][-1], {"id": "all", "caption": "Усі"})
+        self.assertIn("main", res["channels"][0]["tabs"])
+        self.assertIn("all", res["channels"][0]["tabs"])
+
+        with mock.patch("panel_lang.current", return_value="en"):
+            empty_res = ps.channels_view({}, NOW)
+        self.assertEqual(empty_res["default_tab"], "main")
+        self.assertEqual(empty_res["channels"], [])
+        self.assertEqual(empty_res["categories"], [{"id": "all", "caption": "All"}])
+
 
 class Routes(unittest.TestCase):
     def setUp(self):

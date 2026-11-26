@@ -468,7 +468,7 @@ async function renderApps(b){
   const tiles=h('div',{class:'wt-tiles'});
   W.apps.forEach(a=>{const t=h('button',{class:'wt-tile','aria-label':a.name,onclick:()=>{
       if(a.id==='plugin.video.youtube')go({t:'yt',section:'home',q:'',path:'',title:'YouTube',app:a});
-      else if(a.id==='plugin.video.sweettv')go({t:'sweet',cat:'all',title:'SWEET.TV',app:a});
+      else if(a.id==='plugin.video.sweettv')go({t:'sweet',cat:'main',title:'SWEET.TV',app:a});
       else openOnTv(a.id)}},
     appLogo(a),
     h('b',{text:a.name}),h('small',{text:a.kind==='catalog'?'Выбрать на телефоне':'Откроется на ТВ'}));tiles.append(t)});
