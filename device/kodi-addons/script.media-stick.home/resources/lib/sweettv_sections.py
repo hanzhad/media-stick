@@ -60,6 +60,10 @@ class Card(NamedTuple):
     nextline: str
     resume_label: str
     small: bool
+    art_mode: str = ""
+
+
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
 def fmt_mmss(seconds) -> str:
@@ -141,7 +145,7 @@ def channel_card(ch, cat_names, now, resume_doc=None, favs=()) -> Card:
         num=str(ch.number) if ch.number else "",
         initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
         now=now_text, nowline=nowline, next=next_text, nextline=nextline,
-        resume_label="", small=len(ch.name) > 22,
+        resume_label="", small=len(ch.name) > 22, art_mode="logo",
     )
 
 
@@ -233,7 +237,12 @@ def search_card(row, resume_doc=None, favs=()) -> Card:
         pos, frac = _epg_progress(resume_doc, cid, epg)
     else:
         url, fav_key, pos, frac = "", "", 0, 0.0
-    meta_parts = [p for p in (str(row.get("channel_name") or ""), str(row.get("when") or ""), subtitle) if p]
+    if kind == "programme":
+        time_or_live = words.tr("Live") if row.get("live") else str(row.get("when") or "")
+        meta_parts = [p for p in (time_or_live, str(row.get("channel_name") or ""), subtitle) if p]
+    else:
+        meta_parts = [p for p in (str(row.get("channel_name") or ""), str(row.get("when") or ""), subtitle) if p]
+    art_mode = "logo" if kind in ("channel", "programme") else ""
     initials, plate, plate_hi, bg, tint = _palette(title)
     return Card(
         kind=kind or "movie", key=str(row.get("id") or cid or title), fav_key=fav_key, title=title,
@@ -241,12 +250,12 @@ def search_card(row, resume_doc=None, favs=()) -> Card:
         play_url=url if playable else "", alt_url=url if (playable and pos) else "",
         cid=cid, epg=epg, start=start, stop=stop, resume_pos=pos,
         bar=_bar_from_fraction(frac), pbar=_bar_from_fraction(frac, wide=True),
-        fav=bool(fav_key and fav_key in favs), catchup=bool(row.get("playable_in_archive")),
+        fav=bool(fav_key and fav_key in favs), catchup=bool(row.get("can_archive")),
         playable=playable and bool(url), dim=not (playable and bool(url)),
         num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
         now="", nowline="", next="", nextline="",
         resume_label=words.tr("Continue from {time}").format(time=fmt_mmss(pos)) if pos else "",
-        small=len(title) > 22,
+        small=len(title) > 22, art_mode=art_mode,
     )
 
 
@@ -311,6 +320,7 @@ def continue_cards(resume_doc, catalog, now, favs=()) -> list:
                 bar=bar, pbar=pbar, fav=fav_key in favs, catchup=True, playable=bool(url), dim=not bool(url),
                 num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
                 now="", nowline="", next="", nextline="", resume_label=resume_label, small=len(title) > 22,
+                art_mode="logo",
             ))
     return out
 
@@ -339,6 +349,7 @@ def favourites_cards(favs_doc, catalog, cat_names, now, resume_doc=None) -> list
                 catchup=False, playable=True, dim=False, num="",
                 initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
                 now="", nowline="", next="", nextline="", resume_label="", small=len(title) > 22,
+                art_mode="logo",
             ))
         elif key.startswith("show:"):
             show_id = key[5:]
@@ -443,9 +454,44 @@ def day_tabs(archive_days, future_days, now) -> list:
     for offset in range(-max(0, int(archive_days or 0)), max(0, int(future_days or 0)) + 1):
         d = today + timedelta(days=offset)
         noon_ts = int(now) + offset * 86400
-        label = d.strftime("%a %d.%m")
+        if offset == -1:
+            label = words.tr("Yesterday")
+        elif offset == 0:
+            label = words.tr("Today")
+        elif offset == 1:
+            label = words.tr("Tomorrow")
+        else:
+            label = f"{words.tr(_WEEKDAYS[d.weekday()])} {d.strftime('%d.%m')}"
         tabs.append((noon_ts, label))
-    return tabs or [(int(now), today.strftime("%a %d.%m"))]
+    return tabs or [(int(now), words.tr("Today"))]
+
+
+def detail_meta_and_desc(detail: dict, fallback_card: Optional[Card] = None) -> Tuple[str, str]:
+    """Build rich hero_meta and non-blank hero_desc from a vod_detail/show_detail answer."""
+    parts = []
+    year = int(detail.get("year") or 0)
+    if year:
+        parts.append(str(year))
+    imdb = float(detail.get("imdb") or 0.0)
+    if imdb > 0:
+        parts.append(f"IMDb {imdb:.1f}")
+    dur = int(detail.get("duration") or 0)
+    if dur >= 60:
+        parts.append(words.tr("{n} min").format(n=dur // 60))
+    age = str(detail.get("age_rating") or "").strip()
+    if age:
+        parts.append(age)
+    genres = [str(g).strip() for g in (detail.get("genre_names") or ()) if str(g).strip()]
+    if genres:
+        parts.append(", ".join(genres[:3]))
+    countries = [str(c).strip() for c in (detail.get("countries") or ()) if str(c).strip()]
+    if countries:
+        parts.append(", ".join(countries[:2]))
+    meta = "  ·  ".join(parts) if parts else (fallback_card.meta if fallback_card else "")
+    desc = str(detail.get("description") or "").strip()
+    if not desc:
+        desc = (fallback_card.desc if fallback_card else "") or meta
+    return meta, desc
 
 
 def hero_info(card: Optional[Card]) -> dict:
@@ -455,7 +501,7 @@ def hero_info(card: Optional[Card]) -> dict:
             "hero_play": words.tr("Watch"), "hero_alt": "", "hero_guide": "",
             "hero_fav": words.tr("Add to favourites"),
             "has_play": "", "has_alt": "", "has_guide": "", "has_fav": "",
-            "hero_pbar": "", "hero_sub": "", "hero_initials": "",
+            "hero_pbar": "", "hero_sub": "", "hero_initials": "", "hero_is_logo": "",
         }
     is_show = card.kind in ("show_vod", "show_epg", "show_tv", "series")
     if is_show:
@@ -464,7 +510,7 @@ def hero_info(card: Optional[Card]) -> dict:
         guide_label = ""
     else:
         play_label = card.resume_label if card.resume_label else words.tr("Watch")
-        alt_label = words.tr("From start") if card.alt_url else ""
+        alt_label = words.tr("From start (0:00)") if card.alt_url else ""
         guide_label = words.tr("Programme guide") if card.kind == "channel" else ""
     return {
         "hero_title": card.title,
@@ -481,6 +527,7 @@ def hero_info(card: Optional[Card]) -> dict:
         "hero_pbar": card.pbar or "",
         "hero_sub": card.nextline or card.resume_label or "",
         "hero_initials": card.initials or "",
+        "hero_is_logo": "1" if card.art_mode == "logo" else "",
     }
 
 

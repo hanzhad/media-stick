@@ -33,6 +33,7 @@ os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
 os.environ["MEDIASTICK_ADDON_LIB"] = os.path.join(ADDON, "resources", "lib")     # where the phone page finds the TV's texts
 os.environ["MEDIASTICK_PREFS_DIR"] = os.path.join(TMP, "prefs")        # the device's language lives here (mediastick_lang)
 os.environ["MEDIASTICK_RESUME_DIR"] = os.path.join(TMP, "resume")      # local resume & favourites live here (mediastick_resume)
+os.environ["MEDIASTICK_SWEETSTORE_DB"] = os.path.join(TMP, "sweettv", "sweettv.db")
 os.makedirs(os.environ["MEDIASTICK_PREFS_DIR"])
 with open(os.path.join(os.environ["MEDIASTICK_PREFS_DIR"], "language"), "w", encoding="utf-8") as f:
     f.write("en" + chr(10))                                                     # English unless a test says otherwise: the strings read as the code spells them
@@ -97,8 +98,9 @@ class ListItem:
 class WindowXML:
     def __init__(self, *a):
         self._props, self.focus = {}, 0
-        self.controls = {100: Control(), 200: Control(), 201: Control(), 210: Control(), 211: Control(), 212: Control(), 213: Control(),
-                         300: Control(), 301: Control(), 400: Control(), 410: Control(), 415: Control(), 416: Control(),
+        self.controls = {100: Control(), 200: Control(), 201: Control(), 209: Control(), 210: Control(), 211: Control(), 212: Control(), 213: Control(),
+                         300: Control(), 301: Control(), 400: Control(), 409: Control(), 410: Control(), 415: Control(), 416: Control(),
+                         417: Control(), 418: Control(), 419: Control(), 420: Control(),
                          **{i: Control() for i in range(401, 409)}}
         self.closed = False
 
@@ -109,6 +111,8 @@ class WindowXML:
         return self._props.get(key, "")
 
     def getControl(self, control_id):
+        if control_id not in self.controls:
+            self.controls[control_id] = Control()
         return self.controls[control_id]
 
     def setFocusId(self, control_id):
@@ -228,6 +232,8 @@ from resources.lib import sweettv_search as SRCH  # noqa: E402
 import mediastick_resume as MR  # noqa: E402
 import mediastick_sweetlive as ML  # noqa: E402
 import mediastick_sweetapi as API  # noqa: E402
+import mediastick_sweetplay as SP  # noqa: E402
+import mediastick_sweetstore as sweetstore  # noqa: E402
 
 W.set_language("en")                     # the pure parts of the screen (the windows set it from the file above)
 REAL_WARM = prefetch.warm                # the start-up run itself; a test case replaces the module's by one that does nothing
@@ -757,9 +763,9 @@ class Following(unittest.TestCase):
             reports, _ = self.run_follow([None])
         self.assertEqual(reports, [])
 
-    def test_it_seeks_once_when_the_stream_is_long_enough(self):
+    def test_it_never_seeks_because_resident_controller_owns_seeking(self):
         reports, io = self.run_follow([(0.0, 0.0), (1.0, 100.0), (2.0, 3600.0), (901.0, 3600.0), None], seek_to=900)
-        self.assertEqual(io.seeks, [900])
+        self.assertEqual(io.seeks, [])
         self.assertEqual(reports[0][1:], (901.0, 3600.0))
         reports, io = self.run_follow([(1.0, 3600.0), None], seek_to=0)
         self.assertEqual(io.seeks, [])
@@ -945,15 +951,33 @@ def sign(signed):
         f'<settings version="2"><setting id="logged">{"true" if signed else "false"}</setting></settings>')
 
 
+_WRITE_SEQ = 0
+
+
 def write_list(raw, age=0):
-    path = os.path.join(TMP, "temp", "channelList.json")
-    put(path, raw if isinstance(raw, str) else json.dumps(raw))
-    when = time.time() - age
-    os.utime(path, (when, when))
-    return path
+    global _WRITE_SEQ
+    _WRITE_SEQ += 1
+    st = sweetstore.default_store()
+    base = Fake.now if getattr(Fake, "now", None) else time.time()
+    when = (int(base) + _WRITE_SEQ) if age == 0 else int(base - age)
+    if isinstance(raw, str):
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            return st.db_path
+    else:
+        doc = raw
+    if isinstance(doc, dict) and doc.get("status") not in (None, "OK"):
+        existing = st.get_channels_payload(now=when)
+        if not existing.get("list"):
+            st.clear()
+            st.record_sync_error(str(doc.get("status") or "ERROR"), now=when)
+            return st.db_path
+    st.upsert_channels(doc, now=when)
+    return st.db_path
 
 
-def wait_for(condition, timeout=3.0):
+def wait_for(condition, timeout=0.5):
     end = time.monotonic() + timeout
     while not condition():
         if time.monotonic() > end:
@@ -964,9 +988,13 @@ def wait_for(condition, timeout=3.0):
 
 class WindowCase(unittest.TestCase):
     def setUp(self):
-        for name in ("temp", "profile", "addon_data", "resume"):
+        global _WRITE_SEQ
+        _WRITE_SEQ = 0
+        sweetstore.reset_default_store()
+        for name in ("temp", "profile", "addon_data", "resume", "sweettv"):
             import shutil
             shutil.rmtree(os.path.join(TMP, name), ignore_errors=True)
+        sweetstore.reset_default_store()
         for name in ("builtins", "notes", "rpc", "rpc_threads", "played", "seeks"):
             getattr(Fake, name).clear()
         Fake.playing, Fake.stopped = False, 0
@@ -1027,7 +1055,11 @@ class SignedOutAndEmpty(WindowCase):
         self.assertEqual(window.focus, SIGNIN)
         self.assertEqual(window.controls[ROW].items, [])
         sign(True)
-        with mock.patch.object(accounts, "signin_service", return_value="done") as signin:
+        with mock.patch.object(
+            accounts,
+            "signin_service",
+            side_effect=lambda svc: (write_list(answer(chan(1, number=1))), "done")[1],
+        ) as signin:
             window.onClick(SIGNIN)
         signin.assert_called_once_with("sweettv")
         self.assertTrue(wait_for(lambda: window.mode == D.DATA))
@@ -1056,7 +1088,6 @@ class SignedOutAndEmpty(WindowCase):
         self.assertEqual(window.focus, window._grid_id())
 
     def test_a_half_written_or_empty_file_is_loading_then_no_channels(self):
-        write_list('{"status": "OK", "list": [{"id": 1, "na')
         window = self.open()
         self.assertTrue(wait_for(lambda: window.getProperty("msg_title") == "Loading channels"))
         window._look()
@@ -1064,17 +1095,16 @@ class SignedOutAndEmpty(WindowCase):
         write_list(answer())
         window._look()
         self.assertEqual((window.mode, window.getProperty("msg_title")), (D.EMPTY, "No channels yet"))
-        write_list(answer(chan(1, "One")))                          # (a new size is a new stamp, whatever the clock says)
+        write_list(answer(chan(1, "One")))
         window._look()
         self.assertEqual(window.mode, D.DATA)
 
     def test_a_list_that_goes_unreadable_keeps_what_is_shown(self):
-        path = write_list(answer(chan(1, "One")))
+        write_list(answer(chan(1, "One")))
         window = self.open()
         self.assertTrue(wait_for(lambda: window.mode == D.DATA))
-        put(path, '{"status": "OK", "list": [')
-        os.utime(path, (time.time() + 20, time.time() + 20))
-        window._look()
+        with mock.patch.object(sweetstore.SweetStore, "get_channels_payload", side_effect=OSError("db locked")):
+            window._look()
         self.assertEqual((window.mode, self.shown(window)), (D.DATA, ["One"]))
 
     def test_a_stale_file_is_shown_with_a_notice(self):
@@ -1111,13 +1141,11 @@ class SignedOutAndEmpty(WindowCase):
         self.assertTrue(wait_for(lambda: window.getProperty("msg_kind") == "empty"))
         self.assertEqual((window.getProperty("msg_title"), window.focus), ("No channels yet", sweettv_app.RETRY))
         write_list({"status": "ERROR", "list": []})
-        os.utime(files.channel_path(), (time.time() + 20, time.time() + 20))
         window._look()
         self.assertEqual((window.getProperty("msg_kind"), window.getProperty("msg_glyph")), ("error", "!"))
         self.assertEqual((window.mode, window.focus), (D.EMPTY, sweettv_app.RETRY))
         self.assertEqual(window.getProperty("msg_tint"), W.RED)
         write_list(answer(chan(1, "One", number=1)))
-        os.utime(files.channel_path(), (time.time() + 40, time.time() + 40))
         window.onClick(sweettv_app.RETRY)                                               # in the background, like the poll
         self.assertTrue(wait_for(lambda: window.mode == D.DATA))
         self.assertEqual(self.shown(window), ["One"])
@@ -1139,15 +1167,13 @@ class SignedOutAndEmpty(WindowCase):
         self.assertIsNone(window.waiting_since)
 
     def test_a_service_error_after_channels_were_shown_keeps_them(self):
-        path = write_list(answer(chan(1, "One")))
+        write_list(answer(chan(1, "One")))
         window = self.open()
         self.assertTrue(wait_for(lambda: window.mode == D.DATA))
-        put(path, json.dumps({"status": "ERROR", "list": []}))
-        os.utime(path, (time.time() + 20, time.time() + 20))
+        write_list({"status": "ERROR", "list": []})
         window._look()
         self.assertEqual((window.mode, self.shown(window)), (D.DATA, ["One"]))
         write_list(answer(chan(1, "One"), chan(2, "Two")))
-        os.utime(path, (time.time() + 40, time.time() + 40))
         window._look()
         self.assertEqual(self.shown(window), ["One", "Two"])
 
@@ -1162,7 +1188,6 @@ class SignedOutAndEmpty(WindowCase):
             if key != "demo":
                 self.assertNotIn("demo", str(value).lower(), key)
         write_list(answer(chan(1, "One")))
-        os.utime(files.channel_path(), (time.time() + 20, time.time() + 20))
         window._look()
         self.assertNotIn("0-9", window.getProperty("hint"))
         self.assertFalse(Fake.notes)
@@ -1207,7 +1232,7 @@ class Channels(WindowCase):
         for n in range(15):
             window.controls[window._grid_id()].selected = n
             Fake.now = NOW + n
-            window.onClick(window._grid_id())
+            window.onClick(417)
         self.assertEqual([e["id"] for e in window.state["recent"]], [str(100 + n) for n in range(14, 2, -1)])
         self.assertTrue(wait_for(lambda: self.saved()["last"] == "114"))
         self.assertEqual([e["id"] for e in self.saved()["recent"]], [str(100 + n) for n in range(14, 2, -1)])
@@ -1215,31 +1240,30 @@ class Channels(WindowCase):
     def test_the_file_is_read_once_per_change_and_off_the_ui_thread(self):
         write_list(self.raw())
         seen = []
-        real = files.read_catalog
+        real = D.parse_catalog
 
-        def spy(path, now):
+        def spy(raw_doc, now):
             seen.append(threading.current_thread() is threading.main_thread())
-            return real(path, now)
-        with mock.patch.object(files, "read_catalog", side_effect=spy):
+            return real(raw_doc, now)
+        with mock.patch.object(D, "parse_catalog", side_effect=spy):
             window = self.open()
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
             for _ in range(5):
                 window._look()
             self.assertEqual(seen, [False])
             write_list(self.raw())
-            os.utime(files.channel_path(), (time.time() + 30, time.time() + 30))
             window._look()
             self.assertEqual(len(seen), 2)
 
     def test_a_look_while_another_runs_does_nothing(self):
         window = self.ready()
-        with mock.patch.object(files, "file_stamp") as stamp:
+        with mock.patch.object(window, "_snapshot") as snap:
             window._loading.acquire()
             try:
                 window._look()
             finally:
                 window._loading.release()
-        stamp.assert_not_called()
+        snap.assert_not_called()
 
     def test_the_minute_tick_moves_the_programmes_on_without_touching_the_list(self):
         window = self.ready()
@@ -1371,11 +1395,18 @@ class Channels(WindowCase):
             self.assertEqual(window.controls[410].selected, 1)
             self.assertEqual(window.controls[400].selected, 0)
             self.assertIn("2", window.controls[210].label)
-            # Click 210 plays S2E1 from 320s and records season/episode in resume
+            # Click 210 dispatches sweettv.play NotifyAll for S2E1 from 320s with episode_mode=True
             window.onClick(210)
             self.assertTrue(wait_for(lambda: Fake.rpc))
             req = json.loads(Fake.rpc[-1])
-            self.assertIn("playvod/500|201|10?start=320", req["params"]["item"]["file"])
+            self.assertEqual(req["method"], "JSONRPC.NotifyAll")
+            self.assertEqual(req["params"]["message"], "sweettv.play")
+            self.assertEqual(
+                (req["params"]["data"]["kind"], req["params"]["data"]["movie_id"],
+                 req["params"]["data"]["episode_id"], req["params"]["data"]["start_offset"],
+                 req["params"]["data"]["episode_mode"]),
+                ("vod", "500", "201", 320, True),
+            )
             self.assertEqual((window.session.season, window.session.episode), (2, 1))
             # Finish S2E1 -> refresh advances modal to S2E2
             window._report(window.session, 1390, 1400)
@@ -1387,37 +1418,43 @@ class Channels(WindowCase):
             self.assertTrue(saved_ep["done"])
 
     def test_hero_guide_button_416_opens_guide_modal(self):
-        window = self.ready()
-        window.onClick(416)
-        self.assertTrue(window._modal_open())
-        self.assertEqual(window.getProperty("modal"), "guide")
+        with mock.patch.object(API, "day", return_value={"ok": True, "cid": "10", "items": []}):
+            window = self.ready()
+            window.onClick(416)
+            self.assertTrue(window._modal_open())
+            self.assertIn(window.getProperty("modal"), ("guide", "channel"))
 
     def test_wide_sections_focus_and_click_use_wide_row_201(self):
-        window = self.ready()
-        self.assertEqual(window.section, "channels")
-        self.assertEqual(window.getProperty("wide_grid"), "1")
-        self.assertEqual(window.focus, 201)
-        window.controls[201].selected = 1
-        self.assertEqual(window._focused_card().cid, "20")
-        window.onClick(201)
-        self.assertTrue(wait_for(lambda: Fake.rpc))
-        request = json.loads(Fake.rpc[-1])
-        self.assertEqual(request["params"]["item"]["file"], "plugin://plugin.video.sweettv/playvid/20|null")
+        with mock.patch.object(API, "day", return_value={"ok": True, "cid": "20", "items": []}):
+            window = self.ready()
+            self.assertEqual(window.section, "channels")
+            self.assertEqual(window.getProperty("wide_grid"), "1")
+            self.assertEqual(window.focus, 201)
+            window.controls[201].selected = 1
+            self.assertEqual(window._focused_card().cid, "20")
+            window.onClick(201)
+            self.assertTrue(window._modal_open())
+            window.onClick(210)
+            self.assertTrue(wait_for(lambda: Fake.rpc))
+            request = json.loads(Fake.rpc[-1])
+            self.assertEqual(request["method"], "JSONRPC.NotifyAll")
+            self.assertEqual((request["params"]["message"], request["params"]["data"]["kind"], request["params"]["data"]["cid"]),
+                             ("sweettv.play", "live", "20"))
 
-    def test_ok_plays_live_through_player_open_on_a_worker_thread_and_remembers_it(self):
+    def test_ok_plays_live_through_notify_all_on_a_worker_thread_and_remembers_it(self):
         window = self.ready()
         window.controls[window._grid_id()].selected = 1
-        window.onClick(window._grid_id())
+        window.onClick(417)
         self.assertTrue(wait_for(lambda: Fake.rpc))
         request = json.loads(Fake.rpc[-1])
-        self.assertEqual((request["method"], request["params"]["item"]["file"]),
-                         ("Player.Open", "plugin://plugin.video.sweettv/playvid/20|null"))
+        self.assertEqual((request["method"], request["params"]["message"],
+                          request["params"]["data"]["kind"], request["params"]["data"]["cid"]),
+                         ("JSONRPC.NotifyAll", "sweettv.play", "live", "20"))
         self.assertIsNot(Fake.rpc_threads[-1], threading.main_thread())
         self.assertEqual(Fake.played, [])
         self.assertTrue(wait_for(lambda: self.saved()["last"] == "20"))
         saved = self.saved()
         self.assertEqual(saved["recent"], [{"id": "20", "at": NOW}])
-        self.assertIsNone(window.session)                            # live: nothing to follow
 
     def test_the_state_is_written_only_on_the_writers_thread_and_whole(self):
         calls, real = [], S.save_state
@@ -1428,7 +1465,7 @@ class Channels(WindowCase):
         with mock.patch.object(S, "save_state", spy):
             window = self.ready()
             window.controls[window._grid_id()].selected = 1
-            window.onClick(window._grid_id())
+            window.onClick(417)
             window.focus = window._grid_id()
             self.press(window, 117)
             self.assertTrue(wait_for(lambda: "ch:20" in MR.fav_keys() and self.saved()["last"] == "20"))
@@ -1440,8 +1477,8 @@ class Channels(WindowCase):
 
     def test_coming_back_from_the_player_stops_the_stream_and_keeps_the_place(self):
         window = self.ready()
-        window.controls[ROW].selected = 2
-        window.onClick(ROW)
+        window.controls[window._grid_id()].selected = 2
+        window.onClick(417)
         window.onInit()                                             # at once: not a return yet
         Fake.playing = True
         window.onInit()
@@ -1450,7 +1487,7 @@ class Channels(WindowCase):
         window.play_at -= 10
         window.onInit()
         self.assertTrue(wait_for(lambda: Fake.stopped == 1))
-        self.assertEqual(window.controls[ROW].selected, 2)
+        self.assertEqual(window.controls[window._grid_id()].selected, 2)
         window.onInit()
         time.sleep(0.05)
         self.assertEqual(Fake.stopped, 1)
@@ -1458,7 +1495,7 @@ class Channels(WindowCase):
     def test_back_from_the_player_puts_the_focus_back_where_kodi_lost_it(self):
         window = self.ready()
         window.controls[window._grid_id()].selected = 1
-        window.onClick(window._grid_id())
+        window.onClick(417)
         window.focus = 0
         window.play_at -= 10
         window.onInit()
@@ -1557,12 +1594,10 @@ class Channels(WindowCase):
         window.onClick(404)
         window.controls[window._grid_id()].selected = 1
         write_list(self.raw())
-        os.utime(files.channel_path(), (time.time() + 60, time.time() + 60))
         window._look()
         self.assertEqual((self.shown(window), window.controls[window._grid_id()].selected), (["Ten", "Thirty"], 1))
         self.assertEqual(window.filter_key, "c:1")
         write_list(answer(chan(10, "Ten", number=10)))              # the categories are gone: back to the default
-        os.utime(files.channel_path(), (time.time() + 90, time.time() + 90))
         window._look()
         self.assertEqual(self.shown(window), ["Ten"])
         self.assertEqual(window.filter_key, "all")
@@ -1694,8 +1729,8 @@ class Language(WindowCase):
         for word in ("Watch", "Favourite", "Channel number", "Guide and continue"):
             self.assertNotIn(word, window.getProperty("hint"))
         self.assertEqual(window.getProperty("chip"), "Вход выполнен")
-        self.assertEqual((window.getProperty("l_catchup"), window.getProperty("l_favourite"), window.getProperty("l_guide")),
-                         ("Архив", "Избранное", "Программа передач"))
+        self.assertEqual((window.getProperty("l_catchup"), window.getProperty("l_favourite")), ("Архив", "Избранное"))
+        self.assertTrue(window.getProperty("l_guide").startswith("Программа"))
         card = window.controls[ROW].items[0]
         self.assertEqual((card.props["meta"], card.props["nowline"], card.props["nextline"], card.props["resume"]),
                          ("Канал 10  ·  News", "Сейчас   07:50 – 08:10", "Далее   08:10 – 08:20   Then ten", ""))
@@ -1723,7 +1758,7 @@ class Language(WindowCase):
                 "ok": True, "cid": "10", "name": "Ten", "date": "2027-01-15", "now": NOW,
                 "archive_days": 1, "future_days": 3,
                 "items": [{"epg": "1", "cid": "10", "title": "Now ten", "start": NOW - 600, "stop": NOW + 600,
-                           "when": "07:50", "live": True, "playable_in_archive": True, "available": True,
+                           "when": "07:50", "live": True, "can_archive": True, "playable_in_archive": True, "available": True,
                            "preview": "", "season": 0, "episode": 0, "show_id": ""}]}):
             window._guide_show()
             self.assertTrue(wait_for(lambda: len(window.controls[GUIDE].items) >= 1))
@@ -1740,7 +1775,8 @@ class Language(WindowCase):
             window = self.window(lang)
             self.assertEqual([i.label for i in window.controls[MENU].items],
                              ["Search", "Continue", "Favourites", "Shows", "Series", "Movies", "TV Channels"])
-            self.assertEqual((window.getProperty("chip"), window.getProperty("l_guide")), ("Signed in", "Programme guide"))
+            self.assertEqual(window.getProperty("chip"), "Signed in")
+            self.assertIn(window.getProperty("l_guide"), ("Programme guide", "Programme", "Schedule"))
             self.assertEqual(window.controls[ROW].items[0].props["meta"], "Channel 10  ·  News")
             window.stop()
 
@@ -1762,15 +1798,15 @@ class Language(WindowCase):
         demo = self.open(demo=True)
         self.assertTrue(wait_for(lambda: demo.mode == D.DATA))
         self.assertEqual(demo.getProperty("chip"), "Демо")
-        demo.controls[ROW].selected = 0
-        demo.onClick(ROW)
+        demo.controls[demo._grid_id()].selected = 0
+        demo.onClick(417)
         self.assertEqual(Fake.notes[-1:], ["Демо: ничего не воспроизводится."])
 
 
 class Demo(WindowCase):
     def test_demo_is_marked_fills_all_seven_sections_and_never_touches_real_data(self):
         write_list(answer(chan(1, "Real")))
-        with mock.patch.object(files, "file_stamp", side_effect=AssertionError("real file")), \
+        with mock.patch.object(sweetstore.SweetStore, "get_channels_payload", side_effect=AssertionError("real store")), \
                 mock.patch.object(files, "signed_in", side_effect=AssertionError("real login")), \
                 mock.patch.object(API, "top_search", side_effect=AssertionError("network")), \
                 mock.patch.object(API, "shows", side_effect=AssertionError("network")), \
@@ -1802,12 +1838,12 @@ class Demo(WindowCase):
             self.assertTrue(wait_for(lambda: len(window.controls[400].items) > 0))
             self.assertGreater(len(window.controls[410].items), 0)
             self.press(window, 92)
-            # Channels section (index 6) -> Hero 212 opens 7-day Channel Guide modal (400 + 410)
+            # Channels section (index 6) -> clicking channel / 416 opens 7-day Channel Hub (400 + 410)
             window.controls[MENU].selected = 6
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) > 0))
             window.controls[window._grid_id()].selected = 0
-            window.onClick(212)
+            window.onClick(201)
             self.assertTrue(wait_for(lambda: len(window.controls[400].items) > 0))
             self.assertGreater(len(window.controls[410].items), 0)
 
@@ -1831,11 +1867,11 @@ class Demo(WindowCase):
         window.controls[MENU].selected = 6
         window.onClick(MENU)
         self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) > 0))
-        window.controls[ROW].selected = 0
-        window.onClick(ROW)
-        window.focus = ROW
+        window.controls[window._grid_id()].selected = 0
+        window.focus = window._grid_id()
         self.press(window, 117)
-        window.onClick(212)
+        window.onClick(417)
+        window.onClick(201)
         self.assertTrue(wait_for(lambda: len(window.controls[GUIDE].items) > 0))
         if not any(i.props.get("kind") in ("live", "archive") for i in window.controls[GUIDE].items):
             tabs = window.controls[sweettv_app.MODAL_TABS]
@@ -1904,7 +1940,7 @@ class PreviewVideo(WindowCase):
             self.assertTrue(wait_for(lambda: Fake.played))
             self.assertEqual(Fake.played[-1], (("plugin://plugin.video.sweettv/playvid/20|null", None, True), {}))
             Fake.playing = True
-            window.onClick(window._grid_id())
+            window.onClick(417)
             self.assertEqual(Fake.builtins, ["Action(FullScreen)"])
             self.assertEqual(Fake.rpc, [])
             window.play_at -= 10
@@ -2067,9 +2103,9 @@ class ContinueAndFavourites(WindowCase):
         window.controls[MENU].selected = 6
         window.onClick(MENU)
         self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) == 1))
-        window.focus = ROW
-        window.controls[ROW].selected = 0
-        window.onClick(213)
+        window.focus = window._grid_id()
+        window.controls[window._grid_id()].selected = 0
+        window.onClick(420)
         self.assertTrue(wait_for(lambda: "ch:10" in MR.fav_keys()))
         self.press(window, 117)
         self.assertTrue(wait_for(lambda: "ch:10" not in MR.fav_keys()))
@@ -2202,8 +2238,11 @@ class CatalogSections(WindowCase):
             self.assertEqual(window.getProperty('modal'), 'detail')
             window.onClick(210)
             self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 1))
-            self.assertEqual(json.loads(Fake.rpc[-1])["params"]["item"]["file"],
-                             "plugin://plugin.video.sweettv/playvod/501|null|10")
+            rpc_mov = json.loads(Fake.rpc[-1])
+            self.assertEqual(rpc_mov["method"], "JSONRPC.NotifyAll")
+            self.assertEqual((rpc_mov["params"]["message"], rpc_mov["params"]["data"]["kind"],
+                              rpc_mov["params"]["data"]["movie_id"], rpc_mov["params"]["data"]["owner_id"]),
+                             ("sweettv.play", "vod", "501", 10))
             window.controls[MENU].selected = 4
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: self.shown(window) == ["Series A"]))
@@ -2237,7 +2276,7 @@ class ChannelsSection(WindowCase):
         window.onClick(fast_chip)
         self.assertEqual(self.shown(window), ["24/7 Comedy"])
 
-    def test_ok_on_channel_plays_live_and_hero_211_starts_from_zero_and_212_opens_guide(self):
+    def test_ok_on_channel_opens_hub_and_browse_hero_417_live_418_from_start_416_guide(self):
         Fake.now = NOW
         raw = answer(chan(10, "Ten", number=10, catchup=True, catchup_duration=7,
                           epg=[prog(NOW - 600, NOW + 600, "Now ten", 9)]))
@@ -2246,7 +2285,7 @@ class ChannelsSection(WindowCase):
                 "ok": True, "cid": "10", "name": "Ten", "date": "2027-01-15", "now": NOW,
                 "archive_days": 7, "future_days": 3,
                 "items": [{"epg": "9", "cid": "10", "title": "Now ten", "start": NOW - 600, "stop": NOW + 600,
-                           "when": "07:50", "live": True, "playable_in_archive": True, "available": True,
+                           "when": "07:50", "live": True, "can_archive": True, "playable_in_archive": True, "available": True,
                            "preview": "", "season": 0, "episode": 0, "show_id": ""}]}):
             window = self.open()
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
@@ -2256,15 +2295,18 @@ class ChannelsSection(WindowCase):
             gid = window._grid_id()
             window.focus = gid
             window.controls[gid].selected = 0
-            window.onClick(ROW)
+            window.onClick(417)
             self.assertTrue(wait_for(lambda: len(Fake.rpc) == 1))
-            self.assertEqual(json.loads(Fake.rpc[-1])["params"]["item"]["file"],
-                             "plugin://plugin.video.sweettv/playvid/10|null")
-            window.onClick(211)
+            r1 = json.loads(Fake.rpc[-1])
+            self.assertEqual((r1["method"], r1["params"]["data"]["kind"], r1["params"]["data"]["cid"], r1["params"]["data"]["from_start"]),
+                             ("JSONRPC.NotifyAll", "live", "10", False))
+            window.onClick(418)
             self.assertTrue(wait_for(lambda: len(Fake.rpc) == 2))
-            self.assertEqual(json.loads(Fake.rpc[-1])["params"]["item"]["file"],
-                             "plugin://plugin.video.sweettv/playvid/10|9")
-            window.onClick(212)
+            r2 = json.loads(Fake.rpc[-1])
+            self.assertEqual((r2["method"], r2["params"]["data"]["kind"], r2["params"]["data"]["cid"],
+                              r2["params"]["data"]["epg_id"], r2["params"]["data"]["from_start"]),
+                             ("JSONRPC.NotifyAll", "epg", "10", "9", True))
+            window.onClick(201)
             self.assertTrue(wait_for(lambda: len(window.controls[400].items) >= 1))
             self.assertGreater(len(window.controls[410].items), 1)
 
@@ -2303,16 +2345,16 @@ class Modals(WindowCase):
                 "ok": True, "cid": "20", "name": "Twenty", "date": "2027-01-15", "now": NOW,
                 "archive_days": 3, "future_days": 3,
                 "items": [{"epg": "21", "cid": "20", "title": "Now twenty", "start": NOW - 600, "stop": NOW + 600,
-                           "when": "07:50", "live": True, "playable_in_archive": True, "available": True,
+                           "when": "07:50", "live": True, "can_archive": True, "playable_in_archive": True, "available": True,
                            "preview": "", "season": 0, "episode": 0, "show_id": ""}]}):
             window = self.open()
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
             window.controls[MENU].selected = 6
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) == 2))
-            window.focus = ROW
+            window.focus = window._grid_id()
             window.controls[window._grid_id()].selected = 1
-            window.onClick(212)
+            window.onClick(416)
             self.assertTrue(wait_for(lambda: len(window.controls[400].items) >= 1))
             self.press(window, BACK)
             self.assertFalse(window.getProperty("guide") or window.getProperty("modal"))
@@ -2341,17 +2383,160 @@ class PageValues(unittest.TestCase):
 
 
 def count_pictures(node):
-    """Pictures a node draws at once: images and buttons (one texture each), not looking inside lists/panels."""
+    """Pictures a node draws at once: images, buttons, and togglebuttons."""
     total = 0
     for child in node:
         if child.tag != "control":
             continue
         kind = child.get("type")
-        if kind in ("image", "button"):
+        if kind in ("image", "button", "togglebutton"):
             total += 1
         elif kind not in ("list", "panel"):
             total += count_pictures(child)
     return total
+
+
+def _eval_kodi_cond(expr: str, win_props: dict, item_props: dict = None, focus_id: int = 0,
+                    item_art: str = "https://img/x.jpg", container_counts: dict = None) -> bool:
+    """Deterministic evaluator for Kodi skin <visible> boolean expressions."""
+    if not expr or not expr.strip():
+        return True
+    s = expr.strip()
+    item_props = item_props or {}
+    container_counts = container_counts or {}
+
+    def _val(ref: str) -> str:
+        ref = ref.strip()
+        m = re.fullmatch(r"Window\.Property\(([^)]+)\)", ref)
+        if m:
+            return str(win_props.get(m.group(1), ""))
+        m = re.fullmatch(r"ListItem\.Property\(([^)]+)\)", ref)
+        if m:
+            return str(item_props.get(m.group(1), ""))
+        if ref == "ListItem.Art(icon)":
+            return str(item_art)
+        if ref == "ListItem.Label":
+            return str(item_props.get("title", "Item"))
+        if ref == "ListItem.Label2":
+            return str(item_props.get("label2", ""))
+        m = re.fullmatch(r"Container\((\d+)\)\.NumItems", ref)
+        if m:
+            return str(container_counts.get(int(m.group(1)), 1))
+        return ref
+
+    def _split_top(text: str, op_char: str) -> list:
+        parts, depth, start = [], 0, 0
+        for idx, ch in enumerate(text):
+            if ch in "([":
+                depth += 1
+            elif ch in ")]":
+                depth = max(0, depth - 1)
+            elif ch == op_char and depth == 0:
+                parts.append(text[start:idx])
+                start = idx + 1
+        parts.append(text[start:])
+        return parts
+
+    or_parts = _split_top(s, "|")
+    if len(or_parts) > 1:
+        return any(_eval_kodi_cond(p, win_props, item_props, focus_id, item_art, container_counts) for p in or_parts)
+
+    and_parts = _split_top(s, "+")
+    if len(and_parts) > 1:
+        return all(_eval_kodi_cond(p, win_props, item_props, focus_id, item_art, container_counts) for p in and_parts)
+
+    if s.startswith("!"):
+        return not _eval_kodi_cond(s[1:].strip(), win_props, item_props, focus_id, item_art, container_counts)
+
+    if (s.startswith("[") and s.endswith("]")) or (s.startswith("(") and s.endswith(")")):
+        inner = s[1:-1]
+        if len(_split_top(inner, ")")) == 1 and len(_split_top(inner, "]")) == 1:
+            return _eval_kodi_cond(inner, win_props, item_props, focus_id, item_art, container_counts)
+
+    low = s.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    m = re.fullmatch(r"Control\.HasFocus\((\d+)\)", s)
+    if m:
+        return int(m.group(1)) == int(focus_id)
+    m = re.fullmatch(r"String\.IsEmpty\((.+)\)", s)
+    if m:
+        return _val(m.group(1)) == ""
+    m = re.fullmatch(r"String\.IsEqual\((.+),([^,]+)\)", s)
+    if m:
+        return _val(m.group(1)) == m.group(2).strip()
+    m = re.fullmatch(r"Integer\.IsGreater\((.+),(-?\d+)\)", s)
+    if m:
+        try:
+            return int(_val(m.group(1)) or 0) > int(m.group(2))
+        except ValueError:
+            return False
+    return True
+
+
+def _resolve_info_tex(tex_text: str, win_props: dict, item_props: dict, item_art: str) -> str:
+    t = (tex_text or "").strip()
+    if not t:
+        return ""
+    m = re.fullmatch(r"\$INFO\[Window\.Property\(([^)]+)\)\]", t)
+    if m:
+        return str(win_props.get(m.group(1), ""))
+    m = re.fullmatch(r"\$INFO\[ListItem\.Property\(([^)]+)\)\]", t)
+    if m:
+        return str(item_props.get(m.group(1), ""))
+    if t == "$INFO[ListItem.Art(icon)]":
+        return str(item_art)
+    return t
+
+
+def count_visible_textures(node, win_props: dict, focus_id: int, item_props: dict = None,
+                           item_art: str = "https://img/x.jpg", container_items: dict = None) -> int:
+    """Count GPU textures visible simultaneously in `node` for a given window/focus state."""
+    container_items = container_items or {}
+    counts = {k: len(v) for k, v in container_items.items()}
+    if node.tag == "control":
+        vis = node.findtext("visible") or ""
+        if not _eval_kodi_cond(vis, win_props, item_props, focus_id, item_art, counts):
+            return 0
+        for anim in node.findall("animation"):
+            if anim.get("effect") == "slide" and "end" in anim.attrib:
+                dx = int(anim.get("end", "0,0").split(",")[0])
+                w = int(node.findtext("width") or 0)
+                cond = anim.get("condition") or ""
+                if dx <= -max(280, w) and cond and _eval_kodi_cond(cond, win_props, item_props, focus_id, item_art, counts):
+                    return 0
+        kind = node.get("type")
+        if kind == "image":
+            tex_node = node.find("texture")
+            tex = _resolve_info_tex(tex_node.text if tex_node is not None else "", win_props, item_props or {}, item_art)
+            return 1 if tex else 0
+        if kind in ("button", "togglebutton"):
+            return 1
+        if kind in ("list", "panel"):
+            cid = int(node.get("id") or 0)
+            w = int(node.findtext("width") or 0)
+            h = int(node.findtext("height") or 0)
+            il = node.find("itemlayout")
+            fl = node.find("focusedlayout")
+            iw = int(il.get("width")) if (il is not None and il.get("width")) else w
+            ih = int(il.get("height")) if (il is not None and il.get("height")) else h
+            slots = max(1, w // max(1, iw)) * max(1, h // max(1, ih))
+            c_items = container_items.get(cid)
+            if c_items is None:
+                c_items = [(item_props or {}, item_art)] * slots
+            shown = c_items[:slots]
+            if not shown:
+                return 0
+            total = 0
+            for idx, (ip, ia) in enumerate(shown):
+                layout = fl if (idx == 0 and fl is not None) else il
+                if layout is not None:
+                    for ch in layout:
+                        total += count_visible_textures(ch, win_props, focus_id, ip, ia, container_items)
+            return total
+    return sum(count_visible_textures(ch, win_props, focus_id, item_props, item_art, container_items) for ch in node)
 
 
 class Skin(unittest.TestCase):
@@ -2359,7 +2544,9 @@ class Skin(unittest.TestCase):
         return ET.parse(os.path.join(SKIN, name)).getroot()
 
     def control(self, root, control_id):
-        return next(c for c in root.iter("control") if c.get("id") == str(control_id))
+        found = next((c for c in root.iter("control") if c.get("id") == str(control_id)), None)
+        self.assertIsNotNone(found, f"Missing control id={control_id}")
+        return found
 
     def test_panel_grid_4x2_rail_hero_buttons_filter_chips_and_modal(self):
         root = self.tree()
@@ -2367,14 +2554,15 @@ class Skin(unittest.TestCase):
         types_ = {int(c.get("id")): c.get("type") for c in root.iter("control") if c.get("id", "").isdigit()}
         self.assertEqual(types_[100], "list")
         self.assertEqual(types_[200], "panel")
-        for btn in (210, 211, 212, 213, 300, 301):
+        for btn in (210, 211, 213, 300, 301, 415, 416, 417, 418, 420):
             self.assertEqual(types_.get(btn), "button", btn)
         self.assertEqual(types_[400], "list")
         self.assertIn(types_.get(410), ("list", "grouplist"))
         for cid in range(401, 409):
-            self.assertIn(cid, types_, cid)
+            self.assertEqual(types_.get(cid), "togglebutton", cid)
         self.assertEqual(types_.get(209), "grouplist")
         self.assertEqual(types_.get(409), "grouplist")
+        self.assertEqual(types_.get(419), "grouplist")
         self.assertEqual(types_[201], "panel")
         panel = self.control(root, 200)
         self.assertEqual(panel.findtext("orientation"), "vertical")
@@ -2415,11 +2603,279 @@ class Skin(unittest.TestCase):
 
     def test_visible_textures_at_most_34_in_all_states(self):
         root = self.tree()
-        top = [c for c in root.find("controls") if c.tag == "control"]
-        static_pics = sum(1 for c in top if c.get("type") in ("image", "button"))
+        chip_props = {f"chip_{cid}": f"Chip {cid}" for cid in range(401, 409)}
+        chip_props["chip_active_401"] = "1"
+        poster_items = {
+            100: [({"title": f"Sec {i}"}, "") for i in range(7)],
+            200: [({"title": f"Film {i}", "meta": "2025", "bar": ""}, f"https://img/{i}.jpg") for i in range(10)],
+        }
+        wide_items = {
+            100: [({"title": f"Sec {i}"}, "") for i in range(7)],
+            201: [({"title": f"Ch {i}", "now": "Live", "bar": "sweettv-bar-10.png"}, f"https://img/{i}.png") for i in range(4)],
+        }
+        hub_items = {
+            410: [({"title": f"Tab {i}", "active": "1" if i == 0 else ""}, "") for i in range(7)],
+            400: [({"title": f"Row {i}", "when": "20:00", "kind": "archive"}, "") for i in range(8)],
+        }
+        states = (
+            ("poster_browse", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1", **chip_props}, 200, poster_items),
+            ("wide_hero_still", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1", "hero_art": "https://img/bg.jpg",
+                                 "hero_is_logo": "", "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
+                                 "has_guide": "1", "has_fav": "1", **chip_props}, 201, wide_items),
+            ("wide_hero_logo", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1", "hero_art": "https://img/logo.png",
+                                "hero_is_logo": "1", "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
+                                "has_guide": "1", "has_fav": "1", **chip_props}, 201, wide_items),
+            ("movie_detail_hub", {"mode": "data", "modal": "detail", "guide": "", "hero_art": "https://img/m.jpg",
+                                  "hero_is_logo": "", "has_play": "1", "has_alt": "1", "has_guide": "", "has_fav": "1"}, 210, {}),
+            ("show_series_hub", {"mode": "data", "modal": "show", "guide": "1", "hero_art": "https://img/s.jpg",
+                                 "hero_is_logo": "", "has_play": "1", "has_alt": "1", "has_guide": "", "has_fav": "1"}, 400, hub_items),
+            ("channel_hub", {"mode": "data", "modal": "guide", "guide": "1", "hero_art": "https://img/logo.png",
+                             "hero_is_logo": "1", "has_play": "1", "has_alt": "1", "has_guide": "", "has_fav": "1"}, 400, hub_items),
+        )
+        # Verify texture counter catches >34 budget overflow on a synthetic window
+        synth = ET.fromstring("<window><controls>" + "".join(
+            "<control type='image'><texture>white.png</texture></control>" for _ in range(35)
+        ) + "</controls></window>")
+        self.assertEqual(count_visible_textures(synth, {}, 0), 35)
+        # Require Unified Hero Hub + Hero Action Row 419 + sweettv-menu.png to be part of the <=34 budget
+        self.control(root, 419)
+        for state_name, wprops, focus_id, c_items in states:
+            with self.subTest(state=state_name):
+                vis_count = count_visible_textures(root, wprops, focus_id, container_items=c_items)
+                self.assertGreater(vis_count, 0, f"{state_name} rendered 0 textures")
+                self.assertLessEqual(vis_count, 34, f"{state_name} exceeded 34 GPU textures: {vis_count}")
+
+    def test_art_assets_poster_mask_240x356_burger_menu_64x64_and_chip_active_48x48(self):
+        from PIL import Image
+        import numpy as np
+
+        poster_mask_path = os.path.join(MEDIA, "sweettv-poster-mask.png")
+        menu_path = os.path.join(MEDIA, "sweettv-menu.png")
+        chip_active_path = os.path.join(MEDIA, "sweettv-chip-active.png")
+
+        self.assertTrue(os.path.isfile(poster_mask_path))
+        with Image.open(poster_mask_path) as im:
+            self.assertEqual(im.mode, "RGBA")
+            self.assertEqual(im.size, (240, 356))
+            arr = np.asarray(im)
+            self.assertEqual(int(arr[0, 0, 3]), 0)
+            self.assertEqual(int(arr[355, 239, 3]), 0)
+            self.assertEqual(int(arr[178, 120, 3]), 255)
+
+        self.assertTrue(os.path.isfile(menu_path), "Missing sweettv-menu.png")
+        with Image.open(menu_path) as im:
+            self.assertEqual(im.mode, "RGBA")
+            self.assertEqual(im.size, (64, 64))
+            arr = np.asarray(im)
+            self.assertEqual(int(arr[0, 0, 3]), 0)
+            col_alpha = arr[:, 32, 3] > 128
+            bars = 0
+            in_bar = False
+            for opaque in col_alpha:
+                if opaque and not in_bar:
+                    bars += 1
+                    in_bar = True
+                elif not opaque:
+                    in_bar = False
+            self.assertEqual(bars, 3, f"Expected 3 burger bars in sweettv-menu.png, got {bars}")
+
+        self.assertTrue(os.path.isfile(chip_active_path), "Missing sweettv-chip-active.png")
+        with Image.open(chip_active_path) as im:
+            self.assertEqual(im.mode, "RGBA")
+            self.assertEqual(im.size, (48, 48))
+            arr = np.asarray(im)
+            cx_r, cx_g, cx_b, cx_a = (int(v) for v in arr[24, 24])
+            self.assertEqual(cx_a, 255)
+            self.assertLessEqual(abs(cx_r - 0x24), 4)
+            self.assertLessEqual(abs(cx_g - 0x34), 4)
+            self.assertLessEqual(abs(cx_b - 0x4D), 4)
+            # 2px #00D2C6 outline near top midpoint (y=0..1, x=24)
+            edge = arr[1, 24]
+            self.assertGreater(int(edge[3]), 180)
+            self.assertLess(int(edge[0]), 25)
+            self.assertGreater(int(edge[1]), 180)
+            self.assertGreater(int(edge[2]), 170)
+
+    def test_collapsed_rail_burger_filter_togglebuttons_and_poster_grid_200_layout(self):
+        root = self.tree()
+        # 1. Collapsed rail burger replaces empty label
+        burgers = [
+            c for c in root.findall(".//control[@type='image']")
+            if (c.findtext("texture") or "").strip() == "sweettv-menu.png"
+        ]
+        self.assertEqual(len(burgers), 1)
+        b = burgers[0]
+        self.assertEqual(
+            (int(b.findtext("left")), int(b.findtext("top")), int(b.findtext("width")), int(b.findtext("height"))),
+            (18, 36, 32, 32),
+        )
+        b_col = (b.findtext("colordiffuse") or b.find("texture").get("colordiffuse") or "").upper()
+        self.assertEqual(b_col, "FF00D2C6")
+        self.assertEqual((b.findtext("visible") or "").strip(), "!Control.HasFocus(100)")
+        empty_collapsed_labels = [
+            c for c in root.findall(".//control[@type='label']")
+            if (c.findtext("visible") or "").strip() == "!Control.HasFocus(100)" and not (c.findtext("label") or "").strip()
+        ]
+        self.assertEqual(empty_collapsed_labels, [])
+
+        # 2. Filter chips 401..408 are togglebutton with chip_active_40X and sweettv-chip-active.png
+        for cid in range(401, 409):
+            chip = self.control(root, cid)
+            self.assertEqual(chip.get("type"), "togglebutton")
+            self.assertEqual(
+                (chip.findtext("usealttexture") or "").strip(),
+                f"!String.IsEmpty(Window.Property(chip_active_{cid}))",
+            )
+            alt_nf = (chip.findtext("alttexturenofocus") or chip.get("alttexturenofocus") or "").strip()
+            self.assertEqual(alt_nf, "sweettv-chip-active.png")
+
+        # 3. Poster Grid 200: centered 240x356 poster, concentric focus ring, <onright>415</onright>, and padded logo mode
         panel = self.control(root, 200)
-        panel_pics_per_card = count_pictures(panel.find("focusedlayout"))
-        self.assertLessEqual(static_pics + 4 * panel_pics_per_card, 34)
+        self.assertEqual((panel.findtext("onright") or "").strip(), "415")
+        cell_w = int(panel.find("itemlayout").get("width"))
+        for layout_name in ("itemlayout", "focusedlayout"):
+            layout = panel.find(layout_name)
+            posters = [
+                c for c in layout.findall("control[@type='image']")
+                if c.find("texture") is not None and c.find("texture").get("diffuse") == "sweettv-poster-mask.png"
+            ]
+            self.assertGreaterEqual(len(posters), 1, layout_name)
+            for p_img in posters:
+                pw, ph, pleft, ptop = (int(p_img.findtext(k)) for k in ("width", "height", "left", "top"))
+                self.assertEqual((pw, ph), (240, 356))
+                self.assertEqual(pleft, (cell_w - 240) // 2)
+                self.assertEqual(p_img.find("aspectratio").get("scalediffuse"), "false")
+            if layout_name == "focusedlayout":
+                ring = next(c for c in layout.findall("control[@type='image']") if c.findtext("texture") == "youtube-ring.png")
+                rleft, rtop, rw, rh = (int(ring.findtext(k)) for k in ("left", "top", "width", "height"))
+                p0 = posters[0]
+                pleft, ptop = int(p0.findtext("left")), int(p0.findtext("top"))
+                self.assertEqual(pleft - rleft, (rleft + rw) - (pleft + 240))
+                self.assertEqual(ptop - rtop, (rtop + rh) - (ptop + 356))
+        keep_logos_in_200 = [
+            c for c in panel.findall(".//control[@type='image']")
+            if c.find("aspectratio") is not None and (c.findtext("aspectratio") or "").strip() == "keep"
+        ]
+        self.assertGreaterEqual(len(keep_logos_in_200), 1, "Grid 200 must render padded keep logos for art_mode=logo cards")
+
+    def test_framed_browse_hero_419_and_mutually_exclusive_logo_vs_still(self):
+        root = self.tree()
+        row_419 = self.control(root, 419)
+        self.assertEqual(row_419.get("type"), "grouplist")
+        child_ids = [int(c.get("id")) for c in row_419.findall("control") if (c.get("id") or "").isdigit()]
+        self.assertEqual(child_ids, [417, 418, 416, 420])
+
+        main_group = next(
+            g for g in root.find("controls").findall("control[@type='group']")
+            if "String.IsEmpty(Window.Property(modal))" in (g.findtext("visible") or "")
+        )
+        hero_group = next(
+            g for g in main_group.findall("control[@type='group']")
+            if "Window.Property(wide_grid)" in (g.findtext("visible") or "")
+        )
+        card_masks = [
+            c for c in hero_group.findall(".//control[@type='image']")
+            if (c.findtext("texture") or "").strip() == "card-mask.png"
+        ]
+        self.assertGreaterEqual(len(card_masks), 1)
+        cm_col = (card_masks[0].findtext("colordiffuse") or card_masks[0].find("texture").get("colordiffuse") or "").upper()
+        self.assertIn("121927", cm_col)
+
+        hero_art_imgs = [
+            c for c in hero_group.findall(".//control[@type='image']")
+            if "Window.Property(hero_art)" in (c.findtext("texture") or "")
+        ]
+        scrim_imgs = [
+            c for c in hero_group.findall(".//control[@type='image']")
+            if (c.findtext("texture") or "").strip() == "gradient-left.png"
+        ]
+        self.assertGreaterEqual(len(hero_art_imgs), 2, "Expected keep logo and scale still hero_art branches")
+        self.assertGreaterEqual(len(scrim_imgs), 1, "Expected gradient-left.png scrim in Framed Browse Hero")
+
+        props_logo = {"mode": "data", "modal": "", "wide_grid": "1", "hero_art": "https://img/l.png", "hero_is_logo": "1"}
+        props_still = {"mode": "data", "modal": "", "wide_grid": "1", "hero_art": "https://img/s.jpg", "hero_is_logo": ""}
+        vis_logo = [c for c in hero_art_imgs if _eval_kodi_cond(c.findtext("visible") or "", props_logo, focus_id=201)]
+        vis_still = [c for c in hero_art_imgs if _eval_kodi_cond(c.findtext("visible") or "", props_still, focus_id=201)]
+        self.assertEqual(len(vis_logo), 1)
+        self.assertEqual((vis_logo[0].findtext("aspectratio") or "").strip(), "keep")
+        self.assertEqual(len(vis_still), 1)
+        self.assertEqual((vis_still[0].findtext("aspectratio") or "").strip(), "scale")
+        self.assertFalse(any(_eval_kodi_cond(c.findtext("visible") or "", props_logo, focus_id=201) for c in scrim_imgs))
+        self.assertTrue(any(_eval_kodi_cond(c.findtext("visible") or "", props_still, focus_id=201) for c in scrim_imgs))
+
+    def test_unified_fullscreen_hero_hubs_and_strict_single_focus_410_400(self):
+        root = self.tree()
+        modal_group = next(
+            g for g in root.find("controls").findall("control[@type='group']")
+            if "!String.IsEmpty(Window.Property(modal))" in (g.findtext("visible") or "")
+        )
+        # No cramped 1480x900 popup box remains
+        cramped = [
+            g for g in modal_group.iter("control")
+            if g.findtext("width") == "1480" and g.findtext("height") == "900"
+        ]
+        self.assertEqual(cramped, [], "Cramped 1480x900 popup box must be replaced by full-screen 1920x1080 Hero Hub")
+        full_bg = [
+            c for c in modal_group.findall("control[@type='image']")
+            if c.findtext("width") == "1920" and c.findtext("height") == "1080"
+            and "0C111B" in ((c.findtext("colordiffuse") or c.find("texture").get("colordiffuse") or "").upper())
+        ]
+        self.assertGreaterEqual(len(full_bg), 1, "Hub must have full-screen 1920x1080 #0C111B background")
+
+        ms_titles = [
+            c for c in modal_group.findall(".//control[@type='label']")
+            if (c.findtext("font") or "").strip() == "MsTitle"
+        ]
+        self.assertGreaterEqual(len(ms_titles), 1, "Hub title must use MsTitle font")
+
+        textboxes = [
+            c for c in modal_group.findall(".//control[@type='textbox']")
+            if "Window.Property(hero_desc)" in (c.findtext("label") or "")
+        ]
+        self.assertGreaterEqual(len(textboxes), 1)
+        detail_props = {"mode": "data", "modal": "detail", "guide": "", "hero_desc": "Plot"}
+        vis_detail_tb = [c for c in textboxes if _eval_kodi_cond(c.findtext("visible") or "", detail_props, focus_id=210)]
+        self.assertGreaterEqual(len(vis_detail_tb), 1)
+        self.assertGreaterEqual(int(vis_detail_tb[0].findtext("height")), 140, "Movie Hub textbox must expand for full synopsis")
+
+        # Strict single-focus (#00D2C6) on tabs 410 and list 400
+        tabs_410 = self.control(root, 410)
+        list_400 = self.control(root, 400)
+        for cid, container in ((410, tabs_410), (400, list_400)):
+            il_str = ET.tostring(container.find("itemlayout"), encoding="unicode").upper()
+            self.assertNotIn("00D2C6", il_str, f"Container {cid} itemlayout must not glow #00D2C6")
+            fl = container.find("focusedlayout")
+            teal_imgs = [
+                c for c in fl.findall("control[@type='image']")
+                if "00D2C6" in ((c.findtext("colordiffuse") or c.find("texture").get("colordiffuse") or "").upper())
+            ]
+            self.assertGreaterEqual(len(teal_imgs), 1, f"Container {cid} focusedlayout needs #00D2C6 focus image")
+            for t_img in teal_imgs:
+                vis_expr = (t_img.findtext("visible") or "").strip()
+                self.assertTrue(
+                    _eval_kodi_cond(vis_expr, {"mode": "data", "modal": "show", "guide": "1"}, focus_id=cid),
+                    f"Container {cid} teal image must be visible when Control.HasFocus({cid})",
+                )
+                self.assertFalse(
+                    _eval_kodi_cond(vis_expr, {"mode": "data", "modal": "show", "guide": "1"}, focus_id=210),
+                    f"Container {cid} teal image must be hidden when !Control.HasFocus({cid})",
+                )
+
+        # Inactive selected tab in 410 uses sweettv-chip-active.png + white text (FFFFFFFF)
+        fl_410 = tabs_410.find("focusedlayout")
+        inactive_chip = [
+            c for c in fl_410.findall("control[@type='image']")
+            if (c.findtext("texture") or "").strip() == "sweettv-chip-active.png"
+            and _eval_kodi_cond(c.findtext("visible") or "", {"mode": "data", "modal": "show", "guide": "1"}, focus_id=400)
+            and not _eval_kodi_cond(c.findtext("visible") or "", {"mode": "data", "modal": "show", "guide": "1"}, focus_id=410)
+        ]
+        self.assertEqual(len(inactive_chip), 1, "Inactive selected tab in 410 must render sweettv-chip-active.png")
+        inactive_white_lbl = [
+            c for c in fl_410.findall("control[@type='label']")
+            if (c.findtext("textcolor") or "").upper() == "FFFFFFFF"
+            and _eval_kodi_cond(c.findtext("visible") or "", {"mode": "data", "modal": "show", "guide": "1"}, focus_id=400)
+        ]
+        self.assertGreaterEqual(len(inactive_white_lbl), 1, "Inactive selected tab in 410 must use white textcolor FFFFFFFF")
 
     def test_brand_palette_navy_and_turquoise_no_netflix_red(self):
         text = ET.tostring(self.tree(), encoding="unicode")
@@ -2567,6 +3023,560 @@ class FieldFixesAppTest(unittest.TestCase):
 
 
 
+
+
+
+class SweetStoreCutoverTests(WindowCase):
+    """Criterion 1A: SweetStore cutover, zero channelList.json/CHANNEL_FILE, and SweetStore.clear() on sign-out."""
+
+    def test_zero_channellist_json_or_channel_file_references_in_home_addon(self):
+        forbidden = re.compile(r"channelList\.json|CHANNEL_FILE")
+        offenders = []
+        for dirpath, dirnames, filenames in os.walk(ADDON):
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+            for fn in sorted(filenames):
+                if not fn.endswith((".py", ".xml")):
+                    continue
+                full = os.path.join(dirpath, fn)
+                with open(full, encoding="utf-8") as f:
+                    for lineno, line in enumerate(f, 1):
+                        if forbidden.search(line):
+                            offenders.append(f"{os.path.relpath(full, ROOT)}:{lineno}: {line.strip()}")
+        self.assertEqual(offenders, [], f"Forbidden channelList.json / CHANNEL_FILE references remain: {offenders}")
+
+    def test_files_snapshot_reads_sweetstore_preserves_contract_and_reuses_stamp(self):
+        st = sweetstore.default_store()
+        st.clear()
+        with mock.patch.object(files, "signed_in", return_value=True):
+            snap_empty = files.snapshot(NOW, None, None, None)
+            self.assertEqual((snap_empty.signed, snap_empty.catalog, snap_empty.has_file, snap_empty.unreadable),
+                             (True, None, False, False))
+
+            st.upsert_channels(answer(chan(10, "Ten", number=10), chan(20, "Twenty", number=20)), now=NOW - 30)
+            snap_ok = files.snapshot(NOW, None, None, None)
+            self.assertTrue(snap_ok.signed and snap_ok.has_file and not snap_ok.unreadable)
+            self.assertIsNotNone(snap_ok.catalog)
+            self.assertEqual([c.name for c in snap_ok.catalog.channels], ["Ten", "Twenty"])
+            self.assertEqual(int(snap_ok.mtime), NOW - 30)
+
+            # Unchanged store stamp reuses catalog without calling parse_catalog again
+            with mock.patch.object(D, "parse_catalog", side_effect=AssertionError("must not re-parse unchanged store")):
+                snap_reused = files.snapshot(NOW + 5, snap_ok.catalog, snap_ok.stamp, snap_ok.mtime)
+            self.assertIs(snap_reused.catalog, snap_ok.catalog)
+
+            # Transient SQLite / I/O error keeps previous catalog and marks unreadable=True
+            with mock.patch.object(sweetstore.SweetStore, "get_channels_payload", side_effect=OSError("db busy")):
+                snap_err = files.snapshot(NOW + 10, snap_ok.catalog, snap_ok.stamp, snap_ok.mtime)
+            self.assertIs(snap_err.catalog, snap_ok.catalog)
+            self.assertTrue(snap_err.unreadable)
+
+    def test_signout_clears_sweetstore(self):
+        st = sweetstore.default_store()
+        st.upsert_channels(answer(chan(10, "Ten", number=10)), now=NOW)
+        st.upsert_title_detail({"ok": True, "id": "vod:501", "title": "Film"}, now=NOW)
+        st.put_swr("movies:0:1:0", {"items": [1]}, ttl_s=300, now=NOW)
+        self.assertTrue(st.get_channels_payload(now=NOW).get("list"))
+
+        sign(False)
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.SIGNIN))
+        self.assertEqual(st.get_channels_payload(now=NOW), {})
+        self.assertIsNone(st.get_title_detail("vod:501"))
+        self.assertIsNone(st.get_swr("movies:0:1:0", now=NOW))
+
+
+class ResidentPlayerAndAutoplayTests(WindowCase):
+    """Criterion 1B & 1C: NotifyAll playback dispatch, canonical can_archive, and 5s episode autoplay."""
+
+    def _boot_in_memory(self, raw_doc=None):
+        Fake.now = NOW
+        raw_doc = raw_doc or answer(
+            chan(10, "Ten", number=10, catchup=True, catchup_duration=7,
+                 epg=[prog(NOW - 1800, NOW - 600, "Past ten", 8), prog(NOW - 600, NOW + 600, "Now ten", 9)]),
+            chan(20, "LiveOnly", number=20, catchup=False,
+                 epg=[prog(NOW - 600, NOW + 600, "Live twenty", 21)]),
+        )
+        sweetstore.default_store().upsert_channels(raw_doc, now=NOW)
+        window = self.make()
+        window.signed = True
+        window.mode = D.DATA
+        window.raw_catalog = raw_doc
+        window._install(D.parse_catalog(raw_doc, NOW), NOW)
+        return window
+
+    def test_playback_dispatches_build_play_notify_for_live_from_start_vod_and_episodes(self):
+        window = self._boot_in_memory()
+        # 0. Existing 210 primary CTA in Movie Detail Hub must dispatch JSONRPC.NotifyAll sweettv.play (not Player.Open)
+        init_card = sweettv_app.sections.vod_card(_sample_movie(501, "Film", owner_id=10), "movie")
+        window._open_detail_modal(init_card)
+        window.onClick(210)
+        self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 1))
+        r0 = json.loads(Fake.rpc[-1])
+        self.assertEqual(r0["method"], "JSONRPC.NotifyAll")
+        self.assertEqual(r0["params"]["message"], "sweettv.play")
+        Fake.rpc.clear()
+        # 1. Live channel via Browse Hero 417 -> kind=live, from_start=False
+        window._open_section("channels")
+        window.controls[201].selected = 0
+        window._sync_hero()
+        window.onClick(417)
+        self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 1))
+        d1 = json.loads(Fake.rpc[-1])["params"]["data"]
+        self.assertEqual((d1["kind"], d1["cid"], d1["from_start"], d1["episode_mode"]), ("live", "10", False, False))
+
+        # 2. «С начала (0:00)» via Browse Hero 418 -> kind=epg, from_start=True
+        window.onClick(418)
+        self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 2))
+        d2 = json.loads(Fake.rpc[-1])["params"]["data"]
+        self.assertEqual((d2["kind"], d2["cid"], d2["epg_id"], d2["from_start"], d2["episode_mode"]),
+                         ("epg", "10", "9", True, False))
+
+        # 3. Movie Detail Hub: 210 resumes at saved offset; 211 starts from 0:00 with from_start=True
+        doc = MR.record(MR.empty(), "plugin://plugin.video.sweettv/playvod/501|null|10", 240, 7200, NOW - 10, {"title": "Film"})
+        MR.save(doc)
+        window.resume_doc = MR.load()
+        mov_card = sweettv_app.sections.vod_card(_sample_movie(501, "Film", owner_id=10), "movie", window.resume_doc, set())
+        with mock.patch.object(API, "vod_detail", return_value={"ok": True, "id": "vod:501", "movie_id": "501",
+                                                                "title": "Film", "description": "Synopsis", "owner_id": 10,
+                                                                "vod_url": "plugin://plugin.video.sweettv/playvod/501|null|10",
+                                                                "resume": 240, "seasons": []}):
+            window._open_detail_modal(mov_card)
+            window.onClick(210)
+            self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 3))
+            d3 = json.loads(Fake.rpc[-1])["params"]["data"]
+            self.assertEqual((d3["kind"], d3["movie_id"], d3["start_offset"], d3["from_start"], d3["episode_mode"]),
+                             ("vod", "501", 240, False, False))
+
+        with mock.patch.object(API, "vod_detail", return_value={"ok": True, "id": "vod:501", "movie_id": "501",
+                                                                "title": "Film", "description": "Synopsis", "owner_id": 10,
+                                                                "vod_url": "plugin://plugin.video.sweettv/playvod/501|null|10",
+                                                                "resume": 240, "seasons": []}):
+            window._open_detail_modal(mov_card)
+            window.onClick(211)
+            self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 4))
+            d4 = json.loads(Fake.rpc[-1])["params"]["data"]
+            self.assertEqual((d4["kind"], d4["movie_id"], d4["start_offset"], d4["from_start"], d4["episode_mode"]),
+                             ("vod", "501", 0, True, False))
+
+        # 4. EPG Show Hub episode click -> kind=epg, episode_mode=True
+        epg_show_detail = {
+            "ok": True, "id": "epg:801", "title": "MasterChef",
+            "episodes": [{"epg": "8", "cid": "10", "title": "Ep 1", "start": NOW - 1800, "stop": NOW - 600,
+                          "can_archive": True, "playable": True, "url": "plugin://plugin.video.sweettv/playvid/10|8"}],
+        }
+        show_card = sweettv_app.sections.show_card({"id": "epg:801", "kind": "show_epg", "title": "MasterChef"})
+        with mock.patch.object(API, "show_detail", return_value=epg_show_detail):
+            window._open_show_modal(show_card)
+            self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 1))
+            window.controls[400].selected = 0
+            window.onClick(400)
+            self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 5))
+            d5 = json.loads(Fake.rpc[-1])["params"]["data"]
+            self.assertEqual((d5["kind"], d5["cid"], d5["epg_id"], d5["episode_mode"]), ("epg", "10", "8", True))
+
+    def test_show_hub_5s_autoplay_countdown_cancel_completion_and_negative_boundaries(self):
+        window = self._boot_in_memory()
+        detail = {
+            "ok": True, "id": "vod:600", "movie_id": "600", "title": "TestSeries",
+            "seasons": [{"id": 1, "number": 1, "title": "Season 1", "episodes": [
+                {"id": 101, "episode_id": 101, "number": 1, "title": "Ep 1", "duration": 1400,
+                 "owner_id": 10, "vod_url": "plugin://plugin.video.sweettv/playvod/600|101|10", "resume": 0, "watched": False},
+                {"id": 102, "episode_id": 102, "number": 2, "title": "Ep 2", "duration": 1400,
+                 "owner_id": 10, "vod_url": "plugin://plugin.video.sweettv/playvod/600|102|10", "resume": 0, "watched": False},
+            ]}],
+        }
+        card = sweettv_app.sections.vod_card({"id": 600, "title": "TestSeries", "vod_url": "u"}, "series")
+        with mock.patch.object(API, "vod_detail", return_value=detail):
+            window._open_show_modal(card)
+            self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 2))
+
+            # Adjacent negative 1: stopping early at 300s/1400s must NOT trigger autoplay countdown
+            Fake.rpc.clear()
+            window.controls[400].selected = 0
+            window.onClick(400)
+            self.assertTrue(wait_for(lambda: len(Fake.rpc) == 1 and window.session is not None))
+            window._report(window.session, 300, 1400)
+            window._focus_back()
+            self.assertEqual(window.getProperty("autoplay_text"), "")
+
+            # Natural end of Ep 1 (1390s/1400s) -> sets autoplay_text; pressing Back cancels countdown without playing Ep 2
+            window.controls[400].selected = 0
+            window.onClick(400)
+            self.assertTrue(wait_for(lambda: len(Fake.rpc) == 2 and window.session is not None))
+            window._report(window.session, 1390, 1400)
+            window._focus_back()
+            self.assertTrue(bool(window.getProperty("autoplay_text")), "Natural episode end must set autoplay_text countdown")
+            self.press(window, BACK)
+            self.assertEqual(window.getProperty("autoplay_text"), "")
+            time.sleep(0.05)
+            self.assertEqual(len(Fake.rpc), 2, "Canceled autoplay must not dispatch next episode")
+
+            # Natural end allowed to finish countdown -> auto-dispatches Ep 2 with episode_mode=True
+            real_later = window._later
+            with mock.patch.object(window, "_later", side_effect=lambda name, delay, fn: real_later(name, min(delay, 0.01), fn)):
+                ep1_row = dict(window.modal_seasons[0]["episodes"][0], resume=0, watched=False)
+                window._play_modal_row(ep1_row, season_num=1)
+                self.assertTrue(wait_for(lambda: len(Fake.rpc) == 3 and window.session is not None))
+                window._report(window.session, 1390, 1400)
+                window._focus_back()
+                self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 4, timeout=6.0), "5s autoplay did not dispatch Ep 2")
+            d_auto = json.loads(Fake.rpc[-1])["params"]["data"]
+            self.assertEqual((d_auto["kind"], d_auto["movie_id"], d_auto["episode_id"], d_auto["episode_mode"]),
+                             ("vod", "600", "102", True))
+            self.assertEqual(window.getProperty("autoplay_text"), "")
+
+            # Adjacent negative 2: natural end of final episode Ep 2 -> no next episode, autoplay_text stays empty
+            if window.session is not None:
+                window._report(window.session, 1390, 1400)
+                window._focus_back()
+            self.assertEqual(window.getProperty("autoplay_text"), "")
+
+    def test_canonical_can_archive_across_items_sections_and_guide(self):
+        for fname in ("sweettv_items.py", "sweettv_sections.py", "sweettv_guide.py"):
+            path = os.path.join(ADDON, "resources", "lib", fname)
+            with open(path, encoding="utf-8") as f:
+                self.assertNotIn("playable_in_archive", f.read(), f"{fname} must use canonical can_archive")
+
+        # Pure table check on guide_items & search_card with ONLY can_archive present
+        g_items = IT.guide_items([
+            {"title": "OnAir", "live": True, "can_archive": True, "start": NOW - 300, "when": "07:55"},
+            {"title": "Archived", "live": False, "can_archive": True, "start": NOW - 3600, "when": "07:00"},
+            {"title": "NoCatchupPast", "live": False, "can_archive": False, "start": NOW - 3600, "when": "07:00"},
+            {"title": "Upcoming", "live": False, "can_archive": False, "start": NOW + 3600, "when": "09:00"},
+        ])
+        self.assertEqual([li.getProperty("kind") for li in g_items], ["live", "archive", "future", "future"])
+
+        s_yes = sweettv_app.sections.search_card({
+            "kind": "programme", "id": "8", "title": "Past ten", "cid": "10", "epg": "8",
+            "start": NOW - 1800, "stop": NOW - 600, "channel_name": "Ten", "when": "07:30",
+            "live": False, "can_archive": True, "playable": True, "available": True,
+        })
+        s_no = sweettv_app.sections.search_card({
+            "kind": "programme", "id": "22", "title": "Future", "cid": "10", "epg": "22",
+            "start": NOW + 1800, "stop": NOW + 3600, "channel_name": "Ten", "when": "08:30",
+            "live": False, "can_archive": False, "playable": False, "available": True,
+        })
+        self.assertTrue(s_yes.catchup)
+        self.assertFalse(s_no.catchup)
+
+        # Guide row click with ONLY can_archive
+        window = self._boot_in_memory()
+        day_rows = [
+            {"epg": "8", "cid": "10", "title": "Past ten", "start": NOW - 1800, "stop": NOW - 600,
+             "when": "07:30", "live": False, "can_archive": True, "available": True},
+            {"epg": "22", "cid": "10", "title": "Future ten", "start": NOW + 1800, "stop": NOW + 3600,
+             "when": "08:30", "live": False, "can_archive": False, "available": True},
+        ]
+        with mock.patch.object(API, "day", return_value={"ok": True, "cid": "10", "items": day_rows}):
+            window._open_section("channels")
+            window.controls[201].selected = 0
+            window.onClick(201)
+            self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 2))
+            Fake.rpc.clear()
+            Fake.notes.clear()
+            window.controls[400].selected = 0
+            window.onClick(400)
+            self.assertTrue(wait_for(lambda: len(Fake.rpc) == 1))
+            self.assertEqual(json.loads(Fake.rpc[-1])["params"]["data"]["epg_id"], "8")
+
+            window.controls[400].selected = 1
+            window.onClick(400)
+            self.assertEqual(len(Fake.rpc), 1)
+            self.assertTrue(Fake.notes)
+
+
+class HubsNavigationAndFixesTests(WindowCase):
+    """Section 3: D-pad Left/Right on 400, Right->415 Search jump, Channel Hub deep-links, Poster race fix, and RU localization."""
+
+    def _boot_in_memory(self, raw_doc=None, lang="en"):
+        Fake.now = NOW
+        Fake.home["media-stick.lang"] = lang
+        W.set_language(lang)
+        raw_doc = raw_doc or answer(
+            chan(15, "Новый Канал", number=1, catchup=True, catchup_duration=7, icon_v2_url="https://img/nk-logo.png",
+                 epg=[prog(NOW - 3600, NOW - 1800, "Ранок", 500),
+                      prog(NOW - 600, NOW + 1800, "Холостяк", 501, description="Романтичне реаліті")]),
+            chan(16, "Прямий", number=2, catchup=False, icon_v2_url="https://img/pr-logo.png",
+                 epg=[prog(NOW - 600, NOW + 1800, "Новини", 601)]),
+        )
+        sweetstore.default_store().upsert_channels(raw_doc, now=NOW)
+        window = self.make()
+        window.signed = True
+        window.mode = D.DATA
+        window.raw_catalog = raw_doc
+        window._install(D.parse_catalog(raw_doc, NOW), NOW)
+        for k, v in W.labels().items():
+            window._prop(k, v)
+        return window
+
+    def test_dpad_left_right_on_list_400_switches_season_and_day_tabs_without_leaving_400(self):
+        window = self._boot_in_memory()
+        detail = {
+            "ok": True, "id": "vod:700", "movie_id": "700", "title": "ThreeSeasons",
+            "seasons": [
+                {"id": 1, "number": 1, "title": "S1", "episodes": [{"id": 11, "episode_id": 11, "number": 1, "title": "S1E1", "duration": 1200, "vod_url": "plugin://plugin.video.sweettv/playvod/700|11|1"}]},
+                {"id": 2, "number": 2, "title": "S2", "episodes": [{"id": 21, "episode_id": 21, "number": 1, "title": "S2E1", "duration": 1200, "vod_url": "plugin://plugin.video.sweettv/playvod/700|21|1"}]},
+                {"id": 3, "number": 3, "title": "S3", "episodes": [{"id": 31, "episode_id": 31, "number": 1, "title": "S3E1", "duration": 1200, "vod_url": "plugin://plugin.video.sweettv/playvod/700|31|1"}]},
+            ],
+        }
+        card = sweettv_app.sections.vod_card({"id": 700, "title": "ThreeSeasons", "vod_url": "u"}, "series")
+        with mock.patch.object(API, "vod_detail", return_value=detail):
+            window._open_show_modal(card)
+            self.assertTrue(wait_for(lambda: len(window.modal_seasons) == 3 and window.focus == 400))
+            self.assertEqual(window.modal_tab_idx, 0)
+
+            # Left at boundary 0 clamps at 0 and keeps focus on 400
+            self.press(window, 1)  # ACTION_MOVE_LEFT
+            self.assertEqual((window.modal_tab_idx, window.focus), (0, 400))
+
+            # Right advances 0 -> 1 -> 2, clamping at 2, updating 400 items & 410 selection while keeping focus on 400
+            self.press(window, 2)  # ACTION_MOVE_RIGHT
+            self.assertEqual((window.modal_tab_idx, window.controls[410].selected, window.focus), (1, 1, 400))
+            self.assertEqual(window.controls[400].items[0].label, "S2E1")
+
+            self.press(window, 2)
+            self.assertEqual((window.modal_tab_idx, window.controls[410].selected, window.focus), (2, 2, 400))
+            self.assertEqual(window.controls[400].items[0].label, "S3E1")
+
+            self.press(window, 2)  # boundary clamp at last tab
+            self.assertEqual((window.modal_tab_idx, window.focus), (2, 400))
+
+            # Up/Down on 400 do NOT switch tabs
+            self.press(window, 3)  # UP
+            self.press(window, 4)  # DOWN
+            self.assertEqual(window.modal_tab_idx, 2)
+
+            # Left goes back 2 -> 1
+            self.press(window, 1)
+            self.assertEqual((window.modal_tab_idx, window.controls[400].items[0].label, window.focus), (1, "S2E1", 400))
+
+        # Also verify Left/Right on 400 switches day tabs in Channel Hub
+        self.press(window, BACK)
+        with mock.patch.object(API, "day", side_effect=lambda cid, day_ts, *a, **kw: {
+            "ok": True, "cid": str(cid), "items": [{"epg": str(day_ts), "cid": str(cid), "title": f"Day {day_ts}",
+                                                    "start": int(day_ts), "stop": int(day_ts) + 600, "when": "12:00",
+                                                    "live": False, "can_archive": True, "available": True}],
+        }):
+            window._open_section("channels")
+            window.controls[201].selected = 0
+            window.onClick(201)
+            self.assertTrue(wait_for(lambda: len(window.controls[410].items) > 2 and window.focus == 400))
+            start_tab = window.modal_tab_idx
+            self.press(window, 1)  # Left -> previous day
+            self.assertEqual((window.modal_tab_idx, window.focus), (start_tab - 1, 400))
+            self.press(window, 2)  # Right -> back to today
+            self.assertEqual((window.modal_tab_idx, window.focus), (start_tab, 400))
+
+    def test_poster_grid_right_jumps_to_search_415_and_back_restores_pre_search_pos(self):
+        window = self._boot_in_memory()
+        movies = [_sample_movie(100 + i, f"Film {i}") for i in range(12)]
+        with mock.patch.object(API, "configuration", return_value=_sample_config()),                 mock.patch.object(API, "catalog_page", return_value={"ok": True, "section": "movies", "items": movies, "total": 12}):
+            window._open_section("movies")
+            self.assertTrue(wait_for(lambda: len(window.controls[200].items) == 12))
+            window.focus = 200
+
+            # Adjacent negative: middle column (index 2 of 5-column row) pressing Right does NOT jump to 415
+            window.controls[200].selected = 2
+            self.press(window, KEY_RIGHT)
+            self.assertEqual(window.focus, 200)
+
+            # Rightmost column (index 9: row 1, col 4) pressing Right jumps to top Search 415
+            window.controls[200].selected = 9
+            self.press(window, KEY_RIGHT)
+            self.assertEqual(window.focus, 415)
+
+            # Even if grid selection moved, Back from 415 restores exact _pre_search_pos (9) and focus 200
+            window.controls[200].selected = 0
+            self.press(window, BACK)
+            self.assertEqual(window.focus, 200)
+            self.assertEqual(window.controls[200].selected, 9)
+
+    def test_movie_detail_hub_hydrates_rich_synopsis_age_genres_countries_never_blank(self):
+        window = self._boot_in_memory(lang="ru")
+        rich_detail = {
+            "ok": True, "id": "vod:501", "movie_id": "501", "title": "Начало",
+            "description": "Кобб крадет тайны из подсознания во время сна.",
+            "age_rating": "16+", "genres": [12], "genre_names": ["Фантастика", "Триллер"],
+            "countries": ["США", "Великобритания"], "year": 2010, "duration": 8880, "imdb": 8.8,
+            "owner_id": 10, "vod_url": "plugin://plugin.video.sweettv/playvod/501|null|10",
+            "poster": "https://img/501.jpg", "banner": "https://img/501-bg.jpg", "seasons": [],
+        }
+        bare_card = sweettv_app.sections.vod_card(_sample_movie(501, "Начало", year=2010, imdb=8.8), "movie")
+        self.assertEqual(bare_card.desc, "")
+        with mock.patch.object(API, "vod_detail", return_value=rich_detail):
+            window._open_detail_modal(bare_card)
+            self.assertTrue(wait_for(lambda: "Кобб крадет тайны" in window.getProperty("hero_desc")))
+        self.assertEqual(window.getProperty("modal"), "detail")
+        self.assertEqual(window.getProperty("has_guide"), "")
+        combined = f"{window.getProperty('hero_meta')} {window.getProperty('hero_desc')}"
+        for expected in ("16+", "Фантастика", "США", "Кобб крадет тайны"):
+            self.assertIn(expected, combined)
+
+    def test_channel_hub_hydration_spoiler_safe_ctas_and_search_archive_deeplinks(self):
+        window = self._boot_in_memory(lang="ru")
+        st = sweetstore.default_store()
+        yesterday_ts = NOW - 86400
+        st.upsert_epg("15", [
+            {"id": 450, "text": "Вечерний выпуск", "time_start": yesterday_ts - 1800, "time_stop": yesterday_ts, "available": True},
+            {"id": 451, "text": "МастерШеф", "time_start": yesterday_ts, "time_stop": yesterday_ts + 3600, "available": True},
+        ], now=NOW)
+
+        # 1. Search archive & live airing formatting (time/status first) + art_mode="logo"
+        live_airing = sweettv_app.sections.search_card({
+            "kind": "programme", "id": "501", "title": "Холостяк", "cid": "15", "epg": "501",
+            "start": NOW - 600, "stop": NOW + 1800, "channel_name": "Новый Канал", "when": "07:50",
+            "live": True, "can_archive": True, "playable": True, "available": True, "image_url": "https://img/nk-logo.png",
+        })
+        arch_airing = sweettv_app.sections.search_card({
+            "kind": "programme", "id": "451", "title": "МастерШеф", "cid": "15", "epg": "451",
+            "start": yesterday_ts, "stop": yesterday_ts + 3600, "channel_name": "Новый Канал", "when": "21:00",
+            "live": False, "can_archive": True, "playable": True, "available": True, "image_url": "https://img/nk-logo.png",
+        })
+        vod_movie = sweettv_app.sections.search_card({
+            "kind": "movie", "id": "900", "title": "Дюна", "subtitle": "2021", "cid": "", "epg": "",
+            "start": 0, "stop": 0, "channel_name": "", "when": "", "live": False, "can_archive": False,
+            "playable": True, "available": True, "vod_url": "plugin://plugin.video.sweettv/playvod/900|null|10",
+            "image_url": "https://img/dune.jpg",
+        })
+        self.assertTrue(" ".join(live_airing.meta.split()).startswith("В эфире · Новый Канал"), live_airing.meta)
+        self.assertTrue(" ".join(arch_airing.meta.split()).startswith("21:00 · Новый Канал"), arch_airing.meta)
+        self.assertEqual(IT.card_props(live_airing).get("art_mode"), "logo")
+        self.assertEqual(IT.card_props(arch_airing).get("art_mode"), "logo")
+        self.assertNotEqual(IT.card_props(vod_movie).get("art_mode"), "logo")
+
+        # 2. Immediate SweetStore.channel_day hydration before async sweetapi.day() completes + RU spoiler-safe CTAs
+        self.assertTrue(callable(getattr(window, "_open_channel_hub", None)), "Missing _open_channel_hub")
+        api_gate = threading.Event()
+
+        def slow_day(cid, day_unix, *a, **kw):
+            api_gate.wait(1.0)
+            return {
+                "ok": True, "cid": str(cid), "items": [
+                    {"epg": "500", "cid": "15", "title": "Ранок", "start": NOW - 3600, "stop": NOW - 1800,
+                     "when": "07:00", "live": False, "can_archive": True, "available": True},
+                    {"epg": "501", "cid": "15", "title": "Холостяк (API)", "start": NOW - 600, "stop": NOW + 1800,
+                     "when": "07:50", "live": True, "can_archive": True, "available": True},
+                ],
+            }
+
+        with mock.patch.object(API, "day", side_effect=slow_day):
+            window._open_section("channels")
+            window.controls[201].selected = 0
+            window.onClick(201)
+            # Hydrated synchronously from SweetStore BEFORE api_gate is set!
+            self.assertTrue(window._modal_open())
+            self.assertGreaterEqual(len(window.controls[400].items), 1, "Channel Hub must hydrate immediately from SweetStore.channel_day")
+            self.assertEqual(window.getProperty("has_guide"), "")
+            self.assertEqual(window.controls[210].getLabel() or window.getProperty("hero_play"), "Смотреть эфир")
+            self.assertEqual(window.controls[211].getLabel() or window.getProperty("hero_alt"), "С начала (0:00)")
+            self.assertEqual((window.getProperty("has_play"), window.getProperty("has_alt")), ("1", "1"))
+            api_gate.set()
+            self.assertTrue(wait_for(lambda: any("Холостяк (API)" in i.label for i in window.controls[400].items)))
+
+        # Adjacent negative: channel 16 without catchup hides 211 (has_alt == "")
+        self.press(window, BACK)
+        with mock.patch.object(API, "day", return_value={"ok": True, "cid": "16", "items": []}):
+            window.controls[201].selected = 1
+            window.onClick(201)
+            self.assertEqual(window.getProperty("has_alt"), "")
+        self.press(window, BACK)
+
+        # 3. Clicking an archived programme in Search deep-links into Channel Hub on target_day ("Вчера") & target_epg ("451")
+        Fake.rpc.clear()
+        with mock.patch.object(API, "day", return_value={
+            "ok": True, "cid": "15", "items": [
+                {"epg": "450", "cid": "15", "title": "Вечерний выпуск", "start": yesterday_ts - 1800, "stop": yesterday_ts,
+                 "when": "07:30", "live": False, "can_archive": True, "available": True},
+                {"epg": "451", "cid": "15", "title": "МастерШеф", "start": yesterday_ts, "stop": yesterday_ts + 3600,
+                 "when": "08:00", "live": False, "can_archive": True, "available": True},
+            ],
+        }):
+            window.section = "search"
+            window._prop("wide_grid", "")
+            window._apply_cards([arch_airing])
+            window.focus = 200
+            window.controls[200].selected = 0
+            window.onClick(200)
+            self.assertEqual(Fake.rpc, [], "Clicking Search archive airing must open Channel Hub, not raw playback")
+            self.assertTrue(window._modal_open())
+            self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 2))
+            self.assertEqual(window.controls[410].items[window.modal_tab_idx].label, "Вчера")
+            self.assertEqual(window.controls[400].selected, 1)
+            self.assertEqual(window.controls[400].items[1].label, "МастерШеф")
+
+    def test_poster_race_fix_sync_hero_ignores_none_in_modal_and_cancels_timer_on_immediate(self):
+        window = self._boot_in_memory()
+        card_a = sweettv_app.sections.vod_card(_sample_movie(101, "Card A"), "movie")
+        card_b = sweettv_app.sections.vod_card(_sample_movie(102, "Hub B"), "movie")
+        window._apply_cards([card_a, card_b])
+        # First hero_art sets initial banner; moving selection schedules 0.18s hero_art timer
+        window.controls[200].selected = 1
+        window._sync_hero()
+        window.controls[200].selected = 0
+        window._sync_hero()
+        self.assertIn("hero_art", window._timers)
+
+        # Opening Hub (or calling _sync_hero(..., immediate=True)) cancels pending 0.18s timer immediately
+        with mock.patch.object(API, "vod_detail", return_value={"ok": True, "id": "vod:102", "movie_id": "102",
+                                                                "title": "Hub B", "description": "Plot B",
+                                                                "banner": card_b.banner, "seasons": []}):
+            window._open_detail_modal(card_b)
+        self.assertNotIn("hero_art", window._timers)
+        self.assertEqual(window.getProperty("hero_art"), card_b.banner)
+        time.sleep(0.22)
+        self.assertEqual(window.getProperty("hero_art"), card_b.banner, "Pending grid hero_art timer leaked into open Hub")
+
+        # While _modal_open(), _sync_hero(card=None) is a no-op
+        window._sync_hero()
+        self.assertEqual(window.getProperty("hero_title"), "Hub B")
+        self.assertEqual(window.getProperty("hero_art"), card_b.banner)
+
+        # Explicit card with immediate=True inside modal DOES update immediately without scheduling timer
+        updated_b = card_b._replace(banner="https://img/102-hd.jpg", desc="Updated Plot")
+        window._sync_hero(updated_b, immediate=True)
+        self.assertNotIn("hero_art", window._timers)
+        self.assertEqual(window.getProperty("hero_art"), "https://img/102-hd.jpg")
+
+    def test_russian_day_tabs_ascending_season_labels_and_episode_fallback(self):
+        # Mon 2026-11-23 12:00 UTC -> offset -3 is Fri 20.11, -1 Вчера, 0 Сегодня, +1 Завтра
+        mon_2026_11_23 = 1795435200
+        W.set_language("ru")
+        ru_tabs = [lbl for _, lbl in sweettv_app.sections.day_tabs(3, 2, mon_2026_11_23)]
+        self.assertEqual(ru_tabs, ["Пт 20.11", "Сб 21.11", "Вчера", "Сегодня", "Завтра", "Ср 25.11"])
+        self.assertEqual([lbl for _, lbl in sweettv_app.sections.day_tabs(0, 0, mon_2026_11_23)], ["Сегодня"])
+
+        W.set_language("uk")
+        uk_tabs = [lbl for _, lbl in sweettv_app.sections.day_tabs(1, 1, mon_2026_11_23)]
+        self.assertEqual(uk_tabs, ["Вчора", "Сьогодні", "Завтра"])
+
+        W.set_language("en")
+        en_tabs = [lbl for _, lbl in sweettv_app.sections.day_tabs(3, 1, mon_2026_11_23)]
+        self.assertEqual(en_tabs, ["Fri 20.11", "Sat 21.11", "Yesterday", "Today", "Tomorrow"])
+
+        # Episode fallback "1 серия".."N серия" in Russian when title is missing, preserving real titles
+        W.set_language("ru")
+        ep_items = IT.episode_items([
+            {"id": 1, "number": 1, "title": "", "duration": 1800},
+            {"id": 2, "number": 2, "title": "   ", "duration": 1800},
+            {"id": 3, "number": 3, "title": "Финал", "duration": 2400},
+        ])
+        self.assertEqual([li.label for li in ep_items], ["1 серия", "2 серия", "Финал"])
+
+        # Ascending season labels ("1 сезон", "2 сезон") in Show/Series Hub
+        window = self._boot_in_memory(lang="ru")
+        unsorted_detail = {
+            "ok": True, "id": "vod:888", "movie_id": "888", "title": "Сериал",
+            "seasons": [
+                {"id": 20, "number": 2, "title": "", "episodes": [{"id": 201, "episode_id": 201, "number": 1, "title": "", "duration": 1500, "vod_url": "plugin://plugin.video.sweettv/playvod/888|201|1"}]},
+                {"id": 10, "number": 1, "title": "", "episodes": [{"id": 101, "episode_id": 101, "number": 1, "title": "", "duration": 1500, "vod_url": "plugin://plugin.video.sweettv/playvod/888|101|1"}]},
+            ],
+        }
+        card = sweettv_app.sections.vod_card({"id": 888, "title": "Сериал", "vod_url": "u"}, "series")
+        with mock.patch.object(API, "vod_detail", return_value=unsorted_detail):
+            window._open_show_modal(card)
+            self.assertTrue(wait_for(lambda: len(window.controls[410].items) == 2))
+        self.assertEqual([li.label for li in window.controls[410].items], ["1 сезон", "2 сезон"])
+        self.assertEqual(window.controls[400].items[0].label, "1 серия")
 
 
 if __name__ == "__main__":

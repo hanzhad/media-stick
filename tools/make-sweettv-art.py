@@ -43,6 +43,31 @@ def make_chip():
     art.save_rgba(os.path.join(art.MEDIA, 'sweettv-chip.png'), art.rr_mask((CHIP, CHIP), (0, 0, CHIP, CHIP), CHIP / 2))
 
 
+def make_chip_active():
+    """Active/selected inactive-focus chip: 48x48 9-slice border=24, #24344D fill + 2px #00D2C6 outline."""
+    s = 4
+    im = Image.new("RGBA", (CHIP * s, CHIP * s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle(
+        (0, 0, CHIP * s - 1, CHIP * s - 1),
+        radius=(CHIP // 2) * s,
+        fill=(0x24, 0x34, 0x4D, 255),
+        outline=(0x00, 0xD2, 0xC6, 255),
+        width=2 * s,
+    )
+    im = im.resize((CHIP, CHIP), Image.BOX)
+    im.save(art.track(os.path.join(art.MEDIA, "sweettv-chip-active.png")), optimize=True)
+
+
+def make_burger():
+    """64x64 RGBA crisp 3-bar burger menu icon for the collapsed left rail."""
+    size = 64
+    mask = np.zeros((size, size), dtype=np.float32)
+    for cy in (18, 32, 46):
+        mask = np.maximum(mask, art.rr_mask((size, size), (10, cy - 3, 54, cy + 3), 3))
+    art.save_rgba(os.path.join(art.MEDIA, "sweettv-menu.png"), mask)
+
+
 def make_bars():
     """A track at 28% and the part gone through at full: tinted by the skin."""
     for name, bar_w in BARS:
@@ -107,7 +132,7 @@ def make_logo(n, spec):
 def make_masks():
     """Exact-size 12px rounded-corner diffuse masks for 5x2 poster cards and 4x3 wide cards."""
     specs = (
-        ("sweettv-poster-mask.png", 328, 356, 12),
+        ("sweettv-poster-mask.png", 240, 356, 12),
         ("sweettv-wide-mask.png", 420, 206, 12),
     )
     for name, w, h, radius in specs:
@@ -122,6 +147,8 @@ def main():
         os.makedirs(d, exist_ok=True)
     make_star()
     make_chip()
+    make_chip_active()
+    make_burger()
     make_bars()
     make_masks()
     for n, spec in enumerate(LOGOS, 1):

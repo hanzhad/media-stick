@@ -27,8 +27,10 @@ WIDE_SECTIONS = frozenset(("continue", "channels"))
 BTN_ALT, BTN_FAV = 211, 213
 SIGNIN_BUTTON, RETRY = 300, 301
 PAGE_SEARCH, HERO_GUIDE = 415, 416
-ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_CONTEXT_MENU = 2, 3, 4, 117
+HERO_PLAY, HERO_ALT, HERO_FAV = 417, 418, 420
+ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_CONTEXT_MENU = 1, 2, 3, 4, 117
 MENU_DELAY = 0.12
+AUTOPLAY_SECONDS = 5
 RETURN_GRACE = 2
 RUNNING = "media-stick.sweettv"
 DEMO_LOGOS = os.path.join(ui.ADDON_PATH, "resources", "media", "demo")
@@ -107,6 +109,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self._qr_focus_index = 0
         self._qr_focus_key = ""
         self._qr_dirty = False
+        self._pre_search_pos = None
+        self._autoplay_candidate = None
         self._shelf_setup()
         self._find_setup()
         self._guide_setup()
@@ -241,7 +245,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             return files.Snapshot(True, self.demo_catalog, ("demo",), now, True, False)
         snap = files.snapshot(now, self.catalog, self.stamp, self.mtime)
         if snap.catalog is not None and snap.catalog is not self.catalog:
-            raw = files.read_raw(files.channel_path())
+            raw = files.read_raw(now)
             if isinstance(raw, dict):
                 self.raw_catalog = raw
         return snap
@@ -281,6 +285,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         elif not self.dropped:
             self.dropped = True
             if not self.demo:
+                files.clear_store()
                 ns = pages.namespace()
                 if ns:
                     page_cache.drop_namespace(ns)
@@ -449,21 +454,30 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         pos = self._active_grid_pos()
         return self.cards[pos] if 0 <= pos < len(self.cards) else None
 
-    def _sync_hero(self, card=None):
+    def _sync_hero(self, card=None, immediate=False):
+        if card is None and self._modal_open():
+            return
         card = card if card is not None else self._focused_card()
         banner = card.banner if card else ""
-        if not banner or not self._window_props.get("hero_art"):
+        if immediate or not banner or not self._window_props.get("hero_art"):
             self._cancel("hero_art")
             self._prop("hero_art", banner)
         else:
             self._later("hero_art", 0.18, lambda b=banner: self._prop("hero_art", b))
         info = sections.hero_info(card)
+        if self._modal_open():
+            info["has_guide"] = ""
+            info["hero_guide"] = ""
         for k, v in info.items():
             self._prop(k, v)
-        self.getControl(RESUME).setLabel(info["hero_play"])
-        self.getControl(BTN_ALT).setLabel(info["hero_alt"])
-        self.getControl(GUIDE_BUTTON).setLabel(info["hero_guide"])
-        self.getControl(BTN_FAV).setLabel(info["hero_fav"])
+        for cid, key in (
+            (RESUME, "hero_play"), (BTN_ALT, "hero_alt"), (GUIDE_BUTTON, "hero_guide"), (BTN_FAV, "hero_fav"),
+            (HERO_PLAY, "hero_play"), (HERO_ALT, "hero_alt"), (HERO_GUIDE, "hero_guide"), (HERO_FAV, "hero_fav"),
+        ):
+            try:
+                self.getControl(cid).setLabel(info[key])
+            except Exception:
+                pass
 
     # -- section switching --
 
@@ -488,6 +502,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     def _open_section(self, key, focus_cid="", sync_menu=False):
         with self._lock:
+            self._pre_search_pos = None
             self.section = key
             self.page_query = ""
             self._prop("wide_grid", "1" if key in WIDE_SECTIONS else "")
@@ -585,17 +600,24 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def onAction(self, action):
         action_id = action.getId()
         if action_id in ui.BACK_ACTIONS:
+            if self._cancel_autoplay():
+                return
             if self._modal_open():
                 self._guide_close()
             elif self.digits:
                 self._digits_clear()
-            elif self.mode == data.DATA and self._focus() in (PAGE_SEARCH, HERO_GUIDE):
+            elif self.mode == data.DATA and self._focus() in (PAGE_SEARCH, HERO_PLAY, HERO_ALT, HERO_GUIDE, HERO_FAV):
+                if self._focus() == PAGE_SEARCH and self._pre_search_pos is not None and self.cards:
+                    pos = max(0, min(self._pre_search_pos, len(self.cards) - 1))
+                    self._pre_search_pos = None
+                    self._select_grid(pos)
                 self._focus_on(self._grid_id() if self.cards else MENU)
             elif self.mode == data.DATA and self._focus() in (ROW, WIDE_ROW) and self.page_query:
                 self.page_query = ""
                 self._sync_page_search_label()
                 self._restore_section_view()
             elif self.mode == data.DATA and self._focus() in (ROW, WIDE_ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV,
+                                                              HERO_PLAY, HERO_ALT, HERO_GUIDE, HERO_FAV,
                                                               *range(CHIP_FIRST, CHIP_LAST + 1)):
                 self._focus_on(MENU)
             else:
@@ -604,11 +626,18 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if self.mode == data.DATA:
             digit = data.digit_of(action_id, action.getButtonCode())
             if self._modal_open():
+                if self._focus() == GUIDE and action_id in (ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT) and self.modal_tabs:
+                    step = -1 if action_id == ACTION_MOVE_LEFT else 1
+                    target = max(0, min(len(self.modal_tabs) - 1, self.modal_tab_idx + step))
+                    if target != self.modal_tab_idx:
+                        self._modal_select_tab(target, keep_focus=True)
+                    return
                 if digit is not None or action_id == ACTION_CONTEXT_MENU:
                     return
             else:
                 if action_id == ACTION_CONTEXT_MENU:
-                    if self._focus() in (ROW, WIDE_ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV):
+                    if self._focus() in (ROW, WIDE_ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV,
+                                         HERO_PLAY, HERO_ALT, HERO_GUIDE, HERO_FAV):
                         self._toggle_favourite()
                     return
                 if digit is not None:
@@ -618,8 +647,14 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 if action_id == ACTION_MOVE_RIGHT and self._focus() == MENU:
                     self._cancel("menu")
                     self._apply_menu()
+                elif action_id == ACTION_MOVE_RIGHT and self._focus() == ROW:
+                    pos = self._active_grid_pos()
+                    if self.cards and (pos % 5 == 4 or pos == len(self.cards) - 1):
+                        self._pre_search_pos = pos
+                        self._focus_on(PAGE_SEARCH)
+                        return
         super().onAction(action)
-        if self._focus() in (ROW, WIDE_ROW):
+        if not self._modal_open() and self._focus() in (ROW, WIDE_ROW):
             self._sync_hero()
             if action_id in (ACTION_MOVE_RIGHT, ACTION_MOVE_DOWN):
                 self._maybe_paginate()
@@ -644,15 +679,22 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                     if self.cards:
                         self._focus_on(self._grid_id())
             elif control_id == RESUME:
-                if getattr(self, "modal_kind", "") == "show":
+                mk = getattr(self, "modal_kind", "")
+                if mk == "show":
                     self._play_next_up()
+                elif mk == "guide":
+                    self._play_card(self.modal_card)
+                elif mk == "detail":
+                    self._play_card(self.modal_card, close_detail=True)
                 else:
                     self._ok_card()
-            elif control_id == BTN_ALT:
+            elif control_id == HERO_PLAY:
+                self._play_focused_card()
+            elif control_id in (BTN_ALT, HERO_ALT):
                 self._alt_action()
-            elif control_id == GUIDE_BUTTON:
+            elif control_id in (GUIDE_BUTTON, HERO_GUIDE):
                 self._guide_show()
-            elif control_id == BTN_FAV:
+            elif control_id in (BTN_FAV, HERO_FAV):
                 self._toggle_favourite()
             elif CHIP_FIRST <= control_id <= CHIP_LAST:
                 self._chip_click(control_id)
@@ -664,8 +706,6 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._signin()
             elif control_id == PAGE_SEARCH:
                 self._ask_page_search()
-            elif control_id == HERO_GUIDE:
-                self._guide_show()
             elif control_id == RETRY:
                 self._look_soon()
         except Exception as e:
@@ -687,63 +727,157 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if card.kind in ("show_vod", "show_epg", "show_tv", "series"):
             self._open_show_modal(card)
             return
+        if not was_detail and card.kind == "channel" and card.cid:
+            self._open_channel_hub(card.cid)
+            return
+        if not was_detail and card.kind == "programme" and self.section == "search" and card.cid:
+            self._open_channel_hub(card.cid, target_day=card.start, target_epg=card.epg)
+            return
         if card.kind == "movie" and not was_detail and self.section not in WIDE_SECTIONS:
             self._open_detail_modal(card)
             return
-        if not card.playable or not card.play_url:
+        self._play_card(card, close_detail=was_detail)
+
+    def _play_focused_card(self):
+        card = self._focused_card()
+        if card is None or card.kind == "skeleton":
+            return
+        if card.kind in ("show_vod", "show_epg", "show_tv", "series"):
+            self._open_show_modal(card)
+            return
+        self._play_card(card)
+
+    def _play_card(self, card, from_start=False, close_detail=False):
+        if card is None or card.kind == "skeleton":
+            return
+        url = card.alt_url if from_start else card.play_url
+        if not card.playable or not url:
             ui.notify(words.tr("This programme has not aired yet."))
             return
-        if was_detail:
+        if close_detail:
             self._guide_close()
         if card.kind == "channel":
-            self._start_playback(card.play_url, cid=card.cid)
+            if from_start and card.epg:
+                session = play.Session(card.cid, card.epg, card.title, card.start, card.stop, url=url)
+                notify_spec = {
+                    "kind": "epg",
+                    "cid": card.cid,
+                    "epg_id": card.epg,
+                    "start_offset": 0,
+                    "from_start": True,
+                    "title": card.title,
+                }
+                self._start_playback(url, cid=card.cid, session=session, notify_spec=notify_spec)
+            else:
+                notify_spec = {"kind": "live", "cid": card.cid, "title": card.title}
+                self._start_playback(url, cid=card.cid, notify_spec=notify_spec)
         else:
-            session = play.Session(card.cid, card.epg, card.title, card.start, card.stop, url=card.play_url)
-            self._start_playback(card.play_url, cid=card.cid, session=session, seek_to=card.resume_pos)
+            pos = 0 if from_start else card.resume_pos
+            ep_mode = card.kind == "episode"
+            session = play.Session(card.cid, card.epg, card.title, card.start, card.stop,
+                                   url=url, episode_mode=ep_mode)
+            notify_spec = {
+                "url": url,
+                "start_offset": pos,
+                "from_start": bool(from_start),
+                "title": card.title,
+                "episode_mode": ep_mode,
+            }
+            self._start_playback(url, cid=card.cid, session=session, seek_to=pos, notify_spec=notify_spec)
 
     def _alt_action(self):
-        card = self._focused_card()
+        card = getattr(self, "modal_card", None) if self._modal_open() else self._focused_card()
         if card is None:
             return
         if card.kind in ("show_vod", "show_epg", "show_tv", "series"):
             self._open_show_modal(card)
             return
         if card.alt_url:
-            session = play.Session(card.cid, card.epg, card.title, card.start, card.stop, url=card.alt_url)
-            self._start_playback(card.alt_url, cid=card.cid, session=session, seek_to=0)
+            self._play_card(card, from_start=True, close_detail=(getattr(self, "modal_kind", "") == "detail"))
 
     # -- playback & resume --
 
-    def _start_playback(self, url, cid="", session=None, seek_to=0):
+    def _start_playback(self, url="", cid="", session=None, seek_to=0, notify_spec=None):
         if self.demo:
             ui.notify(words.tr("Demo: nothing is played."))
             return
-        if not url:
+        if not url and not notify_spec:
             return
         now = self._now()
         if PREVIEW_VIDEO and cid and session is None and self.previewing == cid and playing():
             xbmc.executebuiltin("Action(FullScreen)")
             self.play_at = now
             return
+        spec = dict(notify_spec) if notify_spec else {
+            "url": url,
+            "start_offset": seek_to,
+            "from_start": seek_to == 0,
+        }
+        payload_json = play.notify_request(**spec)
         with self._lock:
             if cid:
                 self.state = saved.record_played(self.state, cid, now)
                 self._update_menu()
             self.session = session
+            self._autoplay_candidate = None
         if self.writer is not None and cid:
             self.writer.submit(self.state)
         self.play_at = now
-        self._in_worker(self._start_stream, url, session, seek_to)
+        self._in_worker(self._start_stream, payload_json, session)
 
-    def _start_stream(self, url, session, seek_to):
-        xbmc.executeJSONRPC(play.open_request(url))
+    def _start_stream(self, payload_json, session):
+        xbmc.executeJSONRPC(payload_json)
         if session is not None:
-            play.follow(session, self._player(), self._stop, self._report, seek_to)
+            play.follow(session, self._player(), self._stop, self._report)
 
     def _player(self):
         if self._io is None:
             self._io = play.PlayerIO()
         return self._io
+
+    def _next_episode_after(self, session):
+        if self.modal_kind != "show" or not self.modal_seasons or session is None:
+            return None
+        s_url = session.url.split("?", 1)[0]
+        for si, season in enumerate(self.modal_seasons):
+            eps = season.get("episodes") or ()
+            for ei, ep in enumerate(eps):
+                ep_url = str(ep.get("vod_url") or ep.get("url") or "").split("?", 1)[0]
+                match_url = bool(s_url and ep_url and ep_url == s_url)
+                match_epg = bool(session.cid and session.epg
+                                 and str(ep.get("cid") or "") == session.cid
+                                 and str(ep.get("epg") or "") == session.epg)
+                if match_url or match_epg:
+                    if not self.modal_flat_tv:
+                        if ei + 1 < len(eps):
+                            return dict(eps[ei + 1]), int(season.get("number") or (si + 1))
+                        if si + 1 < len(self.modal_seasons):
+                            nxt_season = self.modal_seasons[si + 1]
+                            nxt_eps = nxt_season.get("episodes") or ()
+                            if nxt_eps:
+                                return dict(nxt_eps[0]), int(nxt_season.get("number") or (si + 2))
+                    elif ei > 0:
+                        return dict(eps[ei - 1]), 1
+                    return None
+        return None
+
+    def _cancel_autoplay(self) -> bool:
+        had = bool(self._timers.get("autoplay") or self._autoplay_candidate or self._window_props.get("autoplay_text"))
+        self._cancel("autoplay")
+        self._autoplay_candidate = None
+        self._prop("autoplay_text", "")
+        return had
+
+    def _start_autoplay(self, row, season_num, remaining=AUTOPLAY_SECONDS):
+        if self._stop.is_set() or self.modal_kind != "show":
+            self._cancel_autoplay()
+            return
+        if remaining <= 0:
+            self._prop("autoplay_text", "")
+            self._play_modal_row(row, season_num=season_num)
+            return
+        self._prop("autoplay_text", words.tr("Next episode in {n}s").format(n=remaining))
+        self._later("autoplay", 1.0, lambda: self._start_autoplay(row, season_num, remaining - 1))
 
     def _report(self, session, pos, total):
         with self._lock:
@@ -751,6 +885,11 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 return
             self.session = None
             now = self._now()
+            natural_end = bool(total > 0 and (total - pos <= mr.END_MARGIN or pos >= 0.97 * total))
+            if natural_end and getattr(session, "episode_mode", False) and self.modal_kind == "show":
+                self._autoplay_candidate = self._next_episode_after(session)
+            else:
+                self._autoplay_candidate = None
             if session.url:
                 meta = {"title": session.title, "start": session.start, "stop": session.stop}
                 if getattr(session, "season", 0) > 0:
@@ -786,9 +925,16 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def _focus_back(self):
         if self.modal_kind == "show":
             self._refresh_show_modal_progress()
+            with self._lock:
+                cand = self._autoplay_candidate
+                self._autoplay_candidate = None
+            if cand is not None:
+                self._start_autoplay(cand[0], cand[1])
         elif self.section == "continue" and not self._modal_open():
             self._show_continue()
-        if self.mode == data.DATA and self._focus() not in (MENU, ROW, WIDE_ROW, PAGE_SEARCH, HERO_GUIDE, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV, GUIDE):
+        if self.mode == data.DATA and self._focus() not in (MENU, ROW, WIDE_ROW, PAGE_SEARCH, HERO_PLAY, HERO_ALT,
+                                                             HERO_GUIDE, HERO_FAV, RESUME, BTN_ALT, GUIDE_BUTTON,
+                                                             BTN_FAV, GUIDE):
             self._focus_on(GUIDE if self._modal_open() else self._grid_id())
 
     def _preview_start(self):
@@ -799,7 +945,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             xbmc.Player().play(url, None, True)
 
     def _toggle_favourite(self):
-        card = self._focused_card()
+        in_modal = self._modal_open()
+        card = getattr(self, "modal_card", None) if in_modal else self._focused_card()
         if card is None or not card.fav_key:
             return
         with self._lock:
@@ -815,13 +962,20 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 added, _ = mr.toggle_fav(card.fav_key, {"title": card.title, "thumb": card.art}, now=self._now())
                 self.favs_doc = mr.load_favs()
             self.fav_keys = set(self.favs_doc["items"].keys())
+            updated = card._replace(fav=added)
+            if in_modal:
+                self.modal_card = updated
+                self._sync_hero(updated, immediate=True)
+                if self.modal_kind == "show":
+                    self._sync_show_cta(self.modal_next_up)
+                elif self.modal_kind == "guide" and self.modal_channel is not None:
+                    self._sync_channel_hub_ctas(self.modal_channel, updated)
             pos = self._active_grid_pos()
-            if self.section == "favourites" and not added:
+            if self.section == "favourites" and not added and not in_modal:
                 self._show_favourites()
                 if self.cards:
                     self._select_grid(min(pos, len(self.cards) - 1))
-            else:
-                updated = card._replace(fav=added)
+            elif 0 <= pos < len(self.cards) and self.cards[pos].key == card.key:
                 self.cards[pos] = updated
                 for cid in (ROW, WIDE_ROW):
                     try:
@@ -829,7 +983,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                         self._shown_props[card.key] = items.apply_card(li, updated, self._shown_props.get(card.key))
                     except Exception:
                         pass
-                self._sync_hero()
+                if not in_modal:
+                    self._sync_hero()
             self._update_menu()
 
     # -- timers & workers --
