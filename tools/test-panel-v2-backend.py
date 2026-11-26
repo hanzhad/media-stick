@@ -1153,7 +1153,7 @@ class TestPanelV2Routes(unittest.TestCase):
             {"cmd": "set_section", "app": "netflix", "section": "tv"},
             {"cmd": "set_section", "app": "sweettv"},
             {"cmd": "play_episode", "app": "sweettv", "idx": 99999},
-            {"cmd": "search", "app": "sweettv", "query": "Bearer sk-1234567890abcdef"},
+            {"cmd": "search", "app": "sweettv", "query": "Bearer sk-1234567890abcdef1234567890"},
         ):
             self.kodi_calls.clear()
             code, _, _ = self._req("POST", "/api/ui/cmd", bad_cmd)

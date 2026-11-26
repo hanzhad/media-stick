@@ -3,6 +3,7 @@ import { initTrackpad } from './trackpad.js';
 import { initPowerBanner } from './power-banner.js';
 import { initScreenV2 } from './screen-v2.js';
 import { initDiagnostics } from './diagnostics.js';
+import { initTouchBar } from './touchbar.js';
 
 function byId(id) {
   return document.getElementById(id);
@@ -119,6 +120,20 @@ function boot() {
     },
   });
 
+  const touchbar = initTouchBar({
+    root: byId('touchbar'),
+    ws,
+    api,
+    toast,
+    buzz,
+    onSearch: () => {
+      if (typeof window.openCtxSearch === 'function') window.openCtxSearch();
+    },
+    onContext: (ctx) => {
+      window.__uiCtx = ctx;
+    },
+  });
+
   ws.on('now', () => {
     if (typeof window.tick === 'function') window.tick();
   });
@@ -142,14 +157,26 @@ function boot() {
     }
     if (typeof window.hdrDraw === 'function') window.hdrDraw();
   });
+  let wsCtxSeen = false;
+  ws.on('ui_context', (ctx) => {
+    wsCtxSeen = true;
+    window.__uiCtx = ctx;
+  });
 
   window.addEventListener('panel:status', (e) => {
     const st = e.detail;
     if (powerBanner) powerBanner.updateScreen((st && st.screen) || '');
   });
 
+  fetch('/api/ui/context', { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((ctx) => {
+      if (!wsCtxSeen && ctx && typeof ctx === 'object' && touchbar) touchbar.update(ctx);
+    })
+    .catch(() => {});
+
   ws.connect();
-  window.panelV2 = { ws, trackpad, powerBanner, screenV2, diagnostics };
+  window.panelV2 = { ws, trackpad, powerBanner, screenV2, diagnostics, touchbar };
 }
 
 if (document.readyState === 'loading') {

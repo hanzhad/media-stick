@@ -34,6 +34,7 @@ import panel_accounts   # the Accounts tab and its API
 import panel_watch      # the Смотреть tab and its API
 import panel_lang       # the device's language: its settings page and API
 import panel_sweettv    # the SWEET.TV part of that API
+import panel_ui_context   # TV UI context tmpfs watcher + command dispatcher
 import panel_onboarding_ui   # the sheet of the shared TV <-> phone onboarding
 from panel_core import auth_pin, input_bus, kodi_bus, screen_cap, state_hub, static_files, tls_reload, ws_hub
 try:
@@ -410,6 +411,20 @@ PIN_AUTH = auth_pin.PinAuth(state_dir=STATE_DIR)
 WS_HUB = ws_hub.WsHub()
 STATIC_ASSETS = static_files.StaticAssets()
 
+
+def _ui_ctx_now():
+    return panel_ui_context.read_context(UI_CTX.path)
+
+
+def _on_ui_ctx_change(ctx):
+    WS_HUB.broadcast({"type": "ui_context", "context": ctx})
+
+
+UI_CTX = panel_ui_context.UiContextWatcher(
+    ws_count=WS_HUB.count,
+    on_change=_on_ui_ctx_change,
+)
+
 # ---------------- page ----------------
 
 PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
@@ -536,14 +551,23 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 .sub span{min-width:0;overflow-wrap:anywhere}
 .sub .btn{font-size:14px;font-weight:400;white-space:nowrap;flex:0 0 auto}
 .expl{margin:0 0 10px;color:var(--dim);font-size:15px}
-/* remote card: reaches down to the tab bar (208px = header, mode switch and tab bar); the
+/* remote card: reaches down to the tab bar (152px = header and tab bar); the
    key rows keep their size and the D-pad takes whatever height is left, as large as the card is
    wide at most, so it grows on tall phones and shrinks on short ones and nothing scrolls. */
-.rc{position:relative;padding:14px;display:flex;flex-direction:column;height:calc(100vh - 208px - env(safe-area-inset-top) - env(safe-area-inset-bottom));min-height:400px}
-@supports (height:1svh){.rc{height:calc(100svh - 208px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}
-/* the now-playing bar (64px and its gap) is above the mode switch while something plays: the card gets shorter, it never changes shape */
-@media (max-width:899px){body.np .rc{height:calc(100vh - 284px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}
-@media (max-width:899px){@supports (height:1svh){body.np .rc{height:calc(100svh - 284px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}}
+.rc-shell{display:flex;flex-direction:column;gap:8px}
+.rc{position:relative;padding:14px;display:flex;flex-direction:column;height:calc(100vh - 152px - env(safe-area-inset-top) - env(safe-area-inset-bottom));min-height:340px}
+@supports (height:1svh){.rc{height:calc(100svh - 152px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}
+/* the now-playing bar (64px and its gap) and/or Touch Bar above .rc: the card gets shorter, it never changes shape */
+@media (max-width:899px){body.np .rc{height:calc(100vh - 228px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}
+@media (max-width:899px){@supports (height:1svh){body.np .rc{height:calc(100svh - 228px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}}
+@media (max-width:899px){
+  .rc-shell.tb-on .rc{height:calc(100vh - 248px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}
+  body.np .rc-shell.tb-on .rc{height:calc(100vh - 324px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}
+  @supports (height:1svh){
+    .rc-shell.tb-on .rc{height:calc(100svh - 248px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}
+    body.np .rc-shell.tb-on .rc{height:calc(100svh - 324px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}
+  }
+}
 /* the one toast: a short word at the bottom, above the sheets */
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom));z-index:var(--z-toast);max-width:calc(100vw - 32px);padding:12px 20px;border-radius:999px;background:#fff;color:var(--bg);font-weight:600;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.4)}
 .dwrap{position:relative;flex:1 1 0;min-height:120px}
@@ -588,11 +612,14 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 .sp-head{margin:0 0 12px}
 .sp-head .btn{min-height:44px;padding:0 14px;background:transparent;color:var(--dim)}
 .dsub{display:block;margin-top:2px;color:var(--faint);font-size:13px}
-/* the mode switch of the remote; the picture mode swaps the whole remote card for the screen card */
-.modes{display:flex;gap:4px;padding:4px;margin-bottom:12px;border-radius:16px;background:var(--card)}
-.modes button{flex:1;min-height:44px;padding:0;border:0;border-radius:12px;background:transparent;color:var(--dim);touch-action:manipulation}
-.modes button.on{background:var(--card2);color:#fff;font-weight:600}
+/* mobile corner mode switchers; the picture mode swaps the whole remote card for the screen card */
+.mode-corners{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex:none}
+.mc-btn{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:var(--bg);color:var(--dim);font-size:13px;font-weight:500;touch-action:manipulation}
+.mc-btn:active{background:var(--card2);color:#fff}
+#t-remote:not([data-mode=air]) .mc-btn[data-for-mode=air]{display:none}
+#t-remote[data-mode=air] .mc-btn[data-for-mode=keys]{display:none}
 #t-remote[data-mode=screen] .rc{display:none}
+#t-remote[data-mode=screen] #touchbar{display:none}
 #t-remote:not([data-mode=screen]) #t-screen{display:none}
 [data-tab=settings]~[data-tab=settings]{margin-top:12px}
 /* wide screen, no tab bar, everything at once: Смотреть across the top, the picture beside the remote
@@ -600,12 +627,14 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 @media (min-width:900px){
   #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act" "lang lang";gap:20px;padding:28px}
   .top{grid-area:top;margin-bottom:0}
-  .tabs,.modes,.sp-head,#t-setlist{display:none!important}
+  .tabs,.mode-corners,.sp-head,#t-setlist{display:none!important}
   .toast{bottom:28px}
   [data-tab]{display:block!important;margin:0!important}
   [data-tab]>.card{height:100%}
   #t-remote{display:contents!important}
-  #t-remote .rc{display:flex!important;grid-area:remote}
+  #t-remote .rc-shell{display:flex!important;flex-direction:column;gap:8px;grid-area:remote}
+  #t-remote .rc{display:flex!important;flex:1}
+  #t-remote #touchbar:not(.hide){display:block!important}
   #t-screen{display:block!important;grid-area:screen}
   #t-screen>.card{height:100%}
   #t-wifi{grid-area:wifi}#t-https{grid-area:https}#t-info{grid-area:info}#t-act{grid-area:act}
@@ -643,6 +672,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
 <symbol id="i-air" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/></symbol>
 <symbol id="i-cam" viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h2l1.5-2h5L16 6h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
 </defs></svg>
 
 <div id="setup" class="hide" style="max-width:440px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))">
@@ -664,13 +694,16 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 
   @@WATCH_SECTION@@<section id="t-remote" data-tab="remote" class="hide">
     @@WATCH_BAR@@
-    <div class="modes" role="tablist" aria-label="Режим пульта">
-      <button data-m="keys" role="tab" class="on" aria-selected="true">Кнопки</button>
-      <button data-m="air" role="tab" aria-selected="false">Указка</button>
-      <button data-m="screen" role="tab" aria-selected="false">Экран</button>
-    </div>
-    <div class="card rc">
-      <div class="dwrap" id="stage"><svg class="dpad" viewBox="0 0 240 240" role="group" aria-label="Навигация">
+    <div class="rc-shell">
+      <div id="touchbar" class="tb hide" aria-label="Панель приложения"></div>
+      <div class="card rc">
+        <div class="mode-corners">
+          <button class="mc-btn" type="button" data-mode-go="screen" data-for-mode="keys"><svg class="i s"><use href="#i-cam"/></svg>Экран</button>
+          <button class="mc-btn" type="button" data-mode-go="keys" data-for-mode="air"><svg class="i s"><use href="#i-remote"/></svg>Кнопки</button>
+          <button class="mc-btn" type="button" data-mode-go="air" data-for-mode="keys"><svg class="i s"><use href="#i-air"/></svg>Указка</button>
+          <button class="mc-btn" type="button" data-mode-go="screen" data-for-mode="air"><svg class="i s"><use href="#i-cam"/></svg>Экран</button>
+        </div>
+        <div class="dwrap" id="stage"><svg class="dpad" viewBox="0 0 240 240" role="group" aria-label="Навигация">
         <g class="seg" data-a="up" role="button" aria-label="Вверх"><path d="M38 38A116 116 0 0 1 202 38L154 86A48 48 0 0 0 86 86Z"/><use href="#i-up" x="108" y="50" width="24" height="24"/></g>
         <g class="seg" data-a="right" role="button" aria-label="Вправо"><path d="M202 38A116 116 0 0 1 202 202L154 154A48 48 0 0 0 154 86Z"/><use href="#i-right" x="166" y="108" width="24" height="24"/></g>
         <g class="seg" data-a="down" role="button" aria-label="Вниз"><path d="M202 202A116 116 0 0 1 38 202L86 154A48 48 0 0 0 154 154Z"/><use href="#i-down" x="108" y="166" width="24" height="24"/></g>
@@ -708,15 +741,21 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
         <button class="btn" data-a="contextmenu" aria-label="Ещё"><svg class="i"><use href="#i-more"/></svg></button>
         <button class="btn" id="txt-open" aria-label="Текст"><svg class="i"><use href="#i-text"/></svg></button>
+        <button class="btn" id="btn-search-rc" type="button" aria-label="Поиск"><svg class="i"><use href="#i-search"/></svg></button>
       </div>
       <div class="grp">
         <button class="btn" data-a="volumedown" aria-label="Тише"><svg class="i"><use href="#i-vdn"/></svg></button>
         <button class="btn" data-a="mute" aria-label="Без звука"><svg class="i"><use href="#i-mute"/></svg></button>
         <button class="btn" data-a="volumeup" aria-label="Громче"><svg class="i"><use href="#i-vup"/></svg></button>
       </div>
+      </div>
     </div>
     <div id="t-screen">
     <div class="card">
+      <div class="mode-corners">
+        <button class="mc-btn" type="button" data-mode-go="air"><svg class="i s"><use href="#i-air"/></svg>Указка</button>
+        <button class="mc-btn" type="button" data-mode-go="keys"><svg class="i s"><use href="#i-remote"/></svg>Кнопки</button>
+      </div>
       <div class="head">
         <h2>Экран</h2>
         <div class="acts">
@@ -886,13 +925,14 @@ document.querySelectorAll('[data-a]').forEach(b=>b.addEventListener('click',()=>
 // its own text box in the air pad's place: what is typed there shows in Kodi's field as it
 // goes (and what is typed on the TV shows here), Done or the phone's Enter confirms it on the
 // TV, Cancel closes it there. «Пульт» = back to the pad, type with the remote.
-let kbOpen=false, kbHid=false, kbT=null, kbSent='', kbQuiet=0, kbTyped=0, kbPoll=null, kbPb=false, kbMan=false;
+let kbOpen=false, kbHid=false, kbT=null, kbSent='', kbQuiet=0, kbTyped=0, kbPoll=null, kbPb=false, kbMan=false, kbMode='';
 function kbPolling(on){
   clearInterval(kbPoll);kbPoll=null;
   if(on)kbPoll=setInterval(()=>{if(kbPb||document.hidden)return;kbPb=true;
     api('/api/focus').then(r=>kbUi(r&&r.kb||null)).catch(()=>{}).finally(()=>kbPb=false)},700)
 }
 function kbUi(k){
+  if(kbMode==='ctx_search')return;   // isolated contextual search ignores Kodi keyboard pushes
   if(performance.now()<kbQuiet)return;   // a reply from before Done / Cancel
   const box=$('kb'), inp=$('kb-in');
   if(!k&&kbMan)return;   // the manual overlay stays until it is closed
@@ -909,17 +949,32 @@ function kbUi(k){
   if(!kbOpen){kbOpen=true;inp.value=kbSent=k.text||'';box.classList.remove('hide');box.closest('.rc').classList.add('kbon');kbPolling(true)}
   else if((k.text||'')!==inp.value&&!kbT&&performance.now()-kbTyped>1200)inp.value=kbSent=k.text||''
 }
+function ctxSearchClose(){
+  kbMode='';kbMan=false;kbOpen=false;$('kb-in').blur();
+  $('kb').classList.add('hide');$('kb').closest('.rc').classList.remove('kbon')
+}
 function kbSend(done){
+  if(kbMode==='ctx_search'){
+    if(!done)return;
+    const c=window.__uiCtx, app=(c&&c.app)||'', query=$('kb-in').value;
+    if(!app)return;
+    const p={cmd:'search',app,query};
+    if(window.panelV2&&window.panelV2.ws&&window.panelV2.ws.isOpen&&window.panelV2.ws.isOpen()){
+      if(window.panelV2.ws.sendJson({type:'ui_cmd',...p}))return;
+    }
+    api('/api/ui/cmd',p).catch(keyFailed);
+    return
+  }
   clearTimeout(kbT);kbT=null;const v=$('kb-in').value;
   if(!done&&v===kbSent)return;kbSent=v;
   api('/api/text',{text:v,done:!!done}).catch(keyFailed)
 }
-function kbClose(){kbMan=false;kbUi(null);kbQuiet=performance.now()+1500;clearTimeout(tickSoon);tickSoon=setTimeout(tick,1600)}
-$('kb-in').addEventListener('input',()=>{kbTyped=performance.now();clearTimeout(kbT);kbT=setTimeout(()=>kbSend(false),150)});
+function kbClose(){kbMan=false;kbUi(null);if(kbMode==='ctx_search')ctxSearchClose();kbQuiet=performance.now()+1500;clearTimeout(tickSoon);tickSoon=setTimeout(tick,1600)}
+$('kb-in').addEventListener('input',()=>{if(kbMode==='ctx_search')return;kbTyped=performance.now();clearTimeout(kbT);kbT=setTimeout(()=>kbSend(false),150)});
 $('kb-in').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();buzz();kbSend(true);kbClose()}});
 $('kb-ok').addEventListener('click',()=>{buzz();kbSend(true);kbClose()});
-$('kb-c').addEventListener('click',()=>{buzz();clearTimeout(kbT);api('/api/key',{action:'back'}).catch(keyFailed);kbClose()});
-$('kb-x').addEventListener('click',()=>{if(kbMan){kbMan=false;kbOpen=false;$('kb-in').blur();$('kb').classList.add('hide');$('kb').closest('.rc').classList.remove('kbon');return}kbHid=true;$('kb-in').blur();$('kb').classList.add('hide');$('kb').closest('.rc').classList.remove('kbon');kbPolling(false)});
+$('kb-c').addEventListener('click',()=>{buzz();clearTimeout(kbT);if(kbMode==='ctx_search'){ctxSearchClose();return}api('/api/key',{action:'back'}).catch(keyFailed);kbClose()});
+$('kb-x').addEventListener('click',()=>{if(kbMan){kbMan=false;kbOpen=false;$('kb-in').blur();$('kb').classList.add('hide');$('kb').closest('.rc').classList.remove('kbon');return}if(kbMode==='ctx_search'){ctxSearchClose();return}kbHid=true;$('kb-in').blur();$('kb').classList.add('hide');$('kb').closest('.rc').classList.remove('kbon');kbPolling(false)});
 // «Текст»: the same overlay as when the TV asks for text, opened by hand (it types into whatever has focus on the TV)
 function kbManual(){
   if(kbOpen)return;
@@ -929,7 +984,20 @@ function kbManual(){
   inp.inputMode='text';inp.value=kbSent='';
   box.classList.remove('hide');box.closest('.rc').classList.add('kbon');inp.focus()
 }
+function openCtxSearch(){
+  const c=window.__uiCtx;
+  if(!c||!c.app||!c.can_search){kbManual();return}
+  if(kbOpen&&kbMode!=='ctx_search')return;
+  const box=$('kb'), inp=$('kb-in');
+  kbMan=false;kbHid=false;kbMode='ctx_search';kbOpen=true;kbPolling(false);clearTimeout(kbT);kbT=null;
+  $('kb-t').textContent=c.search_hint||'Поиск';
+  $('kb-x').textContent='Закрыть';$('kb-c').classList.add('hide');
+  inp.inputMode='text';inp.value=kbSent=c.search_query||'';
+  box.classList.remove('hide');box.closest('.rc').classList.add('kbon');inp.focus()
+}
+window.openCtxSearch=openCtxSearch;
 $('txt-open').addEventListener('click',()=>{buzz();kbManual()});
+$('btn-search-rc').addEventListener('click',()=>{buzz();openCtxSearch()});
 function keysUi(dead){
   const d=new Set(dead||[]);
   document.querySelectorAll('button[data-a]').forEach(b=>{b.disabled=d.has(b.dataset.a)})
@@ -937,7 +1005,7 @@ function keysUi(dead){
 document.addEventListener('touchstart',()=>{},{passive:true});  // iOS: enables :active
 const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
-const TABS=['watch','remote','settings'], MODES=['keys','air','screen'];
+const TABS=['watch','remote','settings'], MODES = ['keys', 'air', 'screen'];
 let tab='watch', mode='keys', httpsUrl='';
 const screenOn=()=>tab==='remote'&&mode==='screen';
 // the picture runs only while it is on a phone's screen; a computer shows one still frame
@@ -961,11 +1029,10 @@ function setMode(m){
   if(!MODES.includes(m))m='keys';
   mode=m;lsSet('mode',m);
   $('t-remote').dataset.mode=m;
-  document.querySelectorAll('.modes [data-m]').forEach(b=>{const on=b.dataset.m===m;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
   if(m!=='air')airStop(true);
   airUi();screenSync()
 }
-document.querySelectorAll('.modes [data-m]').forEach(b=>b.addEventListener('click',()=>{buzz();setMode(b.dataset.m)}));
+document.querySelectorAll('[data-mode-go]').forEach(b=>b.addEventListener('click',()=>{buzz();setMode(b.dataset.modeGo)}));
 // Settings on a phone: the list, or one page of it (spage; '' = the list). A page has a hash, so the back button works.
 const SP_HASH={acc:'accounts',lang:'language',wifi:'wifi',https:'https',info:'device',act:'maintenance'}, SP_OF={}, SP_ID={acc:'t-acc',lang:'t-lang',wifi:'t-wifi',https:'t-https',info:'t-info',act:'t-act'};
 Object.keys(SP_HASH).forEach(k=>{SP_OF[SP_HASH[k]]=k});
@@ -1726,6 +1793,11 @@ def _ws_text(msg, sock):
             kodi("GUI.ActivateWindow", {"window": "home"})
         elif a in ACTIONS:
             kodi("Input.ExecuteAction", {"action": key_action(a)})
+    elif mtype == "ui_cmd":
+        try:
+            panel_ui_context.dispatch_ui_cmd(msg, kodi)
+        except (ValueError, OSError):
+            pass
 
 
 class H(BaseHTTPRequestHandler):
@@ -1909,7 +1981,12 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(ws_hub.build_handshake_response(ws_key))
             self.wfile.flush()
             self.close_connection = True
-            WS_HUB.serve_client(self.connection, on_text=_ws_text, on_pointer=_ws_pointer)
+            WS_HUB.serve_client(
+                self.connection,
+                on_text=_ws_text,
+                on_pointer=_ws_pointer,
+                on_open=lambda s: WS_HUB.send_json(s, {"type": "ui_context", "context": _ui_ctx_now()}),
+            )
             return
         if static_files.is_static_path(p):
             code, headers, body = STATIC_ASSETS.serve(self.path, headers=self.headers)
@@ -1943,6 +2020,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(panel_accounts.with_signin(status()))
         if p == "/api/accounts":
             return self.send(panel_accounts.view())
+        if p == "/api/ui/context":
+            return self.send(_ui_ctx_now())
         if p == "/api/logs":
             qs = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             unit = (qs.get("unit") or [""])[0]
@@ -2027,6 +2106,14 @@ class H(BaseHTTPRequestHandler):
         if p.startswith(panel_sweettv.PREFIX):
             body, code = panel_sweettv.post(p, b, kodi)
             return self.send(body, code=code)
+        if p == "/api/ui/cmd":
+            try:
+                panel_ui_context.dispatch_ui_cmd(b, kodi)
+                return self.send({"ok": True})
+            except ValueError as e:
+                return self.send({"error": str(e)}, code=400)
+            except OSError:
+                return self.send("ТВ не отвечает", "text/plain", 503)
         try:
             if p == "/api/key":
                 a = b.get("action")
@@ -2140,6 +2227,8 @@ def start_https():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 def _on_kodi_push(method, params):
+    if method == "Other.mediastick.ui_context":
+        UI_CTX.notify()
     if method in kodi_bus.PUSH_METHODS:
         if method.startswith("Player."):
             status_cache["t"] = 0.0
@@ -2159,6 +2248,7 @@ if __name__ == "__main__":
     os.makedirs(SHOTS, exist_ok=True)
     KODI_BUS.subscribe(_on_kodi_push)
     KODI_BUS.start()
+    UI_CTX.start()
     INPUT_BUS.start()
     threading.Thread(target=settle_loop, daemon=True).start()
     start_https()

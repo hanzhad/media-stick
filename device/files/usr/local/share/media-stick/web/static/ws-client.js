@@ -138,6 +138,10 @@ export class WsClient {
       }
       return;
     }
+    if (t === 'ui_context') {
+      this.emit('ui_context', msg.context !== undefined ? msg.context : (msg.data !== undefined ? msg.data : msg));
+      return;
+    }
     if (t === 'now' || t === 'vol' || t === 'kb' || t === 'screen_owner' || t === 'status') {
       this.emit(t, msg.data !== undefined ? msg.data : msg);
     }
