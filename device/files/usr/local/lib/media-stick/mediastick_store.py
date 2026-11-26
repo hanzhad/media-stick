@@ -55,6 +55,16 @@ _SECRET_JOINED = frozenset({
     "setcookie",
     "bearertoken",
 })
+_NON_SECRET_KEYS = frozenset({
+    "available_without_auth",
+    "without_auth",
+    "no_auth",
+    "requires_auth",
+    "require_auth",
+    "auth_required",
+    "needs_auth",
+    "need_auth",
+})
 _SECRET_VALUE_PATTERNS = (
     re.compile(r"(?:^|\b)bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
     re.compile(r"(?:^|\b)(?:authorization|cookie)\s*:\s*\S", re.IGNORECASE),
@@ -85,6 +95,8 @@ class CacheHit:
 def _is_secret_key(key: str) -> bool:
     expanded = _CAMEL_RE.sub(r"\1_\2", key).lower()
     tokens = [tok for tok in _NON_ALNUM_RE.split(expanded) if tok]
+    if "_".join(tokens) in _NON_SECRET_KEYS:
+        return False
     if any(tok in _SECRET_TOKENS for tok in tokens):
         return True
     return "".join(tokens) in _SECRET_JOINED
@@ -100,7 +112,7 @@ def contains_secret(obj, _depth: int = 0) -> bool:
         return True
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if isinstance(k, str) and _is_secret_key(k):
+            if not isinstance(v, bool) and isinstance(k, str) and _is_secret_key(k):
                 return True
             if contains_secret(v, _depth + 1):
                 return True

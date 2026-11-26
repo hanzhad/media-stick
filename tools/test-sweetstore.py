@@ -788,6 +788,58 @@ class TestSweetStoreSQLiteShell(unittest.TestCase):
                 cnt = con.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
                 self.assertEqual(cnt, 0, f"Table {tbl} not wiped by clear()")
 
+    def test_upsert_and_seed_channels_allow_available_without_auth_flags(self):
+        fixture_path = os.path.join(ROOT, "tools", "fixtures", "sweettv-channel-list.json")
+        with open(fixture_path, encoding="utf-8") as f:
+            realistic_doc = json.load(f)
+        self.assertGreaterEqual(len(realistic_doc.get("list") or []), 2)
+        for idx, ch in enumerate(realistic_doc["list"]):
+            ch["available_without_auth"] = bool(idx % 2 == 1)
+            ch["requires_auth"] = not ch["available_without_auth"]
+            ch["without_auth"] = 1 if ch["available_without_auth"] else 0
+
+        expected_count = len(realistic_doc["list"])
+        expected_ids = {int(c["id"]) for c in realistic_doc["list"]}
+
+        # 1. upsert_channels() succeeds on realistic GetChannels.json with available_without_auth bool flags
+        count = self.st.upsert_channels(realistic_doc, now=NOW)
+        self.assertEqual(count, expected_count)
+        payload = self.st.get_channels_payload(now=NOW)
+        self.assertEqual(payload.get("status"), "OK")
+        self.assertEqual({int(c["id"]) for c in payload["list"]}, expected_ids)
+
+        # 2. seed_from_channel_file() succeeds on the same realistic GetChannels.json file
+        self.st.clear()
+        seed_path = os.path.join(self.tmp.name, "live-channelList.json")
+        with open(seed_path, "w", encoding="utf-8") as f:
+            json.dump(realistic_doc, f)
+        self.assertTrue(self.st.seed_from_channel_file(seed_path, now=NOW))
+        seeded_payload = self.st.get_channels_payload(now=NOW)
+        self.assertEqual(seeded_payload.get("status"), "OK")
+        self.assertEqual({int(c["id"]) for c in seeded_payload["list"]}, expected_ids)
+
+        # 3. Adjacent negative boundary: a real secret alongside available_without_auth still raises SecretRefused
+        self.st.clear()
+        tainted_doc = {
+            "status": "OK",
+            "categories": realistic_doc.get("categories", []),
+            "list": [
+                {
+                    **realistic_doc["list"][0],
+                    "available_without_auth": False,
+                    "auth": "secret-token-value",
+                }
+            ],
+        }
+        with self.assertRaises(ms_core.SecretRefused):
+            self.st.upsert_channels(tainted_doc, now=NOW)
+        tainted_path = os.path.join(self.tmp.name, "tainted-channelList.json")
+        with open(tainted_path, "w", encoding="utf-8") as f:
+            json.dump(tainted_doc, f)
+        with self.assertRaises(ms_core.SecretRefused):
+            self.st.seed_from_channel_file(tainted_path, now=NOW)
+        self.assertEqual(self.st.get_channels_payload(now=NOW), {})
+
 
 if __name__ == "__main__":
     unittest.main()
