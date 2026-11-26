@@ -3,7 +3,8 @@
 Pure Core (stdlib-only, zero xbmc imports):
   - JSONRPC.NotifyAll payload builders & validators: build_play_notify, build_ctl_notify
   - Uncached stream resolution & CDN mirror rotation: open_stream, open_vod
-  - Demuxer & quality cap selection: select_demuxer
+  - Demuxer & quality cap selection: is_finished_hls_archive, parse_hls_master,
+      pick_hls_variant, resolve_hls_variant, select_demuxer
   - Timeline, rollover, overrun grace & seek state machines:
       compute_initial_seek, plan_slot_end, classify_overrun_resume, plan_seek,
       evaluate_watchdog, SeekCoalescer, wall_timeline
@@ -540,6 +541,201 @@ def open_vod(
     }
 
 
+_HLS_ATTR_RE = re.compile(r'([A-Z0-9-]+)=("[^"]*"|[^,]*)')
+_QUALITY_HEIGHT_CAPS = {"720p": 720, "1080p": 1080, "unlimited": None}
+
+
+def is_finished_hls_archive(
+    stream_info: dict,
+    kind: str = "epg",
+    slot_stop: int = 0,
+    now: int = 0,
+) -> bool:
+    """Return True when stream_info is a finished non-DRM HLS DVR archive."""
+    if not isinstance(stream_info, dict):
+        return False
+    protocol = str(stream_info.get("protocol") or "hls").lower()
+    drm = stream_info.get("drm")
+    stop_i = int(slot_stop or 0)
+    now_i = int(now or 0)
+    return bool(
+        kind == "epg"
+        and not drm
+        and protocol == "hls"
+        and stop_i > 0
+        and stop_i <= now_i
+    )
+
+
+def _valid_http_url(url: str) -> str:
+    if not isinstance(url, str):
+        return ""
+    raw = url.strip()
+    if not raw or any(ord(ch) <= 0x20 for ch in raw):
+        return ""
+    parts = urlsplit(raw)
+    if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
+        return ""
+    try:
+        _ = parts.port
+    except ValueError:
+        return ""
+    return raw
+
+
+def _parse_hls_attrs(attr_text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, val in _HLS_ATTR_RE.findall(attr_text):
+        cleaned = val[1:-1] if len(val) >= 2 and val.startswith('"') and val.endswith('"') else val
+        out[key.upper()] = cleaned
+    return out
+
+
+def _parse_hls_int(val: str | None) -> int:
+    if not val:
+        return 0
+    s = val.strip()
+    return int(s) if s.isdigit() else 0
+
+
+def _parse_hls_resolution(val: str) -> tuple[int, int]:
+    if not val or "x" not in val.lower():
+        return 0, 0
+    w_s, _, h_s = val.lower().partition("x")
+    w = _parse_hls_int(w_s)
+    h = _parse_hls_int(h_s)
+    return (w, h) if w > 0 and h > 0 else (0, 0)
+
+
+def parse_hls_master(manifest_text: str | bytes, base_url: str) -> dict:
+    """Parse an HLS master playlist into variant metadata and external-audio status."""
+    empty = {"is_master": False, "variants": [], "has_external_audio": False, "external_audio_groups": []}
+    if isinstance(manifest_text, (bytes, bytearray)):
+        text = bytes(manifest_text).decode("utf-8", errors="replace")
+    elif isinstance(manifest_text, str):
+        text = manifest_text
+    else:
+        return empty
+
+    lines = [ln.strip() for ln in text.lstrip("\ufeff").splitlines() if ln.strip()]
+    if not lines or not lines[0].startswith("#EXTM3U"):
+        return empty
+
+    saw_stream_inf = False
+    has_external_audio = False
+    external_audio_groups: set[str] = set()
+    variants: list[dict] = []
+    pending_inf: dict[str, str] | None = None
+
+    for ln in lines[1:]:
+        if ln.startswith("#EXT-X-MEDIA:"):
+            attrs = _parse_hls_attrs(ln[len("#EXT-X-MEDIA:"):])
+            if attrs.get("TYPE", "").upper() == "AUDIO" and attrs.get("URI", "").strip():
+                has_external_audio = True
+                grp = attrs.get("GROUP-ID", "").strip()
+                if grp:
+                    external_audio_groups.add(grp)
+            continue
+        if ln.startswith("#EXT-X-STREAM-INF:"):
+            saw_stream_inf = True
+            pending_inf = _parse_hls_attrs(ln[len("#EXT-X-STREAM-INF:"):])
+            continue
+        if ln.startswith("#"):
+            continue
+        if pending_inf is not None:
+            attrs = pending_inf
+            pending_inf = None
+            if any(ord(ch) <= 0x20 for ch in ln):
+                continue
+            resolved = _valid_http_url(urljoin(base_url, ln))
+            if not resolved:
+                continue
+            bw = _parse_hls_int(attrs.get("BANDWIDTH"))
+            avg_bw = _parse_hls_int(attrs.get("AVERAGE-BANDWIDTH"))
+            w, h = _parse_hls_resolution(attrs.get("RESOLUTION", ""))
+            variants.append(
+                {
+                    "url": resolved,
+                    "bandwidth": bw or avg_bw,
+                    "average_bandwidth": avg_bw,
+                    "width": w,
+                    "height": h,
+                    "audio": attrs.get("AUDIO", "").strip(),
+                    "codecs": attrs.get("CODECS", "").strip(),
+                }
+            )
+
+    return {
+        "is_master": saw_stream_inf,
+        "variants": variants,
+        "has_external_audio": has_external_audio,
+        "external_audio_groups": sorted(external_audio_groups),
+    }
+
+
+def pick_hls_variant(parsed: dict, quality: str = "1080p") -> str:
+    """Pick a single variant URL matching quality cap, or '' to fall back to master."""
+    if not isinstance(parsed, dict) or not parsed.get("is_master"):
+        return ""
+    if parsed.get("has_external_audio"):
+        return ""
+    variants = [v for v in (parsed.get("variants") or ()) if isinstance(v, dict) and v.get("url")]
+    if not variants:
+        return ""
+
+    q_norm = str(quality or "1080p").strip().lower()
+    cap = _QUALITY_HEIGHT_CAPS.get(q_norm, 1080)
+    with_height = [v for v in variants if int(v.get("height") or 0) > 0]
+
+    if not with_height:
+        chosen = max(variants, key=lambda v: int(v.get("bandwidth") or 0))
+    elif cap is not None:
+        within_cap = [v for v in with_height if int(v.get("height") or 0) <= cap]
+        if within_cap:
+            chosen = max(within_cap, key=lambda v: (int(v.get("height") or 0), int(v.get("bandwidth") or 0)))
+        else:
+            chosen = min(with_height, key=lambda v: (int(v.get("height") or 0), int(v.get("bandwidth") or 0)))
+    else:
+        chosen = max(with_height, key=lambda v: (int(v.get("height") or 0), int(v.get("bandwidth") or 0)))
+
+    ext_groups = set(parsed.get("external_audio_groups") or ())
+    if chosen.get("audio") and chosen["audio"] in ext_groups:
+        return ""
+    return str(chosen.get("url") or "")
+
+
+def resolve_hls_variant(
+    master_url: str,
+    quality: str = "1080p",
+    send=None,
+    timeout: float = STREAM_TIMEOUT,
+) -> str:
+    """Fetch HLS master manifest and return a matching variant URL, or base_url on fallback."""
+    base_url = str(master_url or "").split("|", 1)[0].strip()
+    if not _valid_http_url(base_url):
+        return base_url
+
+    transport = send or _http_send
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Origin": SWEET_ORIGIN,
+        "Referer": SWEET_REFERER,
+    }
+    try:
+        status, raw = transport(base_url, headers, None, timeout)
+    except Exception:
+        return base_url
+    if status != 200 or not raw:
+        return base_url
+
+    try:
+        parsed = parse_hls_master(raw, base_url)
+        chosen = pick_hls_variant(parsed, quality=quality)
+    except Exception:
+        return base_url
+    return chosen or base_url
+
+
 def select_demuxer(
     stream_info: dict,
     kind: str = "epg",
@@ -552,17 +748,8 @@ def select_demuxer(
     protocol = str(stream_info.get("protocol") or "hls").lower()
     drm = stream_info.get("drm")
     license_url = str(stream_info.get("license_url") or "")
-    stop_i = int(slot_stop or 0)
-    now_i = int(now or 0)
 
-    is_finished_hls_archive = (
-        kind == "epg"
-        and not drm
-        and protocol == "hls"
-        and stop_i > 0
-        and stop_i <= now_i
-    )
-    if is_finished_hls_archive:
+    if is_finished_hls_archive(stream_info, kind=kind, slot_stop=slot_stop, now=now):
         if "|" in stream_url:
             play_url = stream_url
         else:

@@ -118,6 +118,9 @@ if [ -x /usr/local/bin/kodi-settings ]; then
         addons.unknownsources=true \
         "videoscreen.screenmode=$SCREEN_MODE" \
         filecache.buffermode=2 \
+        filecache.memorysize=32 \
+        filecache.readfactor=400 \
+        filecache.chunksize=131072 \
         window.width=1920 \
         window.height=1080 \
         debug.screenshotpath=/run/media-stick/shots/ >/dev/null
@@ -126,6 +129,8 @@ fi
 # Enable JSON-RPC on :9090 (disable webserver to avoid passwordless-webserver dialog)
 cat > "$KODI_HOME/userdata/advancedsettings.xml" <<'EOF'
 <advancedsettings version="1.0">
+  <imageres>540</imageres>
+  <fanartres>1080</fanartres>
   <services>
     <esallinterfaces>true</esallinterfaces>
     <webserver>false</webserver>

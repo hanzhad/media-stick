@@ -1,4 +1,6 @@
 <advancedsettings version="1.0">
+  <imageres>540</imageres>
+  <fanartres>1080</fanartres>
   <network>
     <curlclienttimeout>5</curlclienttimeout>
     <curllowspeedtime>5</curllowspeedtime>
