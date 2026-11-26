@@ -1,7 +1,7 @@
 """SWEET.TV app: building Kodi ListItems for the 7-section rail, 4x2 card grid, and modals."""
 import xbmcgui
 
-from resources.lib import sweettv_sections as sections, sweettv_text as words
+from resources.lib import sweettv_data as data, sweettv_sections as sections, sweettv_text as words
 
 
 def rail_items(active_section, counts=None) -> list:
@@ -92,7 +92,7 @@ def modal_tab_items(tabs, active_idx=0) -> list:
     return out
 
 
-def episode_items(episodes) -> list:
+def episode_items(episodes, fallback_art="") -> list:
     out = []
     for idx, ep in enumerate(episodes):
         title = str(ep.get("title") or "").strip()
@@ -102,17 +102,48 @@ def episode_items(episodes) -> list:
         dur = int(ep.get("duration") or 0)
         res = int(ep.get("resume") or 0)
         done = bool(ep.get("watched"))
-        if res > 0:
-            badge = words.tr("Continue from {time}").format(time=sections.fmt_mmss(res))
-        elif done:
-            badge = words.tr("Watched")
-        elif dur >= 60:
-            badge = words.tr("{n} min").format(n=dur // 60)
+        soon = bool(ep.get("coming_soon")) or (ep.get("playable") is False)
+        release_date = str(ep.get("release_date") or "").strip()
+        when = words.tr("E{n}").format(n=num) if num else ""
+        if soon:
+            soon_word = words.tr("Soon")
+            badge = f"{soon_word} · {release_date}" if release_date else soon_word
+            label2 = badge
+            bar = ""
+            kind = "future"
+            sub = badge
         else:
-            badge = ""
-        li = xbmcgui.ListItem(title, badge, offscreen=True)
-        li.setProperty("when", words.tr("E{n}").format(n=num) if num else "")
-        li.setProperty("kind", "resume" if res > 0 else ("done" if done else ""))
+            badge = words.tr("Watched") if done else ""
+            if res > 0:
+                label2 = words.tr("Continue from {time}").format(time=sections.fmt_mmss(res))
+                kind = "resume"
+            elif done:
+                label2 = badge
+                kind = "done"
+            elif dur >= 60:
+                label2 = words.tr("{n} min").format(n=dur // 60)
+                kind = ""
+            else:
+                label2 = ""
+                kind = ""
+            if done:
+                bar = data.bar_name(data.BAR_STEPS)
+            elif res > 0 and dur > 0:
+                bar = sections._bar_from_fraction(min(1.0, res / dur))
+            else:
+                bar = ""
+            sub = label2
+        now_line = "  ·  ".join(p for p in (when, sub) if p)
+        icon = str(ep.get("preview") or ep.get("image_url") or fallback_art or "")
+        li = xbmcgui.ListItem(title, label2, offscreen=True)
+        li.setProperty("when", when)
+        li.setProperty("now", now_line)
+        li.setProperty("badge", badge)
+        li.setProperty("bar", bar)
+        li.setProperty("coming_soon", "1" if soon else "")
+        li.setProperty("kind", kind)
+        if icon:
+            li.setArt({"icon": icon})
         out.append(li)
     return out
 

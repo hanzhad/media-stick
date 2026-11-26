@@ -1393,10 +1393,10 @@ class Channels(WindowCase):
                 resume_label="", small=False,
             )
             window._open_show_modal(card)
-            self.assertTrue(wait_for(lambda: len(window.modal_seasons) == 2 and window.focus == 400))
+            self.assertTrue(wait_for(lambda: len(window.modal_seasons) == 2 and window.focus == 421))
             self.assertEqual(window.modal_tab_idx, 1)
             self.assertEqual(window.controls[410].selected, 1)
-            self.assertEqual(window.controls[400].selected, 0)
+            self.assertEqual(window.controls[421].selected, 0)
             self.assertIn("2", window.controls[210].label)
             # Click 210 dispatches sweettv.play NotifyAll for S2E1 from 320s with episode_mode=True
             window.onClick(210)
@@ -1415,7 +1415,7 @@ class Channels(WindowCase):
             window._report(window.session, 1390, 1400)
             window._refresh_show_modal_progress()
             self.assertEqual(window.modal_tab_idx, 1)
-            self.assertEqual(window.controls[400].selected, 1)
+            self.assertEqual(window.controls[421].selected, 1)
             saved_ep = MR.load()["items"]["sw:vod:500|201"]
             self.assertEqual((saved_ep["season"], saved_ep["episode"]), (2, 1))
             self.assertTrue(saved_ep["done"])
@@ -1832,13 +1832,13 @@ class Demo(WindowCase):
                 mock.patch.object(API, "day", side_effect=AssertionError("network")):
             window = self.open(demo=True)
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
-            # Shows section (index 3) -> OK opens Show Episodes modal (400 + 410)
+            # Shows section (index 3) -> OK opens Show Episodes modal (421 + 410)
             window.controls[MENU].selected = 3
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: window.cards and window.cards[0].kind != 'skeleton'))
             window.controls[ROW].selected = 0
             window.onClick(ROW)
-            self.assertTrue(wait_for(lambda: len(window.controls[400].items) > 0))
+            self.assertTrue(wait_for(lambda: len(window.controls[421].items) > 0))
             self.assertGreater(len(window.controls[410].items), 0)
             self.press(window, 92)
             # Channels section (index 6) -> clicking channel / 416 opens 7-day Channel Hub (400 + 410)
@@ -2151,10 +2151,10 @@ class ShowsSection(WindowCase):
             window.focus = gid
             window.controls[gid].selected = 0
             window.onClick(ROW)
-            self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 1))
+            self.assertTrue(wait_for(lambda: len(window.controls[421].items) == 1))
             m_det.assert_called()
             self.assertEqual(len(window.controls[410].items), 1)
-            self.assertEqual(window.controls[400].items[0].label, "Ep 1")
+            self.assertEqual(window.controls[421].items[0].label, "Ep 1")
 
 
 class CatalogSections(WindowCase):
@@ -2253,8 +2253,8 @@ class CatalogSections(WindowCase):
             window.focus = gid
             window.controls[gid].selected = 0
             window.onClick(ROW)
-            self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 1))
-            self.assertEqual(window.controls[400].items[0].label, "Pilot")
+            self.assertTrue(wait_for(lambda: len(window.controls[421].items) == 1))
+            self.assertEqual(window.controls[421].items[0].label, "Pilot")
 
     def test_catalog_chips_skips_umbrella_genre_ids_and_falls_back_on_empty_sort_modes(self):
         live_genres = [
@@ -4373,7 +4373,7 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
                 "id": 501, "title": "Dune", "poster": "https://img/501.jpg",
                 "banner": "https://img/501-bg.jpg", "wide_art": "https://img/501-wide.jpg", "vod_url": "u",
             }, "movie")
-            window.shown = [card]
+            window.cards = [card]
             window.focus = 200
             window.controls[200].selected = 0
             window._toggle_favourite()
@@ -4381,8 +4381,8 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
         self.assertEqual(fav_calls[0][1].get("banner"), "https://img/501-bg.jpg")
         self.assertEqual(fav_calls[0][1].get("wide_art"), "https://img/501-wide.jpg")
 
-        window.favs_doc = favs_doc
-        with mock.patch.object(files, "recall_title_detail", side_effect=lambda k: recalled.get(k)) as recall_spy:
+        with mock.patch.object(MR, "load_favs", return_value=favs_doc), \
+             mock.patch.object(files, "recall_title_detail", side_effect=lambda k: recalled.get(k)) as recall_spy:
             window._open_section("favourites")
             self.assertEqual(window.getProperty("wide_grid"), "1")
             self.assertGreaterEqual(len(window.controls[201].items), 1)
@@ -4447,9 +4447,9 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
             self.assertIn(W.tr("This episode has not been released yet."), Fake.notes)
 
             sess = sweettv_app.play.Session(
-                kind="vod", play_url="plugin://plugin.video.sweettv/playvod/600|101|10",
-                cid="", epg="", movie_id="600", episode_id="101", season=1, title="Ep 1",
-                start=0, stop=0, duration=1400, from_start=False, resume_pos=0, started_at=NOW,
+                "", "", "Ep 1", 0, 0,
+                url="plugin://plugin.video.sweettv/playvod/600|101|10",
+                season=1, episode=1, episode_mode=True,
             )
             self.assertIsNone(window._next_episode_after(sess))
 
@@ -4459,13 +4459,13 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
     def test_epg_programme_image_parsing_cards_and_nonblocking_worker_hydration(self):
         # Part 4.1: Programme.image default & parse_programme extraction
         self.assertEqual(D.Programme(1000, 2000, "x", "", True, "").image, "")
-        p_img = D.parse_programme({"id": 50, "text": "News", "time_start": 1000, "time_stop": 2000,
+        p_img = D.parse_programme({"id": 50, "text": "News", "time_start": NOW - 600, "time_stop": NOW + 1200,
                                    "image_url": "https://img/epg50.jpg"}, NOW)
         self.assertEqual(p_img.image, "https://img/epg50.jpg")
-        p_ext = D.parse_programme({"id": 51, "text": "Show", "time_start": 1000, "time_stop": 2000,
+        p_ext = D.parse_programme({"id": 51, "text": "Show", "time_start": NOW - 600, "time_stop": NOW + 1200,
                                    "preview_url_ext": "https://img/ext51.jpg"}, NOW)
         self.assertEqual(p_ext.image, "https://img/ext51.jpg")
-        p_bad = D.parse_programme({"id": 52, "text": "Bad", "time_start": 1000, "time_stop": 2000,
+        p_bad = D.parse_programme({"id": 52, "text": "Bad", "time_start": NOW - 600, "time_stop": NOW + 1200,
                                    "image_url": "ftp://bad/x.jpg"}, NOW)
         self.assertEqual(p_bad.image, "")
 

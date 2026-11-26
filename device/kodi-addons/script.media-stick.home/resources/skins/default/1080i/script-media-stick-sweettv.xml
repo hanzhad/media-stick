@@ -13,6 +13,44 @@
             <height>1080</height>
             <visible>String.IsEqual(Window.Property(mode),data) + String.IsEmpty(Window.Property(modal))</visible>
 
+            <!-- Full-Bleed Background Hero for Continue, Favourites & TV Channels -->
+            <control type="image">
+                <left>560</left>
+                <top>0</top>
+                <width>1360</width>
+                <height>765</height>
+                <aspectratio align="center" aligny="center">scale</aspectratio>
+                <texture background="true">$INFO[Window.Property(hero_art)]</texture>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+            </control>
+            <control type="image">
+                <left>560</left>
+                <top>0</top>
+                <width>720</width>
+                <height>765</height>
+                <texture>gradient-left.png</texture>
+                <colordiffuse>FF0C111B</colordiffuse>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+            </control>
+            <control type="image">
+                <left>560</left>
+                <top>340</top>
+                <width>1360</width>
+                <height>425</height>
+                <texture>gradient-bottom.png</texture>
+                <colordiffuse>FF0C111B</colordiffuse>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+            </control>
+            <control type="image">
+                <left>560</left>
+                <top>0</top>
+                <width>1360</width>
+                <height>160</height>
+                <texture>gradient-top.png</texture>
+                <colordiffuse>B30C111B</colordiffuse>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+            </control>
+
             <!-- Compact Top Header: section title + DEMO/notice + Top-of-page scoped Search (415) -->
             <control type="label">
                 <left>96</left>
@@ -399,25 +437,17 @@
                 </focusedlayout>
             </control>
 
-            <!-- Framed Browse Hero for Continue & TV Channels -->
+            <!-- Full-Bleed Browse Hero Content for Continue, Favourites & TV Channels -->
             <control type="group">
-                <left>96</left>
-                <top>148</top>
-                <width>1776</width>
-                <height>484</height>
+                <left>0</left>
+                <top>0</top>
+                <width>1920</width>
+                <height>1080</height>
                 <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat))</visible>
-                <control type="image">
-                    <left>0</left>
-                    <top>0</top>
-                    <width>1776</width>
-                    <height>484</height>
-                    <texture border="32">card-mask.png</texture>
-                    <colordiffuse>FF121927</colordiffuse>
-                </control>
                 <control type="label">
-                    <left>36</left>
-                    <top>24</top>
-                    <width>960</width>
+                    <left>96</left>
+                    <top>172</top>
+                    <width>1060</width>
                     <height>56</height>
                     <font>Med40</font>
                     <textcolor>FFFFFFFF</textcolor>
@@ -425,9 +455,9 @@
                     <label>$INFO[Window.Property(hero_title)]</label>
                 </control>
                 <control type="label">
-                    <left>36</left>
-                    <top>84</top>
-                    <width>960</width>
+                    <left>96</left>
+                    <top>232</top>
+                    <width>1060</width>
                     <height>34</height>
                     <font>Reg25</font>
                     <textcolor>FF14E0C8</textcolor>
@@ -435,9 +465,9 @@
                     <label>$INFO[Window.Property(hero_meta)]</label>
                 </control>
                 <control type="label">
-                    <left>36</left>
-                    <top>128</top>
-                    <width>960</width>
+                    <left>96</left>
+                    <top>276</top>
+                    <width>1060</width>
                     <height>136</height>
                     <font>Reg25</font>
                     <textcolor>FFB0BCCF</textcolor>
@@ -445,8 +475,8 @@
                     <label>$INFO[Window.Property(hero_desc)]</label>
                 </control>
                 <control type="image">
-                    <left>36</left>
-                    <top>278</top>
+                    <left>96</left>
+                    <top>426</top>
                     <width>640</width>
                     <height>6</height>
                     <texture>$INFO[Window.Property(hero_pbar)]</texture>
@@ -454,9 +484,9 @@
                     <visible>!String.IsEmpty(Window.Property(hero_pbar))</visible>
                 </control>
                 <control type="label">
-                    <left>36</left>
-                    <top>298</top>
-                    <width>960</width>
+                    <left>96</left>
+                    <top>448</top>
+                    <width>1060</width>
                     <height>34</height>
                     <font>Reg22</font>
                     <textcolor>FF8594AB</textcolor>
@@ -464,12 +494,12 @@
                     <label>$INFO[Window.Property(hero_sub)]</label>
                 </control>
                 <control type="grouplist" id="419">
-                    <left>36</left>
-                    <top>356</top>
-                    <width>984</width>
+                    <left>96</left>
+                    <top>512</top>
+                    <width>1320</width>
                     <height>56</height>
                     <orientation>horizontal</orientation>
-                    <itemgap>10</itemgap>
+                    <itemgap>12</itemgap>
                     <usecontrolcoords>false</usecontrolcoords>
                     <onleft>100</onleft>
                     <onup condition="!String.IsEmpty(Window.Property(filters))">409</onup>
@@ -533,37 +563,19 @@
                     </control>
                 </control>
                 <control type="image">
-                    <left>1032</left>
-                    <top>24</top>
-                    <width>712</width>
-                    <height>400</height>
-                    <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
-                    <texture background="true" diffuse="sweettv-wide-mask.png">$INFO[Window.Property(hero_art)]</texture>
-                    <visible>!String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
-                </control>
-                <control type="image">
-                    <left>1032</left>
-                    <top>24</top>
-                    <width>280</width>
-                    <height>400</height>
-                    <texture>gradient-left.png</texture>
-                    <colordiffuse>FF121927</colordiffuse>
-                    <visible>!String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
-                </control>
-                <control type="image">
-                    <left>1102</left>
-                    <top>64</top>
-                    <width>572</width>
-                    <height>320</height>
+                    <left>1240</left>
+                    <top>160</top>
+                    <width>520</width>
+                    <height>280</height>
                     <aspectratio align="center" aligny="center">keep</aspectratio>
                     <texture background="true">$INFO[Window.Property(hero_art)]</texture>
                     <visible>!String.IsEmpty(Window.Property(hero_art)) + !String.IsEmpty(Window.Property(hero_is_logo))</visible>
                 </control>
                 <control type="label">
-                    <left>1032</left>
-                    <top>24</top>
-                    <width>712</width>
-                    <height>400</height>
+                    <left>1240</left>
+                    <top>160</top>
+                    <width>520</width>
+                    <height>280</height>
                     <font>Light60</font>
                     <textcolor>FFB0BCCF</textcolor>
                     <align>center</align>
@@ -931,7 +943,7 @@
             <control type="label">
                 <left>96</left>
                 <top>120</top>
-                <width>1080</width>
+                <width>1280</width>
                 <height>34</height>
                 <font>Reg25</font>
                 <textcolor>FF14E0C8</textcolor>
@@ -1047,7 +1059,8 @@
                 <height>56</height>
                 <orientation>horizontal</orientation>
                 <onup>209</onup>
-                <ondown>400</ondown>
+                <ondown condition="String.IsEqual(Window.Property(modal),show)">421</ondown>
+                <ondown condition="String.IsEqual(Window.Property(modal),guide)">400</ondown>
                 <visible>!String.IsEmpty(Window.Property(guide))</visible>
                 <itemlayout width="212" height="56">
                     <control type="image">
@@ -1118,14 +1131,227 @@
                 </focusedlayout>
             </control>
 
-            <!-- Episode / Programme List (400) - strict single-focus #00D2C6 -->
+            <!-- Horizontal 16:9 Episode Row (421) for Show / Series Hub -->
+            <control type="panel" id="421">
+                <left>96</left>
+                <top>448</top>
+                <width>1776</width>
+                <height>344</height>
+                <orientation>horizontal</orientation>
+                <scrolltime>200</scrolltime>
+                <onup>410</onup>
+                <visible>String.IsEqual(Window.Property(modal),show)</visible>
+                <itemlayout width="444" height="310">
+                    <control type="image">
+                        <left>12</left>
+                        <top>10</top>
+                        <width>420</width>
+                        <height>206</height>
+                        <texture>sweettv-wide-mask.png</texture>
+                        <colordiffuse>FF121927</colordiffuse>
+                        <visible>String.IsEmpty(ListItem.Art(icon))</visible>
+                    </control>
+                    <control type="image">
+                        <left>12</left>
+                        <top>10</top>
+                        <width>420</width>
+                        <height>206</height>
+                        <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
+                        <texture background="true" diffuse="sweettv-wide-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                        <visible>!String.IsEmpty(ListItem.Art(icon)) + !String.IsEqual(ListItem.Property(coming_soon),1)</visible>
+                    </control>
+                    <control type="image">
+                        <left>12</left>
+                        <top>10</top>
+                        <width>420</width>
+                        <height>206</height>
+                        <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
+                        <colordiffuse>66FFFFFF</colordiffuse>
+                        <texture background="true" diffuse="sweettv-wide-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                        <visible>!String.IsEmpty(ListItem.Art(icon)) + String.IsEqual(ListItem.Property(coming_soon),1)</visible>
+                    </control>
+                    <control type="label">
+                        <left>12</left>
+                        <top>10</top>
+                        <width>420</width>
+                        <height>206</height>
+                        <font>Bold34</font>
+                        <textcolor>FFB0BCCF</textcolor>
+                        <selectedcolor>FFB0BCCF</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(when)]</label>
+                        <visible>String.IsEmpty(ListItem.Art(icon))</visible>
+                    </control>
+                    <control type="image">
+                        <left>216</left>
+                        <top>22</top>
+                        <width>202</width>
+                        <height>36</height>
+                        <texture border="18">sweettv-chip.png</texture>
+                        <colordiffuse>E6121927</colordiffuse>
+                        <visible>!String.IsEmpty(ListItem.Property(badge))</visible>
+                    </control>
+                    <control type="label">
+                        <left>224</left>
+                        <top>22</top>
+                        <width>186</width>
+                        <height>36</height>
+                        <font>Reg22</font>
+                        <textcolor>FF14E0C8</textcolor>
+                        <selectedcolor>FF14E0C8</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(badge)]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(badge))</visible>
+                    </control>
+                    <control type="image">
+                        <left>24</left>
+                        <top>206</top>
+                        <width>396</width>
+                        <height>6</height>
+                        <texture>$INFO[ListItem.Property(bar)]</texture>
+                        <colordiffuse>FF00D2C6</colordiffuse>
+                        <visible>!String.IsEmpty(ListItem.Property(bar))</visible>
+                    </control>
+                    <control type="label">
+                        <left>14</left>
+                        <top>222</top>
+                        <width>416</width>
+                        <height>30</height>
+                        <font>Reg22</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <selectedcolor>FFFFFFFF</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                    </control>
+                    <control type="label">
+                        <left>14</left>
+                        <top>252</top>
+                        <width>416</width>
+                        <height>26</height>
+                        <font>Reg22</font>
+                        <textcolor>FF8594AB</textcolor>
+                        <selectedcolor>FF8594AB</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(now)]</label>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="444" height="310">
+                    <control type="image">
+                        <left>6</left>
+                        <top>4</top>
+                        <width>432</width>
+                        <height>218</height>
+                        <texture border="24">youtube-ring.png</texture>
+                        <colordiffuse>FF14E0C8</colordiffuse>
+                        <visible>Control.HasFocus(421)</visible>
+                    </control>
+                    <control type="image">
+                        <left>12</left>
+                        <top>10</top>
+                        <width>420</width>
+                        <height>206</height>
+                        <texture>sweettv-wide-mask.png</texture>
+                        <colordiffuse>FF121927</colordiffuse>
+                        <visible>String.IsEmpty(ListItem.Art(icon))</visible>
+                    </control>
+                    <control type="image">
+                        <left>12</left>
+                        <top>10</top>
+                        <width>420</width>
+                        <height>206</height>
+                        <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
+                        <texture background="true" diffuse="sweettv-wide-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                        <visible>!String.IsEmpty(ListItem.Art(icon)) + !String.IsEqual(ListItem.Property(coming_soon),1)</visible>
+                    </control>
+                    <control type="image">
+                        <left>12</left>
+                        <top>10</top>
+                        <width>420</width>
+                        <height>206</height>
+                        <aspectratio align="center" aligny="center" scalediffuse="false">scale</aspectratio>
+                        <colordiffuse>66FFFFFF</colordiffuse>
+                        <texture background="true" diffuse="sweettv-wide-mask.png">$INFO[ListItem.Art(icon)]</texture>
+                        <visible>!String.IsEmpty(ListItem.Art(icon)) + String.IsEqual(ListItem.Property(coming_soon),1)</visible>
+                    </control>
+                    <control type="label">
+                        <left>12</left>
+                        <top>10</top>
+                        <width>420</width>
+                        <height>206</height>
+                        <font>Bold34</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <selectedcolor>FFFFFFFF</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(when)]</label>
+                        <visible>String.IsEmpty(ListItem.Art(icon))</visible>
+                    </control>
+                    <control type="image">
+                        <left>216</left>
+                        <top>22</top>
+                        <width>202</width>
+                        <height>36</height>
+                        <texture border="18">sweettv-chip.png</texture>
+                        <colordiffuse>E6121927</colordiffuse>
+                        <visible>!String.IsEmpty(ListItem.Property(badge))</visible>
+                    </control>
+                    <control type="label">
+                        <left>224</left>
+                        <top>22</top>
+                        <width>186</width>
+                        <height>36</height>
+                        <font>Reg22</font>
+                        <textcolor>FF14E0C8</textcolor>
+                        <selectedcolor>FF14E0C8</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(badge)]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(badge))</visible>
+                    </control>
+                    <control type="image">
+                        <left>24</left>
+                        <top>206</top>
+                        <width>396</width>
+                        <height>6</height>
+                        <texture>$INFO[ListItem.Property(bar)]</texture>
+                        <colordiffuse>FF14E0C8</colordiffuse>
+                        <visible>!String.IsEmpty(ListItem.Property(bar))</visible>
+                    </control>
+                    <control type="label">
+                        <left>14</left>
+                        <top>222</top>
+                        <width>416</width>
+                        <height>30</height>
+                        <font>Bold25</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <selectedcolor>FFFFFFFF</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                    </control>
+                    <control type="label">
+                        <left>14</left>
+                        <top>252</top>
+                        <width>416</width>
+                        <height>26</height>
+                        <font>Reg22</font>
+                        <textcolor>FF14E0C8</textcolor>
+                        <selectedcolor>FF14E0C8</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(now)]</label>
+                    </control>
+                </focusedlayout>
+            </control>
+
+            <!-- Channel TV Guide Programme List (400) - strict single-focus #00D2C6 -->
             <control type="list" id="400">
                 <left>96</left>
                 <top>436</top>
                 <width>1728</width>
                 <height>512</height>
                 <onup>410</onup>
-                <visible>!String.IsEmpty(Window.Property(guide))</visible>
+                <visible>String.IsEqual(Window.Property(modal),guide)</visible>
                 <itemlayout width="1728" height="64">
                     <control type="label">
                         <left>16</left>

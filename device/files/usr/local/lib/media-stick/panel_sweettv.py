@@ -626,7 +626,7 @@ def set_settings(body):
 
 
 def toggle_favourite(body):
-    """POST /api/sweettv/favourite {key, title?, thumb?, meta?}."""
+    """POST /api/sweettv/favourite {key, title?, thumb?, banner?, wide_art?, meta?}."""
     if mr is None:
         raise pw.Refused(_t("Remembering places is not available on this device."), 503)
     if not isinstance(body, dict):
@@ -634,7 +634,16 @@ def toggle_favourite(body):
     key = body.get("key")
     if not isinstance(key, str) or not mr.FAV_KEY_RE.fullmatch(key):
         raise pw.Refused(_t("Wrong value."))
-    now_fav, saved_ok = mr.toggle_fav(key, {"title": body.get("title"), "thumb": body.get("thumb"), "meta": body.get("meta")})
+    now_fav, saved_ok = mr.toggle_fav(
+        key,
+        {
+            "title": body.get("title"),
+            "thumb": body.get("thumb"),
+            "banner": body.get("banner"),
+            "wide_art": body.get("wide_art"),
+            "meta": body.get("meta"),
+        },
+    )
     if not saved_ok:
         raise pw.Refused(_t("The choice could not be saved."), 500)
     return {"ok": True, "key": key, "favourite": now_fav}

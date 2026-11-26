@@ -191,6 +191,7 @@ TEXT = {
     "Soon": {"ru": "Скоро", "uk": "Незабаром"},
     "Not in the archive": {"ru": "Нет в архиве", "uk": "Немає в архіві"},
     "This programme has not aired yet.": {"ru": "Эта передача ещё не вышла в эфир.", "uk": "Ця передача ще не вийшла в ефір."},
+    "This episode has not been released yet.": {"ru": "Эта серия ещё не вышла.", "uk": "Ця серія ще не вийшла."},
     "Loading…": {"ru": "Загрузка…", "uk": "Завантаження…"},
     "No shows with episodes in the archive yet.": {"ru": "Шоу и сериалов с архивом пока нет.",
                                                    "uk": "Шоу та серіалів з архівом поки немає."},

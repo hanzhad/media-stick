@@ -8,6 +8,7 @@ from resources.lib import sweettv_data as data, sweettv_demo, sweettv_files as f
     sweettv_play as play, sweettv_sections as sections, sweettv_text as words, ui
 
 GUIDE = 400
+SHOW_EPISODES = 421
 MODAL_TABS = 410
 GUIDE_BUTTON = 212
 RESUME_BUTTON = 210
@@ -54,6 +55,7 @@ class Guide:
             self._prop("guide", "")
             self._prop("guide_title", "")
             self.getControl(GUIDE).reset()
+            self.getControl(SHOW_EPISODES).reset()
             self.getControl(MODAL_TABS).reset()
         self._select_grid(pos)
         self._focus_on(self._grid_id())
@@ -80,6 +82,7 @@ class Guide:
             self._sync_hero(card, immediate=True)
             self._prop("has_guide", "")
             self.getControl(GUIDE).reset()
+            self.getControl(SHOW_EPISODES).reset()
             self.getControl(MODAL_TABS).reset()
             demo = self.demo
             resume_doc = self.resume_doc
@@ -175,6 +178,7 @@ class Guide:
             self._sync_hero(card, immediate=True)
             self._prop("has_guide", "")
             self.getControl(GUIDE).reset()
+            self.getControl(SHOW_EPISODES).reset()
             self.getControl(MODAL_TABS).reset()
             demo = self.demo
             raw = self.raw_catalog
@@ -220,7 +224,14 @@ class Guide:
                         list(s.get("episodes") or ()),
                         key=lambda ep: (int(ep.get("number") or 0), int(ep.get("episode_id") or ep.get("id") or 0)),
                     )
-                    seasons.append({"number": s_num, "title": s_title, "episodes": eps})
+                    capped, seen_soon = [], False
+                    for ep in eps:
+                        if ep.get("coming_soon") or ep.get("playable") is False:
+                            if seen_soon:
+                                continue
+                            seen_soon = True
+                        capped.append(ep)
+                    seasons.append({"number": s_num, "title": s_title, "episodes": capped})
                 nu = sweetapi.resolve_next_up(seasons=seasons)
             else:
                 eps = detail.get("episodes") or []
@@ -228,9 +239,11 @@ class Guide:
                 nu = detail.get("next_up") or (sweetapi.resolve_next_up(episodes=eps) if eps else None)
             meta, desc = sections.detail_meta_and_desc(detail, card)
             banner = str(detail.get("banner") or card.banner or card.art or "")
+            wide_art = str(detail.get("wide_art") or card.wide_art or banner or "")
             updated_card = card._replace(
                 title=str(detail.get("title") or card.title),
                 banner=banner,
+                wide_art=wide_art,
                 meta=meta,
                 desc=desc,
                 fav=bool(detail.get("favourite", card.fav)),
@@ -248,12 +261,12 @@ class Guide:
             e_idx = int(nu["episode_index"]) if nu else 0
             self.modal_tab_idx = s_idx
             self._render_show_tab(s_idx, select_ep=e_idx)
-        self._focus_on(GUIDE)
+        self._focus_on(SHOW_EPISODES)
 
     def _render_show_tab(self, idx, select_ep=0):
         if not self.modal_seasons:
             self.modal_rows = []
-            self.getControl(GUIDE).reset()
+            self.getControl(SHOW_EPISODES).reset()
             self.getControl(MODAL_TABS).reset()
             return
         idx = max(0, min(idx, len(self.modal_seasons) - 1))
@@ -264,11 +277,12 @@ class Guide:
         tabs_ctl.reset()
         tabs_ctl.addItems(items.modal_tab_items(self.modal_tabs, idx))
         tabs_ctl.selectItem(idx)
-        list_ctl = self.getControl(GUIDE)
-        list_ctl.reset()
-        list_ctl.addItems(items.episode_items(eps))
+        fallback = (self.modal_card.wide_art or self.modal_card.banner) if self.modal_card else ""
+        ep_ctl = self.getControl(SHOW_EPISODES)
+        ep_ctl.reset()
+        ep_ctl.addItems(items.episode_items(eps, fallback_art=fallback))
         if eps:
-            list_ctl.selectItem(max(0, min(int(select_ep or 0), len(eps) - 1)))
+            ep_ctl.selectItem(max(0, min(int(select_ep or 0), len(eps) - 1)))
 
     def _refresh_show_modal_progress(self):
         with self._lock:
@@ -423,7 +437,8 @@ class Guide:
 
     def _play_modal_row(self, row, season_num=0):
         url = row.get("vod_url") or row.get("url") or ""
-        if not url:
+        if row.get("coming_soon") or row.get("playable") is False or not url:
+            ui.notify(words.tr("This episode has not been released yet."))
             return
         self._cancel_autoplay()
         resume = int(row.get("resume") or 0)
@@ -479,7 +494,8 @@ class Guide:
 
     def _modal_click(self):
         with self._lock:
-            pos = self.getControl(GUIDE).getSelectedPosition()
+            ctl_id = SHOW_EPISODES if self.modal_kind == "show" else GUIDE
+            pos = self.getControl(ctl_id).getSelectedPosition()
             if pos < 0 or pos >= len(self.modal_rows):
                 return
             row = self.modal_rows[pos]

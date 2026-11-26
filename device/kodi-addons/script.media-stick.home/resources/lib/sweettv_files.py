@@ -81,6 +81,15 @@ def recall_title_detail(title_key) -> Optional[dict]:
         return None
 
 
+def enrich_epg_art(epg_ids, now=None) -> dict:
+    """Batch-fetch EPG artwork and real titles into SweetStore via sweetapi.enrich_epg_records."""
+    try:
+        return sweetapi.enrich_epg_records(epg_ids, store=sweetstore.default_store(), now=now)
+    except Exception as e:
+        ui.log(f"epg art enrichment failed: {e!r}")
+        return {}
+
+
 def clear_store() -> None:
     """Wipe cached SWEET.TV catalog data on sign-out."""
     try:

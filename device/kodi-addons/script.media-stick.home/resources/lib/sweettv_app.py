@@ -16,14 +16,14 @@ from resources.lib import page_cache, quick_resume, single_instance, sweettv_dat
     sweettv_files as files, sweettv_items as items, sweettv_pages as pages, sweettv_play as play, \
     sweettv_sections as sections, sweettv_state as saved, sweettv_text as words, ui
 from resources.lib.sweettv_find import Find
-from resources.lib.sweettv_guide import GUIDE, GUIDE_BUTTON, MODAL_TABS, Guide
+from resources.lib.sweettv_guide import GUIDE, GUIDE_BUTTON, MODAL_TABS, SHOW_EPISODES, Guide
 from resources.lib.sweettv_jump import DigitJump
 from resources.lib.sweettv_shelf import CHIP_FIRST, CHIP_LAST, PAGE_SIZE, Shelf
 from resources.lib.sweettv_writer import StateWriter
 
 XML = "script-media-stick-sweettv.xml"
 MENU, ROW, WIDE_ROW, ACTIONS, RESUME = 100, 200, 201, 209, 210
-WIDE_SECTIONS = frozenset(("continue", "channels"))
+WIDE_SECTIONS = frozenset(("continue", "favourites", "channels"))
 BTN_ALT, BTN_FAV = 211, 213
 SIGNIN_BUTTON, RETRY = 300, 301
 PAGE_SEARCH, HERO_GUIDE = 415, 416
@@ -112,6 +112,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self._qr_dirty = False
         self._pre_search_pos = None
         self._autoplay_candidate = None
+        self._enriched_epg_ids = set()
         self._shelf_setup()
         self._find_setup()
         self._guide_setup()
@@ -234,7 +235,9 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self.signed = True
             self._prop("signed", "1")
             self._prop("chip", words.chip(False, True))
-            if self.section not in ("continue", "shows"):
+            if self.section == "favourites" and self.fav_keys:
+                pass
+            elif self.section not in ("continue", "shows"):
                 self.section = "continue" if has_cont else "shows"
             self._prop("wide_grid", "1" if self.section in WIDE_SECTIONS else "")
             self._prop("section_title", words.section_title(self.section))
@@ -242,6 +245,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self._fill_menu()
             if self.section == "continue":
                 self._show_continue()
+            elif self.section == "favourites":
+                self._show_favourites()
             else:
                 self._open_section("shows")
             self._show_mode(data.DATA, {})
@@ -363,6 +368,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                     )
         self.cards = cards
         self._sync_hero()
+        self._schedule_epg_hydration("channels", now=now)
 
     # -- the controls --
 
@@ -595,18 +601,23 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         elif key in sections.SECTION_KEYS:
             self._open_section(key, focus_cid=focus_cid, sync_menu=sync_menu)
 
-    def _show_continue(self):
+    def _show_continue(self, keep_pos=False):
         if not self.demo:
             self.resume_doc = mr.load()
         cards = self._continue_cards()
-        self._apply_cards(cards, empty_msg=words.tr("Nothing in Continue yet."))
+        self._apply_cards(cards, empty_msg=words.tr("Nothing in Continue yet."), keep_pos=keep_pos)
+        self._schedule_epg_hydration("continue", cards=cards)
 
-    def _show_favourites(self):
+    def _show_favourites(self, keep_pos=False):
         if not self.demo:
             self.favs_doc = mr.load_favs()
             self.fav_keys = mr.fav_keys(self.favs_doc)
-        cards = sections.favourites_cards(self.favs_doc, self.catalog, self.cat_names, self._now(), self.resume_doc)
-        self._apply_cards(cards, empty_msg=words.tr("No favourites yet."))
+        recall = None if self.demo else files.recall_title_detail
+        cards = sections.favourites_cards(
+            self.favs_doc, self.catalog, self.cat_names, self._now(), self.resume_doc, recall_title=recall
+        )
+        self._apply_cards(cards, empty_msg=words.tr("No favourites yet."), keep_pos=keep_pos)
+        self._schedule_epg_hydration("favourites", cards=cards)
 
     def _show_channels(self, focus_cid=""):
         if not self.catalog:
@@ -617,6 +628,81 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         now = self._now()
         cards = [sections.channel_card(c, self.cat_names, now, self.resume_doc, self.fav_keys) for c in self.shown]
         self._apply_cards(cards, focus_key=focus_cid, empty_msg=words.tr("No channels here."))
+        self._schedule_epg_hydration("channels", now=now)
+
+    def _collect_unenriched_epg_ids(self, section: str, cards=None, now=None) -> list:
+        if self.demo:
+            return []
+        ts = self._now() if now is None else now
+        ch_by_id = {c.cid: c for c in self.catalog.channels} if self.catalog else {}
+        ids, seen = [], set()
+
+        def _add(eid):
+            if eid and eid not in self._enriched_epg_ids and eid not in seen:
+                seen.add(eid)
+                ids.append(eid)
+
+        if section == "channels":
+            for ch in self.shown:
+                cur, _ = data.now_next(ch, ts)
+                if cur and cur.epg_id and not cur.image:
+                    _add(cur.epg_id)
+                if len(ids) >= 40:
+                    break
+        elif section == "favourites":
+            for card in (cards if cards is not None else self.cards):
+                if card.kind == "channel" and card.cid:
+                    ch = ch_by_id.get(card.cid)
+                    if ch is not None:
+                        cur, _ = data.now_next(ch, ts)
+                        if cur and cur.epg_id and not cur.image:
+                            _add(cur.epg_id)
+                    if len(ids) >= 40:
+                        break
+        elif section == "continue":
+            for card in (cards if cards is not None else self.cards):
+                if card.kind == "programme" and card.epg:
+                    ch = ch_by_id.get(card.cid)
+                    if not card.wide_art or (ch is not None and (card.title == ch.name or card.wide_art == ch.banner)):
+                        _add(card.epg)
+                    if len(ids) >= 40:
+                        break
+        return ids[:40]
+
+    def _schedule_epg_hydration(self, section: str, cards=None, now=None):
+        if self.demo:
+            return
+        with self._lock:
+            epg_ids = self._collect_unenriched_epg_ids(section, cards=cards, now=now)
+            if not epg_ids:
+                return
+            self._enriched_epg_ids.update(epg_ids)
+        self._in_worker(self._hydrate_epg_art, epg_ids)
+
+    def _hydrate_epg_art(self, epg_ids):
+        if self.demo or self._stop.is_set() or not epg_ids:
+            return
+        now = self._now()
+        updated = files.enrich_epg_art(epg_ids, now=now)
+        if not updated or self._stop.is_set():
+            return
+        snap = files.snapshot(now, self.catalog, None, self.mtime)
+        with self._lock:
+            if self._stop.is_set():
+                return
+            if snap.catalog is not None and not snap.catalog.error:
+                self.catalog = snap.catalog
+                self.cat_names = dict(snap.catalog.categories)
+                self.stamp, self.mtime = snap.stamp, snap.mtime
+                if self.shown:
+                    by_id = {c.cid: c for c in self.catalog.channels}
+                    self.shown = [by_id[c.cid] for c in self.shown if c.cid in by_id]
+            if self.section == "channels":
+                self._refresh_channels(now)
+            elif self.section == "continue" and not self.page_query:
+                self._show_continue(keep_pos=True)
+            elif self.section == "favourites" and not self.page_query:
+                self._show_favourites(keep_pos=True)
 
     # -- keys & clicks --
 
@@ -649,7 +735,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if self.mode == data.DATA:
             digit = data.digit_of(action_id, action.getButtonCode())
             if self._modal_open():
-                if self._focus() == GUIDE and action_id in (ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT) and self.modal_tabs:
+                if self.modal_kind == "guide" and self._focus() == GUIDE and action_id in (ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT) and self.modal_tabs:
                     step = -1 if action_id == ACTION_MOVE_LEFT else 1
                     target = max(0, min(len(self.modal_tabs) - 1, self.modal_tab_idx + step))
                     if target != self.modal_tab_idx:
@@ -723,7 +809,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._chip_click(control_id)
             elif control_id == MODAL_TABS:
                 self._modal_select_tab(self.getControl(MODAL_TABS).getSelectedPosition())
-            elif control_id == GUIDE:
+            elif control_id in (GUIDE, SHOW_EPISODES):
                 self._modal_click()
             elif control_id == SIGNIN_BUTTON:
                 self._signin()
@@ -858,6 +944,12 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self._io = play.PlayerIO()
         return self._io
 
+    @staticmethod
+    def _ep_playable(ep) -> bool:
+        return isinstance(ep, dict) and not ep.get("coming_soon") and ep.get("playable") is not False and bool(
+            ep.get("vod_url") or ep.get("url")
+        )
+
     def _next_episode_after(self, session):
         if self.modal_kind != "show" or not self.modal_seasons or session is None:
             return None
@@ -872,15 +964,21 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                                  and str(ep.get("epg") or "") == session.epg)
                 if match_url or match_epg:
                     if not self.modal_flat_tv:
-                        if ei + 1 < len(eps):
-                            return dict(eps[ei + 1]), int(season.get("number") or (si + 1))
-                        if si + 1 < len(self.modal_seasons):
-                            nxt_season = self.modal_seasons[si + 1]
-                            nxt_eps = nxt_season.get("episodes") or ()
-                            if nxt_eps:
-                                return dict(nxt_eps[0]), int(nxt_season.get("number") or (si + 2))
-                    elif ei > 0:
-                        return dict(eps[ei - 1]), 1
+                        s_num = int(season.get("number") or (si + 1))
+                        for cand in eps[ei + 1:]:
+                            if self._ep_playable(cand):
+                                return dict(cand), s_num
+                        for nsi in range(si + 1, len(self.modal_seasons)):
+                            nxt_season = self.modal_seasons[nsi]
+                            nxt_num = int(nxt_season.get("number") or (nsi + 1))
+                            for cand in (nxt_season.get("episodes") or ()):
+                                if self._ep_playable(cand):
+                                    return dict(cand), nxt_num
+                    else:
+                        for idx in range(ei - 1, -1, -1):
+                            cand = eps[idx]
+                            if self._ep_playable(cand):
+                                return dict(cand), 1
                     return None
         return None
 
@@ -957,8 +1055,9 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self._show_continue()
         if self.mode == data.DATA and self._focus() not in (MENU, ROW, WIDE_ROW, PAGE_SEARCH, HERO_PLAY, HERO_ALT,
                                                              HERO_GUIDE, HERO_FAV, RESUME, BTN_ALT, GUIDE_BUTTON,
-                                                             BTN_FAV, GUIDE):
-            self._focus_on(GUIDE if self._modal_open() else self._grid_id())
+                                                             BTN_FAV, GUIDE, SHOW_EPISODES):
+            target = (SHOW_EPISODES if self.modal_kind == "show" else GUIDE) if self._modal_open() else self._grid_id()
+            self._focus_on(target)
 
     def _preview_start(self):
         card = self._focused_card()
@@ -979,10 +1078,20 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                     del items_map[card.fav_key]
                     added = False
                 else:
-                    items_map[card.fav_key] = {"title": card.title, "thumb": card.art, "at": int(self._now())}
+                    items_map[card.fav_key] = {
+                        "title": card.title,
+                        "thumb": card.art,
+                        "banner": card.banner,
+                        "wide_art": card.wide_art,
+                        "at": int(self._now()),
+                    }
                     added = True
             else:
-                added, _ = mr.toggle_fav(card.fav_key, {"title": card.title, "thumb": card.art}, now=self._now())
+                added, _ = mr.toggle_fav(
+                    card.fav_key,
+                    {"title": card.title, "thumb": card.art, "banner": card.banner, "wide_art": card.wide_art},
+                    now=self._now(),
+                )
                 self.favs_doc = mr.load_favs()
             self.fav_keys = set(self.favs_doc["items"].keys())
             updated = card._replace(fav=added)
