@@ -1,66 +1,76 @@
-"""SWEET.TV app: where its data lives and how it is read: the plugin's channel list (special://temp), the
+"""SWEET.TV app: where its data lives and how it is read: SweetStore (SQLite catalog & EPG), the
 add-on's own state file (see sweettv_state), the plugin's `logged` setting and the network the stick is on.
-Thin: each function is one look at a file; what to make of it is sweettv_data's business."""
-import json
+Thin: each function is one look at a store or file; what to make of it is sweettv_data's business.
+"""
 import os
+import sys
 from typing import NamedTuple, Optional
 
 import xbmcgui
 import xbmcvfs
 
-from resources.lib import apps, net, sweettv_data as data, ui
+LIB_DIR = "/usr/local/lib/media-stick"
+if os.path.isdir(LIB_DIR) and LIB_DIR not in sys.path:
+    sys.path.insert(0, LIB_DIR)
 
-CHANNEL_FILE = "special://temp/channelList.json"
+import mediastick_sweetapi as sweetapi  # noqa: E402
+import mediastick_sweetstore as sweetstore  # noqa: E402
+from resources.lib import apps, net, sweettv_data as data, ui  # noqa: E402
+
 QR_FAILED = set()
-_LAST_RAW = (None, None, None)
-
-
-def channel_path():
-    return xbmcvfs.translatePath(CHANNEL_FILE)
+_LAST_RAW = (None, None)
 
 
 def state_path():
     return os.path.join(xbmcvfs.translatePath(apps.RECENT_DIR), "sweettv.json")
 
 
-def file_stamp(path):
-    try:
-        st = os.stat(path)
-    except OSError:
-        return None
-    return st.st_mtime_ns, st.st_size
+def _payload_stamp(payload: dict) -> tuple:
+    return (
+        int(payload.get("updated_at") or 0),
+        len(payload.get("list") or ()),
+        str(payload.get("status") or ""),
+        str(payload.get("sync_error") or ""),
+    )
 
 
-def read_catalog(path, now):
-    """The catalog in the plugin's file, or None when it cannot be read now (missing, half written, not JSON)."""
+def read_raw(now=None):
+    """The normalized SweetStore channel payload as a dict, or None when it cannot be read."""
     global _LAST_RAW
     try:
-        with open(path, "rb") as f:
-            raw = json.load(f)
-    except (OSError, ValueError, MemoryError) as e:
-        ui.log(f"channel list not readable: {e!r}")
-        return None
-    if isinstance(raw, dict):
-        _LAST_RAW = (path, file_stamp(path), raw)
-    return data.parse_catalog(raw, now)
-
-
-def read_raw(path):
-    """The plugin's channel list as it is (a dict), or None when it cannot be read now."""
-    global _LAST_RAW
-    stamp = file_stamp(path)
-    if _LAST_RAW[0] == path and _LAST_RAW[1] == stamp and _LAST_RAW[2] is not None:
-        return _LAST_RAW[2]
-    try:
-        with open(path, "rb") as f:
-            raw = json.load(f)
-    except (OSError, ValueError, MemoryError) as e:
-        ui.log(f"channel list not readable for the sections: {e!r}")
-        return None
-    if isinstance(raw, dict):
-        _LAST_RAW = (path, stamp, raw)
-        return raw
+        payload = sweetstore.default_store().get_channels_payload(now=now)
+    except Exception as e:
+        ui.log(f"channel store not readable for the sections: {e!r}")
+        return _LAST_RAW[1]
+    if isinstance(payload, dict) and payload:
+        _LAST_RAW = (_payload_stamp(payload), payload)
+        return payload
     return None
+
+
+def channel_day(cid, day_key: str, now=None, tr=None) -> list:
+    """Stored programmes for `(cid, day_key)` formatted with local `when` labels."""
+    try:
+        rows = sweetstore.default_store().channel_day(cid, day_key, now=now)
+    except Exception as e:
+        ui.log(f"channel day read failed: {e!r}")
+        return []
+    ref_now = int(now) if now is not None else None
+    out = []
+    for r in rows:
+        item = dict(r)
+        if not item.get("when") and item.get("start"):
+            item["when"] = sweetapi.when_text(int(item["start"]), ref_now, tr)
+        out.append(item)
+    return out
+
+
+def clear_store() -> None:
+    """Wipe cached SWEET.TV catalog data on sign-out."""
+    try:
+        sweetstore.default_store().clear()
+    except Exception as e:
+        ui.log(f"channel store clear failed: {e!r}")
 
 
 def language() -> str:
@@ -98,30 +108,41 @@ def network():
 class Snapshot(NamedTuple):
     signed: bool
     catalog: Optional[data.Catalog]
-    stamp: Optional[tuple]       # (mtime_ns, size) of the file the catalog came from
+    stamp: Optional[tuple]       # (updated_at, count, status, sync_error) of the store payload
     mtime: Optional[float]
     has_file: bool
-    unreadable: bool             # the file is there but could not be read this time
+    unreadable: bool             # the store could not be read this time
 
 
 def snapshot(now, catalog, stamp, mtime) -> Snapshot:
     """What there is to show now. `catalog`, `stamp` and `mtime` are what the last good look found: they are
-    reused while the file is unchanged (parsing once per change), and kept when it cannot be read this time."""
-    signed, path = signed_in(), channel_path()
-    found = file_stamp(path)
+    reused while the store is unchanged (parsing once per change), and kept when it cannot be read this time."""
+    global _LAST_RAW
+    signed = signed_in()
+    if signed is False:
+        return Snapshot(False, None, None, None, False, False)
+    try:
+        payload = sweetstore.default_store().get_channels_payload(now=now)
+    except Exception as e:
+        ui.log(f"channel store not readable: {e!r}")
+        return Snapshot(True if signed is None else True, catalog, stamp, mtime, True, True)
+    has_data = isinstance(payload, dict) and bool(payload)
     if signed is None:
-        signed = found is not None
+        signed = isinstance(payload, dict) and bool(payload.get("list"))
     if not signed:
-        return Snapshot(False, None, None, None, found is not None, False)
-    if found is None:
+        return Snapshot(False, None, None, None, has_data, False)
+    if not has_data:
         return Snapshot(True, None, None, None, False, False)
-    if found == stamp and catalog is not None:
-        return Snapshot(True, catalog, found, mtime, True, False)
-    fresh = read_catalog(path, now)
+    new_stamp = _payload_stamp(payload)
+    if new_stamp == stamp and catalog is not None:
+        return Snapshot(True, catalog, new_stamp, mtime, True, False)
+    fresh = data.parse_catalog(payload, now)
+    _LAST_RAW = (new_stamp, payload)
     if fresh is None or (fresh.error and catalog is not None and catalog.channels):
-        # half written, perhaps, or the service had a bad moment: what is shown stays, the next look tries again
         return Snapshot(True, catalog, stamp, mtime, True, True)
-    return Snapshot(True, fresh, found, found[0] / 1e9, True, False)
+    updated_at = int(payload.get("updated_at") or 0)
+    new_mtime = float(updated_at) if updated_at > 0 else float(now)
+    return Snapshot(True, fresh, new_stamp, new_mtime, True, False)
 
 
 def phone_page():

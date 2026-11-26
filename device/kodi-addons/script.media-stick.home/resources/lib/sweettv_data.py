@@ -1,9 +1,8 @@
-"""SWEET.TV app, the part that needs no Kodi: reading the plugin's channel list, categories, what is on
+"""SWEET.TV app, the part that needs no Kodi: reading the channel catalog, categories, what is on
 now and next, what the window shows. Everything here takes ready data and returns data.
 
-The plugin plugin.video.sweettv (0.1.13) saves the answer of TvService/GetChannels.json, unchanged, as
-special://temp/channelList.json every 15 minutes once it is logged in (it asks for the 10 programmes before now
-and the 100 after). What is read from it:
+SweetStore reconstructs the normalized answer of TvService/GetChannels.json from SQLite (with the
+recent and upcoming programmes per channel). What is read from it:
 
   status                       "OK"
   list[]                       id, name, number, icon_v2_url (icon_url), category[] (ids), catchup,

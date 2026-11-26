@@ -276,7 +276,7 @@ def demo_top_search(now, logo_dir="") -> dict:
         "ok": True,
         "items": [
             {"kind": "movie", "id": "5000", "title": "Harbour Lights", "subtitle": "2020", "cid": "", "epg": "",
-             "start": 0, "stop": 0, "channel_name": "", "when": "", "live": False, "playable_in_archive": False,
+             "start": 0, "stop": 0, "channel_name": "", "when": "", "live": False, "can_archive": False,
              "playable": True, "available": True, "vod_url": "plugin://plugin.video.sweettv/playvod/5000|null|10",
              "preview": "", "image_url": _demo_logo(logo_dir, 0), "repeats": 0, "more": ""},
         ],
@@ -289,7 +289,7 @@ def demo_search(needle, now, logo_dir="") -> dict:
     pool = demo_top_search(now, logo_dir)["items"] + [
         {"kind": "programme", "id": "101001", "title": "Morning Briefing", "subtitle": "Aurora News 24",
          "cid": "101", "epg": "101001", "start": int(now) - 3600, "stop": int(now) - 1800,
-         "channel_name": "Aurora News 24", "when": "07:00", "live": False, "playable_in_archive": True,
+         "channel_name": "Aurora News 24", "when": "07:00", "live": False, "can_archive": True,
          "playable": True, "available": True, "preview": "", "image_url": _demo_logo(logo_dir, 2),
          "repeats": 0, "more": ""},
     ]
@@ -308,7 +308,7 @@ def demo_day(cid, day_unix, raw, now) -> dict:
         items.append({
             "epg": str(int(cid) * 1000 + i), "cid": str(cid), "title": f"{name} Show {i + 1}",
             "start": st, "stop": sp, "when": f"{8 + i * 2:02d}:00",
-            "live": st <= now < sp, "playable_in_archive": st < now, "available": True,
+            "live": st <= now < sp, "can_archive": st < now, "available": True,
             "preview": "", "season": 0, "episode": 0, "show_id": "",
         })
     return {"ok": True, "cid": str(cid), "name": name, "date": "2027-01-15",

@@ -45,6 +45,7 @@ def card_props(card: sections.Card) -> dict:
         "next": card.next,
         "nextline": card.nextline,
         "resume": card.resume_label,
+        "art_mode": card.art_mode,
     }
 
 
@@ -79,8 +80,11 @@ def modal_tab_items(tabs, active_idx=0) -> list:
 
 def episode_items(episodes) -> list:
     out = []
-    for ep in episodes:
-        title = str(ep.get("title") or "")
+    for idx, ep in enumerate(episodes):
+        title = str(ep.get("title") or "").strip()
+        num = int(ep.get("number") or 0)
+        if not title:
+            title = words.tr("{n} episode").format(n=num or (idx + 1))
         dur = int(ep.get("duration") or 0)
         res = int(ep.get("resume") or 0)
         done = bool(ep.get("watched"))
@@ -93,7 +97,6 @@ def episode_items(episodes) -> list:
         else:
             badge = ""
         li = xbmcgui.ListItem(title, badge, offscreen=True)
-        num = int(ep.get("number") or 0)
         li.setProperty("when", words.tr("E{n}").format(n=num) if num else "")
         li.setProperty("kind", "resume" if res > 0 else ("done" if done else ""))
         out.append(li)
@@ -107,7 +110,7 @@ def guide_items(rows) -> list:
         if r.get("live"):
             badge = words.tr("Live")
             kind = "live"
-        elif r.get("playable_in_archive"):
+        elif r.get("can_archive"):
             badge = words.tr("Archive")
             kind = "archive"
         else:
