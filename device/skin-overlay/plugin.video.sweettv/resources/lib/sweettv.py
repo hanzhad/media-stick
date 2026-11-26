@@ -244,8 +244,8 @@ def refreshChannelList():
             if _ms_store is not None:
                 try:
                     _ms_store.default_store().upsert_channels(jsdata, now=timestamp)
-                except Exception:
-                    pass
+                except Exception as e:
+                    xbmc.log('media-stick: SWEET.TV SweetStore sync failed: ' + type(e).__name__, xbmc.LOGWARNING)
             # media-stick end
     else:
         xbmc.log("Failed to update channel list", xbmc.LOGERROR)

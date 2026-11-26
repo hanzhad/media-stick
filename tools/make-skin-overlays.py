@@ -237,8 +237,8 @@ OVERLAYS = [
          "            if _ms_store is not None:\n"
          "                try:\n"
          "                    _ms_store.default_store().upsert_channels(jsdata, now=timestamp)\n"
-         "                except Exception:\n"
-         "                    pass\n"
+         "                except Exception as e:\n"
+         "                    xbmc.log('media-stick: SWEET.TV SweetStore sync failed: ' + type(e).__name__, xbmc.LOGWARNING)\n"
          "            # media-stick end\n"),
         ('        xbmc.log("Failed to update channel list", xbmc.LOGERROR)\n',
          '        xbmc.log("Failed to update channel list", xbmc.LOGERROR)\n'
