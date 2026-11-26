@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- SWEET.TV 1080p Gallery & Full-Screen Hero Hubs: midnight-navy (#0C111B / #121927 / #1B263B) & turquoise (#00D2C6 / #14E0C8).
-     Slide-out rail (100), togglebutton filter chips (401..408), 5x2 poster gallery (200), framed browse hero (419) + 4x1 wide grid (201),
+     Slide-out rail (100), horizontal filter chips list (409), 5x2 poster gallery (200), framed browse hero (419) + 4x1 wide grid (201),
      unified 1920x1080 Hero Hubs (209: 210..213, 410 tabs, 400 list), sign-in (300) and status (301). -->
 <window>
     <backgroundcolor>0xff0c111b</backgroundcolor>
@@ -131,15 +131,13 @@
                 <ondown condition="String.IsEmpty(Window.Property(filters)) + String.IsEmpty(Window.Property(wide_grid))">200</ondown>
             </control>
 
-            <!-- Auto-width Filter Chips Row (401..408 inside 409 grouplist) -->
-            <control type="grouplist" id="409">
+            <!-- Horizontal Filter Chips List (409) -->
+            <control type="list" id="409">
                 <left>96</left>
                 <top>86</top>
                 <width>1776</width>
                 <height>48</height>
                 <orientation>horizontal</orientation>
-                <itemgap>12</itemgap>
-                <usecontrolcoords>false</usecontrolcoords>
                 <scrolltime>180</scrolltime>
                 <onleft>100</onleft>
                 <onup>415</onup>
@@ -147,142 +145,118 @@
                 <ondown condition="!String.IsEmpty(Window.Property(wide_grid)) + [!String.IsEmpty(Window.Property(has_play)) | !String.IsEmpty(Window.Property(has_guide))]">419</ondown>
                 <ondown condition="!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(has_play)) + String.IsEmpty(Window.Property(has_guide))">201</ondown>
                 <visible>!String.IsEmpty(Window.Property(filters))</visible>
-                <control type="togglebutton" id="401">
-                    <width min="120" max="320">auto</width>
-                    <height>48</height>
-                    <font>Reg22</font>
-                    <textcolor>FFB0BCCF</textcolor>
-                    <focusedcolor>FF0C111B</focusedcolor>
-                    <texturenofocus border="24" colordiffuse="FF121927">sweettv-chip.png</texturenofocus>
-                    <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                    <alttexturenofocus border="24">sweettv-chip-active.png</alttexturenofocus>
-                    <alttexturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</alttexturefocus>
-                    <usealttexture>!String.IsEmpty(Window.Property(chip_active_401))</usealttexture>
-                    <textoffsetx>24</textoffsetx>
-                    <align>center</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[Window.Property(chip_401)]</label>
-                    <visible>!String.IsEmpty(Window.Property(chip_401))</visible>
-                </control>
-                <control type="togglebutton" id="402">
-                    <width min="120" max="320">auto</width>
-                    <height>48</height>
-                    <font>Reg22</font>
-                    <textcolor>FFB0BCCF</textcolor>
-                    <focusedcolor>FF0C111B</focusedcolor>
-                    <texturenofocus border="24" colordiffuse="FF121927">sweettv-chip.png</texturenofocus>
-                    <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                    <alttexturenofocus border="24">sweettv-chip-active.png</alttexturenofocus>
-                    <alttexturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</alttexturefocus>
-                    <usealttexture>!String.IsEmpty(Window.Property(chip_active_402))</usealttexture>
-                    <textoffsetx>24</textoffsetx>
-                    <align>center</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[Window.Property(chip_402)]</label>
-                    <visible>!String.IsEmpty(Window.Property(chip_402))</visible>
-                </control>
-                <control type="togglebutton" id="403">
-                    <width min="120" max="320">auto</width>
-                    <height>48</height>
-                    <font>Reg22</font>
-                    <textcolor>FFB0BCCF</textcolor>
-                    <focusedcolor>FF0C111B</focusedcolor>
-                    <texturenofocus border="24" colordiffuse="FF121927">sweettv-chip.png</texturenofocus>
-                    <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                    <alttexturenofocus border="24">sweettv-chip-active.png</alttexturenofocus>
-                    <alttexturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</alttexturefocus>
-                    <usealttexture>!String.IsEmpty(Window.Property(chip_active_403))</usealttexture>
-                    <textoffsetx>24</textoffsetx>
-                    <align>center</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[Window.Property(chip_403)]</label>
-                    <visible>!String.IsEmpty(Window.Property(chip_403))</visible>
-                </control>
-                <control type="togglebutton" id="404">
-                    <width min="120" max="320">auto</width>
-                    <height>48</height>
-                    <font>Reg22</font>
-                    <textcolor>FFB0BCCF</textcolor>
-                    <focusedcolor>FF0C111B</focusedcolor>
-                    <texturenofocus border="24" colordiffuse="FF121927">sweettv-chip.png</texturenofocus>
-                    <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                    <alttexturenofocus border="24">sweettv-chip-active.png</alttexturenofocus>
-                    <alttexturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</alttexturefocus>
-                    <usealttexture>!String.IsEmpty(Window.Property(chip_active_404))</usealttexture>
-                    <textoffsetx>24</textoffsetx>
-                    <align>center</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[Window.Property(chip_404)]</label>
-                    <visible>!String.IsEmpty(Window.Property(chip_404))</visible>
-                </control>
-                <control type="togglebutton" id="405">
-                    <width min="120" max="320">auto</width>
-                    <height>48</height>
-                    <font>Reg22</font>
-                    <textcolor>FFB0BCCF</textcolor>
-                    <focusedcolor>FF0C111B</focusedcolor>
-                    <texturenofocus border="24" colordiffuse="FF121927">sweettv-chip.png</texturenofocus>
-                    <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                    <alttexturenofocus border="24">sweettv-chip-active.png</alttexturenofocus>
-                    <alttexturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</alttexturefocus>
-                    <usealttexture>!String.IsEmpty(Window.Property(chip_active_405))</usealttexture>
-                    <textoffsetx>24</textoffsetx>
-                    <align>center</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[Window.Property(chip_405)]</label>
-                    <visible>!String.IsEmpty(Window.Property(chip_405))</visible>
-                </control>
-                <control type="togglebutton" id="406">
-                    <width min="120" max="320">auto</width>
-                    <height>48</height>
-                    <font>Reg22</font>
-                    <textcolor>FFB0BCCF</textcolor>
-                    <focusedcolor>FF0C111B</focusedcolor>
-                    <texturenofocus border="24" colordiffuse="FF121927">sweettv-chip.png</texturenofocus>
-                    <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                    <alttexturenofocus border="24">sweettv-chip-active.png</alttexturenofocus>
-                    <alttexturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</alttexturefocus>
-                    <usealttexture>!String.IsEmpty(Window.Property(chip_active_406))</usealttexture>
-                    <textoffsetx>24</textoffsetx>
-                    <align>center</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[Window.Property(chip_406)]</label>
-                    <visible>!String.IsEmpty(Window.Property(chip_406))</visible>
-                </control>
-                <control type="togglebutton" id="407">
-                    <width min="120" max="320">auto</width>
-                    <height>48</height>
-                    <font>Reg22</font>
-                    <textcolor>FFB0BCCF</textcolor>
-                    <focusedcolor>FF0C111B</focusedcolor>
-                    <texturenofocus border="24" colordiffuse="FF121927">sweettv-chip.png</texturenofocus>
-                    <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                    <alttexturenofocus border="24">sweettv-chip-active.png</alttexturenofocus>
-                    <alttexturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</alttexturefocus>
-                    <usealttexture>!String.IsEmpty(Window.Property(chip_active_407))</usealttexture>
-                    <textoffsetx>24</textoffsetx>
-                    <align>center</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[Window.Property(chip_407)]</label>
-                    <visible>!String.IsEmpty(Window.Property(chip_407))</visible>
-                </control>
-                <control type="togglebutton" id="408">
-                    <width min="120" max="320">auto</width>
-                    <height>48</height>
-                    <font>Reg22</font>
-                    <textcolor>FFB0BCCF</textcolor>
-                    <focusedcolor>FF0C111B</focusedcolor>
-                    <texturenofocus border="24" colordiffuse="FF121927">sweettv-chip.png</texturenofocus>
-                    <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                    <alttexturenofocus border="24">sweettv-chip-active.png</alttexturenofocus>
-                    <alttexturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</alttexturefocus>
-                    <usealttexture>!String.IsEmpty(Window.Property(chip_active_408))</usealttexture>
-                    <textoffsetx>24</textoffsetx>
-                    <align>center</align>
-                    <aligny>center</aligny>
-                    <label>$INFO[Window.Property(chip_408)]</label>
-                    <visible>!String.IsEmpty(Window.Property(chip_408))</visible>
-                </control>
+                <itemlayout width="222" height="48">
+                    <control type="image">
+                        <left>0</left>
+                        <top>0</top>
+                        <width>210</width>
+                        <height>48</height>
+                        <texture border="24">sweettv-chip-active.png</texture>
+                        <visible>!String.IsEmpty(ListItem.Property(active))</visible>
+                    </control>
+                    <control type="image">
+                        <left>0</left>
+                        <top>0</top>
+                        <width>210</width>
+                        <height>48</height>
+                        <texture border="24">sweettv-chip.png</texture>
+                        <colordiffuse>FF121927</colordiffuse>
+                        <visible>String.IsEmpty(ListItem.Property(active))</visible>
+                    </control>
+                    <control type="label">
+                        <left>14</left>
+                        <top>0</top>
+                        <width>182</width>
+                        <height>48</height>
+                        <font>Reg22</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <selectedcolor>FFFFFFFF</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(active))</visible>
+                    </control>
+                    <control type="label">
+                        <left>14</left>
+                        <top>0</top>
+                        <width>182</width>
+                        <height>48</height>
+                        <font>Reg22</font>
+                        <textcolor>FFB0BCCF</textcolor>
+                        <selectedcolor>FFB0BCCF</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>String.IsEmpty(ListItem.Property(active))</visible>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="222" height="48">
+                    <control type="image">
+                        <left>0</left>
+                        <top>0</top>
+                        <width>210</width>
+                        <height>48</height>
+                        <texture border="24">sweettv-chip.png</texture>
+                        <colordiffuse>FF00D2C6</colordiffuse>
+                        <visible>Control.HasFocus(409)</visible>
+                    </control>
+                    <control type="image">
+                        <left>0</left>
+                        <top>0</top>
+                        <width>210</width>
+                        <height>48</height>
+                        <texture border="24">sweettv-chip-active.png</texture>
+                        <visible>!Control.HasFocus(409) + !String.IsEmpty(ListItem.Property(active))</visible>
+                    </control>
+                    <control type="image">
+                        <left>0</left>
+                        <top>0</top>
+                        <width>210</width>
+                        <height>48</height>
+                        <texture border="24">sweettv-chip.png</texture>
+                        <colordiffuse>FF121927</colordiffuse>
+                        <visible>!Control.HasFocus(409) + String.IsEmpty(ListItem.Property(active))</visible>
+                    </control>
+                    <control type="label">
+                        <left>14</left>
+                        <top>0</top>
+                        <width>182</width>
+                        <height>48</height>
+                        <font>Reg22</font>
+                        <textcolor>FF0C111B</textcolor>
+                        <selectedcolor>FF0C111B</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>Control.HasFocus(409)</visible>
+                    </control>
+                    <control type="label">
+                        <left>14</left>
+                        <top>0</top>
+                        <width>182</width>
+                        <height>48</height>
+                        <font>Reg22</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <selectedcolor>FFFFFFFF</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>!Control.HasFocus(409) + !String.IsEmpty(ListItem.Property(active))</visible>
+                    </control>
+                    <control type="label">
+                        <left>14</left>
+                        <top>0</top>
+                        <width>182</width>
+                        <height>48</height>
+                        <font>Reg22</font>
+                        <textcolor>FFB0BCCF</textcolor>
+                        <selectedcolor>FFB0BCCF</selectedcolor>
+                        <align>center</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>!Control.HasFocus(409) + String.IsEmpty(ListItem.Property(active))</visible>
+                    </control>
+                </focusedlayout>
             </control>
 
             <!-- Grid 1: Vertical Poster Gallery 5x2 (Search, Favourites, Shows, Series, Movies) -->

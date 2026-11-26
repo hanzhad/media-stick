@@ -83,6 +83,16 @@ def card_item(card: sections.Card, wide=False) -> xbmcgui.ListItem:
     return li
 
 
+def chip_items(chips, active_key="") -> list:
+    out = []
+    for key, label in (chips or ()):
+        li = xbmcgui.ListItem(str(label), offscreen=True)
+        li.setProperty("key", str(key))
+        li.setProperty("active", "1" if key == active_key else "")
+        out.append(li)
+    return out
+
+
 def modal_tab_items(tabs, active_idx=0) -> list:
     out = []
     for idx, (_, label) in enumerate(tabs):

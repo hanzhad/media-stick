@@ -1565,14 +1565,14 @@ class Channels(WindowCase):
         self.assertEqual(window.focus, 201)
         self.press(window, 58 + 7)
         self.assertEqual(window.getProperty("jump"), "No channel 7")
-        self.assertEqual(window.controls[ROW].selected, 1)
+        self.assertEqual(window.controls[201].selected, 1)
 
     def test_a_single_digit_waits_then_goes(self):
         window = self.ready(raw=answer(chan(1, "A", number=1), chan(2, "B", number=12)))
-        window.controls[ROW].selected = 1
+        window.controls[201].selected = 1
         with mock.patch.object(D, "DIGIT_WAIT", 0.03):
             self.press(window, 58 + 1)
-            self.assertTrue(wait_for(lambda: window.controls[ROW].selected == 0 and window.getProperty("jump") == ""))
+            self.assertTrue(wait_for(lambda: window.controls[201].selected == 0 and window.getProperty("jump") == ""))
 
     def test_back_clears_a_typed_number_first_then_leaves(self):
         window = self.ready(raw=answer(chan(1, "A", number=1), chan(2, "B", number=12)))
@@ -1596,7 +1596,7 @@ class Channels(WindowCase):
 
     def test_a_catalog_that_changes_keeps_the_focused_channel_and_category(self):
         window = self.ready()
-        window.onClick(404)
+        window.controls[409].selectItem(1); window.onClick(409)
         window.controls[window._grid_id()].selected = 1
         write_list(self.raw())
         window._look()
@@ -1605,7 +1605,7 @@ class Channels(WindowCase):
         write_list(answer(chan(10, "Ten", number=10)))              # the categories are gone: back to the default
         window._look()
         self.assertEqual(self.shown(window), ["Ten"])
-        self.assertEqual(window.filter_key, "all")
+        self.assertEqual(window.filter_key, "main")
 
     def test_only_the_polling_the_budget_allows(self):
         waits = []
@@ -1729,7 +1729,7 @@ class Language(WindowCase):
         self.assertEqual([i.label for i in menu], ["Поиск", "Продолжить", "Избранное", "Шоу", "Сериалы", "Фильмы", "ТВ-каналы"])
         self.assertEqual(window.getProperty("hint"),
                          W.hint_line(True, True))
-        for word in ("Смотреть", "Меню", "Избранное", "0-9", "Номер канала", "Вверх", "Программа и продолжение"):
+        for word in ("Смотреть", "Меню", "Разделы", "0-9", "Номер канала", "Вверх", "Программа и продолжение"):
             self.assertIn(word, window.getProperty("hint"))
         for word in ("Watch", "Favourite", "Channel number", "Guide and continue"):
             self.assertNotIn(word, window.getProperty("hint"))
@@ -2194,7 +2194,7 @@ class CatalogSections(WindowCase):
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: len(seen_calls) >= 1))
             m_cfg.assert_called()
-            window.onClick(402)
+            window.controls[409].selectItem(1); window.onClick(409)
             self.assertTrue(wait_for(lambda: any(c[1] != 0 or c[2] != 1 for c in seen_calls)), seen_calls)
 
     def test_infinite_pagination_loads_next_page_when_focusing_last_row(self):
@@ -2287,6 +2287,7 @@ class CatalogSections(WindowCase):
                 ("g:58", "Триллеры"),
                 ("g:60", "Фантастика"),
                 ("g:62", "Приключения"),
+                ("g:70", "Семейные"),
             ],
         )
 
@@ -2319,8 +2320,9 @@ class ChannelsSection(WindowCase):
         self.assertTrue(wait_for(lambda: window.mode == D.DATA))
         window.controls[MENU].selected = 6
         window.onClick(MENU)
-        self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) == 3))
-        self.assertEqual(self.shown(window), ["Live One", "Premium Two", "24/7 Comedy"])
+        self.assertTrue(wait_for(lambda: len(window.controls[201].items) == 2))
+        self.assertEqual(self.shown(window), ["Live One", "Premium Two"])
+        window.controls[409].selectItem(len(window.controls[409].items) - 1); window.onClick(409)
         fast_idx = next((i for i, item in enumerate(window.controls[409].items) if item.getProperty("key") == "fast"), None)
         self.assertIsNotNone(fast_idx, "24/7 FAST chip missing from 409 list")
         window.controls[409].selectItem(fast_idx)
@@ -2900,12 +2902,12 @@ class Skin(unittest.TestCase):
             ("wide_logo_rail_focused", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1",
                                         "hero_art": "https://img/logo.png", "hero_is_logo": "1",
                                         "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
-                                        "has_guide": "1", "has_fav": "1", **chip_props}, 100, wide_items),
-            ("poster_grid_focused", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1", **chip_props}, 200, poster_items),
+                                        "has_guide": "1", "has_fav": "1"}, 100, wide_items),
+            ("poster_grid_focused", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1"}, 200, poster_items),
             ("wide_grid_focused", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1",
                                    "hero_art": "https://img/bg.jpg", "hero_is_logo": "",
                                    "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
-                                   "has_guide": "1", "has_fav": "1", **chip_props}, 201, wide_items),
+                                   "has_guide": "1", "has_fav": "1"}, 201, wide_items),
         ):
             with self.subTest(state=state_name):
                 vis_count = count_visible_textures(root, wprops, focus_id, container_items=c_items)
@@ -3836,7 +3838,7 @@ class SectionSwitchWideGridAndHydrationTests(WindowCase):
                 ("shows", 200, ["Holostyak", "MasterChef"], "1"),
                 ("series", 200, ["Series One"], "1"),
                 ("movies", 200, ["Film One"], "1"),
-                ("channels", 201, ["СТБ HD", "24/7 Комедия"], "1"),
+                ("channels", 201, ["СТБ HD"], "1"),
                 ("continue", 201, ["Continue Film"], ""),
                 ("favourites", 201, ["Fav Film"], ""),
                 ("search", 200, ["Top Search Hit"], "1"),
@@ -3861,7 +3863,7 @@ class SectionSwitchWideGridAndHydrationTests(WindowCase):
             # Clicking "fast" ("24/7") chip in 409 list on channels filters to 24/7 channels
             window.controls[MENU].selected = rail_order.index("channels")
             window.onClick(MENU)
-            self.assertTrue(wait_for(lambda: len(window.controls[201].items) == 2))
+            self.assertTrue(wait_for(lambda: len(window.controls[201].items) == 1))
             fast_idx = next(i for i, item in enumerate(window.controls[409].items) if item.getProperty("key") == "fast")
             window.controls[409].selectItem(fast_idx)
             window.onClick(409)
@@ -4657,8 +4659,8 @@ class Issue103FilterListTaxonomyDebounceAndMenuKeyTests(WindowCase):
         self.assertTrue(all_ch_cats & {20, 23, 29}, "Demo channels must tag 20/23/29 for Main tab")
         self.assertTrue(any(ch.get("is_fast_channel") for ch in demo_raw_data["list"]))
 
-        W.set_language("ru")
-        window = self.ready(raw=demo_raw_data)
+
+        write_list(demo_raw_data); window = self.open(); self.assertTrue(wait_for(lambda: window.mode == D.DATA))
         window.controls[MENU].selected = 6
         window.onClick(MENU)
         self.assertTrue(wait_for(lambda: len(window.controls[409].items) >= 9))
