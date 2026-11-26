@@ -39,6 +39,7 @@ PREFS = os.environ.get("MEDIASTICK_PREFS_DIR", "/var/lib/media-stick/prefs")
 DIR = os.environ.get("MEDIASTICK_RESUME_DIR", "/var/lib/media-stick/resume")
 STORE_FILE = "positions.json"
 QUALITY_FILE, DEFAULT_QUALITY = "max-quality", "1080p"
+PREVIEW_VIDEO_FILE, DEFAULT_PREVIEW_VIDEO = "preview-video", True
 FAVS_FILE = "sweettv-favourites.json"
 MAX_ITEMS = 300                     # the newest ones are kept
 MIN_POS = 5                         # s: a place nearer the start than this is not worth coming back to
@@ -164,6 +165,34 @@ def read_quality() -> str:
 def write_quality(value) -> bool:
     """Write normalized quality cap atomically to prefs/max-quality."""
     return _write_atomic(PREFS, QUALITY_FILE, normalize_quality(value) + "\n")
+
+
+def normalize_preview_video(value) -> bool:
+    """Normalize background live preview preference to bool (default True)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off"):
+            return False
+    return DEFAULT_PREVIEW_VIDEO
+
+
+def read_preview_video() -> bool:
+    """Read /var/lib/media-stick/prefs/preview-video, returning True when missing or invalid."""
+    try:
+        with open(os.path.join(PREFS, PREVIEW_VIDEO_FILE), encoding="utf-8") as f:
+            return normalize_preview_video(f.readline())
+    except (OSError, ValueError):
+        return DEFAULT_PREVIEW_VIDEO
+
+
+def write_preview_video(value: bool) -> bool:
+    """Write normalized background preview preference atomically to prefs/preview-video."""
+    flag = normalize_preview_video(value)
+    return _write_atomic(PREFS, PREVIEW_VIDEO_FILE, ("true" if flag else "false") + "\n")
 
 
 # ---- what a played file is -------------------------------------------------------------------

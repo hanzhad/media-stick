@@ -415,7 +415,7 @@ STATIC_ASSETS = static_files.StaticAssets()
 PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#121620">
-<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Media Stick"><title>Media Stick</title>
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Media Stick"><title>Media Stick</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <style>
@@ -511,7 +511,7 @@ dt:nth-last-child(2),dd:last-child{border-bottom:0}
 .dot.bad{background:var(--bad)}
 .dot.warn{background:var(--warn)}
 /* page */
-#app{max-width:440px;margin:0 auto;padding:12px 16px calc(84px + env(safe-area-inset-bottom))}
+#app{max-width:440px;margin:0 auto;padding:calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(84px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))}
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px}
 .top b{font-size:20px;font-weight:600;flex:none}
 .pill{display:inline-flex;align-items:center;min-width:0;padding:8px 14px;border-radius:999px;background:rgba(255,255,255,.08);color:var(--dim);font-size:14px;white-space:nowrap}
@@ -539,11 +539,11 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 /* remote card: reaches down to the tab bar (208px = header, mode switch and tab bar); the
    key rows keep their size and the D-pad takes whatever height is left, as large as the card is
    wide at most, so it grows on tall phones and shrinks on short ones and nothing scrolls. */
-.rc{position:relative;padding:14px;display:flex;flex-direction:column;height:calc(100vh - 208px);min-height:400px}
-@supports (height:1svh){.rc{height:calc(100svh - 208px - env(safe-area-inset-bottom))}}
+.rc{position:relative;padding:14px;display:flex;flex-direction:column;height:calc(100vh - 208px - env(safe-area-inset-top) - env(safe-area-inset-bottom));min-height:400px}
+@supports (height:1svh){.rc{height:calc(100svh - 208px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}
 /* the now-playing bar (64px and its gap) is above the mode switch while something plays: the card gets shorter, it never changes shape */
-@media (max-width:899px){body.np .rc{height:calc(100vh - 284px)}}
-@media (max-width:899px){@supports (height:1svh){body.np .rc{height:calc(100svh - 284px - env(safe-area-inset-bottom))}}}
+@media (max-width:899px){body.np .rc{height:calc(100vh - 284px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}
+@media (max-width:899px){@supports (height:1svh){body.np .rc{height:calc(100svh - 284px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}}
 /* the one toast: a short word at the bottom, above the sheets */
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom));z-index:var(--z-toast);max-width:calc(100vw - 32px);padding:12px 20px;border-radius:999px;background:#fff;color:var(--bg);font-weight:600;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.4)}
 .dwrap{position:relative;flex:1 1 0;min-height:120px}
@@ -572,7 +572,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
    safe-area padding, the z-index; centred and 480px at most on a wide screen. A sheet adds only its own content. */
 .sheet{position:fixed;inset:0;z-index:var(--z-sheet);display:flex;align-items:flex-end;justify-content:center}
 .sheet-back{position:absolute;inset:0;background:rgba(0,0,0,.6)}
-.sheet-box{position:relative;width:100%;max-width:440px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--card);border-radius:24px 24px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -8px 32px rgba(0,0,0,.45)}
+.sheet-box{position:relative;width:100%;max-width:440px;max-height:min(92vh,calc(100vh - env(safe-area-inset-top) - 12px));overflow-y:auto;overscroll-behavior:contain;background:var(--card);border-radius:24px 24px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -8px 32px rgba(0,0,0,.45)}
 .sheet-box::before{content:"";display:block;width:44px;height:5px;margin:-8px auto 12px;border-radius:3px;background:var(--line)}
 @media (min-width:900px){.sheet{align-items:center}.sheet-box{max-width:480px;border-radius:24px}}
 /* settings on a phone: a list of rows, each opens its page inside the tab */
@@ -645,7 +645,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 <symbol id="i-cam" viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h2l1.5-2h5L16 6h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></symbol>
 </defs></svg>
 
-<div id="setup" class="hide" style="max-width:440px;margin:0 auto;padding:20px 16px">
+<div id="setup" class="hide" style="max-width:440px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))">
   <h1 style="font-size:24px;font-weight:600">Подключить Media Stick к Wi-Fi</h1>
   <div id="s-msg" class="msg hide"></div>
   <div class="card">
@@ -708,7 +708,6 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         <button class="btn" data-a="home" aria-label="Домой"><svg class="i"><use href="#i-home"/></svg></button>
         <button class="btn" data-a="contextmenu" aria-label="Ещё"><svg class="i"><use href="#i-more"/></svg></button>
         <button class="btn" id="txt-open" aria-label="Текст"><svg class="i"><use href="#i-text"/></svg></button>
-        <button class="btn" id="shot-save-rc" type="button" aria-label="Скриншот"><svg class="i"><use href="#i-cam"/></svg></button>
       </div>
       <div class="grp">
         <button class="btn" data-a="volumedown" aria-label="Тише"><svg class="i"><use href="#i-vdn"/></svg></button>
@@ -750,10 +749,10 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 
   <section id="t-setlist" data-tab="settings" class="hide">
     <div class="card slist">
-      <button class="srow" data-sp="acc"><svg class="i"><use href="#i-user"/></svg><span class="sname">Аккаунты</span><span class="sval" id="sv-acc"></span><span class="chev" aria-hidden="true">›</span></button>
+      <button class="srow" data-sp="acc"><svg class="i"><use href="#i-user"/></svg><span class="sname">Приложения</span><span class="sval" id="sv-acc"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="wifi"><svg class="i"><use href="#i-wifi"/></svg><span class="sname">Wi-Fi</span><span class="sval" id="sv-wifi"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="https"><svg class="i"><use href="#i-lock"/></svg><span class="sname">Пульт как приложение</span><span class="sval" id="sv-https"></span><span class="chev" aria-hidden="true">›</span></button>
-      @@LANG_ROW@@@@RESUME_ROW@@<button class="srow" data-sp="info"><svg class="i"><use href="#i-info"/></svg><span class="sname">О приставке</span><span class="sval" id="sv-info"></span><span class="chev" aria-hidden="true">›</span></button>
+      @@LANG_ROW@@<button class="srow" data-sp="info"><svg class="i"><use href="#i-info"/></svg><span class="sname">О приставке</span><span class="sval" id="sv-info"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="act"><svg class="i"><use href="#i-rot"/></svg><span class="sname">Обслуживание</span><span class="sval" id="sv-act"></span><span class="chev" aria-hidden="true">›</span></button>
     </div>
   </section>
@@ -809,6 +808,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
       <button id="rk-btn" class="btn" onclick="if(armed('rk-btn','Нажмите ещё раз, чтобы перезапустить плеер'))act('restart-kodi')">Перезапустить плеер</button><button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз, чтобы перезагрузить'))act('reboot')">Перезагрузить</button></div>
       <div class="row gap"><button id="cec-standby" class="btn" type="button">ТВ Standby</button><button id="cec-wake" class="btn" type="button">ТВ Wake</button></div>
+      <button id="shot-save-act" class="btn wide gap" type="button"><svg class="i"><use href="#i-cam"/></svg>Скриншот экрана</button>
       <div id="pin-box" class="gap" style="padding-top:12px;border-top:1px solid var(--line)">
         <div class="head" style="margin-bottom:6px"><h2>LAN PIN-код</h2><span id="pin-state" class="cap" style="margin:0">Выключен</span></div>
         <div class="pin-row"><input id="pin-in" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="4 цифры" autocomplete="off"><button id="pin-set" class="btn sm acc fit" type="button">Сохранить PIN</button><button id="pin-off" class="btn sm fit hide" type="button">Отключить</button></div>
@@ -818,7 +818,6 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
         <div class="row"><select id="diag-unit" aria-label="Служба"><option value="panel">panel</option><option value="kodi">kodi</option><option value="update">update</option><option value="displayd">displayd</option></select><button id="diag-load" class="btn sm fit" type="button">Показать логи</button></div>
         <pre id="diag-out" class="diag-pre hide"></pre>
       </div>
-      <div class="slist" style="margin:14px -18px -18px;border-top:1px solid var(--line)"><button id="keys-row" class="srow" onclick="ykOpen()"><span class="sname">Ключи Google</span><span class="sval">для входа в YouTube</span><span class="chev" aria-hidden="true">›</span></button></div>
     </div>
   </section>
 
@@ -970,6 +969,7 @@ document.querySelectorAll('.modes [data-m]').forEach(b=>b.addEventListener('clic
 // Settings on a phone: the list, or one page of it (spage; '' = the list). A page has a hash, so the back button works.
 const SP_HASH={acc:'accounts',lang:'language',wifi:'wifi',https:'https',info:'device',act:'maintenance'}, SP_OF={}, SP_ID={acc:'t-acc',lang:'t-lang',wifi:'t-wifi',https:'t-https',info:'t-info',act:'t-act'};
 Object.keys(SP_HASH).forEach(k=>{SP_OF[SP_HASH[k]]=k});
+SP_OF.apps='acc';
 let spage='', spPushed=false;
 function setPage(p){
   spage=p;

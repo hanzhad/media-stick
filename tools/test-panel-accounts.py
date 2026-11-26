@@ -858,7 +858,8 @@ class Page(unittest.TestCase):
         bar = page.split('id="acc-yk-cont"', 1)[1].split(">", 1)[0]
         self.assertIn("hide", bar)                                      # hidden until the wizard script shows it
         self.assertLess(page.index('id="acc-yk-cont"'), page.index('id="acc-list"'))
-        self.assertNotIn("Ключи Google", page)                          # the keys row lives on the maintenance page
+        self.assertIn('id="acc-keys-row"', page)
+        self.assertIn("Ключи Google", page)                          # the keys row lives inside YouTube on Apps page
 
     def test_no_browser_dialogs(self):
         page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")

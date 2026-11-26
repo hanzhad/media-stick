@@ -44,7 +44,7 @@ SEEK_BACK_MAX = 86400
 LOCAL_LABEL = "Remember where I stopped, on the device"
 LOCAL_HINT = ("Places to continue from are taken only from what this device saved while you watched. The history of "
               "YouTube, SWEET.TV and Kodi is not used.")
-SHOW_KEY_RE = re.compile(r"(?:vod|epg|tv):[0-9]{1,12}")
+SHOW_KEY_RE = re.compile(r"(?:vod|epg|tv|tv_s):[0-9]{1,12}")
 MOVIE_ID_RE = re.compile(r"[0-9]{1,12}")
 VALID_QUALITIES = ("720p", "1080p", "unlimited")
 QUALITY_OPTIONS = [
@@ -607,20 +607,36 @@ def top_view(raw, now, quality="1080p", client=None):
 
 
 def settings_view():
-    """GET /api/sweettv/settings: device video quality cap."""
+    """GET /api/sweettv/settings: device video quality cap and background preview."""
     if mr is None:
         raise pw.Refused(_t("Remembering places is not available on this device."), 503)
-    return {"ok": True, "quality": mr.read_quality(), "options": list(QUALITY_OPTIONS)}
+    return {
+        "ok": True,
+        "quality": mr.read_quality(),
+        "preview_video": mr.read_preview_video(),
+        "options": list(QUALITY_OPTIONS),
+    }
 
 
 def set_settings(body):
-    """POST /api/sweettv/settings {quality: "720p"|"1080p"|"unlimited"}."""
+    """POST /api/sweettv/settings {quality?: "720p"|"1080p"|"unlimited", preview_video?: bool}."""
     if mr is None:
         raise pw.Refused(_t("Remembering places is not available on this device."), 503)
-    val = body.get("quality") if isinstance(body, dict) else None
-    if not isinstance(val, str) or val not in VALID_QUALITIES:
+    if not isinstance(body, dict) or ("quality" not in body and "preview_video" not in body):
         raise pw.Refused(_t("Wrong value."))
-    if not mr.write_quality(val):
+    has_q = "quality" in body
+    has_pv = "preview_video" in body
+    if has_q:
+        q = body.get("quality")
+        if not isinstance(q, str) or q not in VALID_QUALITIES:
+            raise pw.Refused(_t("Wrong value."))
+    if has_pv:
+        pv = body.get("preview_video")
+        if not isinstance(pv, bool):
+            raise pw.Refused(_t("Wrong value."))
+    if has_q and not mr.write_quality(q):
+        raise pw.Refused(_t("The choice could not be saved."), 500)
+    if has_pv and not mr.write_preview_video(pv):
         raise pw.Refused(_t("The choice could not be saved."), 500)
     return settings_view()
 

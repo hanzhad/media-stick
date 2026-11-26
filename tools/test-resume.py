@@ -804,7 +804,12 @@ class Texts(Base):
 
     def test_phone_tab_is_prilozheniya(self):
         self.assertEqual(sweettv_text.PHONE_TAB, "Приложения")
-        self.assertIn("Приложения", sweettv_text.ui_texts("ru")["phone_step2"])
+        prev = sweettv_text.LANG
+        try:
+            sweettv_text.set_language("ru")
+            self.assertIn("Приложения", sweettv_text.phone_steps("http://mediastick.local")["phone_step2"])
+        finally:
+            sweettv_text.set_language(prev)
 
 
 def ml_url(cid, epg, offset):

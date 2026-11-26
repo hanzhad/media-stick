@@ -211,7 +211,7 @@ class Page(unittest.TestCase):
         # the bar is above the mode switch, in all modes, and the card only gets a little shorter under it
         remote = self.page.split('<section id="t-remote"', 1)[1]
         self.assertLess(remote.index("data-wtbar"), remote.index('class="modes"'))
-        self.assertIn("@media (max-width:899px){body.np .rc{height:calc(100vh - 284px)}}", self.page)
+        self.assertIn("@media (max-width:899px){body.np .rc{height:calc(100vh - 284px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}", self.page)
 
     def test_the_buttons_mode_rows(self):
         rows = [re.findall(r'(?:data-a|id)="([\w-]+)"', g) for g in self.rc().split('<div class="grp">')[1:]]

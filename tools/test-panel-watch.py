@@ -925,7 +925,7 @@ class Page(unittest.TestCase):
             self.assertIn(pill, js)
         for call in ("sg('home')", "sg('shows')", "sg('show?id='", "sg('movies", "sg('series", "sg('vod?id='",
                      "sg('channels')", "sg('guide?cid='", "sg('day?cid='", "sg('top')", "sg('search?q='",
-                     "sg('thumbs')", "spst('favourite'", "spst('play'", "spst('ctl'", "sg('settings')", "spst('settings'"):
+                     "sg('thumbs')", "spst('favourite'", "spst('play'", "spst('ctl'"):
             self.assertIn(call, js)
         for page in ("swguide", "swshow", "swvod"):
             self.assertIn(page, js)

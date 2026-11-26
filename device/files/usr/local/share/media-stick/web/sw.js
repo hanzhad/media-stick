@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ms-panel-v2-2';
+const CACHE_NAME = 'ms-panel-v2-3';
 const PRECACHE = [
   '/manifest.webmanifest',
   '/icon-192.png',
@@ -8,9 +8,11 @@ const PRECACHE = [
 const OFFLINE_HTML = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#121620">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Media Stick</title>
 <style>
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#121620;color:#fff;font:16px/1.45 system-ui,-apple-system,sans-serif;text-align:center;padding:24px}
+body{margin:0;min-height:100vh;min-height:100svh;box-sizing:border-box;display:flex;align-items:center;justify-content:center;background:#121620;color:#fff;font:16px/1.45 system-ui,-apple-system,sans-serif;text-align:center;padding:calc(24px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left))}
 .box{max-width:340px;background:#1F2633;border-radius:24px;padding:28px 22px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
 .spin{width:36px;height:36px;margin:0 auto 16px;border-radius:50%;border:3px solid rgba(255,255,255,.15);border-top-color:#fff;animation:s 1s linear infinite}
 @keyframes s{to{transform:rotate(360deg)}}
