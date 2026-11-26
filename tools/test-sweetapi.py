@@ -1077,6 +1077,100 @@ class VodAndCatalog(unittest.TestCase):
             self.assertFalse(res["ok"], bad)
             self.assertEqual(sender.calls, [], bad)
 
+    def test_inline_epg_show_tv_artwork_fallback_and_non_logo_preservation(self):
+        channels = {"list": [
+            {
+                "id": 15, "name": "СТБ HD", "catchup": True, "catchup_duration": 7, "available": True,
+                "icon_v2_url": "https://img.example/stb-v2.png",
+                "icon_url": "https://img.example/stb-v1.png",
+                "banner_url": "https://static.sweet.tv/cdn-cgi/image/width=400/https://static.sweet.tv/stb-banner.jpg",
+                "epg": [
+                    {
+                        "id": 8101, "text": "Супермама Сезон 8 Випуск 1",
+                        "time_start": NOW - 3600, "time_stop": NOW - 1800,
+                        "tv_show_id": 101, "available": True,
+                    },
+                    {
+                        "id": 8104, "text": "Зважені та щасливі Випуск 3",
+                        "time_start": NOW - 7200, "time_stop": NOW - 5400,
+                        "tv_show_id": 104, "available": True,
+                        "image_url": "https://img.example/show104-poster.jpg",
+                    },
+                ],
+            },
+            {
+                "id": 16, "name": "1+1 Марафон", "catchup": True, "catchup_duration": 3, "available": True,
+                "icon_url": "http://img.example/1plus1.png",
+                "banner_url": "https://img.example/1plus1-banner.jpg",
+                "epg": [
+                    {
+                        "id": 8102, "text": "Сніданок з 1+1 Випуск 12",
+                        "time_start": NOW - 1800, "time_stop": NOW + 1800,
+                        "tv_show_id": 102, "available": True,
+                        "preview_url_ext": "https://static.sweet.tv/cdn-cgi/image/width=400/https://static.sweet.tv/ep102-prev.jpg",
+                    },
+                ],
+            },
+            {
+                "id": 17, "name": "Новий Канал", "catchup": True, "catchup_duration": 3, "available": True,
+                "icon_v2_url": "https://img.example/novy.png",
+                "epg": [
+                    {
+                        "id": 8103, "text": "Хто зверху Сезон 13 Випуск 4",
+                        "time_start": NOW - 5400, "time_stop": NOW - 3600,
+                        "tv_show_id": 103, "available": True,
+                    },
+                ],
+            },
+            {
+                "id": 18, "name": "Bare Channel", "catchup": True, "catchup_duration": 3, "available": True,
+                "epg": [
+                    {
+                        "id": 8105, "text": "Без картинки Випуск 1",
+                        "time_start": NOW - 3600, "time_stop": NOW - 1800,
+                        "tv_show_id": 105, "available": True,
+                    },
+                ],
+            },
+        ]}
+        with tempfile.TemporaryDirectory() as td:
+            st = sweetstore.SweetStore(os.path.join(td, "shows.db"))
+            self.addCleanup(st.close)
+            c, _ = client(by=lambda call: reply({"status": "OK"}))
+            res = api.shows(channels, now=NOW, client=c, tr=ENGLISH, store=st)
+        self.assertTrue(res["ok"])
+        by_id = {x["id"]: x for x in res["items"]}
+
+        # 1. Missing image_url falls back to channel icon_v2_url (art_mode='logo') and channel banner_url (_hq_url)
+        s101 = by_id["tv:101"]
+        self.assertEqual(s101["poster"], "https://img.example/stb-v2.png")
+        self.assertEqual(s101.get("art_mode"), "logo")
+        self.assertEqual(s101["banner"], "https://static.sweet.tv/stb-banner.jpg")
+
+        # 2. Missing icon_v2_url falls back to icon_url (https), and preview_url_ext wins over channel banner_url
+        s102 = by_id["tv:102"]
+        self.assertEqual(s102["poster"], "https://img.example/1plus1.png")
+        self.assertEqual(s102.get("art_mode"), "logo")
+        self.assertEqual(s102["banner"], "https://static.sweet.tv/ep102-prev.jpg")
+
+        # 3. Missing preview_url and missing channel banner_url falls back banner to poster
+        s103 = by_id["tv:103"]
+        self.assertEqual(s103["poster"], "https://img.example/novy.png")
+        self.assertEqual(s103.get("art_mode"), "logo")
+        self.assertEqual(s103["banner"], "https://img.example/novy.png")
+
+        # 4. Adjacent negative: programme WITH image_url keeps its poster and does NOT set art_mode='logo'
+        s104 = by_id["tv:104"]
+        self.assertEqual(s104["poster"], "https://img.example/show104-poster.jpg")
+        self.assertNotEqual(s104.get("art_mode", ""), "logo")
+        self.assertEqual(s104["banner"], "https://static.sweet.tv/stb-banner.jpg")
+
+        # 5. Adjacent boundary: neither programme image_url nor channel icon exists -> empty poster, not art_mode='logo'
+        s105 = by_id["tv:105"]
+        self.assertEqual(s105["poster"], "")
+        self.assertNotEqual(s105.get("art_mode", ""), "logo")
+        self.assertEqual(s105["banner"], "")
+
 
 class FieldFixesTest(unittest.TestCase):
     def test_normalize_search_list_channels_and_hq_url(self):

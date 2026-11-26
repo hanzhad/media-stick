@@ -123,7 +123,7 @@ class Find:
                 self._apply_cards(cards, empty_msg=words.tr('Nothing found for "{q}".').format(q=query))
                 return
             if sec == "continue":
-                cards = sections.continue_cards(self.resume_doc, self.catalog, self._now(), self.fav_keys)
+                cards = self._continue_cards()
                 filtered = sections.filter_local_cards(cards, query)
                 self._apply_cards(filtered, empty_msg=words.tr('Nothing found for "{q}".').format(q=query))
                 return

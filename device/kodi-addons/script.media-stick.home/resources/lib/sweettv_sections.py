@@ -61,6 +61,7 @@ class Card(NamedTuple):
     resume_label: str
     small: bool
     art_mode: str = ""
+    wide_art: str = ""
 
 
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -136,7 +137,7 @@ def channel_card(ch, cat_names, now, resume_doc=None, favs=()) -> Card:
     fav_key = f"ch:{ch.cid}"
     return Card(
         kind="channel", key=ch.cid, fav_key=fav_key, title=ch.name,
-        art=ch.logo, banner=ch.logo, meta=meta, desc=desc,
+        art=ch.logo, banner=ch.banner or ch.logo, meta=meta, desc=desc,
         play_url=data.play_url(ch.cid), alt_url=alt_url,
         cid=ch.cid, epg=current.epg_id if current else "",
         start=current.start if current else 0, stop=current.stop if current else 0,
@@ -145,7 +146,7 @@ def channel_card(ch, cat_names, now, resume_doc=None, favs=()) -> Card:
         num=str(ch.number) if ch.number else "",
         initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
         now=now_text, nowline=nowline, next=next_text, nextline=nextline,
-        resume_label="", small=len(ch.name) > 22, art_mode="logo",
+        resume_label="", small=len(ch.name) > 22, art_mode="logo", wide_art=ch.banner,
     )
 
 
@@ -193,15 +194,20 @@ def show_card(item, favs=()) -> Card:
         meta_parts.append(f"IMDb {imdb:.1f}")
     fav_key = f"show:{show_id}"
     initials, plate, plate_hi, bg, tint = _palette(title)
+    poster = str(item.get("poster") or "")
+    art_mode = str(item.get("art_mode") or "")
+    wide_art = str(item.get("wide_art") or "")
+    banner = str(item.get("banner") or wide_art or poster or "")
     return Card(
         kind=kind, key=show_id, fav_key=fav_key, title=title,
-        art=str(item.get("poster") or ""), banner=str(item.get("banner") or item.get("poster") or ""),
+        art=poster, banner=banner,
         meta="  ·  ".join(meta_parts), desc="",
         play_url="", alt_url="", cid="", epg="", start=0, stop=0,
         resume_pos=0, bar="", pbar="", fav=fav_key in favs,
         catchup=False, playable=True, dim=False,
         num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
         now="", nowline="", next="", nextline="", resume_label="", small=len(title) > 22,
+        art_mode=art_mode, wide_art=wide_art,
     )
 
 
@@ -259,8 +265,123 @@ def search_card(row, resume_doc=None, favs=()) -> Card:
     )
 
 
-def continue_cards(resume_doc, catalog, now, favs=()) -> list:
-    """Build item-level Continue cards from mediastick_resume without per-channel collapse."""
+def _find_vod_episode(tdetail: dict, eid: str) -> Optional[dict]:
+    for s in (tdetail.get("seasons") or ()):
+        if not isinstance(s, dict):
+            continue
+        for ep in (s.get("episodes") or ()):
+            if isinstance(ep, dict) and str(ep.get("episode_id") or ep.get("id") or "") == eid:
+                return ep
+    for ep in (tdetail.get("episodes") or ()):
+        if isinstance(ep, dict) and str(ep.get("episode_id") or ep.get("id") or "") == eid:
+            return ep
+    return None
+
+
+def _continue_vod_card(e: dict, pos: int, bar: str, pbar: str, resume_label: str, favs, recall_title) -> Card:
+    mid = str(e.get("movie_id") or "")
+    eid = str(e.get("episode_id") or "")
+    saved_title = str(e.get("title") or "").strip()
+    saved_thumb = str(e.get("thumb") or "").strip()
+    tdetail = None
+    if callable(recall_title) and mid:
+        try:
+            tdetail = recall_title(f"vod:{mid}")
+        except Exception:
+            tdetail = None
+        if not isinstance(tdetail, dict):
+            tdetail = None
+    ep_match = _find_vod_episode(tdetail, eid) if (tdetail and eid) else None
+    hydrated_title = ""
+    if tdetail:
+        show_t = str(tdetail.get("title") or "").strip()
+        ep_t = str(ep_match.get("title") or "").strip() if ep_match else ""
+        if show_t and ep_t and show_t.lower() not in ep_t.lower():
+            hydrated_title = f"{show_t} · {ep_t}"
+        else:
+            hydrated_title = ep_t or show_t
+    placeholder = f"VOD {mid}"
+    title = (saved_title if saved_title and saved_title != placeholder else "") or hydrated_title or saved_title or placeholder
+    poster = data.logo_of(tdetail.get("poster")) if tdetail else ""
+    t_banner = data.logo_of(tdetail.get("banner")) if tdetail else ""
+    ep_preview = data.logo_of(ep_match.get("preview")) if ep_match else ""
+    art = saved_thumb or poster or ep_preview
+    wide_art = ep_preview or t_banner
+    banner = wide_art or art
+    base_url = f"plugin://plugin.video.sweettv/playvod/{mid}|{eid or 'null'}|0"
+    url = f"{base_url}?start={pos}" if pos > 0 else base_url
+    fav_key = f"vod:{mid}"
+    initials, plate, plate_hi, bg, tint = _palette(title)
+    return Card(
+        kind="movie" if not eid else "episode", key=f"{mid}|{eid}", fav_key=fav_key,
+        title=title, art=art, banner=banner, meta=resume_label, desc="",
+        play_url=url, alt_url=base_url, cid="", epg="", start=0, stop=0, resume_pos=pos,
+        bar=bar, pbar=pbar, fav=fav_key in favs, catchup=False, playable=True, dim=False,
+        num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+        now=resume_label, nowline="", next="", nextline="", resume_label=resume_label,
+        small=len(title) > 22, wide_art=wide_art,
+    )
+
+
+def _continue_epg_card(e: dict, ch, now, pos: int, bar: str, pbar: str, resume_label: str,
+                       favs, recall_prog, seen_generic: set) -> Optional[Card]:
+    cid = str(e.get("cid") or "")
+    epg = str(e.get("epg") or "")
+    raw_title = str(e.get("title") or "").strip()
+    start = int(e.get("start") or 0)
+    stop = int(e.get("stop") or 0)
+    epg_prog = next((p for p in ch.epg if p.epg_id == epg), None) if (ch and epg) else None
+    rec = None
+    if callable(recall_prog) and cid and epg:
+        try:
+            rec = recall_prog(cid, epg)
+        except Exception:
+            rec = None
+        if not isinstance(rec, dict):
+            rec = None
+    if start <= 0:
+        start = int((epg_prog.start if epg_prog else 0) or ((rec.get("start") or rec.get("time_start")) if rec else 0) or 0)
+    if stop <= 0:
+        stop = int((epg_prog.stop if epg_prog else 0) or ((rec.get("stop") or rec.get("time_stop")) if rec else 0) or 0)
+    prog_preview = data.logo_of(rec.get("preview") or rec.get("image_url")) if rec else ""
+    ch_name = ch.name if ch else ""
+    if not raw_title or (ch_name and raw_title == ch_name) or raw_title == f"Channel {cid}":
+        prog_title = (epg_prog.title if epg_prog and epg_prog.title != "Programme" else "") or (
+            str(rec.get("title") or "").strip() if rec else ""
+        )
+        title = prog_title or raw_title or (ch_name or f"Channel {cid}")
+    else:
+        title = raw_title
+    if ch is not None and start > 0 and (not ch.catchup or start < now - max(1, ch.days) * 86400):
+        return None
+    if ch is not None and title == ch.name:
+        if cid in seen_generic:
+            return None
+        seen_generic.add(cid)
+        meta = resume_label
+    else:
+        meta = f"{ch.name}  ·  {resume_label}" if ch else resume_label
+    base_url = data.play_url(cid, epg)
+    url = data.play_url(cid, epg, start=pos) if pos > 0 else base_url
+    fav_key = f"ch:{cid}"
+    art = ch.logo if ch else str(e.get("thumb") or "")
+    wide_art = prog_preview or (ch.banner if ch else "")
+    banner = wide_art or art
+    initials, plate, plate_hi, bg, tint = _palette(title)
+    return Card(
+        kind="programme", key=f"{cid}|{epg}", fav_key=fav_key,
+        title=title, art=art, banner=banner, meta=meta, desc="",
+        play_url=url, alt_url=base_url, cid=cid, epg=epg,
+        start=start, stop=stop, resume_pos=pos,
+        bar=bar, pbar=pbar, fav=fav_key in favs, catchup=True, playable=bool(url), dim=not bool(url),
+        num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
+        now=meta, nowline="", next="", nextline="", resume_label=resume_label, small=len(title) > 22,
+        art_mode="logo", wide_art=wide_art,
+    )
+
+
+def continue_cards(resume_doc, catalog, now, favs=(), recall_prog=None, recall_title=None) -> list:
+    """Build item-level Continue cards with SweetStore hydration, catchup expiry, and generic-channel dedup."""
     items = (resume_doc or {}).get("items") or {}
     ch_by_id = {ch.cid: ch for ch in catalog.channels} if catalog else {}
     entries = []
@@ -277,6 +398,7 @@ def continue_cards(resume_doc, catalog, now, favs=()) -> list:
         entries.append((at, str(key), e))
     entries.sort(key=lambda x: -x[0])
     out = []
+    seen_generic = set()
     for _, key, e in entries:
         pos = int(e.get("pos") or 0)
         total = int(e.get("total") or 1)
@@ -285,43 +407,12 @@ def continue_cards(resume_doc, catalog, now, favs=()) -> list:
         pbar = _bar_from_fraction(frac, wide=True)
         resume_label = words.tr("Continue from {time}").format(time=fmt_mmss(pos))
         if key.startswith("sw:vod:"):
-            mid = str(e.get("movie_id") or "")
-            eid = str(e.get("episode_id") or "")
-            title = str(e.get("title") or f"VOD {mid}")
-            base_url = f"plugin://plugin.video.sweettv/playvod/{mid}|{eid or 'null'}|0"
-            url = f"{base_url}?start={pos}" if pos > 0 else base_url
-            fav_key = f"vod:{mid}"
-            art = str(e.get("thumb") or "")
-            initials, plate, plate_hi, bg, tint = _palette(title)
-            out.append(Card(
-                kind="movie" if not eid else "episode", key=f"{mid}|{eid}", fav_key=fav_key,
-                title=title, art=art, banner=art, meta=resume_label, desc="",
-                play_url=url, alt_url=base_url, cid="", epg="", start=0, stop=0, resume_pos=pos,
-                bar=bar, pbar=pbar, fav=fav_key in favs, catchup=False, playable=True, dim=False,
-                num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
-                now="", nowline="", next="", nextline="", resume_label=resume_label, small=len(title) > 22,
-            ))
+            out.append(_continue_vod_card(e, pos, bar, pbar, resume_label, favs, recall_title))
         else:
-            cid = str(e.get("cid") or "")
-            epg = str(e.get("epg") or "")
-            ch = ch_by_id.get(cid)
-            title = str(e.get("title") or (ch.name if ch else f"Channel {cid}"))
-            base_url = data.play_url(cid, epg)
-            url = data.play_url(cid, epg, start=pos) if pos > 0 else base_url
-            fav_key = f"ch:{cid}"
-            art = ch.logo if ch else str(e.get("thumb") or "")
-            initials, plate, plate_hi, bg, tint = _palette(title)
-            meta = f"{ch.name}  ·  {resume_label}" if ch else resume_label
-            out.append(Card(
-                kind="programme", key=f"{cid}|{epg}", fav_key=fav_key,
-                title=title, art=art, banner=art, meta=meta, desc="",
-                play_url=url, alt_url=base_url, cid=cid, epg=epg,
-                start=int(e.get("start") or 0), stop=int(e.get("stop") or 0), resume_pos=pos,
-                bar=bar, pbar=pbar, fav=fav_key in favs, catchup=True, playable=bool(url), dim=not bool(url),
-                num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
-                now="", nowline="", next="", nextline="", resume_label=resume_label, small=len(title) > 22,
-                art_mode="logo",
-            ))
+            ch = ch_by_id.get(str(e.get("cid") or ""))
+            card = _continue_epg_card(e, ch, now, pos, bar, pbar, resume_label, favs, recall_prog, seen_generic)
+            if card is not None:
+                out.append(card)
     return out
 
 
@@ -527,7 +618,7 @@ def hero_info(card: Optional[Card]) -> dict:
         "hero_pbar": card.pbar or "",
         "hero_sub": card.nextline or card.resume_label or "",
         "hero_initials": card.initials or "",
-        "hero_is_logo": "1" if card.art_mode == "logo" else "",
+        "hero_is_logo": "1" if (card.art_mode == "logo" and not card.wide_art) else "",
     }
 
 

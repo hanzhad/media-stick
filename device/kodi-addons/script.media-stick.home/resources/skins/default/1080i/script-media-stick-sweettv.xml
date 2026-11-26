@@ -23,6 +23,7 @@
                 <textcolor>FFFFFFFF</textcolor>
                 <aligny>center</aligny>
                 <label>$INFO[Window.Property(section_title)]</label>
+                <visible>!Control.HasFocus(100)</visible>
             </control>
             <control type="group">
                 <left>890</left>
@@ -763,7 +764,7 @@
                 <width>340</width>
                 <height>1080</height>
                 <texture>white.png</texture>
-                <colordiffuse>E6060910</colordiffuse>
+                <colordiffuse>FA080C14</colordiffuse>
                 <visible>Control.HasFocus(100)</visible>
             </control>
             <control type="image">

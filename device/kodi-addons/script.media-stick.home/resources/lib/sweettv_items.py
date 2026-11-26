@@ -19,7 +19,16 @@ def rail_items(active_section, counts=None) -> list:
     return out
 
 
-def card_props(card: sections.Card) -> dict:
+def _card_art(card: sections.Card, wide=False) -> tuple:
+    if wide:
+        backdrop = card.wide_art or (card.banner if card.art_mode != "logo" else "")
+        if backdrop:
+            return backdrop, ""
+    return card.art, card.art_mode
+
+
+def card_props(card: sections.Card, wide=False) -> dict:
+    _, art_mode = _card_art(card, wide=wide)
     return {
         "kind": card.kind,
         "key": card.key,
@@ -45,12 +54,15 @@ def card_props(card: sections.Card) -> dict:
         "next": card.next,
         "nextline": card.nextline,
         "resume": card.resume_label,
-        "art_mode": card.art_mode,
+        "art_mode": art_mode,
     }
 
 
-def apply_card(li, card: sections.Card, prev=None) -> dict:
-    props = card_props(card)
+def apply_card(li, card: sections.Card, prev=None, wide=False) -> dict:
+    if hasattr(li, "setLabel"):
+        li.setLabel(card.title)
+    icon, _ = _card_art(card, wide=wide)
+    props = card_props(card, wide=wide)
     if prev is None:
         for k, v in props.items():
             li.setProperty(k, v)
@@ -58,14 +70,16 @@ def apply_card(li, card: sections.Card, prev=None) -> dict:
         for k, v in props.items():
             if prev.get(k) != v:
                 li.setProperty(k, v)
-    if card.art:
-        li.setArt({"icon": card.art})
+    if icon:
+        li.setArt({"icon": icon})
+    elif prev is not None and hasattr(li, "setArt"):
+        li.setArt({"icon": ""})
     return props
 
 
-def card_item(card: sections.Card) -> xbmcgui.ListItem:
+def card_item(card: sections.Card, wide=False) -> xbmcgui.ListItem:
     li = xbmcgui.ListItem(card.title, offscreen=True)
-    apply_card(li, card)
+    apply_card(li, card, wide=wide)
     return li
 
 
