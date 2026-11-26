@@ -103,7 +103,7 @@ class WindowXML:
         self._props, self.focus = {}, 0
         self.controls = {100: Control(), 200: Control(), 201: Control(), 209: Control(), 210: Control(), 211: Control(), 212: Control(), 213: Control(),
                          300: Control(), 301: Control(), 400: Control(), 409: Control(), 410: Control(), 415: Control(), 416: Control(),
-                         417: Control(), 418: Control(), 419: Control(), 420: Control(),
+                         417: Control(), 418: Control(), 419: Control(), 420: Control(), 421: Control(),
                          **{i: Control() for i in range(401, 409)}}
         self.closed = False
 
@@ -2662,6 +2662,10 @@ class Skin(unittest.TestCase):
             410: [({"title": f"Tab {i}", "active": "1" if i == 0 else ""}, "") for i in range(7)],
             400: [({"title": f"Row {i}", "when": "20:00", "kind": "archive"}, "") for i in range(8)],
         }
+        show_hub_items = {
+            410: [({"title": f"Season {i}", "active": "1" if i == 0 else ""}, "") for i in range(4)],
+            421: [({"title": f"Ep {i}", "now": f"E{i}", "bar": "sweettv-bar-10.png", "badge": "Soon" if i == 3 else ""}, f"https://img/ep{i}.jpg") for i in range(4)],
+        }
         states = (
             ("poster_browse", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1", **chip_props}, 200, poster_items),
             ("wide_hero_still", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1", "hero_art": "https://img/bg.jpg",
@@ -2673,7 +2677,7 @@ class Skin(unittest.TestCase):
             ("movie_detail_hub", {"mode": "data", "modal": "detail", "guide": "", "hero_art": "https://img/m.jpg",
                                   "hero_is_logo": "", "has_play": "1", "has_alt": "1", "has_guide": "", "has_fav": "1"}, 210, {}),
             ("show_series_hub", {"mode": "data", "modal": "show", "guide": "1", "hero_art": "https://img/s.jpg",
-                                 "hero_is_logo": "", "has_play": "1", "has_alt": "1", "has_guide": "", "has_fav": "1"}, 400, hub_items),
+                                 "hero_is_logo": "", "has_play": "1", "has_alt": "1", "has_guide": "", "has_fav": "1"}, 421, show_hub_items),
             ("channel_hub", {"mode": "data", "modal": "guide", "guide": "1", "hero_art": "https://img/logo.png",
                              "hero_is_logo": "1", "has_play": "1", "has_alt": "1", "has_guide": "", "has_fav": "1"}, 400, hub_items),
         )
@@ -2881,39 +2885,67 @@ class Skin(unittest.TestCase):
             g for g in root.find("controls").findall("control[@type='group']")
             if "String.IsEmpty(Window.Property(modal))" in (g.findtext("visible") or "")
         )
-        hero_group = next(
-            g for g in main_group.findall("control[@type='group']")
-            if "Window.Property(wide_grid)" in (g.findtext("visible") or "")
-        )
-        card_masks = [
-            c for c in hero_group.findall(".//control[@type='image']")
-            if (c.findtext("texture") or "").strip() == "card-mask.png"
+        browse_hero_imgs = [
+            c for c in main_group.findall(".//control[@type='image']")
+            if "Window.Property(hero_art)" in (c.findtext("texture") or "")
+            or (c.findtext("texture") or "").strip() in ("gradient-left.png", "gradient-bottom.png", "gradient-top.png")
         ]
-        self.assertGreaterEqual(len(card_masks), 1)
-        cm_col = (card_masks[0].findtext("colordiffuse") or card_masks[0].find("texture").get("colordiffuse") or "").upper()
-        self.assertIn("121927", cm_col)
+        hero_group = next(
+            (g for g in main_group.findall("control[@type='group']")
+             if "Window.Property(wide_grid)" in (g.findtext("visible") or "")),
+            None,
+        )
+        if hero_group is not None:
+            card_masks = [
+                c for c in hero_group.findall(".//control[@type='image']")
+                if (c.findtext("texture") or "").strip() == "card-mask.png"
+            ]
+            self.assertEqual(card_masks, [], "Boxed card-mask.png must be removed from browse Hero")
 
         hero_art_imgs = [
-            c for c in hero_group.findall(".//control[@type='image']")
+            c for c in browse_hero_imgs
             if "Window.Property(hero_art)" in (c.findtext("texture") or "")
         ]
-        scrim_imgs = [
-            c for c in hero_group.findall(".//control[@type='image']")
-            if (c.findtext("texture") or "").strip() == "gradient-left.png"
-        ]
+        grad_left = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "gradient-left.png"]
+        grad_bottom = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "gradient-bottom.png"]
+        grad_top = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "gradient-top.png"]
         self.assertGreaterEqual(len(hero_art_imgs), 2, "Expected keep logo and scale still hero_art branches")
-        self.assertGreaterEqual(len(scrim_imgs), 1, "Expected gradient-left.png scrim in Framed Browse Hero")
+        self.assertGreaterEqual(len(grad_left), 1, "Expected gradient-left.png in Full-Bleed Browse Hero")
+        self.assertGreaterEqual(len(grad_bottom), 1, "Expected gradient-bottom.png in Full-Bleed Browse Hero")
+        self.assertGreaterEqual(len(grad_top), 1, "Expected gradient-top.png in Full-Bleed Browse Hero")
 
-        props_logo = {"mode": "data", "modal": "", "wide_grid": "1", "hero_art": "https://img/l.png", "hero_is_logo": "1"}
-        props_still = {"mode": "data", "modal": "", "wide_grid": "1", "hero_art": "https://img/s.jpg", "hero_is_logo": ""}
+        props_logo = {"mode": "data", "modal": "", "wide_grid": "1", "emptycat": "", "hero_art": "https://img/l.png", "hero_is_logo": "1"}
+        props_still = {"mode": "data", "modal": "", "wide_grid": "1", "emptycat": "", "hero_art": "https://img/s.jpg", "hero_is_logo": ""}
         vis_logo = [c for c in hero_art_imgs if _eval_kodi_cond(c.findtext("visible") or "", props_logo, focus_id=201)]
         vis_still = [c for c in hero_art_imgs if _eval_kodi_cond(c.findtext("visible") or "", props_still, focus_id=201)]
         self.assertEqual(len(vis_logo), 1)
         self.assertEqual((vis_logo[0].findtext("aspectratio") or "").strip(), "keep")
+        self.assertEqual(
+            (int(vis_logo[0].findtext("left")), int(vis_logo[0].findtext("top")),
+             int(vis_logo[0].findtext("width")), int(vis_logo[0].findtext("height"))),
+            (1240, 160, 520, 280),
+        )
         self.assertEqual(len(vis_still), 1)
         self.assertEqual((vis_still[0].findtext("aspectratio") or "").strip(), "scale")
-        self.assertFalse(any(_eval_kodi_cond(c.findtext("visible") or "", props_logo, focus_id=201) for c in scrim_imgs))
-        self.assertTrue(any(_eval_kodi_cond(c.findtext("visible") or "", props_still, focus_id=201) for c in scrim_imgs))
+        self.assertEqual(
+            (int(vis_still[0].findtext("left")), int(vis_still[0].findtext("top")),
+             int(vis_still[0].findtext("width")), int(vis_still[0].findtext("height"))),
+            (560, 0, 1360, 765),
+        )
+        for g_list, exp_geom, exp_col in (
+            (grad_left, (560, 0, 720, 765), "FF0C111B"),
+            (grad_bottom, (560, 340, 1360, 425), "FF0C111B"),
+            (grad_top, (560, 0, 1360, 160), "B30C111B"),
+        ):
+            self.assertFalse(any(_eval_kodi_cond(c.findtext("visible") or "", props_logo, focus_id=201) for c in g_list))
+            vis_g = [c for c in g_list if _eval_kodi_cond(c.findtext("visible") or "", props_still, focus_id=201)]
+            self.assertEqual(len(vis_g), 1)
+            self.assertEqual(
+                (int(vis_g[0].findtext("left")), int(vis_g[0].findtext("top")),
+                 int(vis_g[0].findtext("width")), int(vis_g[0].findtext("height"))),
+                exp_geom,
+            )
+            self.assertEqual((vis_g[0].findtext("colordiffuse") or "").upper(), exp_col)
 
     def test_rail_100_label2_width_and_browse_hero_419_button_geometry(self):
         root = self.tree()
@@ -2937,9 +2969,8 @@ class Skin(unittest.TestCase):
 
         row_419 = self.control(root, 419)
         w_419 = int(row_419.findtext("width"))
-        self.assertGreaterEqual(w_419, 980)
-        self.assertEqual(w_419, 984)
-        self.assertEqual(int(row_419.findtext("itemgap")), 10)
+        self.assertEqual(w_419, 1320)
+        self.assertEqual(int(row_419.findtext("itemgap")), 12)
 
         btn_416 = self.control(root, 416)
         w_416 = btn_416.find("width")
@@ -3331,9 +3362,9 @@ class ResidentPlayerAndAutoplayTests(WindowCase):
         show_card = sweettv_app.sections.show_card({"id": "epg:801", "kind": "show_epg", "title": "MasterChef"})
         with mock.patch.object(API, "show_detail", return_value=epg_show_detail):
             window._open_show_modal(show_card)
-            self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 1))
-            window.controls[400].selected = 0
-            window.onClick(400)
+            self.assertTrue(wait_for(lambda: len(window.controls[421].items) == 1))
+            window.controls[421].selected = 0
+            window.onClick(421)
             self.assertTrue(wait_for(lambda: len(Fake.rpc) >= 5))
             d5 = json.loads(Fake.rpc[-1])["params"]["data"]
             self.assertEqual((d5["kind"], d5["cid"], d5["epg_id"], d5["episode_mode"]), ("epg", "10", "8", True))
@@ -3352,20 +3383,20 @@ class ResidentPlayerAndAutoplayTests(WindowCase):
         card = sweettv_app.sections.vod_card({"id": 600, "title": "TestSeries", "vod_url": "u"}, "series")
         with mock.patch.object(API, "vod_detail", return_value=detail):
             window._open_show_modal(card)
-            self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 2))
+            self.assertTrue(wait_for(lambda: len(window.controls[421].items) == 2))
 
             # Adjacent negative 1: stopping early at 300s/1400s must NOT trigger autoplay countdown
             Fake.rpc.clear()
-            window.controls[400].selected = 0
-            window.onClick(400)
+            window.controls[421].selected = 0
+            window.onClick(421)
             self.assertTrue(wait_for(lambda: len(Fake.rpc) == 1 and window.session is not None))
             window._report(window.session, 300, 1400)
             window._focus_back()
             self.assertEqual(window.getProperty("autoplay_text"), "")
 
             # Natural end of Ep 1 (1390s/1400s) -> sets autoplay_text; pressing Back cancels countdown without playing Ep 2
-            window.controls[400].selected = 0
-            window.onClick(400)
+            window.controls[421].selected = 0
+            window.onClick(421)
             self.assertTrue(wait_for(lambda: len(Fake.rpc) == 2 and window.session is not None))
             window._report(window.session, 1390, 1400)
             window._focus_back()
@@ -3486,33 +3517,19 @@ class HubsNavigationAndFixesTests(WindowCase):
         card = sweettv_app.sections.vod_card({"id": 700, "title": "ThreeSeasons", "vod_url": "u"}, "series")
         with mock.patch.object(API, "vod_detail", return_value=detail):
             window._open_show_modal(card)
-            self.assertTrue(wait_for(lambda: len(window.modal_seasons) == 3 and window.focus == 400))
+            self.assertTrue(wait_for(lambda: len(window.modal_seasons) == 3 and window.focus == 421))
             self.assertEqual(window.modal_tab_idx, 0)
 
-            # Left at boundary 0 clamps at 0 and keeps focus on 400
-            self.press(window, 1)  # ACTION_MOVE_LEFT
-            self.assertEqual((window.modal_tab_idx, window.focus), (0, 400))
-
-            # Right advances 0 -> 1 -> 2, clamping at 2, updating 400 items & 410 selection while keeping focus on 400
+            # Left/Right on horizontal episode panel 421 must NOT switch season tabs (421 scrolls episodes horizontally)
             self.press(window, 2)  # ACTION_MOVE_RIGHT
-            self.assertEqual((window.modal_tab_idx, window.controls[410].selected, window.focus), (1, 1, 400))
-            self.assertEqual(window.controls[400].items[0].label, "S2E1")
+            self.assertEqual((window.modal_tab_idx, window.focus), (0, 421))
+            self.press(window, 1)  # ACTION_MOVE_LEFT
+            self.assertEqual((window.modal_tab_idx, window.focus), (0, 421))
 
-            self.press(window, 2)
-            self.assertEqual((window.modal_tab_idx, window.controls[410].selected, window.focus), (2, 2, 400))
-            self.assertEqual(window.controls[400].items[0].label, "S3E1")
-
-            self.press(window, 2)  # boundary clamp at last tab
-            self.assertEqual((window.modal_tab_idx, window.focus), (2, 400))
-
-            # Up/Down on 400 do NOT switch tabs
-            self.press(window, 3)  # UP
-            self.press(window, 4)  # DOWN
-            self.assertEqual(window.modal_tab_idx, 2)
-
-            # Left goes back 2 -> 1
-            self.press(window, 1)
-            self.assertEqual((window.modal_tab_idx, window.controls[400].items[0].label, window.focus), (1, "S2E1", 400))
+            # Explicit season tab switch updates 421 items
+            window._modal_select_tab(1, keep_focus=True)
+            self.assertEqual((window.modal_tab_idx, window.controls[410].selected, window.controls[421].items[0].label),
+                             (1, 1, "S2E1"))
 
         # Also verify Left/Right on 400 switches day tabs in Channel Hub
         self.press(window, BACK)
@@ -3740,7 +3757,7 @@ class HubsNavigationAndFixesTests(WindowCase):
             window._open_show_modal(card)
             self.assertTrue(wait_for(lambda: len(window.controls[410].items) == 2))
         self.assertEqual([li.label for li in window.controls[410].items], ["1 сезон", "2 сезон"])
-        self.assertEqual(window.controls[400].items[0].label, "1 серия")
+        self.assertEqual(window.controls[421].items[0].label, "1 серия")
 
 
 class SectionSwitchWideGridAndHydrationTests(WindowCase):
@@ -3805,7 +3822,7 @@ class SectionSwitchWideGridAndHydrationTests(WindowCase):
                 ("movies", 200, ["Film One"], "1"),
                 ("channels", 201, ["СТБ HD", "24/7 Комедия"], "1"),
                 ("continue", 201, ["Continue Film"], ""),
-                ("favourites", 200, ["Fav Film"], ""),
+                ("favourites", 201, ["Fav Film"], ""),
                 ("search", 200, ["Top Search Hit"], "1"),
             )
             for sec, grid_cid, expected_labels, expected_filters in expected_by_section:
@@ -4212,6 +4229,304 @@ class SectionSwitchWideGridAndHydrationTests(WindowCase):
         self.assertEqual(window.getProperty("filters"), "")
         self.assertEqual(window.getProperty("chip_401"), "")
         self.assertEqual(window.getProperty("chip_active_403"), "")
+
+
+
+class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
+    """Issue #79: full-bleed Hero + widened metadata, Favourites wide row + banner persistence,
+    horizontal 421 episode cards with 1-soon badge/toast, and live EPG artwork/title hydration."""
+
+    def test_skin_full_bleed_hero_labels_hub_meta_and_horizontal_421_panel(self):
+        root = ET.parse(os.path.join(SKIN, "script-media-stick-sweettv.xml")).getroot()
+
+        # Part 1.3: Browse Hero text labels widened (left=96, width=1060) and 419 at (left=96, top=512, width=1320, itemgap=12)
+        row_419 = next(c for c in root.iter("control") if c.get("id") == "419")
+        self.assertEqual(
+            (int(row_419.findtext("left")), int(row_419.findtext("top")),
+             int(row_419.findtext("width")), int(row_419.findtext("height")), int(row_419.findtext("itemgap"))),
+            (96, 512, 1320, 56, 12),
+        )
+        main_group = next(
+            g for g in root.find("controls").findall("control[@type='group']")
+            if "String.IsEmpty(Window.Property(modal))" in (g.findtext("visible") or "")
+        )
+        for prop_expr in (
+            "$INFO[Window.Property(hero_title)]",
+            "$INFO[Window.Property(hero_meta)]",
+            "$INFO[Window.Property(hero_desc)]",
+            "$INFO[Window.Property(hero_sub)]",
+        ):
+            lbl = next((c for c in main_group.findall(".//control[@type='label']") if c.findtext("label") == prop_expr), None)
+            self.assertIsNotNone(lbl, f"Missing browse label {prop_expr}")
+            self.assertEqual(int(lbl.findtext("left")), 96, prop_expr)
+            self.assertEqual(int(lbl.findtext("width")), 1060, prop_expr)
+
+        # Part 1.4: Full-Screen Hub hero_meta widened to (left=96, top=120, width=1280)
+        modal_group = next(
+            g for g in root.find("controls").findall("control[@type='group']")
+            if "!String.IsEmpty(Window.Property(modal))" in (g.findtext("visible") or "")
+        )
+        hub_meta = next(
+            (c for c in modal_group.findall(".//control[@type='label']")
+             if c.findtext("label") == "$INFO[Window.Property(hero_meta)]"),
+            None,
+        )
+        self.assertIsNotNone(hub_meta, "Missing hero_meta label in Full-Screen Hub")
+        self.assertEqual(
+            (int(hub_meta.findtext("left")), int(hub_meta.findtext("top")), int(hub_meta.findtext("width"))),
+            (96, 120, 1280),
+        )
+
+        # Part 3.1-3.4: 400 gated to modal=guide; 421 horizontal 444x310 panel gated to modal=show; 410 conditional ondown
+        list_400 = next(c for c in root.iter("control") if c.get("id") == "400")
+        vis_400 = list_400.findtext("visible") or ""
+        self.assertTrue(_eval_kodi_cond(vis_400, {"mode": "data", "modal": "guide", "guide": "1"}, focus_id=400))
+        self.assertFalse(_eval_kodi_cond(vis_400, {"mode": "data", "modal": "show", "guide": "1"}, focus_id=421))
+
+        panel_421 = next((c for c in root.iter("control") if c.get("id") == "421"), None)
+        self.assertIsNotNone(panel_421, "Missing horizontal episode panel id=421")
+        self.assertEqual(panel_421.get("type"), "panel")
+        self.assertEqual((panel_421.findtext("orientation") or "").strip(), "horizontal")
+        self.assertEqual((panel_421.findtext("onup") or "").strip(), "410")
+        self.assertEqual(
+            (int(panel_421.findtext("left")), int(panel_421.findtext("top")),
+             int(panel_421.findtext("width")), int(panel_421.findtext("height"))),
+            (96, 448, 1776, 344),
+        )
+        vis_421 = panel_421.findtext("visible") or ""
+        self.assertTrue(_eval_kodi_cond(vis_421, {"mode": "data", "modal": "show", "guide": "1"}, focus_id=421))
+        self.assertFalse(_eval_kodi_cond(vis_421, {"mode": "data", "modal": "guide", "guide": "1"}, focus_id=400))
+
+        for layout_name in ("itemlayout", "focusedlayout"):
+            layout = panel_421.find(layout_name)
+            self.assertIsNotNone(layout, layout_name)
+            self.assertEqual((int(layout.get("width")), int(layout.get("height"))), (444, 310), layout_name)
+            xml_str = ET.tostring(layout, encoding="unicode")
+            self.assertIn("sweettv-wide-mask.png", xml_str, layout_name)
+            self.assertIn("ListItem.Property(bar)", xml_str, layout_name)
+            self.assertIn("ListItem.Property(badge)", xml_str, layout_name)
+            self.assertIn("ListItem.Property(coming_soon)", xml_str, layout_name)
+            self.assertIn("ListItem.Property(now)", xml_str, layout_name)
+            self.assertIn("ListItem.Property(when)", xml_str, layout_name)
+
+        tabs_410 = next(c for c in root.iter("control") if c.get("id") == "410")
+        ondowns = [(od.get("condition") or "", (od.text or "").strip()) for od in tabs_410.findall("ondown")]
+        self.assertTrue(
+            any("show" in cond and target == "421" for cond, target in ondowns),
+            f"410 must have <ondown> to 421 for modal=show, got {ondowns}",
+        )
+        self.assertTrue(
+            any("guide" in cond and target == "400" for cond, target in ondowns),
+            f"410 must have <ondown> to 400 for modal=guide, got {ondowns}",
+        )
+
+    def test_favourites_wide_section_and_banner_wide_art_persistence(self):
+        self.assertIn("favourites", sweettv_app.WIDE_SECTIONS)
+        self.assertEqual(sweettv_app.WIDE_SECTIONS, frozenset(("continue", "favourites", "channels")))
+
+        # Pure Core: favourites_cards accepts recall_title and hydrates show:* & vod:* banner/wide_art/meta/desc
+        raw = answer(chan(15, "СТБ HD", number=1, icon_v2_url="https://img/15-sq.png", banner_url="https://img/15-ban.jpg"))
+        catalog = D.parse_catalog(raw, NOW)
+        favs_doc = {
+            "v": 1,
+            "items": {
+                "show:vod:10": {"title": "Saved Show", "thumb": "https://img/10-sq.jpg", "at": NOW - 10},
+                "vod:501": {"title": "Saved Movie", "thumb": "https://img/501-sq.jpg",
+                            "banner": "https://img/501-saved-ban.jpg", "wide_art": "https://img/501-saved-wide.jpg", "at": NOW - 20},
+                "ch:999": {"title": "Offline Ch", "thumb": "https://img/999-sq.png",
+                           "banner": "https://img/999-ban.jpg", "wide_art": "https://img/999-wide.jpg", "at": NOW - 30},
+            },
+        }
+        recalled = {
+            "show:vod:10": {"title": "Holostyak", "poster": "https://img/10-sq.jpg", "banner": "https://img/10-ban.jpg",
+                            "wide_art": "https://img/10-wide.jpg", "year": 2025, "description": "Romantic reality"},
+        }
+        cards = sweettv_app.sections.favourites_cards(
+            favs_doc, catalog, {}, NOW, resume_doc=None, recall_title=lambda k: recalled.get(k)
+        )
+        by_fav = {c.fav_key: c for c in cards}
+        self.assertEqual(by_fav["show:vod:10"].banner, "https://img/10-ban.jpg")
+        self.assertEqual(by_fav["show:vod:10"].wide_art, "https://img/10-wide.jpg")
+        self.assertIn("Romantic reality", by_fav["show:vod:10"].desc)
+        self.assertIn("2025", by_fav["show:vod:10"].meta)
+        self.assertEqual(by_fav["vod:501"].banner, "https://img/501-saved-ban.jpg")
+        self.assertEqual(by_fav["vod:501"].wide_art, "https://img/501-saved-wide.jpg")
+        self.assertEqual(by_fav["ch:999"].banner, "https://img/999-ban.jpg")
+        self.assertEqual(by_fav["ch:999"].wide_art, "https://img/999-wide.jpg")
+
+        # Fallback to thumb when banner/wide_art absent
+        fallback_cards = sweettv_app.sections.favourites_cards(
+            {"v": 1, "items": {"vod:777": {"title": "Thumb Only", "thumb": "https://img/777.jpg", "at": NOW}}},
+            catalog, {}, NOW,
+        )
+        self.assertEqual(fallback_cards[0].banner, "https://img/777.jpg")
+        self.assertEqual(fallback_cards[0].wide_art, "https://img/777.jpg")
+
+        # App: _toggle_favourite persists banner and wide_art to mr.toggle_fav, and _show_favourites uses 201 + recall_title
+        Fake.now = NOW
+        write_list(raw)
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        fav_calls = []
+        with mock.patch.object(MR, "toggle_fav", side_effect=lambda k, m=None, **kw: (fav_calls.append((k, dict(m or {}))) or (True, True))):
+            card = sweettv_app.sections.vod_card({
+                "id": 501, "title": "Dune", "poster": "https://img/501.jpg",
+                "banner": "https://img/501-bg.jpg", "wide_art": "https://img/501-wide.jpg", "vod_url": "u",
+            }, "movie")
+            window.shown = [card]
+            window.focus = 200
+            window.controls[200].selected = 0
+            window._toggle_favourite()
+        self.assertEqual(len(fav_calls), 1)
+        self.assertEqual(fav_calls[0][1].get("banner"), "https://img/501-bg.jpg")
+        self.assertEqual(fav_calls[0][1].get("wide_art"), "https://img/501-wide.jpg")
+
+        window.favs_doc = favs_doc
+        with mock.patch.object(files, "recall_title_detail", side_effect=lambda k: recalled.get(k)) as recall_spy:
+            window._open_section("favourites")
+            self.assertEqual(window.getProperty("wide_grid"), "1")
+            self.assertGreaterEqual(len(window.controls[201].items), 1)
+            self.assertTrue(recall_spy.called)
+
+    def test_episode_items_coming_soon_badge_toast_and_autoplay_skip(self):
+        from resources.lib import sweettv_guide
+        self.assertEqual(sweettv_guide.SHOW_EPISODES, 421)
+
+        W.set_language("ru")
+        self.assertEqual(W.tr("This episode has not been released yet."), "Эта серия ещё не вышла.")
+        W.set_language("uk")
+        self.assertEqual(W.tr("This episode has not been released yet."), "Ця серія ще не вийшла.")
+        W.set_language("en")
+
+        eps = [
+            {"id": 1, "number": 1, "title": "First", "duration": 2000, "resume": 500, "preview": "https://img/e1.jpg"},
+            {"id": 2, "number": 2, "title": "Second", "duration": 2000, "watched": True},
+            {"id": 3, "number": 3, "title": "Next Week", "duration": 0, "coming_soon": True, "playable": False,
+             "release_date": "2026-12-01", "vod_url": ""},
+            {"id": 4, "number": 4, "title": "Soon No Date", "duration": 0, "coming_soon": True, "playable": False},
+        ]
+        lis = IT.episode_items(eps, fallback_art="https://img/fallback.jpg")
+        self.assertEqual(lis[0].art.get("icon"), "https://img/e1.jpg")
+        self.assertTrue(lis[0].getProperty("bar").startswith("sweettv-bar-"))
+        self.assertEqual(lis[0].getProperty("coming_soon"), "")
+        self.assertEqual(lis[1].art.get("icon"), "https://img/fallback.jpg")
+        self.assertEqual(lis[1].getProperty("badge"), W.tr("Watched"))
+        self.assertEqual(lis[1].getProperty("coming_soon"), "")
+        self.assertEqual(lis[2].getProperty("coming_soon"), "1")
+        self.assertEqual(lis[2].getProperty("bar"), "")
+        self.assertIn("2026-12-01", lis[2].getProperty("badge"))
+        self.assertIn(W.tr("Soon"), lis[2].getProperty("badge"))
+        self.assertEqual(lis[3].getProperty("coming_soon"), "1")
+        self.assertEqual(lis[3].getProperty("badge"), W.tr("Soon"))
+
+        # Clicking a coming_soon episode shows toast and does NOT start playback; _next_episode_after skips coming_soon
+        Fake.now = NOW
+        write_list(answer(chan(15, "СТБ HD", number=1)))
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        detail = {
+            "ok": True, "id": "vod:600", "movie_id": "600", "title": "Series", "banner": "https://img/s-ban.jpg",
+            "seasons": [{"id": 1, "number": 1, "title": "Season 1", "episodes": [
+                {"id": 101, "episode_id": 101, "number": 1, "title": "Ep 1", "duration": 1400,
+                 "owner_id": 10, "vod_url": "plugin://plugin.video.sweettv/playvod/600|101|10", "resume": 0, "watched": False},
+                {"id": 102, "episode_id": 102, "number": 2, "title": "Ep 2 Soon", "duration": 0,
+                 "coming_soon": True, "playable": False, "release_date": "2026-12-01", "vod_url": ""},
+            ]}],
+        }
+        card = sweettv_app.sections.vod_card({"id": 600, "title": "Series", "vod_url": "u", "banner": "https://img/s-ban.jpg"}, "series")
+        with mock.patch.object(API, "vod_detail", return_value=detail):
+            window._open_show_modal(card)
+            self.assertTrue(wait_for(lambda: len(window.controls[421].items) == 2))
+            self.assertEqual(window.focus, 421)
+
+            Fake.rpc.clear()
+            Fake.notes.clear()
+            window.controls[421].selected = 1
+            window.onClick(421)
+            self.assertEqual(Fake.rpc, [], "Clicking coming_soon episode must not start playback")
+            self.assertIn(W.tr("This episode has not been released yet."), Fake.notes)
+
+            sess = sweettv_app.play.Session(
+                kind="vod", play_url="plugin://plugin.video.sweettv/playvod/600|101|10",
+                cid="", epg="", movie_id="600", episode_id="101", season=1, title="Ep 1",
+                start=0, stop=0, duration=1400, from_start=False, resume_pos=0, started_at=NOW,
+            )
+            self.assertIsNone(window._next_episode_after(sess))
+
+            window._guide_close()
+            self.assertEqual(window.controls[421].items, [])
+
+    def test_epg_programme_image_parsing_cards_and_nonblocking_worker_hydration(self):
+        # Part 4.1: Programme.image default & parse_programme extraction
+        self.assertEqual(D.Programme(1000, 2000, "x", "", True, "").image, "")
+        p_img = D.parse_programme({"id": 50, "text": "News", "time_start": 1000, "time_stop": 2000,
+                                   "image_url": "https://img/epg50.jpg"}, NOW)
+        self.assertEqual(p_img.image, "https://img/epg50.jpg")
+        p_ext = D.parse_programme({"id": 51, "text": "Show", "time_start": 1000, "time_stop": 2000,
+                                   "preview_url_ext": "https://img/ext51.jpg"}, NOW)
+        self.assertEqual(p_ext.image, "https://img/ext51.jpg")
+        p_bad = D.parse_programme({"id": 52, "text": "Bad", "time_start": 1000, "time_stop": 2000,
+                                   "image_url": "ftp://bad/x.jpg"}, NOW)
+        self.assertEqual(p_bad.image, "")
+
+        # Part 4.2: channel_card prefers current.image for wide_art and banner; vod_card accepts wide_art
+        ch_with_epg_img = D.parse_channel({
+            "id": 15, "name": "СТБ HD", "number": 1, "available": True,
+            "icon_v2_url": "https://img/15-sq.png", "banner_url": "https://img/15-ban.jpg",
+            "epg": [{"id": 501, "text": "МастерШеф", "time_start": NOW - 600, "time_stop": NOW + 1200,
+                     "image_url": "https://img/epg501.jpg"}],
+        }, NOW)
+        c_epg = sweettv_app.sections.channel_card(ch_with_epg_img, {}, NOW)
+        self.assertEqual(c_epg.wide_art, "https://img/epg501.jpg")
+        self.assertEqual(c_epg.banner, "https://img/epg501.jpg")
+
+        v_card = sweettv_app.sections.vod_card({
+            "id": 800, "title": "Movie", "poster": "https://img/800-sq.jpg",
+            "banner": "https://img/800-ban.jpg", "wide_art": "https://img/800-wide.jpg",
+        })
+        self.assertEqual(v_card.wide_art, "https://img/800-wide.jpg")
+
+        # Part 4.3: files.enrich_epg_art delegates to sweetapi.enrich_epg_records
+        with mock.patch.object(API, "enrich_epg_records", return_value={"501": {"image_url": "https://img/501.jpg"}}) as api_spy:
+            res = files.enrich_epg_art(["501"], now=NOW)
+        self.assertEqual(res, {"501": {"image_url": "https://img/501.jpg"}})
+        self.assertTrue(api_spy.called)
+
+        # Part 4.3: Non-blocking worker in SweetTV enriches channels missing current.image, deduplicates, and skips in demo
+        Fake.now = NOW
+        raw_no_img = answer(
+            chan(15, "СТБ HD", number=1, icon_v2_url="https://img/15-sq.png", banner_url="https://img/15-ban.jpg",
+                 epg=[prog(NOW - 600, NOW + 1200, "МастерШеф", 501)]),
+        )
+        write_list(raw_no_img)
+        enriched_calls = []
+
+        def fake_enrich(epg_ids, now=None):
+            enriched_calls.append(list(epg_ids))
+            sweetstore.default_store().upsert_channels(answer(
+                chan(15, "СТБ HD", number=1, icon_v2_url="https://img/15-sq.png", banner_url="https://img/15-ban.jpg",
+                     epg=[prog(NOW - 600, NOW + 1200, "МастерШеф Live", 501, image_url="https://img/epg501-live.jpg")]),
+            ), now=NOW)
+            return {"501": {"id": "501", "image_url": "https://img/epg501-live.jpg", "title": "МастерШеф Live"}}
+
+        with mock.patch.object(files, "enrich_epg_art", side_effect=fake_enrich):
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            window._open_section("channels")
+            self.assertTrue(wait_for(lambda: len(enriched_calls) >= 1 and window.controls[201].items[0].art.get("icon") == "https://img/epg501-live.jpg"))
+            prev_count = len(enriched_calls)
+            window._refresh_channels(NOW + 5)
+            time.sleep(0.05)
+            self.assertEqual(len(enriched_calls), prev_count)
+
+        # Demo mode must NOT call enrich_epg_art
+        demo_calls = []
+        with mock.patch.object(files, "enrich_epg_art", side_effect=lambda *a, **kw: demo_calls.append(1) or {}):
+            demo_win = self.open(demo=True)
+            self.assertTrue(wait_for(lambda: demo_win.mode == D.DATA))
+            demo_win._open_section("channels")
+            time.sleep(0.05)
+            self.assertEqual(demo_calls, [])
 
 
 if __name__ == "__main__":
