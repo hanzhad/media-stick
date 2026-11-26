@@ -111,12 +111,22 @@ class Flag(unittest.TestCase):
 
     def test_a_video_over_the_window_keeps_it_alive(self):
         self.open_window()
-        Kodi.active.clear()                       # the player's fullscreen window is the active one
+        Kodi.active = {12005}                     # the player's fullscreen window is the active one
         Kodi.video = True
         self.clock.now += 3600
         self.assertIsNone(self.claim())
         Kodi.video = False                        # the video ended and the window is gone
+        Kodi.active.clear()
         self.assertIsNotNone(self.claim())
+
+    def test_a_background_video_on_home_without_fullscreen_reclaims_the_stale_flag(self):
+        self.open_window()
+        Kodi.active = {13000}                     # back on Home; video still plays in background without 12005
+        Kodi.video = True
+        self.clock.now += si.GRACE + 1
+        second = self.claim()
+        self.assertIsNotNone(second)
+        self.assertEqual(si.decode(self.home.getProperty(KEY)).token, second.token)
 
     def test_a_late_finally_of_an_old_instance_does_not_clear_a_newer_flag(self):
         old = self.open_window()
@@ -165,7 +175,11 @@ class Kodi_questions(unittest.TestCase):
         self.assertTrue(si.window_active(5))
         self.assertFalse(si.window_active(6))
         Kodi.video = True
+        self.assertFalse(si.video_playing())      # background video without fullscreen 12005 is not active playback
+        Kodi.active = {12005}
         self.assertTrue(si.video_playing())
+        Kodi.video = False
+        self.assertFalse(si.video_playing())
 
 
 if __name__ == "__main__":

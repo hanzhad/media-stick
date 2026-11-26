@@ -36,7 +36,7 @@ ANIMATION_MS_MAX = 400                  # every idle transition is short, no per
 # --- stand-ins for the Kodi modules launcher.py imports -------------------------------------
 now = [1000.0]
 kodi_idle = [False]
-loop = types.SimpleNamespace(ticks=[], tick=0, step=10.0, seen=[])   # the service loop's script, see Service
+loop = types.SimpleNamespace(ticks=[], tick=0, step=10.0, seen=[], video=False, fullscreen_video=False, stops=0, stop_error=None)   # the service loop's script, see Service
 xbmc = types.ModuleType("xbmc")
 xbmc.LOGWARNING = xbmc.LOGERROR = xbmc.LOGINFO = 0
 xbmc.log = lambda *a, **k: None
@@ -48,7 +48,21 @@ def cond_visible(cond):
         return kodi_idle[0]
     if cond.startswith("System.ScreenSaverActive"):      # the service's BLOCKED: a dialog or screensaver
         return loop.ticks[min(loop.tick, len(loop.ticks) - 1)][1] if loop.ticks else False
+    if cond == "Player.HasVideo":
+        return loop.video
+    if cond == "Window.IsActive(12005)":
+        return loop.fullscreen_video
     return False
+
+
+class Player:
+    def stop(self):
+        loop.stops += 1
+        if loop.stop_error is not None:
+            raise loop.stop_error
+
+
+xbmc.Player = Player
 
 
 class Monitor:
@@ -251,6 +265,7 @@ class Service(unittest.TestCase):
         now[0] = 1000.0
         kodi_idle[0] = True
         loop.tick, loop.seen, loop.ticks = 0, [], []
+        loop.video, loop.fullscreen_video, loop.stops, loop.stop_error = False, False, 0, None
         loop.__dict__.pop("instance", None)
         self.calls = []
         self.patches = [
@@ -310,6 +325,34 @@ class Service(unittest.TestCase):
     def test_idle_never_sets_in_another_window(self):
         self.run_service((HOME, False), *[(OTHER, False)] * 6)
         self.assertEqual(set(loop.seen), {""})
+
+    def test_show_launcher_stops_background_video_when_fullscreen_not_active(self):
+        loop.video = True
+        loop.fullscreen_video = False
+        self.run_service((HOME, False), (OWN, False))
+        self.assertGreaterEqual(loop.stops, 1)
+        self.assertEqual(self.calls.count("show"), 1)
+
+    def test_show_launcher_does_not_stop_video_when_fullscreen_active(self):
+        loop.video = True
+        loop.fullscreen_video = True
+        self.run_service((HOME, False), (OWN, False))
+        self.assertEqual(loop.stops, 0)
+        self.assertEqual(self.calls.count("show"), 1)
+
+    def test_show_launcher_does_not_stop_when_no_video(self):
+        loop.video = False
+        loop.fullscreen_video = False
+        self.run_service((HOME, False), (OWN, False))
+        self.assertEqual(loop.stops, 0)
+
+    def test_show_launcher_survives_player_stop_error(self):
+        loop.video = True
+        loop.fullscreen_video = False
+        loop.stop_error = RuntimeError("stop failed")
+        self.run_service((HOME, False), (OWN, False))
+        self.assertEqual(loop.stops, 1)
+        self.assertEqual(self.calls.count("show"), 1)
 
 
 class IdleSkin(unittest.TestCase):
@@ -662,6 +705,44 @@ class NoScreensaver(unittest.TestCase):
             self.assertEqual(len(setting), 1)
             self.assertEqual(setting[0].text or "", "")
             self.assertNotEqual(setting[0].get("default"), "true")
+
+
+class EmulatorBoot(unittest.TestCase):
+    def test_start_sh_clears_wayland_display_in_wslg_mode(self):
+        start_sh = read(os.path.join(ROOT, "tools", "emulator", "start.sh"))
+        self.assertRegex(start_sh, r'-e\s+["\']?WAYLAND_DISPLAY=["\']?')
+        self.assertNotIn("${WAYLAND_DISPLAY:-}", start_sh)
+
+    def test_run_sh_creates_shots_dir_and_sets_screenshotpath(self):
+        run_sh = read(os.path.join(ROOT, "tools", "emulator", "run.sh"))
+        self.assertIn("/run/media-stick/shots", run_sh)
+        self.assertIn("debug.screenshotpath=/run/media-stick/shots/", run_sh)
+
+    def test_run_sh_preseeds_addons33_db_before_kodi(self):
+        run_sh = read(os.path.join(ROOT, "tools", "emulator", "run.sh"))
+        self.assertIn("Addons33.db", run_sh)
+        self.assertLess(run_sh.index("Addons33.db"), run_sh.index("exec kodi --standalone"))
+        for token in (
+            "idVersion",
+            "iCompressCount",
+            "33",
+            "addonID",
+            "enabled",
+            "disabledReason",
+            "$KODI_HOME/addons",
+        ):
+            self.assertIn(token, run_sh, f"run.sh missing {token!r} for Addons33.db pre-seeding")
+        for addon_id in (
+            "skin.estuary",
+            "inputstream.adaptive",
+            "game.controller.default",
+            "game.controller.keyboard",
+            "game.controller.mouse",
+            "resource.language.en_gb",
+            "resource.uisounds.kodi",
+            "webinterface.default",
+        ):
+            self.assertIn(addon_id, run_sh, f"run.sh missing system addon {addon_id!r}")
 
 
 if __name__ == "__main__":
