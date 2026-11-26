@@ -867,12 +867,20 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
 
         test = self
 
+        class FakeVideoInfoTag:
+            def __init__(self):
+                self.resume_points = []
+
+            def setResumePoint(self, resume, total=0.0):
+                self.resume_points.append((float(resume), float(total)))
+
         class FakeListItem:
             def __init__(self, label="", path="", offscreen=False):
                 self.label = label
                 self.path = path
                 self.info = {}
                 self.props = {}
+                self.video_info_tag = FakeVideoInfoTag()
 
             def setLabel(self, label):
                 self.label = label
@@ -885,6 +893,9 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
 
             def setProperty(self, key, value):
                 self.props[key] = str(value)
+
+            def getVideoInfoTag(self):
+                return self.video_info_tag
 
         class FakeWindow:
             def __init__(self, wid=10000):
@@ -1116,6 +1127,162 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
             res_entry = self.state_store.get_resume("sw:5|50")
             if res_entry is not None:
                 self.assertFalse(res_entry["done"], "CDN stall failover must never mark item done=True")
+
+    def test_controller_constants_and_startup_buffering_grace(self):
+        import mediastick_signin as signin
+
+        sp, ctrl = self._make_controller()
+        mod = sys.modules["resources.lib.sweettv_player"]
+        self.assertEqual(mod.STARTUP_GRACE, 30.0)
+        self.assertEqual(mod.SEEK_GRACE, 15.0)
+        self.assertEqual(mod.INITIAL_SEEK_SETTLE, 2.0)
+
+        with mock.patch.object(signin, "sweettv_setting", return_value="Bearer test-tok"):
+            ctrl.handle_play(sp.build_play_notify("epg", cid="5", epg_id="50", from_start=True)["params"]["data"])
+            self.assertEqual(len(self.open_calls), 1)
+
+            # Startup buffering (pos=0, total=0, onAVStarted not yet called) for 15s and up to 29.9s (< STARTUP_GRACE)
+            self.pos[0], self.total[0] = 0.0, 0.0
+            for dt in (5.0, 5.0, 5.0, 14.9):
+                self.mono[0] += dt
+                ctrl.tick()
+                self.assertEqual(len(self.open_calls), 1, f"Startup buffering at +{self.mono[0] - 100.0:.1f}s must NOT failover")
+
+            # onAVStarted() resets startup buffer time so 7s after onAVStarted (< 8s stall) does NOT failover
+            ctrl.onAVStarted()
+            self.mono[0] += 7.0
+            ctrl.tick()
+            self.assertEqual(len(self.open_calls), 1, "Time spent buffering before onAVStarted must not count toward 8s stall")
+
+            # Boundary: if onAVStarted never fires and pos=0, total=0 persists >= STARTUP_GRACE (30s) + 8s, watchdog arms and fails over
+            ctrl.handle_play(sp.build_play_notify("epg", cid="5", epg_id="50", from_start=True)["params"]["data"])
+            base_opens = len(self.open_calls)
+            self.pos[0], self.total[0] = 0.0, 0.0
+            self.mono[0] += 30.0
+            ctrl.tick()
+            self.assertEqual(len(self.open_calls), base_opens)
+            self.mono[0] += 8.5
+            ctrl.tick()
+            self.assertEqual(len(self.open_calls), base_opens + 1, "Watchdog must arm once STARTUP_GRACE expires")
+
+    def test_controller_seek_grace_suppresses_post_seek_rebuffering_failover(self):
+        import mediastick_signin as signin
+
+        sp, ctrl = self._make_controller()
+        with mock.patch.object(signin, "sweettv_setting", return_value="Bearer test-tok"):
+            ctrl.handle_play(sp.build_play_notify("epg", cid="5", epg_id="50", start_offset=900)["params"]["data"])
+            self.pos[0], self.total[0] = 920.0, 7200.0
+            ctrl.onAVStarted()
+            ctrl.tick()
+            self.assertEqual(len(self.open_calls), 1)
+
+            # Seek +180s and flush 0.6s coalescer, then hold constant pos (HLS rebuffering) for 10s and up to 14.9s (< SEEK_GRACE)
+            ctrl.handle_ctl(sp.build_ctl_notify("seek_by", seconds=180)["params"]["data"])
+            self.mono[0] += 0.7
+            ctrl.tick()
+            self.assertAlmostEqual(self.pos[0], 1100.0, delta=1.0)
+
+            for dt in (5.0, 5.0, 4.9):
+                self.mono[0] += dt
+                ctrl.tick()
+                self.assertEqual(len(self.open_calls), 1, "Post-seek rebuffering < SEEK_GRACE must NOT failover")
+
+            # Boundary: after SEEK_GRACE (15s) expires + 8s stall at constant pos -> failover triggers
+            self.mono[0] += 0.2
+            ctrl.tick()
+            self.assertEqual(len(self.open_calls), 1)
+            self.mono[0] += 8.5
+            ctrl.tick()
+            self.assertEqual(len(self.open_calls), 2, "Stall after SEEK_GRACE + 8s must trigger failover")
+
+    def test_controller_watchdog_give_up_while_playing_keeps_session_and_osd_alive(self):
+        import mediastick_signin as signin
+
+        sp, ctrl = self._make_controller()
+        with mock.patch.object(signin, "sweettv_setting", return_value="Bearer test-tok"):
+            ctrl.handle_play(sp.build_play_notify("epg", cid="5", epg_id="50", start_offset=900)["params"]["data"])
+            self.pos[0], self.total[0] = 920.0, 7200.0
+            ctrl.onAVStarted()
+            ctrl.tick()
+            self.assertEqual(len(self.open_calls), 1)
+
+            # Exhaust MAX_FAILOVERS (3) while playback remains active
+            for i in range(sp.MAX_FAILOVERS):
+                self.mono[0] += 8.5
+                ctrl.tick()
+                self.assertEqual(len(self.open_calls), i + 2)
+                self.pos[0], self.total[0] = 920.0, 7200.0
+                ctrl.onAVStarted()
+                ctrl.tick()
+
+            # 4th stall -> evaluate_watchdog returns "give_up" while isPlaying() is True
+            self.mono[0] += 8.5
+            ctrl.tick()
+            self.assertEqual(len(self.open_calls), 4, "give_up must not trigger another failover reopen")
+            self.assertTrue(ctrl._watchdog_exhausted)
+            self.assertIsNotNone(ctrl._session, "give_up while playing must NOT clear self._session")
+            self.assertTrue(os.path.exists(self.session_path), "give_up while playing must NOT delete sweettv-session.json")
+            self.assertIsNotNone(sp.read_active_session(self.session_path))
+            self.assertEqual(self.win_props.get("ms.tv_osd"), "1", "give_up while playing must keep ms.tv_osd alive")
+
+            # Subsequent ticks while still playing keep session & OSD alive without reopening
+            self.mono[0] += 10.0
+            ctrl.tick()
+            self.assertEqual(len(self.open_calls), 4)
+            self.assertTrue(os.path.exists(self.session_path))
+            self.assertEqual(self.win_props.get("ms.tv_osd"), "1")
+
+            res_entry = self.state_store.get_resume("sw:5|50")
+            if res_entry is not None:
+                self.assertFalse(res_entry["done"])
+
+            # Only when playback actually stops is the session cleaned up
+            ctrl.onPlayBackStopped()
+            self.assertFalse(os.path.exists(self.session_path))
+            self.assertIsNone(ctrl._session)
+            self.assertEqual(self.win_props.get("ms.tv_osd"), "")
+
+    def test_controller_native_start_offset_and_initial_seek_settle(self):
+        import mediastick_signin as signin
+
+        sp, ctrl = self._make_controller()
+        with mock.patch.object(signin, "sweettv_setting", return_value="Bearer test-tok"):
+            # Case A: EPG archive with start_offset=900 sets StartOffset & setResumePoint, waits INITIAL_SEEK_SETTLE,
+            # and skips fallback seekTime() when Kodi's native seek lands near start_offset.
+            ctrl.handle_play(sp.build_play_notify("epg", cid="5", epg_id="50", start_offset=900)["params"]["data"])
+            li = self.played[-1][1]
+            self.assertEqual(li.props.get("StartOffset"), "900")
+            self.assertEqual(li.props.get("ResumeTime"), "900")
+            self.assertEqual(li.video_info_tag.resume_points, [(900.0, 7200.0)])
+
+            self.pos[0], self.total[0] = 0.0, 7200.0
+            ctrl.onAVStarted()
+            self.assertEqual(self.seeks, [], "Must NOT call fallback seekTime immediately in onAVStarted")
+            self.mono[0] += 1.9
+            ctrl.tick()
+            self.assertEqual(self.seeks, [], "Must wait INITIAL_SEEK_SETTLE (2.0s) before fallback seekTime")
+
+            # Native StartOffset/setResumePoint lands within SEEK_TOLERANCE of 900 -> zero fallback seekTime!
+            self.pos[0] = 898.0
+            ctrl.tick()
+            self.assertEqual(self.seeks, [], "Native seek landing near start_offset must skip fallback seekTime")
+            self.assertTrue(ctrl._initial_seek_done)
+
+            # Case B: VOD with start_offset=120 where native seek does NOT land -> fallback seekTime after INITIAL_SEEK_SETTLE
+            self.seeks.clear()
+            ctrl.handle_play(sp.build_play_notify("vod", movie_id="9558", owner_id=69, start_offset=120)["params"]["data"])
+            li_vod = self.played[-1][1]
+            self.assertEqual(li_vod.props.get("StartOffset"), "120")
+
+            self.pos[0], self.total[0] = 0.0, 3600.0
+            ctrl.onAVStarted()
+            self.assertEqual(self.seeks, [])
+            self.mono[0] += 1.9
+            ctrl.tick()
+            self.assertEqual(self.seeks, [])
+            self.mono[0] += 0.1
+            ctrl.tick()
+            self.assertEqual(self.seeks, [120.0], "Fallback seekTime must fire once INITIAL_SEEK_SETTLE elapses at pos=0")
 
     def test_home_service_instantiates_single_controller_and_dispatches_notifications(self):
         created_controllers = []
