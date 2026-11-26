@@ -1127,16 +1127,16 @@ class TestSweetStoreSQLiteShell(unittest.TestCase):
         self.assertEqual(by_epg["703"]["image_url"], "https://img.example/703-960.jpg")
 
         # _programme_summary (via programme_at & adjacent_programmes) also prefers image_url over preview_url
-        cur = self.st.programme_at("15", NOW - 2400, now=NOW)
+        cur = self.st.programme_at("15", NOW - 2400)
         self.assertIsNotNone(cur)
         self.assertEqual(cur["preview"], "https://img.example/701-960.jpg")
         self.assertEqual(cur["image_url"], "https://img.example/701-960.jpg")
 
-        adj = self.st.adjacent_programmes("15", NOW, now=NOW)
-        self.assertEqual(adj["prev"]["preview"], "https://img.example/701-960.jpg")
-        self.assertEqual(adj["prev"]["image_url"], "https://img.example/701-960.jpg")
-        self.assertEqual(adj["next"]["preview"], "https://img.example/703-960.jpg")
-        self.assertEqual(adj["next"]["image_url"], "https://img.example/703-960.jpg")
+        prev_p, next_p = self.st.adjacent_programmes("15", "702")
+        self.assertEqual(prev_p["preview"], "https://img.example/701-960.jpg")
+        self.assertEqual(prev_p["image_url"], "https://img.example/701-960.jpg")
+        self.assertEqual(next_p["preview"], "https://img.example/703-960.jpg")
+        self.assertEqual(next_p["image_url"], "https://img.example/703-960.jpg")
 
 
 if __name__ == "__main__":

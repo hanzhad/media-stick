@@ -482,6 +482,7 @@ def normalize_title_payload(detail, now) -> tuple[dict, list[dict]]:
         {"id": s["id"], "number": s["number"], "title": s["title"], "owner_id": s["owner_id"]}
         for s in norm_seasons
     ]
+    released = detail.get("released") is not False
     t_row = {
         "title_key": tkey,
         "id": tkey,
@@ -500,7 +501,8 @@ def normalize_title_payload(detail, now) -> tuple[dict, list[dict]]:
         "genre_names": genre_names,
         "countries": countries,
         "owner_id": owner_id,
-        "vod_url": _safe_str(detail.get("vod_url"), 400),
+        "released": released,
+        "vod_url": _safe_str(detail.get("vod_url"), 400) if released else "",
         "seasons_count": len(norm_seasons),
         "seasons_meta": seasons_meta,
         "seasons": norm_seasons,
@@ -583,6 +585,7 @@ CREATE TABLE IF NOT EXISTS titles (
     countries_json TEXT NOT NULL DEFAULT '[]',
     seasons_meta_json TEXT NOT NULL DEFAULT '[]',
     owner_id INTEGER NOT NULL DEFAULT 0,
+    released INTEGER NOT NULL DEFAULT 1,
     vod_url TEXT NOT NULL DEFAULT '',
     seasons_count INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL DEFAULT 0
@@ -667,6 +670,7 @@ class SweetStore:
     def _ensure_columns(conn: sqlite3.Connection) -> None:
         migrations = (
             ("titles", "wide_art", "TEXT NOT NULL DEFAULT ''"),
+            ("titles", "released", "INTEGER NOT NULL DEFAULT 1"),
             ("episodes", "coming_soon", "INTEGER NOT NULL DEFAULT 0"),
             ("episodes", "release_date", "TEXT NOT NULL DEFAULT ''"),
         )
@@ -1214,7 +1218,7 @@ class SweetStore:
                 "start": t_start,
                 "stop": t_stop,
                 "day_key": r["day_key"],
-                "preview": r["preview_url"] or r["image_url"],
+                "preview": r["image_url"] or r["preview_url"],
                 "image_url": r["image_url"],
                 "live": live,
                 "can_archive": arch,
@@ -1256,7 +1260,7 @@ class SweetStore:
             "show_id": r["show_id"],
             "season": int(r["season_num"]),
             "episode": int(r["episode_num"]),
-            "preview": r["preview_url"] or r["image_url"],
+            "preview": r["image_url"] or r["preview_url"],
             "image_url": r["image_url"],
         }
 
@@ -1395,9 +1399,9 @@ class SweetStore:
                 """INSERT INTO titles(
                      title_key, kind, title, subtitle, description, poster, banner, wide_art,
                      year, duration, imdb, age_rating, genres_json, genre_names_json,
-                     countries_json, seasons_meta_json, owner_id, vod_url,
+                     countries_json, seasons_meta_json, owner_id, released, vod_url,
                      seasons_count, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(title_key) DO UPDATE SET
                      kind=excluded.kind, title=excluded.title, subtitle=excluded.subtitle,
                      description=excluded.description, poster=excluded.poster, banner=excluded.banner,
@@ -1406,7 +1410,8 @@ class SweetStore:
                      genre_names_json=excluded.genre_names_json,
                      countries_json=excluded.countries_json,
                      seasons_meta_json=excluded.seasons_meta_json,
-                     owner_id=excluded.owner_id, vod_url=excluded.vod_url,
+                     owner_id=excluded.owner_id, released=excluded.released,
+                     vod_url=excluded.vod_url,
                      seasons_count=excluded.seasons_count, updated_at=excluded.updated_at""",
                 (
                     tkey,
@@ -1426,6 +1431,7 @@ class SweetStore:
                     json.dumps(t_row["countries"], ensure_ascii=False),
                     json.dumps(t_row["seasons_meta"], ensure_ascii=False),
                     t_row["owner_id"],
+                    1 if t_row.get("released", True) else 0,
                     t_row["vod_url"],
                     t_row["seasons_count"],
                     ts,
@@ -1539,6 +1545,7 @@ class SweetStore:
             s_obj["episodes"].sort(key=lambda e: (e["number"], e["id"]))
             sorted_seasons.append(s_obj)
 
+        released = bool(r["released"]) if "released" in r.keys() else True
         out = {
             "ok": True,
             "id": r["title_key"],
@@ -1557,7 +1564,8 @@ class SweetStore:
             "genre_names": json.loads(r["genre_names_json"] or "[]"),
             "countries": json.loads(r["countries_json"] or "[]"),
             "owner_id": int(r["owner_id"]),
-            "vod_url": r["vod_url"],
+            "released": released,
+            "vod_url": r["vod_url"] if released else "",
             "seasons_count": len(sorted_seasons),
             "seasons": sorted_seasons,
         }
