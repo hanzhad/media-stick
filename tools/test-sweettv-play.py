@@ -307,13 +307,16 @@ class VodAndOverlayCaps(unittest.TestCase):
         stubs.Settings.values.update(logged=True, bearer="Bearer x", playerType="inputstream")
         sweet.time = types.SimpleNamespace(time=lambda: NOW)
 
-        # In-progress broadcast (51: NOW-3600..NOW+3600) with offset -> full manifest update & ResumeTime, not fixed TotalTime
+        # In-progress broadcast (51: NOW-3600..NOW+3600) with offset -> ResumeTime & max_resolution, NEVER deprecated manifest_update_parameter=full
         with mock.patch.object(sys, "argv", ["plugin://plugin.video.sweettv/playvid/5|51?ms_start=300", "1", ""]):
             sweet.playvid("5|51")
         item_live_dvr = log[-1][2]
         self.assertEqual(item_live_dvr.props.get("ResumeTime"), "300")
-        self.assertEqual(item_live_dvr.props.get("inputstream.adaptive.manifest_update_parameter"), "full")
+        self.assertNotIn("inputstream.adaptive.manifest_update_parameter", item_live_dvr.props)
         self.assertEqual(item_live_dvr.props.get("inputstream.adaptive.max_resolution"), "1080p")
+        overlay_sweettv = os.path.join(HERE, "..", "device", "skin-overlay", "plugin.video.sweettv", "resources", "lib", "sweettv.py")
+        with open(overlay_sweettv, encoding="utf-8") as f:
+            self.assertNotIn("manifest_update_parameter", f.read())
 
         # Programme outside channelList.json -> falls back to mediastick_sweetapi.recall for TotalTime
         with mock.patch.object(api, "recall", return_value={"start": NOW - 7200, "stop": NOW - 5400, "available": True}), \
@@ -321,6 +324,83 @@ class VodAndOverlayCaps(unittest.TestCase):
             sweet.playvid("5|9999")
         item_recalled = log[-1][2]
         self.assertEqual(item_recalled.props.get("TotalTime"), "1800")
+
+    def test_sweettv_overlay_uses_sweetstore_without_channellist_and_golive_notifies_resident_player(self):
+        import json as _json
+        import mediastick_sweetstore as sweetstore
+
+        sweetstore.reset_default_store()
+        st = sweetstore.default_store()
+        st.clear()
+        self.addCleanup(st.clear)
+        st.upsert_channels(
+            {
+                "status": "OK",
+                "list": [
+                    {
+                        "id": 5,
+                        "name": "Первый канал",
+                        "catchup": True,
+                        "catchup_duration": 7,
+                        "available": True,
+                        "epg": LIST["list"][0]["epg"],
+                    }
+                ],
+            },
+            now=NOW,
+        )
+
+        log = []
+        plugin = kodi_plugin(log)
+        helper = type("H", (PlayHelper,), {"resolved": [], "channel_list": {}, "plugin": plugin})
+        sweet = stubs.load_sweettv(helper_class=helper, xbmcplugin=plugin)
+        stubs.Settings.values.update(logged=True, bearer="Bearer x", playerType="inputstream")
+        sweet.time = types.SimpleNamespace(time=lambda: NOW)
+
+        # Preserves _ms_use_ffmpeg(cid, epg, protocol, drm) signature backed by SweetStore even when channelList is empty
+        self.assertTrue(sweet._ms_use_ffmpeg("5", "50", "hls", None))
+        self.assertFalse(sweet._ms_use_ffmpeg("5", "51", "hls", None))
+        self.assertFalse(sweet._ms_use_ffmpeg("5", "50", "mpd", None))
+        self.assertFalse(sweet._ms_use_ffmpeg("5", "50", "hls", "com.widevine.alpha"))
+
+        sweet.playvid("5|50")
+        item = log[-1][2]
+        self.assertEqual(item.label, "Утро")
+        self.assertEqual(item.info[1], {"title": "Утро", "tvshowtitle": "Первый канал"})
+        self.assertEqual(item.props.get("TotalTime"), "3600")
+
+        # ms_golive bridges to resident SweetPlayerController via NotifyAll when active session exists
+        try:
+            import mediastick_sweetplay as sp
+        except ImportError as exc:
+            self.fail(f"mediastick_sweetplay missing: {exc}")
+        sess_file = os.path.join(tempfile.mkdtemp(), "sweettv-session.json")
+        rpc_calls = []
+        with mock.patch.object(sp, "SESSION_FILE", sess_file):
+            sp.write_active_session(
+                {
+                    "kind": "epg",
+                    "cid": "5",
+                    "epg_id": "51",
+                    "slot_start": NOW - 3600,
+                    "slot_stop": NOW + 3600,
+                    "anchor_start": NOW - 3600,
+                    "anchor_stop": NOW + 3600,
+                }
+            )
+            sweet.xbmc = types.SimpleNamespace(
+                getInfoLabel=lambda _: "",
+                executebuiltin=lambda cmd: None,
+                executeJSONRPC=lambda payload: (rpc_calls.append(_json.loads(payload)), '{"result":"OK"}')[1],
+                log=lambda *a: None,
+                LOGWARNING=2,
+            )
+            sweet.ms_golive()
+        self.assertEqual(len(rpc_calls), 1)
+        self.assertEqual(rpc_calls[0]["method"], "JSONRPC.NotifyAll")
+        self.assertEqual(rpc_calls[0]["params"]["sender"], "script.media-stick.home")
+        self.assertEqual(rpc_calls[0]["params"]["message"], "sweettv.ctl")
+        self.assertEqual(rpc_calls[0]["params"]["data"]["op"], "live")
 
 
 if __name__ == "__main__":

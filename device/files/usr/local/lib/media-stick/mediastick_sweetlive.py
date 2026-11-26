@@ -67,8 +67,6 @@ SEEK_ATTEMPTS = 3
 MIN_TOTAL = 30             # s: a length shorter than this is the player not knowing yet, not a programme
 ID_RE = re.compile(r"[0-9]{1,12}")
 CID_OR_VOD_RE = re.compile(r"(?:[0-9]{1,12}|vod:[0-9]{1,12})")
-ASK_FILE = "sweettv-ask.json"
-ASK_FRESH = 30             # s an ask is good for: the add-on is asked to resolve the item a moment after it is written
 START_RE = re.compile(r"(?:ms_start|start)=([0-9]{1,12})")
 ITEM_RE = re.compile(r"\s*([0-9]{1,12})\|(null|[0-9]{1,12})(?=$|[?&|#/%\s])")   # `<channel>|<programme or null>` and what Kodi may leave after it
 VOD_ITEM_RE = re.compile(r"\s*([0-9]{1,12})\|(null|[0-9]{1,12})\|([0-9]{1,12})(?=$|[?&|#/%\s])")
@@ -486,64 +484,13 @@ def ended_plan(raw, cid, epg, now):
 
 
 def ask(cid, epg, offset, now=None, folder=None):
-    """The opener of programme `epg` of channel `cid` starts it `offset` s in: written down for the add-on, which may not be told
-    in the path (see "The ask"). Nothing for live, for the beginning, or for what is not an id. True when written."""
-    cid, epg = str(cid), "" if epg in (None, "", "null") else str(epg)
-    offset = _number(offset)
-    if not epg or not offset or offset <= 0 or not ID_RE.fullmatch(cid) or not ID_RE.fullmatch(epg):
-        return False
-    record = {"cid": cid, "epg": epg, "offset": min(offset, START_MAX), "at": int(time.time() if now is None else now)}
-    return _write(folder or NOW_DIR, ASK_FILE, json.dumps({"v": 1, "ask": record}))
+    """Retired no-op: start offset travels in URL query or resident NotifyAll."""
+    return False
 
 
 def ask_url(url, now=None, folder=None):
-    """`ask` for the plugin path `url` (what `url()` made), just before it is opened. Never raises: an ask that is not
-    written leaves the add-on to what the path says."""
-    try:
-        found = ref(url)
-        return bool(found and ask(found[0], found[1], found[2], now, folder))
-    except Exception:
-        return False
-
-
-def _read_ask(folder=None):
-    try:
-        with open(os.path.join(folder or NOW_DIR, ASK_FILE), encoding="utf-8") as f:
-            raw = json.load(f)
-    except (OSError, ValueError, MemoryError):
-        return None
-    e = raw.get("ask") if isinstance(raw, dict) else None
-    if not isinstance(e, dict):
-        return None
-    cid, epg, at, offset = e.get("cid"), e.get("epg"), _number(e.get("at")), _number(e.get("offset"))
-    if not (isinstance(cid, str) and ID_RE.fullmatch(cid) and isinstance(epg, str) and ID_RE.fullmatch(epg)
-            and at is not None and offset is not None and offset > 0):
-        return None
-    return {"cid": cid, "epg": epg, "offset": min(offset, START_MAX), "at": at}
-
-
-def _forget_ask(folder=None):
-    path = os.path.join(folder or NOW_DIR, ASK_FILE)
-    try:
-        os.unlink(path)
-    except FileNotFoundError:
-        pass
-    except OSError:                    # not ours to remove: an empty ask says the same
-        _write(folder or NOW_DIR, ASK_FILE, json.dumps({"v": 1, "ask": None}))
-
-
-def take_ask(cid, epg, now=None, folder=None):
-    """(offset, state) the ask has for this item: state "used" with the offset when there is one for exactly this channel and
-    programme and it is no older than ASK_FRESH s, else offset 0 and state "none" (no ask), "other" (an ask for another item,
-    left alone) or "stale". An ask for this item is taken whatever its age: it is not asked again."""
-    e = _read_ask(folder)
-    if e is None:
-        return 0, "none"
-    if e["cid"] != str(cid) or e["epg"] != str(epg):
-        return 0, "other"
-    _forget_ask(folder)
-    age = (time.time() if now is None else now) - e["at"]
-    return (e["offset"], "used") if -5 <= age <= ASK_FRESH else (0, "stale")
+    """Retired no-op: never writes sweettv-ask.json."""
+    return False
 
 
 def _positive(match):
@@ -551,11 +498,7 @@ def _positive(match):
 
 
 def start_of(argv, videoid, cid, epg, now=None, folder=None):
-    """(offset in s, source) where the add-on is asked to start programme `epg` of channel `cid` (resolving `videoid`, with
-    the process's `argv`). The first that says a place above 0 wins: "query" (argv[2], the query as Kodi should give it),
-    "path" (argv[0]), "videoid" (the id string itself), "argv" (any other argument), "ask" (what the opener wrote down).
-    No place: (0, "none, ask <none|other|stale>"). The ask for this item is consumed whichever source wins."""
-    asked, state = take_ask(cid, epg, now, folder)
+    """(offset in s, source) where the fallback plugin is asked to start programme `epg` of channel `cid`."""
     args = [a if isinstance(a, str) else "" for a in (argv if isinstance(argv, (list, tuple)) else ())]
     where = []
     if len(args) > 2:
@@ -568,4 +511,4 @@ def start_of(argv, videoid, cid, epg, now=None, folder=None):
         found = _positive(START_RE.search(unquote(text_)))
         if found:
             return found, source
-    return (asked, "ask") if asked else (0, "none, ask " + state)
+    return 0, "none"

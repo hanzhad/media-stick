@@ -434,65 +434,19 @@ class StartPlace(unittest.TestCase):
 
 
 class Ask(unittest.TestCase):
-    """Where an archive is to start, as the add-on learns it: the query of the path wherever Kodi leaves it, else what the
-    opener wrote down just before (the device log showed ms_start in the path and an offset of 0 in the add-on)."""
+    """Where a fallback plugin archive starts (query, path, videoid, argv), with sweettv-ask.json retired."""
 
     def setUp(self):
         clean_now()
         self.addCleanup(clean_now)
 
-    def test_an_ask_is_taken_once(self):
-        self.assertTrue(ml.ask(5, 51, 3590, now=NOW))
-        self.assertEqual(ml.take_ask(5, 51, now=NOW + 3), (3590, "used"))
-        self.assertEqual(ml.take_ask(5, 51, now=NOW + 3), (0, "none"))     # a later play of the programme is not put there
-        self.assertFalse(os.path.exists(os.path.join(ml.NOW_DIR, ml.ASK_FILE)))
-
-    def test_a_stale_ask_is_no_place_and_is_gone(self):
-        ml.ask("5", "51", 3590, now=NOW)
-        self.assertEqual(ml.take_ask(5, 51, now=NOW + ml.ASK_FRESH), (3590, "used"))
-        ml.ask("5", "51", 3590, now=NOW)
-        self.assertEqual(ml.take_ask(5, 51, now=NOW + ml.ASK_FRESH + 1), (0, "stale"))
-        self.assertEqual(ml.take_ask(5, 51, now=NOW + 1), (0, "none"))
-
-    def test_an_ask_for_another_channel_or_programme_is_left_alone(self):
-        ml.ask(5, 51, 3590, now=NOW)
-        for cid, epg in ((6, 51), (5, 50), (5, ""), (55, 51)):
-            self.assertEqual(ml.take_ask(cid, epg, now=NOW), (0, "other"), (cid, epg))
-        self.assertEqual(ml.take_ask(5, 51, now=NOW), (3590, "used"))
-
-    def test_nothing_is_asked_for_live_the_beginning_or_a_wrong_id(self):
-        for cid, epg, offset in ((5, "", 300), (5, None, 300), (5, "null", 300), (5, 51, 0), (5, 51, -3), (5, 51, None), (5, 51, True),
-                                 (5, 51, float("nan")), ("x", 51, 300), (5, "x", 300), ("5/../6", 51, 300)):
-            self.assertFalse(ml.ask(cid, epg, offset, now=NOW), (cid, epg, offset))
-        self.assertFalse(os.path.exists(os.path.join(ml.NOW_DIR, ml.ASK_FILE)))
-        self.assertTrue(ml.ask(5, 51, 10 ** 12 - 1, now=NOW))
-        self.assertEqual(ml.take_ask(5, 51, now=NOW), (ml.START_MAX, "used"))
-
-    def test_the_path_that_url_made_is_asked_for(self):
-        self.assertTrue(ml.ask_url(ml.url(5, 51, 3590), now=NOW))
-        self.assertEqual(ml._read_ask(), {"cid": "5", "epg": "51", "offset": 3590, "at": NOW})
-        clean_now()
-        for path in (ml.url(5, 51), ml.url(5), LIVE, "plugin://plugin.video.youtube/play/?video_id=x", "/home/media/film.mkv", None, 5):
-            self.assertFalse(ml.ask_url(path, now=NOW), path)
-        self.assertIsNone(ml._read_ask())
-
-    def test_a_folder_that_cannot_be_written_is_no_failure(self):
-        blocker = os.path.join(TMP, "ask-blocker")
-        with open(blocker, "w") as f:
-            f.write("x")
-        self.assertFalse(ml.ask(5, 51, 3590, now=NOW, folder=os.path.join(blocker, "now")))
-        self.assertFalse(ml.ask_url(ml.url(5, 51, 3590), folder=os.path.join(blocker, "now")))
-
-    def test_a_file_that_is_not_an_ask_reads_as_none(self):
-        path = os.path.join(ml.NOW_DIR, ml.ASK_FILE)
-        os.makedirs(ml.NOW_DIR, exist_ok=True)
-        for text in ("", "not json", "[]", "{}", json.dumps({"ask": 5}), json.dumps({"ask": {"cid": "5", "epg": "51"}}),
-                     json.dumps({"ask": {"cid": 5, "epg": "51", "offset": 9, "at": NOW}}),
-                     json.dumps({"ask": {"cid": "5", "epg": "51", "offset": -9, "at": NOW}}),
-                     json.dumps({"ask": {"cid": "5", "epg": "", "offset": 9, "at": NOW}})):
-            with open(path, "w") as f:
-                f.write(text)
-            self.assertEqual(ml.take_ask(5, 51, now=NOW), (0, "none"), text)
+    def test_sweettv_ask_json_quirk_is_retired(self):
+        ask_path = os.path.join(ml.NOW_DIR, "sweettv-ask.json")
+        if hasattr(ml, "ask"):
+            self.assertFalse(ml.ask(5, 51, 3590, now=NOW))
+        if hasattr(ml, "ask_url"):
+            self.assertFalse(ml.ask_url(ml.url(5, 51, 3590), now=NOW))
+        self.assertFalse(os.path.exists(ask_path), "sweettv-ask.json must never be written")
 
     def test_ids_are_split_from_whatever_kodi_left_after_them(self):
         for videoid, expected in (("5|51", ("5", "51")), ("5|null", ("5", "null")), ("1450|932347395?ms_start=8814", ("1450", "932347395")),
@@ -502,10 +456,8 @@ class Ask(unittest.TestCase):
         for videoid in ("5", "5|", "|51", "x|51", "5|x", "5|51x", "5|-1", "", None, 5, ["5|51"]):
             self.assertIsNone(ml.split_id(videoid), videoid)
 
-    def start(self, argv, videoid="5|51", ask=None, now=NOW, cid=5, epg=51):
+    def start(self, argv, videoid="5|51", now=NOW, cid=5, epg=51):
         clean_now()
-        if ask:
-            ml.ask(*ask, now=NOW)
         return ml.start_of(argv, videoid, cid, epg, now=now)
 
     def test_a_place_in_the_query_of_argv2(self):
@@ -525,37 +477,14 @@ class Ask(unittest.TestCase):
     def test_a_place_in_any_other_argument(self):
         self.assertEqual(self.start(["plugin://x/playvid/", "1", "", "resume:false", "ms_start=77"]), (77, "argv"))
 
-    def test_a_place_only_in_the_ask(self):
-        self.assertEqual(self.start(["plugin://x/playvid/5|51", "1", ""], ask=(5, 51, 3590)), (3590, "ask"))
-        self.assertEqual(self.start(["plugin://x/playvid/5|51"], ask=(5, 51, 3590)), (3590, "ask"))
-        self.assertEqual(self.start([], ask=(5, 51, 3590)), (3590, "ask"))
-        self.assertEqual(self.start(None, videoid=None, ask=(5, 51, 3590)), (3590, "ask"))
-
-    def test_a_stale_ask_gives_no_place(self):
-        argv = ["plugin://x/playvid/5|51", "1", ""]
-        self.assertEqual(self.start(argv, ask=(5, 51, 3590), now=NOW + ml.ASK_FRESH + 1), (0, "none, ask stale"))
-
-    def test_an_ask_for_another_item_gives_no_place_and_stays(self):
-        argv = ["plugin://x/playvid/5|51", "1", ""]
-        for ask in ((5, 50, 3590), (6, 51, 3590)):
-            self.assertEqual(self.start(argv, ask=ask), (0, "none, ask other"), ask)
-            self.assertIsNotNone(ml._read_ask(), ask)
-
-    def test_no_query_and_no_ask_is_the_beginning(self):
+    def test_no_query_is_the_beginning(self):
         for argv in (["plugin://x/playvid/5|51", "1", ""], ["plugin://x/playvid/5|51", "1"], [], None, "ms_start=5", [None, 1, 2]):
-            self.assertEqual(self.start(argv), (0, "none, ask none"), argv)
+            self.assertEqual(self.start(argv)[0], 0, argv)
 
-    def test_what_the_query_says_wins_and_the_ask_is_used_up_all_the_same(self):
-        argv = ["plugin://x/playvid/5|51", "1", "?ms_start=100"]
-        self.assertEqual(self.start(argv, ask=(5, 51, 3590)), (100, "query"))
-        self.assertIsNone(ml._read_ask())
-        self.assertEqual(ml.start_of(["plugin://x/playvid/5|51", "1", ""], "5|51", 5, 51, now=NOW), (0, "none, ask none"))
-
-    def test_a_silly_query_is_no_place_so_the_ask_decides(self):
+    def test_a_silly_query_is_clamped_or_zero(self):
         for query in ("?ms_start=abc", "?ms_start=-5", "?ms_start=", "?ms_start=0", "?other=1", "ms_start=%00"):
             argv = ["plugin://x/playvid/5|51", "1", query]
-            self.assertEqual(self.start(argv), (0, "none, ask none"), query)
-            self.assertEqual(self.start(argv, ask=(5, 51, 40)), (40, "ask"), query)
+            self.assertEqual(self.start(argv)[0], 0, query)
         self.assertEqual(self.start(["x", "1", "?ms_start=99999999999999"]), (ml.START_MAX, "query"))
 
 
@@ -586,8 +515,6 @@ class Texts(unittest.TestCase):
         self.assertIn("Wrong channel.", used)
         self.assertIn("No archive for this channel", used)
         self.assertEqual(sorted(m for m in used if m not in module.TEXT), [])
-        with open(os.path.join(OVERLAY, "service.py"), encoding="utf-8") as f:
-            self.assertIn("_ml.text(_ml.NO_ARCHIVE)", f.read())      # the TV notification goes through the dictionary
 
     def test_tr_answers_russian_then_english(self):
         module = dictionary()
@@ -612,236 +539,52 @@ class Clock:
 
 
 class Service(unittest.TestCase):
-    """The service of the add-on: the player's callbacks on a live channel."""
+    """plugin.video.sweettv/service.py: _MsPlayer and get_channel_list are retired in favour of SweetPlayerController."""
 
-    def make(self, playing, raw=None, place=None):
-        calls, notes = [], []
-        place = [0.0] if place is None else place        # where the player is, seconds; a seek moves it and is kept after it
+    def test_service_overlay_has_zero_msplayer_and_zero_get_channel_list_and_instantiates_no_player(self):
+        service_path = os.path.join(OVERLAY, "service.py")
+        with open(service_path, encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn("_MsPlayer", src)
+        self.assertNotIn("get_channel_list", src)
+        self.assertNotIn("xbmc.Player", src)
 
-        class Player:
-            def __init__(self):
-                pass
+        player_instances = []
 
-            def getPlayingFile(self):
-                if isinstance(playing[0], Exception):
-                    raise playing[0]
-                return playing[0]
+        class ForbiddenPlayer:
+            def __init__(self, *args, **kwargs):
+                player_instances.append(self)
 
-            def getTime(self):
-                return place[0]
+        class OnePassMonitor:
+            def abortRequested(self):
+                return False
 
-            def getTotalTime(self):
-                return 7200.0
-
-            def seekTime(self, seconds):
-                place.append(seconds)
-                place[0] = float(seconds)
+            def waitForAbort(self, seconds):
+                return True
 
         lib = types.ModuleType("resources.lib.sweettv")
-        lib.refreshToken, lib.initSettings, lib.refreshChannelList = (lambda: True), (lambda: None), (lambda: None)
-        lib.helper = types.SimpleNamespace(get_channel_list=lambda: LIST if raw is None else raw)
-        fake = {"xbmc": types.SimpleNamespace(Player=Player, Monitor=object, log=lambda *a: None, LOGWARNING=2, LOGERROR=1, LOGINFO=0,
-                                              executebuiltin=calls.append),
-                "xbmcgui": types.SimpleNamespace(NOTIFICATION_INFO="info",
-                                                 Dialog=lambda: types.SimpleNamespace(notification=lambda *a: notes.append(a))),
-                "resources": types.ModuleType("resources"), "resources.lib": types.ModuleType("resources.lib"),
-                "resources.lib.helper": types.SimpleNamespace(Helper=lambda: object()), "resources.lib.sweettv": lib,
-                "mediastick_sweetlive": ml}
-        Clock.now = float(NOW)
-        with mock.patch.dict(sys.modules, fake), mock.patch.object(time, "time", lambda: Clock.now):
-            space = runpy.run_path(os.path.join(OVERLAY, "service.py"), run_name="sweet_service")
-        return space["_MsPlayer"](), calls, notes
-
-    def run_at(self, fn, *args):
-        with mock.patch.object(time, "time", lambda: Clock.now):
-            return fn(*args)
-
-    def test_a_seek_back_on_a_live_channel_plays_the_archive_of_the_programme(self):
-        player, calls, notes = self.make([LIVE])
-        self.run_at(player.onPlayBackSeek, 0, -10000)
-        self.assertEqual(calls, ["PlayMedia(plugin://plugin.video.sweettv/playvid/5|51?ms_start=3590)"])
-        self.assertEqual(notes, [])
-
-    def test_the_place_is_written_down_before_the_archive_is_opened_from_the_tv(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        player, calls, _ = self.make([LIVE])
-        self.run_at(player.onPlayBackSeek, 0, -10000)
-        self.assertEqual(ml._read_ask(), {"cid": "5", "epg": "51", "offset": 3590, "at": NOW})
-        self.assertEqual(len(calls), 1)
-        clean_now()
-        player, calls, _ = self.make([LIVE])
-        self.run_at(player.onPlayBackPaused)
-        Clock.now += 45
-        self.run_at(player.onPlayBackResumed)
-        self.assertEqual(ml._read_ask()["offset"], 3600)
-
-    def test_nothing_is_written_down_when_nothing_is_opened(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        player, calls, _ = self.make(["plugin://plugin.video.sweettv/playvid/6|null"])      # no archive
-        self.run_at(player.onPlayBackSeek, 0, -10000)
-        self.assertEqual(calls, [])
-        self.assertIsNone(ml._read_ask())
-
-    def test_a_seek_forward_or_on_an_archive_or_on_something_else_does_nothing(self):
-        for playing, offset in ((LIVE, 10000), (LIVE, 0), (ARCHIVE, -10000), ("plugin://plugin.video.youtube/play/?video_id=x", -10000),
-                                ("/home/media/film.mkv", -10000), (OSError("no player"), -10000), (None, -10000)):
-            player, calls, notes = self.make([playing])
-            self.run_at(player.onPlayBackSeek, 0, offset)
-            self.assertEqual((calls, notes), ([], []), (playing, offset))
-
-    def test_a_held_key_is_one_rewind(self):
-        player, calls, _ = self.make([LIVE])
-        for _ in range(5):
-            self.run_at(player.onPlayBackSeek, 0, -10000)
-            Clock.now += 1
-        self.assertEqual(len(calls), 1)
-        Clock.now += 10
-        self.run_at(player.onPlayBackSeek, 0, -10000)
-        self.assertEqual(len(calls), 2)
-
-    def test_no_archive_says_so_and_plays_nothing(self):
-        player, calls, notes = self.make(["plugin://plugin.video.sweettv/playvid/6|null"])
-        self.run_at(player.onPlayBackSeek, 0, -10000)
-        self.assertEqual(calls, [])
-        self.assertEqual([n[:3] for n in notes], [("SWEET.TV", "Архива у этого канала нет", "info")])
-
-    def test_an_unreadable_list_is_not_a_crash(self):
-        for raw in ({}, [], "x"):
-            player, calls, notes = self.make([LIVE], raw=raw)
-            self.run_at(player.onPlayBackSeek, 0, -10000)
-            self.assertEqual(calls, [])
-
-    def test_a_pause_longer_than_the_window_goes_to_the_archive_on_resume(self):
-        player, calls, _ = self.make([LIVE])
-        self.run_at(player.onPlayBackPaused)
-        Clock.now += 45
-        self.run_at(player.onPlayBackResumed)
-        # back to where the picture stopped: 3600 s into the programme, however long the pause was
-        self.assertEqual(calls, ["PlayMedia(plugin://plugin.video.sweettv/playvid/5|51?ms_start=3600)"])
-
-    def test_a_short_pause_or_a_pause_on_something_else_is_left_alone(self):
-        for playing, wait in ((LIVE, 10), (LIVE, ml.PAUSE_LIMIT), (ARCHIVE, 600), ("/home/media/film.mkv", 600)):
-            player, calls, notes = self.make([playing])
-            self.run_at(player.onPlayBackPaused)
-            Clock.now += wait
-            self.run_at(player.onPlayBackResumed)
-            self.assertEqual((calls, notes), ([], []), (playing, wait))
-
-    def test_a_stopped_player_forgets_the_pause(self):
-        player, calls, _ = self.make([LIVE])
-        self.run_at(player.onPlayBackPaused)
-        self.run_at(player.onPlayBackStopped)
-        Clock.now += 600
-        self.run_at(player.onPlayBackResumed)
-        self.assertEqual(calls, [])
-
-    def test_a_live_stream_known_by_its_address_is_rewound_like_one_known_by_its_path(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        ml.remember(5, "", LIVE_STREAM, 0)
-        player, calls, notes = self.make([LIVE_STREAM])
-        self.run_at(player.onPlayBackSeek, 0, -10000)
-        self.assertEqual(calls, ["PlayMedia(plugin://plugin.video.sweettv/playvid/5|51?ms_start=3590)"])
-        ml.remember(5, 50, DVR, 0)
-        player, calls, notes = self.make([DVR])                       # an archive is not rewound to an archive
-        self.run_at(player.onPlayBackSeek, 0, -10000)
-        self.assertEqual(calls, [])
-
-    def started(self, playing, remembered=(), late=0, place=None):
-        """onAVStarted of a player that plays `playing`, with the threads of the service run at once."""
-        clean_now()
-        self.addCleanup(clean_now)
-        for cid, epg, url, offset in remembered:
-            ml.remember(cid, epg, url, offset, now=NOW)
-        place = [10.0] if place is None else place
-        player, calls, notes = self.make([playing], place=place)
-        threads = []
-
-        class Thread:
-            def __init__(self, target, args=(), daemon=None):
-                self.target, self.args, self.daemon = target, args, daemon
-                threads.append(self)
-
-            def start(self):
-                self.target(*self.args)
-
-        Clock.now = float(NOW + late)
-        with mock.patch("threading.Thread", Thread), mock.patch.object(time, "sleep", lambda s: None):
-            self.run_at(player.onAVStarted)
-        return place, threads
-
-    def test_an_archive_asked_to_start_late_is_put_there_once_it_plays(self):
-        place, threads = self.started(DVR_NOW, [(5, 51, DVR_NOW, 3590)])
-        self.assertEqual(place[1:], [3590])
-        self.assertEqual(place[0], 3590.0)
-        self.assertEqual([t.daemon for t in threads], [True])         # it never holds Kodi back
-
-    def test_an_archive_the_player_names_by_its_plugin_path_is_put_there_by_the_path(self):
-        late = "plugin://plugin.video.sweettv/playvid/5|51?ms_start=3590"
-        place, threads = self.started(late)                           # no entry: the path carries the place itself
-        self.assertEqual(place[1:], [3590])
-        for path in ("plugin://plugin.video.sweettv/playvid/5|51", "plugin://plugin.video.sweettv/playvid/5|null?ms_start=300", LIVE):
-            place, threads = self.started(path)
-            self.assertEqual((place, threads), ([10.0], []), path)
-
-    def test_an_archive_that_began_where_it_was_asked_is_not_moved(self):
-        place, _ = self.started(DVR_NOW, [(5, 51, DVR_NOW, 3590)], place=[3592.0])
-        self.assertEqual(place, [3592.0])
-
-    def test_nothing_is_done_for_what_nobody_asked_to_start_late(self):
-        old = ml.SEEK_FRESH + 1
-        cases = [(DVR_NOW, [(5, 51, DVR_NOW, 0)], 0),                  # from the beginning
-                 (DVR_NOW, [], 0),                                     # nobody wrote it down
-                 (DVR_NOW, [(5, 51, DVR_NOW, 3590)], old),             # an old entry is not a start someone waits for
-                 (LIVE_STREAM, [(5, "", LIVE_STREAM, 0)], 0),          # live has no place
-                 (DVR, [(5, 51, DVR_NOW, 3590)], 0),                   # another stream plays
-                 ("/home/media/film.mkv", [(5, 51, DVR_NOW, 3590)], 0),
-                 ("plugin://plugin.video.youtube/play/?video_id=x", [], 0),
-                 (OSError("no player"), [(5, 51, DVR_NOW, 3590)], 0), (None, [], 0)]
-        for playing, remembered, late in cases:
-            place, threads = self.started(playing, remembered, late)
-            self.assertEqual((place, threads), ([10.0], []), (playing, remembered, late))
-
-    def test_a_failure_in_the_start_place_does_not_reach_kodi(self):
-        with mock.patch.object(ml, "follow", side_effect=ValueError("boom")):
-            place, threads = self.started(DVR_NOW, [(5, 51, DVR_NOW, 3590)])
-        self.assertEqual(place, [10.0])
-        self.assertEqual(len(threads), 1)
-
-    def test_forward_seek_on_in_progress_epg_near_live_edge_switches_to_live_but_finished_archive_does_not(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        ml.remember(5, 51, DVR_NOW, 0, now=NOW)
-        player, calls, _ = self.make([DVR_NOW], place=[3590.0])
-        self.run_at(player.onPlayBackSeek, 3590, 0)
-        self.assertEqual(calls, ["PlayMedia(plugin://plugin.video.sweettv/playvid/5|null)"])
-
-        ml.remember(5, 50, DVR, 0, now=NOW)
-        player, calls, _ = self.make([DVR], place=[3590.0])
-        self.run_at(player.onPlayBackSeek, 3590, 0)
-        self.assertEqual(calls, [])
-
-    def test_playback_ended_on_archive_continues_to_next_programme(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        ml.remember(5, 50, DVR, 0, now=NOW)
-        player, calls, _ = self.make([DVR])
-        self.run_at(player.onPlayBackEnded)
-        self.assertEqual(calls, ["PlayMedia(plugin://plugin.video.sweettv/playvid/5|51)"])
-
-    def test_a_device_without_the_library_leaves_the_add_on_as_upstream(self):
-        lib = types.ModuleType("resources.lib.sweettv")
-        lib.refreshToken, lib.initSettings, lib.refreshChannelList = (lambda: True), (lambda: None), (lambda: None)
-        fake = {"xbmc": types.SimpleNamespace(Player=object, Monitor=object, log=lambda *a: None, LOGWARNING=2, LOGERROR=1),
-                "xbmcgui": types.SimpleNamespace(), "resources": types.ModuleType("resources"),
-                "resources.lib": types.ModuleType("resources.lib"),
-                "resources.lib.helper": types.SimpleNamespace(Helper=lambda: object()), "resources.lib.sweettv": lib,
-                "mediastick_sweetlive": None}
-        with mock.patch.dict(sys.modules, fake), mock.patch.object(sys, "path", [p for p in sys.path if p != LIB]):
-            space = runpy.run_path(os.path.join(OVERLAY, "service.py"), run_name="sweet_service")
-        self.assertIsNone(space["_ml"])
+        lib.refreshToken = lambda: True
+        lib.initSettings = lambda: None
+        lib.refreshChannelList = lambda: {"status": "OK"}
+        fake = {
+            "xbmc": types.SimpleNamespace(
+                Player=ForbiddenPlayer,
+                Monitor=OnePassMonitor,
+                log=lambda *a: None,
+                LOGWARNING=2,
+                LOGERROR=1,
+                LOGINFO=0,
+            ),
+            "xbmcgui": types.SimpleNamespace(),
+            "resources": types.ModuleType("resources"),
+            "resources.lib": types.ModuleType("resources.lib"),
+            "resources.lib.helper": types.SimpleNamespace(Helper=lambda: object()),
+            "resources.lib.sweettv": lib,
+        }
+        with mock.patch.dict(sys.modules, fake), mock.patch.object(time, "time", lambda: float(NOW)):
+            space = runpy.run_path(service_path, run_name="__main__")
+        self.assertNotIn("_MsPlayer", space)
+        self.assertEqual(player_instances, [], "plugin.video.sweettv/service.py must not instantiate xbmc.Player")
 
 
 class AddOn(unittest.TestCase):
@@ -873,7 +616,7 @@ class AddOn(unittest.TestCase):
         self.assertEqual([(level, msg) for level, msg in sweet.logs if "asked to start" in msg],
                          [(stubs.INFO, "media-stick: SWEET.TV archive 5|51 asked to start at 3590s (query)")])
         item, sweet = self.item("5|51", "")
-        self.assertIn("at 0s (none, ask none)", self.started_at(sweet))
+        self.assertIn("at 0s (", self.started_at(sweet))
         item, sweet = self.item("5|null", "?ms_start=300")      # live is not asked about
         self.assertEqual([m for _, m in sweet.logs if "asked to start" in m], [])
 
@@ -899,41 +642,6 @@ class AddOn(unittest.TestCase):
             self.assertIn("archive 5|51 asked to start at 3590s (videoid)", self.started_at(sweet), videoid)
             entry = ml.recall(play_tests.STREAM_URL)
             self.assertEqual((entry["cid"], entry["epg"], entry["offset"]), ("5", "51", 3590), videoid)
-
-    def test_a_place_only_in_the_ask_is_the_place_and_is_used_once(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        ml.ask(5, 51, 3590, now=NOW)
-        item, sweet = self.item("5|51", "")
-        self.assertEqual(item.props, {"ResumeTime": "3590", "TotalTime": "7200"})
-        self.assertIn("at 3590s (ask)", self.started_at(sweet))
-        entry = ml.recall(play_tests.STREAM_URL)
-        self.assertEqual((entry["cid"], entry["epg"], entry["offset"]), ("5", "51", 3590))     # remembered, for the service's seek
-        item, sweet = self.item("5|51", "")                  # the same programme, started from the TV a moment later
-        self.assertEqual(item.props, {"TotalTime": "7200"})
-        self.assertEqual(ml.recall(play_tests.STREAM_URL)["offset"], 0)
-
-    def test_an_ask_that_is_old_or_for_another_item_is_no_place(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        ml.ask(5, 51, 3590, now=NOW - ml.ASK_FRESH - 1)
-        item, _ = self.item("5|51", "")
-        self.assertEqual(item.props, {"TotalTime": "7200"})
-        ml.ask(5, 50, 3590, now=NOW)
-        item, _ = self.item("5|51", "")                    # asked for another programme of the channel
-        self.assertEqual(item.props, {"TotalTime": "7200"})
-        self.assertEqual(ml._read_ask()["epg"], "50")      # and left for the one it is for
-        item, _ = self.item("5|50", "")
-        self.assertEqual(item.props, {"ResumeTime": "3590", "TotalTime": "3600"})
-
-    def test_an_ask_is_not_used_up_by_live(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        ml.ask(5, 51, 3590, now=NOW)
-        item, _ = self.item("5|null", "")
-        self.assertEqual(item.props, {})
-        item, _ = self.item("5|51", "")
-        self.assertEqual(item.props["ResumeTime"], "3590")
 
     def test_an_archive_starts_where_the_query_says_and_is_as_long_as_the_programme(self):
         item, _ = self.item("5|51", "?ms_start=3590")
@@ -1226,61 +934,17 @@ class Routes(unittest.TestCase):
         self.assertEqual((code, body), (200, {"ok": True, "epg": "51", "offset": 3600}))
         self.assertEqual(self.calls[-1], ("Player.Open", {"item": {"file": "plugin://plugin.video.sweettv/playvid/5|51?ms_start=3600"}}))
 
-    def test_play_from_a_place_writes_down_the_place_before_it_opens(self):
+    def test_play_and_rewind_carry_offset_in_url_without_writing_sweettv_ask_json(self):
         clean_now()
         self.addCleanup(clean_now)
-        seen = []
-
-        def rpc(method, params=None):
-            seen.append((method, ml._read_ask()))              # what is written down at the moment the player is asked to open
-            return self.rpc(method, params)
+        ask_path = os.path.join(ml.NOW_DIR, "sweettv-ask.json")
         with mock.patch.object(time, "time", lambda: NOW):
-            ps.post("/api/sweettv/play", {"cid": 5, "epg": 51, "at": "now"}, rpc)
-        asked = {"cid": "5", "epg": "51", "offset": 3600, "at": NOW}
-        self.assertEqual([a for m, a in seen if m == "Player.Open"], [asked])
-        self.assertEqual(ml._read_ask(), asked)
-
-    def test_play_from_the_beginning_or_live_or_refused_asks_for_nothing(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        for body in ({"cid": 5, "epg": 51}, {"cid": 5}, {"cid": 5, "epg": 777, "at": 100}, {"cid": 5, "epg": 52, "at": 100}):
-            with mock.patch.object(time, "time", lambda: NOW):
-                ps.post("/api/sweettv/play", body, self.rpc)
-            self.assertIsNone(ml._read_ask(), body)
-
-    def test_the_place_given_in_seconds_is_asked_for_too(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        with mock.patch.object(time, "time", lambda: NOW):
+            ps.post("/api/sweettv/play", {"cid": 5, "epg": 51, "at": "now"}, self.rpc)
             ps.post("/api/sweettv/play", {"cid": 5, "epg": 50, "at": 1200}, self.rpc)
-        self.assertEqual(ml._read_ask()["offset"], 1200)
-        self.assertEqual(self.calls[-1], ("Player.Open", {"item": {"file": "plugin://plugin.video.sweettv/playvid/5|50?ms_start=1200"}}))
-
-    def test_minus_ten_writes_down_the_place_before_it_opens(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        self.playing = {"file": LIVE}
-        seen = []
-
-        def rpc(method, params=None):
-            seen.append((method, ml._read_ask()))
-            return self.rpc(method, params)
-        with mock.patch.object(time, "time", lambda: NOW):
-            pw.post("/api/watch/ctl", {"op": "seek", "by": -10}, rpc)
-        asked = {"cid": "5", "epg": "51", "offset": 3590, "at": NOW}
-        self.assertEqual([a for m, a in seen if m == "Player.Open"], [asked])
-
-    def test_ordinary_seeks_and_the_way_back_to_live_ask_for_nothing(self):
-        clean_now()
-        self.addCleanup(clean_now)
-        for file, request in ((LIVE, {"op": "seek", "by": 10}), (ARCHIVE, {"op": "seek", "by": -10}),
-                              ("plugin://plugin.video.sweettv/playvid/6|null", {"op": "seek", "by": -10})):
-            self.playing = {"file": file}
-            with mock.patch.object(time, "time", lambda: NOW):
-                pw.post("/api/watch/ctl", request, self.rpc)
-        self.playing = {"file": ARCHIVE}
-        ps.post("/api/sweettv/golive", {}, self.rpc)
-        self.assertIsNone(ml._read_ask())
+            self.assertEqual(self.calls[-1], ("Player.Open", {"item": {"file": "plugin://plugin.video.sweettv/playvid/5|50?ms_start=1200"}}))
+            self.playing = {"file": LIVE}
+            pw.post("/api/watch/ctl", {"op": "seek", "by": -10}, self.rpc)
+        self.assertFalse(os.path.exists(ask_path), "sweettv-ask.json must remain retired")
 
     def test_play_refused_is_an_error_and_opens_nothing(self):
         body, code = ps.post("/api/sweettv/play", {"cid": 5, "epg": 777}, self.rpc)
