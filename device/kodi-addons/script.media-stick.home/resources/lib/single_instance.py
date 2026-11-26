@@ -58,7 +58,7 @@ def window_active(window_id):
 
 
 def video_playing():
-    return bool(xbmc.getCondVisibility("Player.HasVideo"))
+    return bool(xbmc.getCondVisibility("Player.HasVideo") and xbmc.getCondVisibility("Window.IsActive(12005)"))
 
 
 class Instance:

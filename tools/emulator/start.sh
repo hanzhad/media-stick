@@ -102,7 +102,7 @@ else
     DOCKER_ARGS+=(
         -e EMU_DISPLAY=wslg
         -e "DISPLAY=${DISPLAY:-:0}"
-        -e "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-}"
+        -e WAYLAND_DISPLAY=
         -e XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir
         -v /tmp/.X11-unix:/tmp/.X11-unix
     )

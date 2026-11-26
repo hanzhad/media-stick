@@ -992,6 +992,121 @@ class TestSkinMediaStick(unittest.TestCase):
             for _it, _raw, txt in tv_sub_vis:
                 self.assertNotIn("00:10 / 01:00", txt)
 
+    def test_dialog_keyboard_compact_mode_and_localization(self):
+        includes = _load_includes()
+        raw_root = ET.parse(os.path.join(SKIN_XML_DIR, "DialogKeyboard.xml")).getroot()
+        root = _expand_includes(raw_root, includes)
+        items = []
+
+        def _walk_all(container, anc_vis):
+            for ctrl in container.findall("./control"):
+                own_vis = tuple(
+                    v.text.strip()
+                    for v in ctrl.findall("./visible")
+                    if v.text and v.text.strip()
+                )
+                vis = anc_vis + own_vis
+                items.append({"ctrl": ctrl, "vis": vis})
+                if ctrl.attrib.get("type") in ("group", "grouplist"):
+                    _walk_all(ctrl, vis)
+
+        controls_el = root.find("./controls")
+        if controls_el is not None:
+            _walk_all(controls_el, ())
+
+        all_ids = {
+            it["ctrl"].attrib.get("id")
+            for it in items
+            if it["ctrl"].attrib.get("id")
+        }
+        for req_id in ("300", "301", "309", "311", "312", "7000", "9101", "1000", "2000", "3000", "4000", "5000", "6000"):
+            self.assertIn(req_id, all_ids, f"DialogKeyboard.xml missing required control id={req_id!r}")
+
+        lang_cases = (
+            ("", "Введите текст с телефона в пульте или нажмите «Клавиатура»", "Клавиатура", "Скрыть"),
+            ("ru", "Введите текст с телефона в пульте или нажмите «Клавиатура»", "Клавиатура", "Скрыть"),
+            ("de", "Введите текст с телефона в пульте или нажмите «Клавиатура»", "Клавиатура", "Скрыть"),
+            ("uk", "Введіть текст з телефона в пульті або натисніть «Клавіатура»", "Клавіатура", "Сховати"),
+            ("en", "Type on your phone: the remote shows a text box", "Keyboard", "Hide keys"),
+        )
+        key_rows = ("1000", "2000", "3000", "4000", "5000", "6000")
+
+        for lang, want_hint, want_show, want_hide in lang_cases:
+            strings = {"Window(home).Property(media-stick.lang)": lang}
+
+            # Compact mode (default: !Skin.HasSetting(ms_tvkeys))
+            bools_compact = {"Skin.HasSetting(ms_tvkeys)": False}
+            for row_id in key_rows:
+                row_items = [it for it in items if it["ctrl"].attrib.get("id") == row_id]
+                self.assertEqual(len(row_items), 1)
+                self.assertFalse(
+                    _is_visible(row_items[0]["vis"], bools_compact, strings),
+                    f"Key row {row_id} must be hidden in compact mode (lang={lang!r})",
+                )
+
+            vis_hints = [
+                _render_kodi_label(it["ctrl"].findtext("label") or "", strings)
+                for it in items
+                if it["ctrl"].attrib.get("type") == "label"
+                and it["ctrl"].attrib.get("id") != "311"
+                and _is_visible(it["vis"], bools_compact, strings)
+            ]
+            self.assertEqual(
+                vis_hints,
+                [want_hint],
+                f"Compact hint mismatch for lang={lang!r}: got {vis_hints!r}",
+            )
+
+            vis_toggles = [
+                it["ctrl"]
+                for it in items
+                if it["ctrl"].attrib.get("id") == "9101"
+                and _is_visible(it["vis"], bools_compact, strings)
+            ]
+            self.assertEqual(
+                len(vis_toggles),
+                1,
+                f"Expected exactly 1 visible 9101 toggle in compact mode for lang={lang!r}",
+            )
+            self.assertEqual(
+                _render_kodi_label(vis_toggles[0].findtext("label") or "", strings),
+                want_show,
+                f"9101 label mismatch for lang={lang!r}",
+            )
+            self.assertEqual(
+                _render_kodi_label(vis_toggles[0].findtext("altlabel") or "", strings),
+                want_hide,
+                f"9101 altlabel mismatch for lang={lang!r}",
+            )
+
+            # Expanded mode (Skin.HasSetting(ms_tvkeys))
+            bools_expanded = {"Skin.HasSetting(ms_tvkeys)": True}
+            for row_id in key_rows:
+                row_items = [it for it in items if it["ctrl"].attrib.get("id") == row_id]
+                self.assertTrue(
+                    _is_visible(row_items[0]["vis"], bools_expanded, strings),
+                    f"Key row {row_id} must be visible in expanded mode (lang={lang!r})",
+                )
+            vis_hints_exp = [
+                it for it in items
+                if it["ctrl"].attrib.get("type") == "label"
+                and it["ctrl"].attrib.get("id") != "311"
+                and _is_visible(it["vis"], bools_expanded, strings)
+            ]
+            self.assertEqual(vis_hints_exp, [], f"Compact hint must hide in expanded mode (lang={lang!r})")
+
+            vis_toggles_exp = [
+                it["ctrl"]
+                for it in items
+                if it["ctrl"].attrib.get("id") == "9101"
+                and _is_visible(it["vis"], bools_expanded, strings)
+            ]
+            self.assertEqual(len(vis_toggles_exp), 1)
+            self.assertEqual(
+                _render_kodi_label(vis_toggles_exp[0].findtext("altlabel") or "", strings),
+                want_hide,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
