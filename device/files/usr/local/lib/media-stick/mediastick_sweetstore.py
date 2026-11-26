@@ -412,6 +412,8 @@ def normalize_title_payload(detail, now) -> tuple[dict, list[dict]]:
                 "epg_id": _safe_str(str(ep.get("epg") or ep.get("epg_id") or ""), 32),
                 "time_start": _safe_ts(ep.get("start") or ep.get("time_start"), 0),
                 "time_stop": _safe_ts(ep.get("stop") or ep.get("time_stop"), 0),
+                "coming_soon": bool(ep.get("coming_soon")),
+                "release_date": _safe_str(ep.get("release_date"), 32),
             })
         norm_eps.sort(key=lambda e: (e["episode_num"], e["id"], e["ep_key"]))
         norm_seasons.append({
@@ -452,6 +454,8 @@ def normalize_title_payload(detail, now) -> tuple[dict, list[dict]]:
                 "epg_id": eid,
                 "time_start": _safe_ts(ep.get("start") or ep.get("time_start"), 0),
                 "time_stop": _safe_ts(ep.get("stop") or ep.get("time_stop"), 0),
+                "coming_soon": bool(ep.get("coming_soon")),
+                "release_date": _safe_str(ep.get("release_date"), 32),
             })
 
     if norm_seasons:
@@ -487,6 +491,7 @@ def normalize_title_payload(detail, now) -> tuple[dict, list[dict]]:
         "description": _safe_str(detail.get("description"), 2000),
         "poster": _safe_str(detail.get("poster"), 400),
         "banner": _safe_str(detail.get("banner"), 400),
+        "wide_art": _safe_str(detail.get("wide_art"), 400),
         "year": _safe_int(detail.get("year"), 0),
         "duration": _safe_int(detail.get("duration"), 0),
         "imdb": _safe_float(detail.get("imdb"), 0.0),
@@ -568,6 +573,7 @@ CREATE TABLE IF NOT EXISTS titles (
     description TEXT NOT NULL DEFAULT '',
     poster TEXT NOT NULL DEFAULT '',
     banner TEXT NOT NULL DEFAULT '',
+    wide_art TEXT NOT NULL DEFAULT '',
     year INTEGER NOT NULL DEFAULT 0,
     duration INTEGER NOT NULL DEFAULT 0,
     imdb REAL NOT NULL DEFAULT 0.0,
@@ -597,6 +603,8 @@ CREATE TABLE IF NOT EXISTS episodes (
     epg_id TEXT NOT NULL DEFAULT '',
     time_start INTEGER NOT NULL DEFAULT 0,
     time_stop INTEGER NOT NULL DEFAULT 0,
+    coming_soon INTEGER NOT NULL DEFAULT 0,
+    release_date TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (title_key, ep_key)
 );
 CREATE INDEX IF NOT EXISTS idx_ep_title ON episodes(title_key, season_num, episode_num);
@@ -656,6 +664,23 @@ class SweetStore:
         return conn
 
     @staticmethod
+    def _ensure_columns(conn: sqlite3.Connection) -> None:
+        migrations = (
+            ("titles", "wide_art", "TEXT NOT NULL DEFAULT ''"),
+            ("episodes", "coming_soon", "INTEGER NOT NULL DEFAULT 0"),
+            ("episodes", "release_date", "TEXT NOT NULL DEFAULT ''"),
+        )
+        cols_by_table: dict[str, set[str]] = {}
+        for tbl, col, ddl in migrations:
+            if tbl not in cols_by_table:
+                cols_by_table[tbl] = {
+                    r[1] for r in conn.execute(f"PRAGMA table_info('{tbl}')").fetchall()
+                }
+            if col not in cols_by_table[tbl]:
+                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {ddl}")
+                cols_by_table[tbl].add(col)
+
+    @staticmethod
     def _ensure_schema(conn: sqlite3.Connection) -> None:
         existing = {
             r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
@@ -671,6 +696,7 @@ class SweetStore:
             for tbl in _ALL_TABLES:
                 conn.execute(f"DROP TABLE IF EXISTS {tbl}")
         conn.executescript(_SCHEMA)
+        SweetStore._ensure_columns(conn)
         conn.commit()
 
     def close(self) -> None:
@@ -829,15 +855,15 @@ class SweetStore:
                  image_url, preview_url, can_archive, available, source, updated_at
                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(cid, epg_id) DO UPDATE SET
-                 title=excluded.title,
-                 base_title=excluded.base_title,
+                 title=CASE WHEN excluded.title != '' THEN excluded.title ELSE programmes.title END,
+                 base_title=CASE WHEN excluded.base_title != '' THEN excluded.base_title ELSE programmes.base_title END,
                  description=CASE WHEN excluded.description != '' THEN excluded.description ELSE programmes.description END,
                  show_id=CASE WHEN excluded.show_id != '' THEN excluded.show_id ELSE programmes.show_id END,
                  season_num=CASE WHEN excluded.season_num > 0 THEN excluded.season_num ELSE programmes.season_num END,
                  episode_num=CASE WHEN excluded.episode_num > 0 THEN excluded.episode_num ELSE programmes.episode_num END,
-                 time_start=excluded.time_start,
-                 time_stop=excluded.time_stop,
-                 day_key=excluded.day_key,
+                 time_start=CASE WHEN excluded.time_start > 0 THEN excluded.time_start ELSE programmes.time_start END,
+                 time_stop=CASE WHEN excluded.time_stop > 0 THEN excluded.time_stop ELSE programmes.time_stop END,
+                 day_key=CASE WHEN excluded.day_key != '' THEN excluded.day_key ELSE programmes.day_key END,
                  image_url=CASE WHEN excluded.image_url != '' THEN excluded.image_url ELSE programmes.image_url END,
                  preview_url=CASE WHEN excluded.preview_url != '' THEN excluded.preview_url ELSE programmes.preview_url END,
                  can_archive=MAX(programmes.can_archive, excluded.can_archive),
@@ -988,6 +1014,133 @@ class SweetStore:
             self._upsert_prog_rows(prog_rows)
             self._conn.commit()
         return len(prog_rows)
+
+    def upsert_epg_records(self, records: list[dict], now=None, source: str = "epg_records") -> int:
+        """Normalize and upsert raw TvService/GetEpgRecords.json records across channels."""
+        if ms_core.contains_secret(records):
+            raise ms_core.SecretRefused("epg records contain secret data")
+        if not isinstance(records, (list, tuple)):
+            return 0
+        ts = int(now if now is not None else time.time())
+        by_cid: dict[str, list[dict]] = {}
+        for r in records:
+            if not isinstance(r, dict):
+                continue
+            eid = _clean_id(r.get("id") if r.get("id") is not None else r.get("epg_id"))
+            cid_s = _clean_id(r.get("channel_id") if r.get("channel_id") is not None else r.get("cid"))
+            if not eid or not cid_s:
+                continue
+            by_cid.setdefault(cid_s, []).append(r)
+        if not by_cid:
+            return 0
+
+        ch_info: dict[str, tuple[bool, int, bool]] = {}
+        with self._lock:
+            cids = list(by_cid.keys())
+            for i in range(0, len(cids), 500):
+                chunk = cids[i:i + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                for row in self._conn.execute(
+                    f"SELECT cid, catchup, catchup_duration, available FROM channels WHERE cid IN ({placeholders})",
+                    chunk,
+                ).fetchall():
+                    ch_info[str(row["cid"])] = (
+                        bool(row["catchup"]),
+                        int(row["catchup_duration"]),
+                        bool(row["available"]),
+                    )
+
+        deduped: dict[tuple[str, str], tuple] = {}
+        for cid_s, recs in by_cid.items():
+            catchup, cdur, ch_avail = ch_info.get(cid_s, (False, 0, True))
+            for r in recs:
+                eid = _clean_id(r.get("id") if r.get("id") is not None else r.get("epg_id"))
+                title = _safe_str(r.get("text") if r.get("text") is not None else r.get("title"), 200)
+                t_start = _safe_ts(r.get("time_start") if "time_start" in r else r.get("start"), 0)
+                t_stop = _safe_ts(r.get("time_stop") if "time_stop" in r else r.get("stop"), 0)
+                if t_start > 0 and t_stop <= t_start:
+                    t_stop = t_start
+                elif t_start <= 0:
+                    t_start = 0
+                    t_stop = 0
+                day_key = _day_key(t_start) if t_start > 0 else ""
+                prog_avail = r.get("available") is not False
+                can_arch = (
+                    compute_can_archive(catchup and ch_avail, cdur, prog_avail, t_start, ts)
+                    if t_start > 0
+                    else False
+                )
+                sid_int = _safe_int(
+                    r.get("tv_show_id") if r.get("tv_show_id") is not None else r.get("show_id"),
+                    0,
+                )
+                show_id = str(sid_int) if sid_int > 0 else ""
+                season_num = max(
+                    0,
+                    _safe_int(r.get("season_number") if r.get("season_number") is not None else r.get("season"), 0),
+                )
+                episode_num = max(
+                    0,
+                    _safe_int(r.get("episode_number") if r.get("episode_number") is not None else r.get("episode"), 0),
+                )
+                image_url = _https_url(r.get("image_url"))
+                preview_url = (
+                    _https_url(r.get("preview_url_ext"))
+                    or _https_url(r.get("preview_url"))
+                    or _https_url(r.get("preview"))
+                )
+                deduped[(cid_s, eid)] = (
+                    cid_s,
+                    eid,
+                    title,
+                    base_show_title(title) if title else "",
+                    _safe_str(r.get("description"), 1000),
+                    show_id,
+                    season_num,
+                    episode_num,
+                    t_start,
+                    t_stop,
+                    day_key,
+                    image_url,
+                    preview_url,
+                    1 if can_arch else 0,
+                    1 if prog_avail else 0,
+                    source,
+                    ts,
+                )
+        prog_rows = list(deduped.values())
+        if not prog_rows:
+            return 0
+        with self._lock:
+            self._upsert_prog_rows(prog_rows)
+            self._conn.commit()
+        return len(prog_rows)
+
+    def epg_ids_missing_art(self, epg_ids) -> list[int]:
+        """Return deduplicated positive int EPG IDs missing both image_url and preview_url in programmes."""
+        ordered: list[int] = []
+        seen: set[int] = set()
+        for raw in epg_ids or ():
+            eid = _safe_int(raw, 0)
+            if eid > 0 and eid not in seen:
+                seen.add(eid)
+                ordered.append(eid)
+        if not ordered:
+            return []
+        has_art: set[str] = set()
+        str_ids = [str(x) for x in ordered]
+        with self._lock:
+            for i in range(0, len(str_ids), 500):
+                chunk = str_ids[i:i + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = self._conn.execute(
+                    f"SELECT DISTINCT epg_id FROM programmes "
+                    f"WHERE epg_id IN ({placeholders}) AND (image_url != '' OR preview_url != '')",
+                    chunk,
+                ).fetchall()
+                for row in rows:
+                    has_art.add(str(row["epg_id"]))
+        return [eid for eid in ordered if str(eid) not in has_art]
 
     @staticmethod
     def _effective_archive(r: sqlite3.Row, ch: sqlite3.Row | None, ts: int) -> tuple[bool, bool]:
@@ -1240,16 +1393,16 @@ class SweetStore:
         with self._lock:
             self._conn.execute(
                 """INSERT INTO titles(
-                     title_key, kind, title, subtitle, description, poster, banner,
+                     title_key, kind, title, subtitle, description, poster, banner, wide_art,
                      year, duration, imdb, age_rating, genres_json, genre_names_json,
                      countries_json, seasons_meta_json, owner_id, vod_url,
                      seasons_count, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(title_key) DO UPDATE SET
                      kind=excluded.kind, title=excluded.title, subtitle=excluded.subtitle,
                      description=excluded.description, poster=excluded.poster, banner=excluded.banner,
-                     year=excluded.year, duration=excluded.duration, imdb=excluded.imdb,
-                     age_rating=excluded.age_rating, genres_json=excluded.genres_json,
+                     wide_art=excluded.wide_art, year=excluded.year, duration=excluded.duration,
+                     imdb=excluded.imdb, age_rating=excluded.age_rating, genres_json=excluded.genres_json,
                      genre_names_json=excluded.genre_names_json,
                      countries_json=excluded.countries_json,
                      seasons_meta_json=excluded.seasons_meta_json,
@@ -1263,6 +1416,7 @@ class SweetStore:
                     t_row["description"],
                     t_row["poster"],
                     t_row["banner"],
+                    t_row["wide_art"],
                     t_row["year"],
                     t_row["duration"],
                     t_row["imdb"],
@@ -1283,8 +1437,8 @@ class SweetStore:
                     """INSERT INTO episodes(
                          title_key, ep_key, ep_id, season_num, episode_num, title,
                          duration, preview, owner_id, vod_url, cid, epg_id,
-                         time_start, time_stop
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         time_start, time_stop, coming_soon, release_date
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     [
                         (
                             tkey,
@@ -1301,6 +1455,8 @@ class SweetStore:
                             ep["epg_id"],
                             ep["time_start"],
                             ep["time_stop"],
+                            1 if ep.get("coming_soon") else 0,
+                            ep.get("release_date", ""),
                         )
                         for ep in ep_rows
                     ],
@@ -1360,6 +1516,8 @@ class SweetStore:
                     "preview": ep["preview"],
                     "owner_id": int(ep["owner_id"]),
                     "vod_url": ep["vod_url"],
+                    "coming_soon": bool(ep["coming_soon"]),
+                    "release_date": ep["release_date"],
                 })
             else:
                 flat_episodes.append({
@@ -1390,6 +1548,7 @@ class SweetStore:
             "description": r["description"],
             "poster": r["poster"],
             "banner": r["banner"],
+            "wide_art": r["wide_art"] or r["banner"],
             "year": int(r["year"]),
             "duration": int(r["duration"]),
             "imdb": float(r["imdb"]),

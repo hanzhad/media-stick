@@ -38,6 +38,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import weakref
 import zlib
 from datetime import date, timedelta
 from typing import NamedTuple
@@ -790,7 +791,7 @@ def day(cid, day_unix, channels, now=None, client=None, tr=None, store=None):
 
 # ---- VOD, catalog, shows & stream links -------------------------------------------------------
 
-_config_cache = {}
+_config_cache = weakref.WeakKeyDictionary()
 _config_lock = threading.Lock()
 
 
@@ -845,7 +846,8 @@ def _movie_card(movie):
         return None
     owner_id = owner_of(movie)
     poster = https(movie.get("poster_url") or movie.get("original_poster_url"))
-    banner = _hq_url(movie.get("horizontal_poster_url") or movie.get("banner_url") or movie.get("original_banner_url") or poster)
+    banner = _hq_url(movie.get("banner_url") or movie.get("original_banner_url") or movie.get("horizontal_poster_url") or poster)
+    wide_art = https(movie.get("horizontal_poster_url")) or banner
     genres = [g for g in (_num(x) for x in (movie.get("genres") or ())) if g is not None]
     imdb_raw = movie.get("rating_imdb")
     imdb = float(imdb_raw) if isinstance(imdb_raw, (int, float)) and not isinstance(imdb_raw, bool) else 0.0
@@ -855,6 +857,7 @@ def _movie_card(movie):
         "owner_id": owner_id,
         "poster": poster,
         "banner": banner,
+        "wide_art": wide_art,
         "year": _num(movie.get("year")) or 0,
         "duration": _num(movie.get("duration")) or 0,
         "imdb": imdb,
@@ -875,10 +878,12 @@ def configuration(client=None, tr=None):
     """Fetch and normalize MovieService/GetConfiguration.json, cached in memory for CONFIG_TTL (600s)."""
     c = client or _default
     now = c._clock()
-    ckey = id(c)
     with _config_lock:
-        hit = _config_cache.get(ckey)
-        if hit and now - hit[0] < CONFIG_TTL:
+        try:
+            hit = _config_cache.get(c)
+        except TypeError:
+            hit = None
+        if hit and 0 <= now - hit[0] < CONFIG_TTL:
             return hit[1]
     reply = c.post(CONFIG, {})
     if not reply.ok:
@@ -913,7 +918,10 @@ def configuration(client=None, tr=None):
             countries.append({"id": cid, "name": cname})
     res = {"ok": True, "genres": genres, "sort_modes": sort_modes, "countries": countries}
     with _config_lock:
-        _config_cache[ckey] = (now, res)
+        try:
+            _config_cache[c] = (now, res)
+        except TypeError:
+            pass
     return res
 
 
@@ -1122,6 +1130,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None)
                     "title": card["title"],
                     "poster": card["poster"],
                     "banner": card["banner"],
+                    "wide_art": card["wide_art"],
                     "year": card["year"],
                     "imdb": card["imdb"],
                     "vod_url": card["vod_url"],
@@ -1162,8 +1171,9 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None)
                 poster_from_list = next((https(p.get("original_poster_url") or p.get("poster_url")) for p in col_posters if p.get("original_poster_url") or p.get("poster_url")), "")
                 horiz_from_list = next((https(p.get("original_poster_url") or p.get("poster_url")) for p in col_posters if p.get("orientation") == "Horizontal" and (p.get("original_poster_url") or p.get("poster_url"))), "")
                 poster = https(col.get("poster_url")) or poster_from_list or next((https(r.get("image_url")) for r in recs if r.get("image_url")), "")
-                banner = _hq_url(col.get("horizontal_poster_url") or col.get("banner_url")) or _hq_url(horiz_from_list) or _hq_url(next(
+                banner = _hq_url(col.get("banner_url") or col.get("horizontal_poster_url")) or _hq_url(horiz_from_list) or _hq_url(next(
                     (r.get("preview_url_ext") for r in recs if r.get("preview_url_ext")), ""))
+                wide_art = https(col.get("horizontal_poster_url")) or banner
                 _add_item({
                     "kind": "show_epg",
                     "id": "epg:%d" % col_id,
@@ -1173,6 +1183,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None)
                     "title": _clean(col.get("title"), 120),
                     "poster": poster,
                     "banner": banner,
+                    "wide_art": wide_art,
                     "special": False,
                 })
             else:
@@ -1305,10 +1316,100 @@ def _next_up_payload(s_idx, e_idx, s_num, s_title, ep, mode):
     }
 
 
+def _ep_selectable(ep) -> bool:
+    return isinstance(ep, dict) and not ep.get("coming_soon") and ep.get("playable") is not False
+
+
+def extract_release_date(ep) -> str:
+    """Extract and format an episode release date as DD.MM.YYYY, or '' when absent/invalid."""
+    if not isinstance(ep, dict):
+        return ""
+    for key in ("release_date", "premiere_date", "available_from", "air_date", "date"):
+        val = ep.get(key)
+        if val is None or val == "":
+            continue
+        ts = _num(val)
+        if ts is not None:
+            if 10 ** 9 <= ts < 10 ** 11:
+                return time.strftime("%d.%m.%Y", time.gmtime(ts))
+            continue
+        if isinstance(val, str):
+            s = val.strip()
+            if len(s) > 10 and s[10] in ("T", " "):
+                s = s[:10]
+            d = parse_date(s)
+            if d is not None:
+                return f"{d.day:02d}.{d.month:02d}.{d.year:04d}"
+    return ""
+
+
+def filter_season_episodes(raw_episodes, playable_ids=None, mid=0, s_owner=0, local=None) -> list[dict]:
+    """Normalize season episodes, keeping all released episodes and at most one coming_soon stub."""
+    playable_set = {_num(x) for x in (playable_ids or ()) if _num(x)}
+    candidates = []
+    for ep in raw_episodes if isinstance(raw_episodes, (list, tuple)) else ():
+        if not isinstance(ep, dict) or ep.get("available") is False:
+            continue
+        eid = _num(ep.get("id"))
+        if not eid or eid <= 0:
+            continue
+        ep_num = _num(ep.get("number")) or 0
+        candidates.append((ep_num, eid, ep))
+    candidates.sort(key=lambda item: (item[0], item[1]))
+
+    out = []
+    soon_added = False
+    for ep_num, eid, ep in candidates:
+        dur = max(0, _num(ep.get("duration")) or 0)
+        is_released = dur > 0 and (not playable_set or eid in playable_set)
+        preview = https(ep.get("preview_url") or ep.get("image_url"))
+        title = _clean(ep.get("title"), 120)
+        if is_released:
+            ep_res, ep_done, ep_at = _vod_resume_info(local, mid, eid)
+            out.append({
+                "id": eid,
+                "episode_id": eid,
+                "number": ep_num,
+                "title": title,
+                "duration": dur,
+                "preview": preview,
+                "owner_id": s_owner,
+                "vod_url": ml.vod_url(mid, eid, s_owner),
+                "resume": ep_res,
+                "watched": ep_done,
+                "resume_at": ep_at,
+                "coming_soon": False,
+                "playable": True,
+                "release_date": "",
+            })
+        elif not soon_added:
+            soon_added = True
+            out.append({
+                "id": eid,
+                "episode_id": eid,
+                "number": ep_num,
+                "title": title,
+                "duration": 0,
+                "preview": preview,
+                "owner_id": s_owner,
+                "vod_url": "",
+                "resume": 0,
+                "watched": False,
+                "resume_at": 0,
+                "coming_soon": True,
+                "playable": False,
+                "release_date": extract_release_date(ep),
+            })
+    return out
+
+
 def resolve_next_up(seasons=None, episodes=None):
     """Single source of truth for picking the active season and episode to resume or watch next."""
     if seasons:
-        non_empty = [(si, s) for si, s in enumerate(seasons) if isinstance(s, dict) and s.get("episodes")]
+        non_empty = [
+            (si, s) for si, s in enumerate(seasons)
+            if isinstance(s, dict) and any(_ep_selectable(ep) for ep in (s.get("episodes") or ()))
+        ]
         if not non_empty:
             return None
         unfinished = []
@@ -1316,6 +1417,8 @@ def resolve_next_up(seasons=None, episodes=None):
         for si, s in non_empty:
             eps = s["episodes"]
             for ei, ep in enumerate(eps):
+                if not _ep_selectable(ep):
+                    continue
                 res = int(_num(ep.get("resume")) or 0)
                 done = bool(ep.get("watched"))
                 at = int(_num(ep.get("resume_at")) or 0)
@@ -1334,19 +1437,25 @@ def resolve_next_up(seasons=None, episodes=None):
                 start_ei = e_last + 1 if si == s_last else 0
                 for ei in range(start_ei, len(eps)):
                     ep = eps[ei]
-                    if not ep.get("watched"):
+                    if _ep_selectable(ep) and not ep.get("watched"):
                         s = seasons[si]
                         return _next_up_payload(si, ei, _season_number_of(s, si), str(s.get("title") or ""), ep, "next")
             s = seasons[s_last]
             return _next_up_payload(s_last, e_last, _season_number_of(s, s_last), str(s.get("title") or ""), ep_last, "watched")
         si, s = non_empty[0]
-        return _next_up_payload(si, 0, _season_number_of(s, si), str(s.get("title") or ""), s["episodes"][0], "start")
+        for ei, ep in enumerate(s.get("episodes") or ()):
+            if _ep_selectable(ep):
+                return _next_up_payload(si, ei, _season_number_of(s, si), str(s.get("title") or ""), ep, "start")
+        return None
 
     if episodes:
         # Flat TV show episodes are ordered newest-first (index 0 is newest).
+        selectable = [(ei, ep) for ei, ep in enumerate(episodes) if _ep_selectable(ep)]
+        if not selectable:
+            return None
         unfinished = []
         watched = []
-        for ei, ep in enumerate(episodes):
+        for ei, ep in selectable:
             res = int(_num(ep.get("resume")) or 0)
             done = bool(ep.get("watched"))
             at = int(_num(ep.get("resume_at")) or 0)
@@ -1361,10 +1470,11 @@ def resolve_next_up(seasons=None, episodes=None):
             _, last_ei, last_ep = max(watched, key=lambda x: x[0])
             for ei in range(last_ei - 1, -1, -1):
                 ep = episodes[ei]
-                if not ep.get("watched"):
+                if _ep_selectable(ep) and not ep.get("watched"):
                     return _next_up_payload(0, ei, 1, "", ep, "next")
             return _next_up_payload(0, last_ei, 1, "", last_ep, "watched")
-        return _next_up_payload(0, 0, 1, "", episodes[0], "start")
+        first_ei, first_ep = selectable[0]
+        return _next_up_payload(0, first_ei, 1, "", first_ep, "start")
     return None
 
 
@@ -1373,6 +1483,11 @@ def apply_progress_to_seasons(seasons, local, movie_id=""):
     mid = str(movie_id or "")
     for s in seasons or ():
         for ep in s.get("episodes") or ():
+            if not _ep_selectable(ep):
+                ep["resume"] = 0
+                ep["watched"] = False
+                ep["resume_at"] = 0
+                continue
             eid = ep.get("episode_id") or ep.get("id")
             if mid and eid:
                 res, done, at = _vod_resume_info(local, mid, eid)
@@ -1383,6 +1498,7 @@ def apply_progress_to_seasons(seasons, local, movie_id=""):
             ep["resume"] = res
             ep["watched"] = done
             ep["resume_at"] = at
+    return seasons
 
 
 def _vod_detail_from_cache(cached, mid, local, favs):
@@ -1398,6 +1514,10 @@ def _vod_detail_from_cache(cached, mid, local, favs):
             "episodes": [
                 {
                     **ep,
+                    "coming_soon": bool(ep.get("coming_soon")),
+                    "playable": bool(ep.get("playable", not bool(ep.get("coming_soon")))),
+                    "release_date": str(ep.get("release_date") or ""),
+                    "vod_url": "" if ep.get("coming_soon") else str(ep.get("vod_url") or ""),
                     "resume": 0,
                     "watched": False,
                     "resume_at": 0,
@@ -1420,6 +1540,7 @@ def _vod_detail_from_cache(cached, mid, local, favs):
         "countries": list(cached.get("countries") or ()),
         "poster": cached.get("poster", ""),
         "banner": cached.get("banner", ""),
+        "wide_art": cached.get("wide_art") or cached.get("banner", ""),
         "year": cached.get("year", 0),
         "duration": cached.get("duration", 0),
         "imdb": cached.get("imdb", 0.0),
@@ -1480,33 +1601,19 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None, store=None
     fav_keys = _fav_set(favs)
     is_fav = ("show:vod:%d" % mid) in fav_keys or ("vod:%d" % mid) in fav_keys
     m_resume, m_watched = _vod_resume(local, mid)
+    playable_ids = movie.get("playable_episode_ids") if isinstance(movie.get("playable_episode_ids"), list) else None
     seasons = []
     for s in movie.get("seasons") if isinstance(movie.get("seasons"), list) else ():
         if not isinstance(s, dict):
             continue
         s_owner = _num(s.get("owner_id")) or card["owner_id"]
-        eps = []
-        for ep in s.get("episodes") if isinstance(s.get("episodes"), list) else ():
-            if not isinstance(ep, dict) or ep.get("available") is False:
-                continue
-            eid = _num(ep.get("id"))
-            if not eid:
-                continue
-            ep_res, ep_done, ep_at = _vod_resume_info(local, mid, eid)
-            eps.append({
-                "id": eid,
-                "episode_id": eid,
-                "number": _num(ep.get("number")) or 0,
-                "title": _clean(ep.get("title"), 120),
-                "duration": _num(ep.get("duration")) or 0,
-                "preview": https(ep.get("preview_url") or ep.get("image_url")),
-                "owner_id": s_owner,
-                "vod_url": ml.vod_url(mid, eid, s_owner),
-                "resume": ep_res,
-                "watched": ep_done,
-                "resume_at": ep_at,
-            })
-        eps.sort(key=lambda e: (e["number"], e["id"]))
+        eps = filter_season_episodes(
+            s.get("episodes"),
+            playable_ids=playable_ids,
+            mid=mid,
+            s_owner=s_owner,
+            local=local,
+        )
         seasons.append({
             "id": _num(s.get("id")) or 0,
             "number": _season_number_of(s, len(seasons)),
@@ -1527,6 +1634,7 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None, store=None
         "countries": countries,
         "poster": card["poster"],
         "banner": card["banner"],
+        "wide_art": card["wide_art"],
         "year": card["year"],
         "duration": card["duration"],
         "imdb": card["imdb"],
@@ -1788,3 +1896,60 @@ def vod_link(movie_id, episode_id=None, owner_id=0, quality="1080p", client=None
         "duration": duration,
         "title": title,
     }
+
+
+def enrich_epg_records(epg_ids, client=None, store=None, now=None, force=False) -> dict[str, dict]:
+    """Batch-fetch EPG artwork and real titles via TvService/GetEpgRecords.json and persist to SweetStore."""
+    c = client or _default
+    st = _resolve_store(store)
+    ts = time.time() if now is None else now
+    ordered: list[int] = []
+    seen: set[int] = set()
+    for raw in epg_ids or ():
+        eid = _num(raw)
+        if eid and eid > 0 and eid not in seen:
+            seen.add(eid)
+            ordered.append(eid)
+    if not ordered:
+        return {}
+    if st is not None and not force:
+        try:
+            ordered = st.epg_ids_missing_art(ordered)
+        except Exception:
+            pass
+    target_ids = ordered[:100]
+    if not target_ids:
+        return {}
+
+    all_recs: list[dict] = []
+    out: dict[str, dict] = {}
+    for i in range(0, len(target_ids), 50):
+        chunk = target_ids[i:i + 50]
+        reply = c.post(EPG_RECORDS, {"id_list": chunk, "image_type": 0, "need_extended_info": True})
+        if not reply.ok:
+            continue
+        recs = reply.data.get("epg_records") or reply.data.get("list") or ()
+        for r in recs if isinstance(recs, list) else ():
+            if not isinstance(r, dict):
+                continue
+            eid = _num(r.get("id") if r.get("id") is not None else r.get("epg_id"))
+            if not eid or eid <= 0:
+                continue
+            all_recs.append(r)
+            cid = _id(r.get("channel_id") if r.get("channel_id") is not None else r.get("cid"))
+            title = _clean(r.get("text") if r.get("text") is not None else r.get("title"), 200)
+            img = https(r.get("image_url"))
+            prev = https(r.get("preview_url_ext")) or https(r.get("preview_url")) or img
+            out[str(eid)] = {
+                "epg": str(eid),
+                "cid": cid,
+                "title": title,
+                "image_url": img,
+                "preview": prev,
+            }
+    if st is not None and all_recs:
+        try:
+            st.upsert_epg_records(all_recs, now=ts)
+        except Exception:
+            pass
+    return out
