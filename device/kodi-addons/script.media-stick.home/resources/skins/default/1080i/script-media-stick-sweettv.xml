@@ -15,39 +15,48 @@
 
             <!-- Full-Bleed Background Hero for Continue, Favourites & TV Channels -->
             <control type="image">
-                <left>560</left>
+                <left>520</left>
                 <top>0</top>
-                <width>1360</width>
-                <height>765</height>
+                <width>1400</width>
+                <height>788</height>
                 <aspectratio align="center" aligny="center">scale</aspectratio>
                 <texture background="true">$INFO[Window.Property(hero_art)]</texture>
                 <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
             </control>
             <control type="image">
-                <left>560</left>
+                <left>520</left>
                 <top>0</top>
-                <width>720</width>
-                <height>765</height>
-                <texture>gradient-left.png</texture>
+                <width>1400</width>
+                <height>788</height>
+                <texture>white.png</texture>
+                <colordiffuse>330C111B</colordiffuse>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+            </control>
+            <control type="image">
+                <left>520</left>
+                <top>0</top>
+                <width>880</width>
+                <height>788</height>
+                <texture>sweettv-fade-left.png</texture>
                 <colordiffuse>FF0C111B</colordiffuse>
                 <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
             </control>
             <control type="image">
-                <left>560</left>
-                <top>340</top>
-                <width>1360</width>
-                <height>425</height>
-                <texture>gradient-bottom.png</texture>
+                <left>520</left>
+                <top>320</top>
+                <width>1400</width>
+                <height>468</height>
+                <texture>sweettv-fade-bottom.png</texture>
                 <colordiffuse>FF0C111B</colordiffuse>
                 <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
             </control>
             <control type="image">
-                <left>560</left>
+                <left>520</left>
                 <top>0</top>
-                <width>1360</width>
+                <width>1400</width>
                 <height>160</height>
-                <texture>gradient-top.png</texture>
-                <colordiffuse>B30C111B</colordiffuse>
+                <texture>sweettv-fade-top.png</texture>
+                <colordiffuse>FF0C111B</colordiffuse>
                 <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
             </control>
 
@@ -447,7 +456,7 @@
                 <control type="label">
                     <left>96</left>
                     <top>172</top>
-                    <width>1060</width>
+                    <width>780</width>
                     <height>56</height>
                     <font>Med40</font>
                     <textcolor>FFFFFFFF</textcolor>
@@ -457,7 +466,7 @@
                 <control type="label">
                     <left>96</left>
                     <top>232</top>
-                    <width>1060</width>
+                    <width>780</width>
                     <height>34</height>
                     <font>Reg25</font>
                     <textcolor>FF14E0C8</textcolor>
@@ -467,7 +476,7 @@
                 <control type="label">
                     <left>96</left>
                     <top>276</top>
-                    <width>1060</width>
+                    <width>780</width>
                     <height>136</height>
                     <font>Reg25</font>
                     <textcolor>FFB0BCCF</textcolor>
@@ -486,7 +495,7 @@
                 <control type="label">
                     <left>96</left>
                     <top>448</top>
-                    <width>1060</width>
+                    <width>780</width>
                     <height>34</height>
                     <font>Reg22</font>
                     <textcolor>FF8594AB</textcolor>
@@ -894,29 +903,38 @@
                 <colordiffuse>FF0C111B</colordiffuse>
             </control>
             <control type="image">
-                <left>520</left>
+                <left>440</left>
                 <top>0</top>
-                <width>1400</width>
-                <height>788</height>
+                <width>1480</width>
+                <height>832</height>
                 <aspectratio align="center" aligny="center">scale</aspectratio>
                 <texture background="true">$INFO[Window.Property(hero_art)]</texture>
                 <visible>!String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
             </control>
             <control type="image">
-                <left>520</left>
+                <left>440</left>
                 <top>0</top>
-                <width>680</width>
-                <height>788</height>
-                <texture>gradient-left.png</texture>
+                <width>1480</width>
+                <height>832</height>
+                <texture>white.png</texture>
+                <colordiffuse>380C111B</colordiffuse>
+                <visible>!String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+            </control>
+            <control type="image">
+                <left>440</left>
+                <top>0</top>
+                <width>920</width>
+                <height>832</height>
+                <texture>sweettv-fade-left.png</texture>
                 <colordiffuse>FF0C111B</colordiffuse>
                 <visible>!String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
             </control>
             <control type="image">
-                <left>520</left>
-                <top>360</top>
-                <width>1400</width>
-                <height>428</height>
-                <texture>gradient-bottom.png</texture>
+                <left>440</left>
+                <top>320</top>
+                <width>1480</width>
+                <height>512</height>
+                <texture>sweettv-fade-bottom.png</texture>
                 <colordiffuse>FF0C111B</colordiffuse>
                 <visible>!String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
             </control>
@@ -930,58 +948,73 @@
                 <visible>!String.IsEmpty(Window.Property(hero_art)) + !String.IsEmpty(Window.Property(hero_is_logo))</visible>
             </control>
 
-            <control type="label">
-                <left>96</left>
-                <top>48</top>
-                <width>1080</width>
-                <height>68</height>
-                <font>MsTitle</font>
-                <textcolor>FFFFFFFF</textcolor>
-                <aligny>center</aligny>
-                <label>$INFO[Window.Property(guide_title)]</label>
-            </control>
-            <control type="label">
-                <left>96</left>
-                <top>120</top>
-                <width>1280</width>
-                <height>34</height>
-                <font>Reg25</font>
-                <textcolor>FF14E0C8</textcolor>
-                <aligny>center</aligny>
-                <label>$INFO[Window.Property(hero_meta)]</label>
-                <visible>!String.IsEmpty(Window.Property(hero_meta))</visible>
-            </control>
-            <control type="textbox">
-                <left>96</left>
-                <top>162</top>
-                <width>1080</width>
-                <height>76</height>
-                <font>Reg22</font>
-                <textcolor>FFE4ECF7</textcolor>
-                <label>$INFO[Window.Property(hero_desc)]</label>
-                <visible>!String.IsEqual(Window.Property(modal),detail) + !String.IsEmpty(Window.Property(hero_desc))</visible>
-            </control>
-            <control type="label">
-                <left>96</left>
-                <top>242</top>
-                <width>1080</width>
-                <height>30</height>
-                <font>Bold25</font>
-                <textcolor>FF00D2C6</textcolor>
-                <aligny>center</aligny>
-                <label>$INFO[Window.Property(autoplay_text)]</label>
-                <visible>!String.IsEmpty(Window.Property(autoplay_text))</visible>
+            <control type="group">
+                <left>0</left>
+                <top>0</top>
+                <width>1920</width>
+                <height>1080</height>
+                <animation type="Conditional" condition="String.IsEqual(Window.Property(modal),show)">
+                    <effect type="slide" start="0,0" end="0,60" time="0" />
+                </animation>
+                <control type="label">
+                    <left>96</left>
+                    <top>56</top>
+                    <width>780</width>
+                    <height>68</height>
+                    <font>MsTitle</font>
+                    <textcolor>FFFFFFFF</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(guide_title)]</label>
+                </control>
+                <control type="label">
+                    <left>96</left>
+                    <top>132</top>
+                    <width>900</width>
+                    <height>34</height>
+                    <font>Reg25</font>
+                    <textcolor>FF14E0C8</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(hero_meta)]</label>
+                    <visible>!String.IsEmpty(Window.Property(hero_meta))</visible>
+                </control>
+                <control type="textbox">
+                    <left>96</left>
+                    <top>176</top>
+                    <width>760</width>
+                    <height>136</height>
+                    <font>Reg22</font>
+                    <textcolor>FFE4ECF7</textcolor>
+                    <label>$INFO[Window.Property(hero_desc)]</label>
+                    <visible>!String.IsEqual(Window.Property(modal),detail) + !String.IsEmpty(Window.Property(hero_desc))</visible>
+                </control>
+                <control type="label">
+                    <left>96</left>
+                    <top>318</top>
+                    <width>760</width>
+                    <height>28</height>
+                    <font>Bold25</font>
+                    <textcolor>FF00D2C6</textcolor>
+                    <aligny>center</aligny>
+                    <label>$INFO[Window.Property(autoplay_text)]</label>
+                    <visible>!String.IsEmpty(Window.Property(autoplay_text))</visible>
+                </control>
             </control>
 
             <control type="grouplist" id="209">
                 <left>96</left>
-                <top>280</top>
+                <top>352</top>
                 <width>1120</width>
                 <height>56</height>
                 <orientation>horizontal</orientation>
                 <itemgap>14</itemgap>
                 <usecontrolcoords>false</usecontrolcoords>
                 <ondown condition="!String.IsEmpty(Window.Property(guide))">410</ondown>
+                <animation type="Conditional" condition="String.IsEqual(Window.Property(modal),show)">
+                    <effect type="slide" start="0,0" end="0,140" time="0" />
+                </animation>
+                <animation type="Conditional" condition="String.IsEqual(Window.Property(modal),detail)">
+                    <effect type="slide" start="0,0" end="0,-132" time="0" />
+                </animation>
                 <control type="button" id="210">
                     <width min="220" max="420">auto</width>
                     <height>56</height>
@@ -1042,9 +1075,9 @@
             <!-- Expanded Synopsis for Movie Detail Hub -->
             <control type="textbox">
                 <left>96</left>
-                <top>368</top>
-                <width>1080</width>
-                <height>380</height>
+                <top>308</top>
+                <width>760</width>
+                <height>520</height>
                 <font>Reg25</font>
                 <textcolor>FFE4ECF7</textcolor>
                 <label>$INFO[Window.Property(hero_desc)]</label>
@@ -1054,7 +1087,7 @@
             <!-- Season / Day Tabs (410) - strict single-focus #00D2C6 -->
             <control type="list" id="410">
                 <left>96</left>
-                <top>364</top>
+                <top>432</top>
                 <width>1728</width>
                 <height>56</height>
                 <orientation>horizontal</orientation>
@@ -1062,6 +1095,9 @@
                 <ondown condition="String.IsEqual(Window.Property(modal),show)">421</ondown>
                 <ondown condition="String.IsEqual(Window.Property(modal),guide)">400</ondown>
                 <visible>!String.IsEmpty(Window.Property(guide))</visible>
+                <animation type="Conditional" condition="String.IsEqual(Window.Property(modal),show)">
+                    <effect type="slide" start="0,0" end="0,172" time="0" />
+                </animation>
                 <itemlayout width="212" height="56">
                     <control type="image">
                         <left>0</left>
@@ -1134,7 +1170,7 @@
             <!-- Horizontal 16:9 Episode Row (421) for Show / Series Hub -->
             <control type="panel" id="421">
                 <left>96</left>
-                <top>448</top>
+                <top>680</top>
                 <width>1776</width>
                 <height>344</height>
                 <orientation>horizontal</orientation>
@@ -1347,7 +1383,7 @@
             <!-- Channel TV Guide Programme List (400) - strict single-focus #00D2C6 -->
             <control type="list" id="400">
                 <left>96</left>
-                <top>436</top>
+                <top>504</top>
                 <width>1728</width>
                 <height>512</height>
                 <onup>410</onup>

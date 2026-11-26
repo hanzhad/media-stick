@@ -2226,9 +2226,12 @@ class CatalogSections(WindowCase):
                       {"id": 6011, "episode_id": 6011, "number": 1, "title": "Pilot", "duration": 2400,
                        "preview": "", "owner_id": 10, "vod_url": "plugin://plugin.video.sweettv/playvod/601|6011|10",
                        "resume": 0, "watched": False}]}]}
+        detail_movie = {"ok": True, "id": "vod:501", "movie_id": "501", "title": "Film A",
+                        "duration": 5400, "owner_id": 10,
+                        "vod_url": "plugin://plugin.video.sweettv/playvod/501|null|10"}
         with mock.patch.object(API, "configuration", return_value=_sample_config()), \
                 mock.patch.object(API, "catalog_page", side_effect=lambda sec, **kw: series if sec == "series" else movies), \
-                mock.patch.object(API, "vod_detail", return_value=detail):
+                mock.patch.object(API, "vod_detail", side_effect=lambda k, **kw: detail_movie if "501" in str(k) else detail):
             window = self.open()
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
             window.controls[MENU].selected = 5
@@ -2888,7 +2891,7 @@ class Skin(unittest.TestCase):
         browse_hero_imgs = [
             c for c in main_group.findall(".//control[@type='image']")
             if "Window.Property(hero_art)" in (c.findtext("texture") or "")
-            or (c.findtext("texture") or "").strip() in ("gradient-left.png", "gradient-bottom.png", "gradient-top.png")
+            or (c.findtext("texture") or "").strip() in ("sweettv-fade-left.png", "sweettv-fade-bottom.png", "sweettv-fade-top.png")
         ]
         hero_group = next(
             (g for g in main_group.findall("control[@type='group']")
@@ -2906,13 +2909,13 @@ class Skin(unittest.TestCase):
             c for c in browse_hero_imgs
             if "Window.Property(hero_art)" in (c.findtext("texture") or "")
         ]
-        grad_left = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "gradient-left.png"]
-        grad_bottom = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "gradient-bottom.png"]
-        grad_top = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "gradient-top.png"]
+        grad_left = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "sweettv-fade-left.png"]
+        grad_bottom = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "sweettv-fade-bottom.png"]
+        grad_top = [c for c in browse_hero_imgs if (c.findtext("texture") or "").strip() == "sweettv-fade-top.png"]
         self.assertGreaterEqual(len(hero_art_imgs), 2, "Expected keep logo and scale still hero_art branches")
-        self.assertGreaterEqual(len(grad_left), 1, "Expected gradient-left.png in Full-Bleed Browse Hero")
-        self.assertGreaterEqual(len(grad_bottom), 1, "Expected gradient-bottom.png in Full-Bleed Browse Hero")
-        self.assertGreaterEqual(len(grad_top), 1, "Expected gradient-top.png in Full-Bleed Browse Hero")
+        self.assertGreaterEqual(len(grad_left), 1, "Expected sweettv-fade-left.png in Full-Bleed Browse Hero")
+        self.assertGreaterEqual(len(grad_bottom), 1, "Expected sweettv-fade-bottom.png in Full-Bleed Browse Hero")
+        self.assertGreaterEqual(len(grad_top), 1, "Expected sweettv-fade-top.png in Full-Bleed Browse Hero")
 
         props_logo = {"mode": "data", "modal": "", "wide_grid": "1", "emptycat": "", "hero_art": "https://img/l.png", "hero_is_logo": "1"}
         props_still = {"mode": "data", "modal": "", "wide_grid": "1", "emptycat": "", "hero_art": "https://img/s.jpg", "hero_is_logo": ""}
@@ -2930,12 +2933,12 @@ class Skin(unittest.TestCase):
         self.assertEqual(
             (int(vis_still[0].findtext("left")), int(vis_still[0].findtext("top")),
              int(vis_still[0].findtext("width")), int(vis_still[0].findtext("height"))),
-            (560, 0, 1360, 765),
+            (520, 0, 1400, 788),
         )
         for g_list, exp_geom, exp_col in (
-            (grad_left, (560, 0, 720, 765), "FF0C111B"),
-            (grad_bottom, (560, 340, 1360, 425), "FF0C111B"),
-            (grad_top, (560, 0, 1360, 160), "B30C111B"),
+            (grad_left, (520, 0, 880, 788), "FF0C111B"),
+            (grad_bottom, (520, 320, 1400, 468), "FF0C111B"),
+            (grad_top, (520, 0, 1400, 160), "FF0C111B"),
         ):
             self.assertFalse(any(_eval_kodi_cond(c.findtext("visible") or "", props_logo, focus_id=201) for c in g_list))
             vis_g = [c for c in g_list if _eval_kodi_cond(c.findtext("visible") or "", props_still, focus_id=201)]

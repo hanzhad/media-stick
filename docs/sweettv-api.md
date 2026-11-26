@@ -27,7 +27,8 @@ Machine-readable type schemas live in [`docs/sweettv-api-shapes.json`](sweettv-a
    - Bulk `channelList.json` / `TvService/GetChannels.json` responses carry **0 EPG previews** (`preview_url` / `preview_url_ext` are absent on bulk guide syncs).
    - `TvService/GetEpgRecords.json` returns `image_url` (`epg_horizontal`), `preview_url_ext`, `preview_url`, and the full `text` programme title (single-channel `GetChannels` day queries can also return `preview_url` / `preview_url_ext`).
 3. **Unreleased episodes in `MovieService/GetMovieInfo.json`**:
-   - Unreleased episodes arrive with `duration == 0`, `file_size == "0"`, a `playable_episode_ids` list on the movie/series object, no release date, and resolve to a ~65 s promotional HLS stub if played.
+   - Unreleased episodes arrive with `duration == 0`, `file_size == "0"`, no release date, and resolve to a ~65 s promotional HLS stub if played.
+   - `playable_episode_ids` on the movie/series object is a truncated preview list (4 IDs per season, and may even include unreleased `duration == 0` stubs), so it **MUST NOT** be used to gate released episodes; `duration > 0` is the authoritative released indicator.
 4. **Config labels in `MovieService/GetConfiguration.json`**:
    - `GetConfiguration` uses `title` on live responses (and `name` as fallback in older/fixture payloads) for `genres`, `sort_modes`, and `countries`; items with blank or missing labels must be filtered out.
    - `GetMovieInfo` returns numeric country IDs when `need_extended_info: true`, which map via `GetConfiguration.countries` (while legacy/fixture payloads may already hold string country names).
