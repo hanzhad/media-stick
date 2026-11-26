@@ -120,13 +120,27 @@ class Page(unittest.TestCase):
         self.assertNotIn("airmode", self.page)
 
     def test_the_remote_has_a_mode_switch_of_three(self):
-        sw = self.page.split('class="modes"', 1)[1].split("</div>", 1)[0]
-        self.assertEqual(re.findall(r'data-m="(\w+)"[^>]*>([^<]+)<', sw), [("keys", "Кнопки"), ("air", "Указка"), ("screen", "Экран")])
-        self.assertLess(self.page.index('class="modes"'), self.page.index('class="card rc"'))
+        self.assertNotIn('class="modes"', self.page)
+        self.assertNotIn(".modes [data-m]", self.page)
+        self.assertIn("MODES = ['keys', 'air', 'screen']", self.page.replace('"', "'"))
         self.assertNotIn('id="mode"', self.page)                    # the round air toggle is gone
         self.assertNotIn("airSet", self.page)
         self.assertNotIn("airMode", self.page)
         self.assertIn("function setMode(m)", self.page)
+
+        # Mobile-only .mode-corners at top of .rc (above .dwrap) and at top of #t-screen > .card (above .head)
+        rc_html = self.rc()
+        self.assertIn('class="mode-corners"', rc_html)
+        self.assertLess(rc_html.index('class="mode-corners"'), rc_html.index('id="stage"'))
+        screen = self.page.split('<div id="t-screen">', 1)[1].split("</section>", 1)[0]
+        self.assertIn('class="mode-corners"', screen)
+        self.assertLess(screen.index('class="mode-corners"'), screen.index('class="head"'))
+
+        # Corner mode switchers cycle keys <-> air <-> screen with data-mode-go + icon + label
+        for mode_go in ("keys", "air", "screen"):
+            self.assertIn(f'data-mode-go="{mode_go}"', self.page)
+        for icon in ("#i-cam", "#i-air", "#i-remote"):
+            self.assertIn(icon, self.page)
 
     def test_the_screen_is_the_third_mode_of_the_remote(self):
         remote = self.page.split('<section id="t-remote"', 1)[1].split("</section>", 1)[0]
@@ -197,8 +211,10 @@ class Page(unittest.TestCase):
     def test_wide_screen_shows_everything_without_the_bar(self):
         wide = self.page.split("@media (min-width:900px){\n  #app{max-width:1360px", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act" "lang lang"', wide)
-        self.assertIn(".tabs,.modes,.sp-head,#t-setlist{display:none!important}", wide)
+        self.assertIn(".mode-corners", wide)
+        self.assertIn("display:none!important", wide)
         self.assertIn("#t-remote{display:contents!important}", wide)
+        self.assertIn("#t-remote .rc-shell{display:flex!important;flex-direction:column;gap:8px;grid-area:remote}", wide)
         self.assertIn("#t-screen{display:block!important", wide)
 
     def rc(self):
@@ -208,16 +224,25 @@ class Page(unittest.TestCase):
         for gone in ("wtdp", "wtnp", "wt-npbox", "wt-pback", "wt-pfull", "Крестовина", "W.rp"):
             self.assertNotIn(gone, self.page)
         self.assertEqual(self.page.count('<div data-wtbar'), 2)       # the bar of «Смотреть» and the bar of «Пульт»
-        # the bar is above the mode switch, in all modes, and the card only gets a little shorter under it
+        # the bar is above .rc-shell (#touchbar + .rc), and .rc fits iPhone SE (min-height:340px) + .tb-on height rules
         remote = self.page.split('<section id="t-remote"', 1)[1]
-        self.assertLess(remote.index("data-wtbar"), remote.index('class="modes"'))
-        self.assertIn("@media (max-width:899px){body.np .rc{height:calc(100vh - 284px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}}", self.page)
+        self.assertIn('class="rc-shell"', remote)
+        self.assertIn('id="touchbar"', remote)
+        self.assertLess(remote.index("data-wtbar"), remote.index('class="rc-shell"'))
+        self.assertLess(remote.index('id="touchbar"'), remote.index('class="card rc"'))
+        self.assertIn("min-height:340px", self.page)
+        self.assertNotIn("min-height:400px", self.page)
+        self.assertIn(".rc-shell.tb-on .rc", self.page)
+        self.assertIn("body.np .rc-shell.tb-on .rc", self.page)
 
     def test_the_buttons_mode_rows(self):
         rows = [re.findall(r'(?:data-a|id)="([\w-]+)"', g) for g in self.rc().split('<div class="grp">')[1:]]
-        self.assertEqual(rows, [["back", "home", "contextmenu", "txt-open"], ["volumedown", "mute", "volumeup"]])
+        self.assertEqual(rows, [["back", "home", "contextmenu", "txt-open", "btn-search-rc"], ["volumedown", "mute", "volumeup"]])
         self.assertIn('data-a="contextmenu" aria-label="Ещё"', self.rc())
         self.assertIn('id="txt-open" aria-label="Текст"', self.rc())
+        self.assertIn('id="btn-search-rc"', self.rc())
+        self.assertIn('aria-label="Поиск"', self.rc())
+        self.assertIn('<symbol id="i-search"', self.page)
         self.assertNotIn("shot-save-rc", self.rc())
         for gone in ("rewind", "fastforward", "playpause", '"stop"', '"info"', '"osd"', "Инфо", "Панель"):
             self.assertNotIn(gone, self.rc())
@@ -247,6 +272,16 @@ class Page(unittest.TestCase):
         # «Закрыть» only hides it
         self.assertIn("$('kb-x').addEventListener('click',()=>{if(kbMan){kbMan=false;kbOpen=false;$('kb-in').blur();"
                       "$('kb').classList.add('hide')", js)
+
+    def test_contextual_search_isolates_kb_mode_and_submits_only_on_enter(self):
+        js = self.page
+        self.assertIn("btn-search-rc", js)
+        self.assertIn("ctx_search", js)
+        self.assertIn("kbMode", js)
+        self.assertIn("ui_cmd", js)
+        self.assertIn("can_search", js)
+        self.assertIn("search_query", js)
+        self.assertIn("search_hint", js)
 
     def test_one_toast_and_failed_keys_say_so(self):
         js = self.page

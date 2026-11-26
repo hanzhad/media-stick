@@ -1,8 +1,9 @@
-const CACHE_NAME = 'ms-panel-v2-3';
+const CACHE_NAME = 'ms-panel-v2-4';
 const PRECACHE = [
   '/manifest.webmanifest',
   '/icon-192.png',
   '/icon-512.png',
+  '/static/touchbar.js',
 ];
 
 const OFFLINE_HTML = `<!doctype html><html lang="ru"><head><meta charset="utf-8">

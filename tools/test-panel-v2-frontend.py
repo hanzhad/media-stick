@@ -247,8 +247,9 @@ class TestStaticRoutesServed(_PanelServerMixin, unittest.TestCase):
         code, _, raw = self._get("/sw.js")
         self.assertEqual(code, 200)
         src = raw.decode("utf-8")
-        self.assertIn("ms-panel-v2-3", src)
-        self.assertNotIn("ms-panel-v2-2", src)
+        self.assertIn("ms-panel-v2-4", src)
+        self.assertNotIn("ms-panel-v2-3", src)
+        self.assertIn("/static/touchbar.js", src)
         self.assertIn("apple-mobile-web-app-capable", src)
         self.assertIn("black-translucent", src)
         self.assertIn("env(safe-area-inset-", src)
@@ -290,6 +291,7 @@ class TestStaticEsModules(_PanelServerMixin, unittest.TestCase):
         "power-banner.js",
         "screen-v2.js",
         "diagnostics.js",
+        "touchbar.js",
         "v2-boot.js",
     )
 
@@ -323,8 +325,26 @@ class TestStaticEsModules(_PanelServerMixin, unittest.TestCase):
         self.assertIn("DataView", src)
         self.assertIn("setUint8", src)
         self.assertIn("setFloat32", src)
-        for ev in ("now", "vol", "kb", "screen_owner", "status"):
+        for ev in ("now", "vol", "kb", "screen_owner", "status", "ui_context"):
             self.assertIn(ev, src, f"ws-client.js missing event {ev!r}")
+
+    def test_touchbar_module_contract(self):
+        src = self._fetch_js("touchbar.js")
+        self.assertIn("export function initTouchBar", src)
+        for token in (
+            "tb-on",
+            "tb-chips",
+            "ui_cmd",
+            "play_episode",
+            "play_epg",
+            "can_archive",
+            "alt_label",
+            "/api/sweettv/show",
+            "/api/sweettv/vod",
+            "/api/sweettv/guide",
+            "/api/sweettv/day",
+        ):
+            self.assertIn(token, src, f"touchbar.js missing {token!r}")
 
     def test_trackpad_gestures_and_rest_fallback_without_https(self):
         src = self._fetch_js("trackpad.js")
@@ -372,8 +392,10 @@ class TestStaticEsModules(_PanelServerMixin, unittest.TestCase):
 
     def test_v2_boot_wires_modules_and_service_worker(self):
         src = self._fetch_js("v2-boot.js")
-        for mod in ("ws-client.js", "trackpad.js", "power-banner.js", "screen-v2.js", "diagnostics.js"):
+        for mod in ("ws-client.js", "trackpad.js", "power-banner.js", "screen-v2.js", "diagnostics.js", "touchbar.js"):
             self.assertIn(mod, src, f"v2-boot.js must import {mod}")
+        self.assertIn("initTouchBar", src)
+        self.assertIn("ui_context", src)
         self.assertIn("serviceWorker", src)
         self.assertIn("/sw.js", src)
 
@@ -455,6 +477,19 @@ class TestPanelRootPageV2(_PanelServerMixin, unittest.TestCase):
             "shot-sheet-close",
         ):
             self.assertIn(f'id="{elem_id}"', html, f"panel HTML missing id={elem_id!r}")
+
+    def test_root_contains_touchbar_and_contextual_search(self):
+        code, _, raw = self._get("/")
+        self.assertEqual(code, 200)
+        html = raw.decode("utf-8")
+
+        self.assertRegex(html, r'<symbol[^>]+id="i-search"[^>]+viewBox="0 0 24 24"')
+        self.assertIn('id="btn-search-rc"', html)
+        self.assertIn('id="touchbar"', html)
+        self.assertIn('class="rc-shell"', html)
+        self.assertIn('class="mode-corners"', html)
+        self.assertIn('data-mode-go="', html)
+        self.assertNotIn('class="modes"', html)
 
 
 if __name__ == "__main__":

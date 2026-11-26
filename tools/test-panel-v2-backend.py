@@ -1111,6 +1111,155 @@ class TestPanelV2Routes(unittest.TestCase):
         finally:
             self._req("POST", "/api/pin", {"action": "disable"}, headers={"Cookie": cookie_kv})
 
+    def test_api_ui_context_and_ui_cmd_validation_and_dispatch(self):
+        code, hdrs, raw = self._req("GET", "/api/ui/context")
+        self.assertEqual(code, 200)
+        self.assertEqual(hdrs.get("Content-Type"), "application/json")
+        ctx = json.loads(raw.decode("utf-8"))
+        self.assertEqual(ctx.get("v"), 1)
+        self.assertIn("app", ctx)
+        self.assertIn("view", ctx)
+
+        # Missing X-Panel header must be rejected (parity with /api/key)
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request(
+            "POST",
+            "/api/ui/cmd",
+            json.dumps({"cmd": "set_section", "app": "sweettv", "section": "tv"}),
+            {"Host": f"localhost:{self.port}", "Content-Type": "application/json"},
+        )
+        r = c.getresponse()
+        r.read()
+        c.close()
+        self.assertEqual(r.status, 403)
+
+        # Bad Host must be rejected
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request(
+            "POST",
+            "/api/ui/cmd",
+            json.dumps({"cmd": "set_section", "app": "sweettv", "section": "tv"}),
+            {"Host": "evil.example", "X-Panel": "1", "Content-Type": "application/json"},
+        )
+        r = c.getresponse()
+        r.read()
+        c.close()
+        self.assertIn(r.status, (403, 421))
+
+        # Invalid commands return 400
+        for bad_cmd in (
+            {},
+            {"cmd": "unknown_cmd", "app": "sweettv"},
+            {"cmd": "set_section", "app": "netflix", "section": "tv"},
+            {"cmd": "set_section", "app": "sweettv"},
+            {"cmd": "play_episode", "app": "sweettv", "idx": 99999},
+            {"cmd": "search", "app": "sweettv", "query": "Bearer sk-1234567890abcdef1234567890"},
+        ):
+            self.kodi_calls.clear()
+            code, _, _ = self._req("POST", "/api/ui/cmd", bad_cmd)
+            self.assertEqual(code, 400, f"expected 400 for {bad_cmd!r}, got {code}")
+            self.assertEqual(self.kodi_calls, [])
+
+        # Valid command dispatches JSONRPC.NotifyAll
+        self.kodi_calls.clear()
+        code, _, raw = self._req("POST", "/api/ui/cmd", {"cmd": "search", "app": "sweettv", "query": "комедия"})
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(raw.decode("utf-8")).get("ok"), True)
+        notify_calls = [(m, p) for m, p in self.kodi_calls if m == "JSONRPC.NotifyAll"]
+        self.assertEqual(len(notify_calls), 1)
+        self.assertEqual(notify_calls[0][1]["message"], "mediastick.ui_cmd")
+        self.assertEqual(notify_calls[0][1]["data"]["cmd"], "search")
+        self.assertEqual(notify_calls[0][1]["data"]["app"], "sweettv")
+        self.assertEqual(notify_calls[0][1]["data"]["query"], "комедия")
+
+        # PIN_AUTH parity when enabled
+        code, hdrs, _ = self._req("POST", "/api/pin", {"pin": "1234"})
+        self.assertEqual(code, 200)
+        cookie_kv = hdrs.get("Set-Cookie", "").split(";", 1)[0]
+        try:
+            code, _, _ = self._req("POST", "/api/ui/cmd", {"cmd": "set_section", "app": "sweettv", "section": "tv"})
+            self.assertEqual(code, 401)
+            code, _, _ = self._req(
+                "POST",
+                "/api/ui/cmd",
+                {"cmd": "set_section", "app": "sweettv", "section": "tv"},
+                headers={"Cookie": cookie_kv},
+            )
+            self.assertEqual(code, 200)
+        finally:
+            self._req("POST", "/api/pin", {"action": "disable"}, headers={"Cookie": cookie_kv})
+
+    def test_ws_ui_context_on_open_and_ui_cmd_dispatch(self):
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=3)
+        s.settimeout(3.0)
+        try:
+            key = base64.b64encode(os.urandom(16)).decode()
+            s.sendall(
+                (
+                    f"GET /ws HTTP/1.1\r\nHost: localhost:{self.port}\r\n"
+                    f"Origin: http://localhost:{self.port}\r\n"
+                    f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                    f"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n\r\n"
+                ).encode()
+            )
+            # Read HTTP 101 headers up to \r\n\r\n without consuming the immediate on_open WS frame.
+            hdr_buf = bytearray()
+            while not hdr_buf.endswith(b"\r\n\r\n"):
+                chunk = s.recv(1)
+                if not chunk:
+                    break
+                hdr_buf.extend(chunk)
+            resp = hdr_buf.decode("utf-8", errors="replace")
+            self.assertIn("101", resp.splitlines()[0])
+
+            # on_open must immediately push current ui_context
+            s.settimeout(0.5)
+            try:
+                op, payload = _read_ws_frame(s)
+            except TimeoutError:
+                self.fail("WS on_open did not push initial ui_context frame")
+            s.settimeout(3.0)
+            self.assertEqual(op, 0x1)
+            msg = json.loads(payload.decode("utf-8"))
+            self.assertEqual(msg.get("type"), "ui_context")
+            self.assertIsInstance(msg.get("context"), dict)
+            self.assertEqual(msg["context"].get("v"), 1)
+
+            # Invalid ui_cmd must be swallowed without crashing WS loop
+            s.sendall(_ws_frame(0x1, json.dumps({"type": "ui_cmd", "cmd": "nope", "app": "sweettv"})))
+            s.sendall(_ws_frame(0x1, json.dumps({"type": "ping"})))
+            op, payload = _read_ws_frame(s)
+            self.assertEqual(op, 0x1)
+            self.assertEqual(json.loads(payload.decode("utf-8")), {"type": "pong"})
+
+            # Valid ui_cmd dispatches JSONRPC.NotifyAll
+            self.kodi_calls.clear()
+            s.sendall(_ws_frame(0x1, json.dumps({
+                "type": "ui_cmd", "cmd": "set_section", "app": "sweettv", "section": "tv",
+            })))
+            s.sendall(_ws_frame(0x1, json.dumps({"type": "ping"})))
+            op, payload = _read_ws_frame(s)
+            self.assertEqual(op, 0x1)
+            self.assertEqual(json.loads(payload.decode("utf-8")), {"type": "pong"})
+            notify_calls = [(m, p) for m, p in self.kodi_calls if m == "JSONRPC.NotifyAll"]
+            self.assertEqual(len(notify_calls), 1)
+            self.assertEqual(notify_calls[0][1]["message"], "mediastick.ui_cmd")
+
+            s.sendall(_ws_frame(0x8, b""))
+        finally:
+            s.close()
+
+    def test_ui_ctx_watcher_and_kodi_push_notify(self):
+        uic_mod = _require_module(self, "panel_ui_context")
+        self.assertTrue(hasattr(panel, "UI_CTX"), "panel.UI_CTX is not wired")
+        self.assertIsInstance(panel.UI_CTX, uic_mod.UiContextWatcher)
+
+        with mock.patch.object(panel.UI_CTX, "notify") as mock_notify:
+            panel._on_kodi_push("Player.OnPlay", {})
+            mock_notify.assert_not_called()
+            panel._on_kodi_push("Other.mediastick.ui_context", {})
+            mock_notify.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)
