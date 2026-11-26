@@ -1612,5 +1612,452 @@ class NextUpResolverTest(unittest.TestCase):
         nu = api.resolve_next_up(episodes=eps)
         self.assertEqual((nu["episode_index"], nu["mode"]), (0, "next"))
 
+class HeroBannerAndWideArtTest(unittest.TestCase):
+    def test_movie_card_banner_and_wide_art_table(self):
+        cases = (
+            (
+                "banner_url_and_horizontal_poster",
+                {
+                    "id": 101,
+                    "title": "Hero Movie",
+                    "banner_url": "https://static.sweet.tv/cdn-cgi/image/width=1280/https://static.sweet.tv/banner-1280x720.jpg",
+                    "horizontal_poster_url": "http://static.sweet.tv/horiz-478x267.jpg",
+                    "poster_url": "https://static.sweet.tv/poster.jpg",
+                },
+                "https://static.sweet.tv/banner-1280x720.jpg",
+                "https://static.sweet.tv/horiz-478x267.jpg",
+            ),
+            (
+                "original_banner_url_fallback",
+                {
+                    "id": 102,
+                    "title": "Original Banner",
+                    "original_banner_url": "https://static.sweet.tv/orig-banner.jpg",
+                    "horizontal_poster_url": "https://static.sweet.tv/horiz.jpg",
+                    "poster_url": "https://static.sweet.tv/poster.jpg",
+                },
+                "https://static.sweet.tv/orig-banner.jpg",
+                "https://static.sweet.tv/horiz.jpg",
+            ),
+            (
+                "horizontal_poster_fallback_when_no_banner",
+                {
+                    "id": 103,
+                    "title": "No Banner",
+                    "horizontal_poster_url": "https://static.sweet.tv/horiz-478x267.jpg",
+                    "poster_url": "https://static.sweet.tv/poster.jpg",
+                },
+                "https://static.sweet.tv/horiz-478x267.jpg",
+                "https://static.sweet.tv/horiz-478x267.jpg",
+            ),
+            (
+                "poster_fallback_when_only_poster",
+                {
+                    "id": 104,
+                    "title": "Poster Only",
+                    "poster_url": "https://static.sweet.tv/poster.jpg",
+                },
+                "https://static.sweet.tv/poster.jpg",
+                "https://static.sweet.tv/poster.jpg",
+            ),
+            (
+                "empty_urls",
+                {"id": 105, "title": "Bare"},
+                "",
+                "",
+            ),
+        )
+        for name, movie, exp_banner, exp_wide_art in cases:
+            with self.subTest(name=name):
+                card = api._movie_card(movie)
+                self.assertEqual(card["banner"], exp_banner)
+                self.assertEqual(card["wide_art"], exp_wide_art)
+
+    def test_shows_sets_banner_and_wide_art_for_vod_and_epg(self):
+        def by(call):
+            url = call["url"]
+            if url.endswith("GetCollections.json"):
+                if call["body"] == {"type": 3}:
+                    return reply({"status": "OK", "collection": [{"id": 301, "id_list": [9558]}]})
+                if call["body"] == {"type": 7}:
+                    return reply({"status": "OK", "collection": [
+                        {"id": 8838, "type": "Epg", "id_list": [15]},
+                        {"id": 8839, "type": "Epg", "id_list": [15]},
+                        {"id": 8840, "type": "Epg", "id_list": [15]},
+                    ]})
+            if url.endswith("GetMovieInfo.json"):
+                return reply({"status": "OK", "movies": [{
+                    "id": 9558,
+                    "title": "Зрадники",
+                    "banner_url": "https://img.example/9558-banner-1280.jpg",
+                    "horizontal_poster_url": "https://img.example/9558-wide-478.jpg",
+                    "poster_url": "https://img.example/9558-poster.jpg",
+                    "availability_info": {"available": True},
+                }]})
+            if url.endswith("GetCollectionInfo.json"):
+                return reply({"status": "OK", "collections": [
+                    {
+                        "id": 8838,
+                        "title": "Холостяк",
+                        "banner_url": "https://img.example/8838-banner.jpg",
+                        "horizontal_poster_url": "https://img.example/8838-wide.jpg",
+                        "poster_url": "https://img.example/8838-poster.jpg",
+                        "secondary_id_list": [501],
+                    },
+                    {
+                        "id": 8839,
+                        "title": "МастерШеф",
+                        "horizontal_poster_url": "https://img.example/8839-wide.jpg",
+                        "poster_url": "https://img.example/8839-poster.jpg",
+                        "secondary_id_list": [501],
+                    },
+                    {
+                        "id": 8840,
+                        "title": "Супермама",
+                        "banner_url": "https://img.example/8840-banner.jpg",
+                        "poster_url": "https://img.example/8840-poster.jpg",
+                        "secondary_id_list": [501],
+                    },
+                ]})
+            if url.endswith("GetEpgRecords.json"):
+                return reply({"status": "OK", "epg_records": [
+                    {"id": 501, "channel_id": 15, "text": "Шоу 1", "time_start": NOW - 3600, "time_stop": NOW - 1800, "available": True},
+                ]})
+            return reply({"status": "OK"})
+
+        c, _ = client(by=by)
+        res = api.shows(CHANNELS, now=NOW, quality="1080p", client=c, tr=ENGLISH)
+        self.assertTrue(res["ok"])
+        by_id = {x["id"]: x for x in res["items"]}
+
+        vod_item = by_id["vod:9558"]
+        self.assertEqual(vod_item["banner"], "https://img.example/9558-banner-1280.jpg")
+        self.assertEqual(vod_item["wide_art"], "https://img.example/9558-wide-478.jpg")
+
+        epg_both = by_id["epg:8838"]
+        self.assertEqual(epg_both["banner"], "https://img.example/8838-banner.jpg")
+        self.assertEqual(epg_both["wide_art"], "https://img.example/8838-wide.jpg")
+
+        epg_horiz_only = by_id["epg:8839"]
+        self.assertEqual(epg_horiz_only["banner"], "https://img.example/8839-wide.jpg")
+        self.assertEqual(epg_horiz_only["wide_art"], "https://img.example/8839-wide.jpg")
+
+        epg_banner_only = by_id["epg:8840"]
+        self.assertEqual(epg_banner_only["banner"], "https://img.example/8840-banner.jpg")
+        self.assertEqual(epg_banner_only["wide_art"], "https://img.example/8840-banner.jpg")
+
+    def test_vod_detail_and_cache_include_wide_art(self):
+        movie_doc = {
+            "id": 9558,
+            "title": "Зрадники",
+            "banner_url": "https://img.example/9558-banner.jpg",
+            "horizontal_poster_url": "https://img.example/9558-wide.jpg",
+            "poster_url": "https://img.example/9558-poster.jpg",
+            "availability_info": {"available": True},
+            "seasons": [],
+        }
+        c, _ = client(reply({"status": "OK", "movies": [movie_doc]}))
+        det = api.vod_detail(9558, client=c, tr=ENGLISH)
+        self.assertTrue(det["ok"])
+        self.assertEqual(det["banner"], "https://img.example/9558-banner.jpg")
+        self.assertEqual(det["wide_art"], "https://img.example/9558-wide.jpg")
+
+        cached_with_wide = {"id": "vod:9558", "title": "Зрадники", "banner": "https://b.jpg", "wide_art": "https://w.jpg", "seasons": []}
+        from_cache = api._vod_detail_from_cache(cached_with_wide, 9558, None, None)
+        self.assertEqual(from_cache["wide_art"], "https://w.jpg")
+
+        cached_legacy = {"id": "vod:9558", "title": "Зрадники", "banner": "https://b.jpg", "seasons": []}
+        from_legacy = api._vod_detail_from_cache(cached_legacy, 9558, None, None)
+        self.assertEqual(from_legacy["wide_art"], "https://b.jpg")
+
+
+class UnreleasedEpisodesTest(unittest.TestCase):
+    def test_extract_release_date_table(self):
+        self.assertTrue(callable(getattr(api, "extract_release_date", None)), "mediastick_sweetapi must define extract_release_date(ep)")
+        cases = (
+            ({"release_date": "2026-12-03"}, "03.12.2026"),
+            ({"premiere_date": "2026-01-09"}, "09.01.2026"),
+            ({"available_from": 1796256000}, "03.12.2026"),          # 2026-12-03 00:00:00 UTC
+            ({"air_date": "1796256000"}, "03.12.2026"),
+            ({"date": "2027-05-15"}, "15.05.2027"),
+            ({"release_date": "", "premiere_date": "2026-12-03"}, "03.12.2026"),
+            # Negative / boundary cases
+            ({}, ""),
+            (None, ""),
+            ({"release_date": ""}, ""),
+            ({"release_date": "not-a-date"}, ""),
+            ({"available_from": 999999999}, ""),                    # < 10**9
+            ({"available_from": 10 ** 11}, ""),                     # >= 10**11
+            ({"date": 0}, ""),
+            ({"date": -100}, ""),
+        )
+        for ep, expected in cases:
+            with self.subTest(ep=ep):
+                self.assertEqual(api.extract_release_date(ep), expected)
+
+    def test_filter_season_episodes_caps_unreleased_to_one_soon_stub(self):
+        self.assertTrue(callable(getattr(api, "filter_season_episodes", None)), "mediastick_sweetapi must define filter_season_episodes()")
+
+        # 1. Fact: episodes 1..3 (duration > 0) and 4..10 (duration == 0, playable_episode_ids=[1,2,3,4])
+        #    returns 1,2,3 playable + 4 coming_soon stub, drops 5..10
+        raw = [
+            {"id": 4, "number": 4, "title": "Ep 4", "duration": 0, "release_date": "2026-12-03"},
+            {"id": 2, "number": 2, "title": "Ep 2", "duration": 2400},
+            {"id": 5, "number": 5, "title": "Ep 5", "duration": 0, "release_date": "2026-12-10"},
+            {"id": 1, "number": 1, "title": "Ep 1", "duration": 2400},
+            {"id": 3, "number": 3, "title": "Ep 3", "duration": 2400},
+            *[{"id": n, "number": n, "title": f"Ep {n}", "duration": 0} for n in range(6, 11)],
+        ]
+        local = {
+            "v": 1,
+            "items": {
+                "sw:vod:9558|2": {"pos": 321, "total": 2400, "done": False, "at": NOW},
+                "sw:vod:9558|4": {"pos": 100, "total": 2400, "done": True, "at": NOW},
+            },
+            "live": {},
+        }
+        filtered = api.filter_season_episodes(raw, playable_ids=[1, 2, 3, 4], mid=9558, s_owner=69, local=local)
+        self.assertEqual([e["id"] for e in filtered], [1, 2, 3, 4])
+        for ep in filtered[:3]:
+            self.assertFalse(ep["coming_soon"])
+            self.assertTrue(ep["playable"])
+            self.assertEqual(ep["release_date"], "")
+            self.assertEqual(ep["vod_url"], ml.vod_url(9558, ep["id"], 69))
+        self.assertEqual(filtered[1]["resume"], 321)
+
+        stub = filtered[3]
+        self.assertEqual((stub["coming_soon"], stub["playable"], stub["vod_url"]), (True, False, ""))
+        self.assertEqual((stub["duration"], stub["resume"], stub["watched"], stub["resume_at"]), (0, 0, False, 0))
+        self.assertEqual(stub["release_date"], "03.12.2026")
+
+        # 2. Boundary: non-empty playable_ids excludes duration > 0 episode not in playable_ids -> becomes soon stub
+        non_playable_dur = [
+            {"id": 11, "number": 1, "title": "R1", "duration": 1800},
+            {"id": 12, "number": 2, "title": "Unreleased despite dur", "duration": 1800, "premiere_date": "2026-12-20"},
+            {"id": 13, "number": 3, "title": "Unreleased 2", "duration": 0},
+        ]
+        f2 = api.filter_season_episodes(non_playable_dur, playable_ids=[11], mid=9558, s_owner=69)
+        self.assertEqual([e["id"] for e in f2], [11, 12])
+        self.assertTrue(f2[0]["playable"] and not f2[0]["coming_soon"])
+        self.assertTrue(f2[1]["coming_soon"] and not f2[1]["playable"])
+        self.assertEqual(f2[1]["release_date"], "20.12.2026")
+
+        # 3. Boundary: empty/None playable_ids relies on duration > 0
+        f3 = api.filter_season_episodes(
+            [
+                {"id": 21, "number": 1, "title": "R1", "duration": 1800},
+                {"id": 22, "number": 2, "title": "U1", "duration": 0},
+                {"id": 23, "number": 3, "title": "U2", "duration": 0},
+            ],
+            playable_ids=None,
+            mid=9558,
+            s_owner=69,
+        )
+        self.assertEqual([e["id"] for e in f3], [21, 22])
+        self.assertTrue(f3[1]["coming_soon"])
+        self.assertEqual(f3[1]["release_date"], "")
+
+        # 4. Negative: available is False or invalid/non-positive id ignored completely
+        f4 = api.filter_season_episodes([
+            {"id": 0, "number": 1, "title": "Zero", "duration": 1800},
+            {"id": -5, "number": 2, "title": "Neg", "duration": 1800},
+            {"number": 3, "title": "Missing", "duration": 1800},
+            {"id": 31, "number": 4, "title": "Unavail", "duration": 1800, "available": False},
+            {"id": 32, "number": 5, "title": "Valid", "duration": 1800, "available": True},
+        ], mid=9558, s_owner=69)
+        self.assertEqual([e["id"] for e in f4], [32])
+
+        # 5. Boundary: 0 released episodes -> only 1 coming_soon stub
+        f5 = api.filter_season_episodes([
+            {"id": 41, "number": 1, "title": "Soon 1", "duration": 0, "release_date": "2026-12-01"},
+            {"id": 42, "number": 2, "title": "Soon 2", "duration": 0, "release_date": "2026-12-08"},
+        ], mid=9558, s_owner=69)
+        self.assertEqual(len(f5), 1)
+        self.assertEqual((f5[0]["id"], f5[0]["coming_soon"], f5[0]["playable"]), (41, True, False))
+
+    def test_vod_detail_filters_unreleased_episodes_and_persists_to_store(self):
+        movie_doc = {
+            "id": 9558,
+            "title": "Зрадники",
+            "availability_info": {"available": True},
+            "playable_episode_ids": [1, 2, 3, 4],
+            "seasons": [{
+                "id": 1,
+                "number": 1,
+                "title": "Сезон 1",
+                "owner_id": 69,
+                "episodes": [
+                    {"id": 1, "number": 1, "title": "Ep 1", "duration": 2400},
+                    {"id": 2, "number": 2, "title": "Ep 2", "duration": 2400},
+                    {"id": 3, "number": 3, "title": "Ep 3", "duration": 2400},
+                    {"id": 4, "number": 4, "title": "Ep 4", "duration": 0, "release_date": "2026-12-03"},
+                    {"id": 5, "number": 5, "title": "Ep 5", "duration": 0, "release_date": "2026-12-10"},
+                    {"id": 6, "number": 6, "title": "Ep 6", "duration": 0},
+                ],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            st = sweetstore.SweetStore(os.path.join(td, "unreleased.db"))
+            self.addCleanup(st.close)
+            c, _ = client(reply({"status": "OK", "movies": [movie_doc]}))
+            det = api.vod_detail(9558, client=c, tr=ENGLISH, store=st)
+            self.assertTrue(det["ok"])
+            eps = det["seasons"][0]["episodes"]
+            self.assertEqual([e["id"] for e in eps], [1, 2, 3, 4])
+            self.assertFalse(eps[2]["coming_soon"])
+            self.assertTrue(eps[2]["playable"])
+            self.assertTrue(eps[3]["coming_soon"])
+            self.assertFalse(eps[3]["playable"])
+            self.assertEqual(eps[3]["vod_url"], "")
+            self.assertEqual(eps[3]["release_date"], "03.12.2026")
+
+            # Offline cache reconstruction preserves coming_soon, playable, release_date, vod_url=""
+            c_off, _ = client((0, b""))
+            det_off = api.vod_detail(9558, client=c_off, tr=ENGLISH, store=st)
+            self.assertTrue(det_off["ok"])
+            eps_off = det_off["seasons"][0]["episodes"]
+            self.assertEqual([e["id"] for e in eps_off], [1, 2, 3, 4])
+            self.assertTrue(eps_off[3]["coming_soon"])
+            self.assertFalse(eps_off[3]["playable"])
+            self.assertEqual(eps_off[3]["vod_url"], "")
+            self.assertEqual(eps_off[3]["release_date"], "03.12.2026")
+
+    def test_resolve_next_up_and_apply_progress_skip_coming_soon(self):
+        # Season with 3 released episodes + 1 coming_soon stub: watching ep 3 must return ep 3 ("watched"), never ep 4
+        seasons = [{
+            "id": 1,
+            "number": 1,
+            "title": "Сезон 1",
+            "episodes": [
+                {"id": 1, "episode_id": 1, "number": 1, "title": "Ep 1", "resume": 0, "watched": True, "resume_at": 100, "vod_url": "u1", "coming_soon": False, "playable": True},
+                {"id": 2, "episode_id": 2, "number": 2, "title": "Ep 2", "resume": 0, "watched": True, "resume_at": 200, "vod_url": "u2", "coming_soon": False, "playable": True},
+                {"id": 3, "episode_id": 3, "number": 3, "title": "Ep 3", "resume": 0, "watched": True, "resume_at": 300, "vod_url": "u3", "coming_soon": False, "playable": True},
+                {"id": 4, "episode_id": 4, "number": 4, "title": "Ep 4", "resume": 0, "watched": False, "resume_at": 0, "vod_url": "", "coming_soon": True, "playable": False},
+            ],
+        }]
+        nu = api.resolve_next_up(seasons=seasons)
+        self.assertIsNotNone(nu)
+        self.assertEqual((nu["episode_index"], nu["episode_id"], nu["mode"]), (2, 3, "watched"))
+
+        # Season with 0 released episodes (only coming_soon stub) -> None
+        only_soon = [{
+            "id": 1,
+            "number": 1,
+            "title": "Сезон 1",
+            "episodes": [
+                {"id": 4, "episode_id": 4, "number": 1, "title": "Ep 1", "resume": 0, "watched": False, "resume_at": 0, "vod_url": "", "coming_soon": True, "playable": False},
+            ],
+        }]
+        self.assertIsNone(api.resolve_next_up(seasons=only_soon))
+
+        # apply_progress_to_seasons must not apply resume/watched to coming_soon or playable=False episodes
+        local = {
+            "v": 1,
+            "items": {
+                "sw:vod:9558|1": {"pos": 120, "total": 2400, "done": False, "at": NOW},
+                "sw:vod:9558|4": {"pos": 500, "total": 2400, "done": True, "at": NOW},
+            },
+            "live": {},
+        }
+        prog_seasons = [{
+            "id": 1,
+            "number": 1,
+            "title": "Сезон 1",
+            "episodes": [
+                {"id": 1, "number": 1, "title": "Ep 1", "coming_soon": False, "playable": True},
+                {"id": 4, "number": 2, "title": "Ep 2", "coming_soon": True, "playable": False},
+            ],
+        }]
+        applied = api.apply_progress_to_seasons(prog_seasons, local, movie_id=9558)
+        self.assertEqual(applied[0]["episodes"][0]["resume"], 120)
+        self.assertEqual((applied[0]["episodes"][1]["resume"], applied[0]["episodes"][1]["watched"], applied[0]["episodes"][1]["resume_at"]), (0, False, 0))
+
+
+class EnrichEpgRecordsTest(unittest.TestCase):
+    def test_enrich_epg_records_dedup_chunk_skip_and_persist(self):
+        self.assertTrue(callable(getattr(api, "enrich_epg_records", None)), "mediastick_sweetapi must define enrich_epg_records()")
+        with tempfile.TemporaryDirectory() as td:
+            st = sweetstore.SweetStore(os.path.join(td, "enrich.db"))
+            self.addCleanup(st.close)
+            st.upsert_channels({
+                "status": "OK",
+                "list": [{"id": 15, "name": "СТБ", "catchup": True, "catchup_duration": 7, "available": True}],
+            }, now=NOW)
+            # Pre-seed EPG 9001 with image_url (already enriched -> should be skipped unless force=True)
+            # and EPG 9002 without image_url/preview_url (missing art -> should be fetched)
+            st.upsert_epg("15", [
+                {"id": 9001, "text": "Already Has Art", "time_start": NOW - 7200, "time_stop": NOW - 3600,
+                 "image_url": "https://img.example/9001-existing.jpg", "available": True},
+                {"id": 9002, "text": "Placeholder", "time_start": NOW - 3600, "time_stop": NOW - 1800,
+                 "available": True},
+            ], now=NOW)
+
+            def by(call):
+                if call["url"].endswith("GetEpgRecords.json"):
+                    self.assertEqual(call["body"]["image_type"], 0)
+                    self.assertTrue(call["body"]["need_extended_info"])
+                    ids = call["body"]["id_list"]
+                    self.assertLessEqual(len(ids), 50)
+                    return reply({
+                        "status": "OK",
+                        "epg_records": [
+                            {
+                                "id": eid,
+                                "channel_id": 15,
+                                "text": f"Real Title {eid}",
+                                "image_url": f"http://img.example/epg_horizontal/{eid}.jpg",
+                                "preview_url_ext": f"https://img.example/prev/{eid}.jpg",
+                            }
+                            for eid in ids
+                        ],
+                    })
+                return reply({"status": "OK"})
+
+            # 60 missing IDs (9002 + 9010..9068) + duplicate 9002 + already-cached 9001 + invalid IDs
+            c, sender = client(by=by)
+            req_ids = [9001, 9002, "9002", 0, -5, "bad", None] + list(range(9010, 9069))
+            res = api.enrich_epg_records(req_ids, client=c, store=st, now=NOW)
+
+            # 9001 skipped; 60 unique missing IDs chunked into 2 calls (50 + 10)
+            self.assertEqual(len(sender.calls), 2)
+            self.assertEqual(len(sender.calls[0]["body"]["id_list"]), 50)
+            self.assertEqual(len(sender.calls[1]["body"]["id_list"]), 10)
+            sent_ids = sender.calls[0]["body"]["id_list"] + sender.calls[1]["body"]["id_list"]
+            self.assertNotIn(9001, sent_ids)
+            self.assertIn(9002, sent_ids)
+            self.assertEqual(len(set(sent_ids)), 60)
+
+            self.assertIn("9002", res)
+            self.assertEqual(res["9002"], {
+                "epg": "9002",
+                "cid": "15",
+                "title": "Real Title 9002",
+                "image_url": "https://img.example/epg_horizontal/9002.jpg",
+                "preview": "https://img.example/prev/9002.jpg",
+            })
+
+            # Persisted into SweetStore; 9002 is no longer missing art
+            self.assertEqual(st.epg_ids_missing_art([9001, 9002, 9010]), [])
+
+            # Calling again with same IDs makes 0 network calls
+            c2, sender2 = client(by=by)
+            res2 = api.enrich_epg_records([9001, 9002, 9010], client=c2, store=st, now=NOW)
+            self.assertEqual(sender2.calls, [])
+            self.assertEqual(res2, {})
+
+            # force=True re-fetches even when image_url is already present
+            c3, sender3 = client(by=by)
+            res3 = api.enrich_epg_records([9001], client=c3, store=st, now=NOW, force=True)
+            self.assertEqual(len(sender3.calls), 1)
+            self.assertEqual(sender3.calls[0]["body"]["id_list"], [9001])
+            self.assertIn("9001", res3)
+
+            # Cap to 100 unique IDs per call -> at most 2 chunks of 50
+            c4, sender4 = client(by=by)
+            api.enrich_epg_records(list(range(20000, 20125)), client=c4, store=st, now=NOW)
+            self.assertEqual(len(sender4.calls), 2)
+            self.assertEqual([len(call["body"]["id_list"]) for call in sender4.calls], [50, 50])
+
+
 if __name__ == "__main__":
     unittest.main()

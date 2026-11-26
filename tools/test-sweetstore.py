@@ -361,6 +361,32 @@ class TestSweetStorePureCore(unittest.TestCase):
             self.assertEqual(bad_eps, [])
 
 
+    def test_normalize_title_payload_preserves_wide_art_coming_soon_and_release_date(self):
+        detail = {
+            "ok": True,
+            "id": "vod:9558",
+            "title": "Зрадники",
+            "banner": "https://img.example/9558-banner.jpg",
+            "wide_art": "https://img.example/9558-wide.jpg",
+            "seasons": [
+                {
+                    "id": 1,
+                    "number": 1,
+                    "title": "Сезон 1",
+                    "episodes": [
+                        {"id": 101, "number": 1, "title": "S1E1", "duration": 2400, "coming_soon": False, "release_date": ""},
+                        {"id": 102, "number": 2, "title": "S1E2", "duration": 0, "coming_soon": True, "release_date": "03.12.2026"},
+                    ],
+                },
+            ],
+        }
+        t_row, ep_rows = store.normalize_title_payload(detail, NOW)
+        self.assertEqual(t_row.get("wide_art"), "https://img.example/9558-wide.jpg")
+        self.assertEqual(len(ep_rows), 2)
+        self.assertEqual((ep_rows[0].get("coming_soon"), ep_rows[0].get("release_date")), (False, ""))
+        self.assertEqual((ep_rows[1].get("coming_soon"), ep_rows[1].get("release_date")), (True, "03.12.2026"))
+
+
 class TestSweetStoreSQLiteShell(unittest.TestCase):
     """Thin WAL SQLite Shell tests against a temporary database."""
 
@@ -839,6 +865,223 @@ class TestSweetStoreSQLiteShell(unittest.TestCase):
         with self.assertRaises(ms_core.SecretRefused):
             self.st.seed_from_channel_file(tainted_path, now=NOW)
         self.assertEqual(self.st.get_channels_payload(now=NOW), {})
+
+
+    def test_schema_migration_adds_wide_art_coming_soon_and_release_date_idempotently(self):
+        legacy_db = os.path.join(self.tmp.name, "legacy.db")
+        con = sqlite3.connect(legacy_db)
+        con.executescript(
+            """
+            CREATE TABLE titles (
+                title_key TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                subtitle TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                poster TEXT NOT NULL DEFAULT '',
+                banner TEXT NOT NULL DEFAULT '',
+                year INTEGER NOT NULL DEFAULT 0,
+                duration INTEGER NOT NULL DEFAULT 0,
+                imdb REAL NOT NULL DEFAULT 0.0,
+                age_rating TEXT NOT NULL DEFAULT '',
+                genres_json TEXT NOT NULL DEFAULT '[]',
+                genre_names_json TEXT NOT NULL DEFAULT '[]',
+                countries_json TEXT NOT NULL DEFAULT '[]',
+                seasons_meta_json TEXT NOT NULL DEFAULT '[]',
+                owner_id INTEGER NOT NULL DEFAULT 0,
+                vod_url TEXT NOT NULL DEFAULT '',
+                seasons_count INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE episodes (
+                title_key TEXT NOT NULL,
+                ep_key TEXT NOT NULL,
+                ep_id INTEGER NOT NULL DEFAULT 0,
+                season_num INTEGER NOT NULL DEFAULT 0,
+                episode_num INTEGER NOT NULL DEFAULT 0,
+                title TEXT NOT NULL DEFAULT '',
+                duration INTEGER NOT NULL DEFAULT 0,
+                preview TEXT NOT NULL DEFAULT '',
+                owner_id INTEGER NOT NULL DEFAULT 0,
+                vod_url TEXT NOT NULL DEFAULT '',
+                cid TEXT NOT NULL DEFAULT '',
+                epg_id TEXT NOT NULL DEFAULT '',
+                time_start INTEGER NOT NULL DEFAULT 0,
+                time_stop INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (title_key, ep_key)
+            );
+            INSERT INTO titles (title_key, kind, title, banner) VALUES ('vod:1', 'series', 'Legacy', 'https://b.jpg');
+            INSERT INTO episodes (title_key, ep_key, ep_id, season_num, episode_num, title, duration)
+                VALUES ('vod:1', '10', 10, 1, 1, 'Legacy Ep', 1800);
+            """
+        )
+        con.commit()
+        con.close()
+
+        # Opening SweetStore twice must migrate idempotently without raising
+        s1 = store.SweetStore(legacy_db)
+        s1.close()
+        s2 = store.SweetStore(legacy_db)
+        self.addCleanup(s2.close)
+
+        title_cols = {r[1] for r in s2._conn.execute("PRAGMA table_info('titles')").fetchall()}
+        ep_cols = {r[1] for r in s2._conn.execute("PRAGMA table_info('episodes')").fetchall()}
+        self.assertIn("wide_art", title_cols)
+        self.assertIn("coming_soon", ep_cols)
+        self.assertIn("release_date", ep_cols)
+
+        got = s2.get_title_detail("vod:1")
+        self.assertIsNotNone(got)
+        self.assertEqual(got["wide_art"], "https://b.jpg")
+        ep = got["seasons"][0]["episodes"][0]
+        self.assertFalse(ep["coming_soon"])
+        self.assertEqual(ep["release_date"], "")
+
+    def test_title_detail_roundtrip_wide_art_and_coming_soon_episodes(self):
+        self.st.upsert_title_detail({
+            "ok": True,
+            "id": "vod:99",
+            "title": "Hero Show",
+            "banner": "https://img.example/banner-1280.jpg",
+            "wide_art": "https://img.example/wide-478.jpg",
+            "seasons": [{
+                "id": 1,
+                "number": 1,
+                "title": "Сезон 1",
+                "episodes": [
+                    {"id": 1, "number": 1, "title": "Ep 1", "duration": 2400, "vod_url": "vod://1", "coming_soon": False, "release_date": ""},
+                    {"id": 2, "number": 2, "title": "Ep 2", "duration": 0, "vod_url": "", "coming_soon": True, "release_date": "03.12.2026"},
+                ],
+            }],
+        }, now=NOW)
+        got = self.st.get_title_detail("vod:99")
+        self.assertEqual(got["banner"], "https://img.example/banner-1280.jpg")
+        self.assertEqual(got["wide_art"], "https://img.example/wide-478.jpg")
+        eps = got["seasons"][0]["episodes"]
+        self.assertEqual((eps[0]["coming_soon"], eps[0]["release_date"]), (False, ""))
+        self.assertEqual((eps[1]["coming_soon"], eps[1]["release_date"], eps[1]["vod_url"]), (True, "03.12.2026", ""))
+
+        # Fallback: empty wide_art returns banner
+        self.st.upsert_title_detail({
+            "ok": True,
+            "id": "vod:100",
+            "title": "Banner Only",
+            "banner": "https://img.example/only-banner.jpg",
+            "wide_art": "",
+            "seasons": [],
+        }, now=NOW)
+        self.assertEqual(self.st.get_title_detail("vod:100")["wide_art"], "https://img.example/only-banner.jpg")
+
+    def test_epg_ids_missing_art_and_upsert_epg_records(self):
+        for method in ("upsert_epg_records", "epg_ids_missing_art"):
+            self.assertTrue(callable(getattr(self.st, method, None)), f"SweetStore must define {method}()")
+
+        self.st.upsert_channels({
+            "status": "OK",
+            "list": [{"id": 15, "name": "СТБ", "catchup": True, "catchup_duration": 7, "available": True}],
+        }, now=NOW)
+        self.st.upsert_epg("15", [
+            {"id": 501, "text": "Has Image", "time_start": NOW - 7200, "time_stop": NOW - 3600,
+             "image_url": "https://img.example/501.jpg", "available": True},
+            {"id": 502, "text": "Has Preview", "time_start": NOW - 3600, "time_stop": NOW - 1800,
+             "preview_url": "https://img.example/502-p.jpg", "available": True},
+            {"id": 503, "text": "Old Title", "time_start": NOW - 1800, "time_stop": NOW - 900,
+             "available": True},
+        ], now=NOW)
+
+        # 501 & 502 have art; 503 has empty art; 504 is missing; 0/-1/bad ignored; duplicates deduplicated
+        missing = self.st.epg_ids_missing_art([501, 502, 503, "503", 504, 0, -1, "bad", None])
+        self.assertEqual(missing, [503, 504])
+
+        # Upsert EPG records:
+        # - 503 omits time_start/time_stop -> must preserve existing NOW-1800..NOW-900 in programmes
+        # - 504 uses cid/epg_id aliases and preview_url_ext
+        upserted = self.st.upsert_epg_records([
+            {
+                "id": 503,
+                "channel_id": 15,
+                "text": "Real Enriched Title 503",
+                "description": "Full desc",
+                "image_url": "http://img.example/epg_horizontal/503.jpg",
+                "preview_url": "https://img.example/503-prev.jpg",
+                "tv_show_id": 77,
+                "season_number": 2,
+                "episode_number": 4,
+            },
+            {
+                "epg_id": 504,
+                "cid": 15,
+                "text": "New Record 504",
+                "time_start": NOW - 900,
+                "time_stop": NOW,
+                "image_url": "https://img.example/epg_horizontal/504.jpg",
+                "preview_url_ext": "https://img.example/504-ext.jpg",
+            },
+            None,
+            {"id": 0, "channel_id": 15, "text": "Bad"},
+        ], now=NOW)
+        self.assertEqual(upserted, 2)
+        self.assertEqual(self.st.epg_ids_missing_art([501, 502, 503, 504]), [])
+
+        rec503 = self.st.recall_programme("503", cid="15", now=NOW)
+        self.assertIsNotNone(rec503)
+        self.assertEqual(rec503["title"], "Real Enriched Title 503")
+        self.assertEqual((rec503["start"], rec503["stop"]), (NOW - 1800, NOW - 900))
+
+        row503 = self.st._conn.execute(
+            "SELECT image_url, preview_url, show_id, season_num, episode_num FROM programmes WHERE cid='15' AND epg_id='503'"
+        ).fetchone()
+        self.assertEqual(row503["image_url"], "https://img.example/epg_horizontal/503.jpg")
+        self.assertEqual(row503["preview_url"], "https://img.example/503-prev.jpg")
+        self.assertEqual((row503["show_id"], row503["season_num"], row503["episode_num"]), ("77", 2, 4))
+
+        # SecretRefused on secrets in upsert_epg_records
+        with self.assertRaises(ms_core.SecretRefused):
+            self.st.upsert_epg_records([{"id": 505, "channel_id": 15, "text": "X", "access_token": "secret"}], now=NOW)
+
+    def test_upsert_epg_records_survives_upsert_channels_and_seed_refreshes(self):
+        ch_doc = {
+            "status": "OK",
+            "list": [{
+                "id": 15,
+                "name": "СТБ",
+                "catchup": True,
+                "catchup_duration": 7,
+                "available": True,
+                "epg": [{
+                    "id": 601,
+                    "text": "Generic Channel EPG",
+                    "time_start": NOW - 3600,
+                    "time_stop": NOW - 1800,
+                    "available": True,
+                }],
+            }],
+        }
+        self.st.upsert_channels(ch_doc, now=NOW)
+        self.st.upsert_epg_records([{
+            "id": 601,
+            "channel_id": 15,
+            "text": "Enriched Programme Title",
+            "image_url": "https://img.example/epg_horizontal/601.jpg",
+        }], now=NOW + 5)
+
+        # Subsequent upsert_channels refresh without image_url must NOT wipe image_url
+        self.st.upsert_channels(ch_doc, now=NOW + 10)
+        row = self.st._conn.execute(
+            "SELECT image_url FROM programmes WHERE cid='15' AND epg_id='601'"
+        ).fetchone()
+        self.assertEqual(row["image_url"], "https://img.example/epg_horizontal/601.jpg")
+        self.assertEqual(self.st.epg_ids_missing_art([601]), [])
+
+        # Subsequent seed_from_channel_file call also must NOT lose image_url
+        seed_path = os.path.join(self.tmp.name, "channelList_refresh.json")
+        with open(seed_path, "w", encoding="utf-8") as f:
+            json.dump(ch_doc, f)
+        self.st.seed_from_channel_file(seed_path, now=NOW + 20)
+        row2 = self.st._conn.execute(
+            "SELECT image_url FROM programmes WHERE cid='15' AND epg_id='601'"
+        ).fetchone()
+        self.assertEqual(row2["image_url"], "https://img.example/epg_horizontal/601.jpg")
 
 
 if __name__ == "__main__":
