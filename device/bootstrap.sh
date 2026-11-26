@@ -246,6 +246,9 @@ kodi_wanted=("${on_settings[@]/%/=true}" services.airplay=false services.webserv
   videoplayer.primeallowhwdeinterlace=false
   videoplayer.seekdelay=1250
   filecache.buffermode=2
+  filecache.memorysize=32
+  filecache.readfactor=400
+  filecache.chunksize=131072
   debug.screenshotpath=/run/media-stick/shots/)
 as_media() { setpriv --reuid=media --regid=media --init-groups "$@"; }
 # Files kept in device/skin-overlay/<addon>/ are copied over the installed add-on of that

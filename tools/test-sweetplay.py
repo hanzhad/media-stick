@@ -32,6 +32,8 @@ import tempfile  # noqa: E402
 import time  # noqa: E402
 import types  # noqa: E402
 import unittest  # noqa: E402
+import urllib.request  # noqa: E402
+import xml.etree.ElementTree as ET  # noqa: E402
 from unittest import mock  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -407,6 +409,206 @@ class TestStreamResolutionAndDemuxer(unittest.TestCase):
                         self.assertEqual(props.get("inputstream.adaptive.max_resolution"), quality)
                     else:
                         self.assertNotIn("inputstream.adaptive.max_resolution", props)
+
+    def test_is_finished_hls_archive_rules(self):
+        sp = _require_sweetplay(self)
+        hls = {"stream_url": "https://cdn.sweet.tv/s/index.m3u8", "protocol": "hls", "drm": None}
+        dash = {"stream_url": "https://cdn.sweet.tv/s/index.mpd", "protocol": "mpd", "drm": None}
+        wv = {"stream_url": "https://cdn.sweet.tv/s/index.m3u8", "protocol": "hls", "drm": "com.widevine.alpha"}
+        cases = (
+            ("finished_epg", hls, "epg", DAY1_23_00 - 1, DAY1_23_00, True),
+            ("exact_stop_boundary", hls, "epg", DAY1_23_00, DAY1_23_00, True),
+            ("in_progress_epg", hls, "epg", DAY1_23_00 + 1, DAY1_23_00, False),
+            ("zero_slot_stop", hls, "epg", 0, DAY1_23_00, False),
+            ("live_kind", hls, "live", DAY1_23_00 - 60, DAY1_23_00, False),
+            ("vod_kind", hls, "vod", DAY1_23_00 - 60, DAY1_23_00, False),
+            ("drm_epg", wv, "epg", DAY1_23_00 - 60, DAY1_23_00, False),
+            ("dash_epg", dash, "epg", DAY1_23_00 - 60, DAY1_23_00, False),
+        )
+        for label, info, kind, slot_stop, now_ts, want in cases:
+            with self.subTest(case=label):
+                self.assertEqual(
+                    sp.is_finished_hls_archive(info, kind=kind, slot_stop=slot_stop, now=now_ts),
+                    want,
+                )
+
+    def test_parse_hls_master_and_pick_hls_variant_facts(self):
+        sp = _require_sweetplay(self)
+        base_url = "https://edge1.sweet.tv/dvr/5/49/index.m3u8"
+        master = "\n".join(
+            [
+                "#EXTM3U",
+                "#EXT-X-VERSION:3",
+                '#EXT-X-STREAM-INF:BANDWIDTH=1200000,AVERAGE-BANDWIDTH=1000000,RESOLUTION=854x480,CODECS="avc1.4d401f,mp4a.40.2"',
+                "480p/index.m3u8",
+                '#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2"',
+                "720p_low/index.m3u8",
+                '#EXT-X-STREAM-INF:BANDWIDTH=3800000,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2"',
+                "720p/index.m3u8",
+                '#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,CODECS="avc1.640028,mp4a.40.2"',
+                "/cdn/1080p/index.m3u8",
+            ]
+        )
+        parsed = sp.parse_hls_master(master, base_url)
+        self.assertTrue(parsed["is_master"])
+        self.assertFalse(parsed["has_external_audio"])
+        self.assertEqual(len(parsed["variants"]), 4)
+        self.assertEqual(
+            sp.pick_hls_variant(parsed, quality="720p"),
+            "https://edge1.sweet.tv/dvr/5/49/720p/index.m3u8",
+        )
+        self.assertEqual(
+            sp.pick_hls_variant(parsed, quality="1080p"),
+            "https://edge1.sweet.tv/cdn/1080p/index.m3u8",
+        )
+        self.assertEqual(
+            sp.pick_hls_variant(parsed, quality="unlimited"),
+            "https://edge1.sweet.tv/cdn/1080p/index.m3u8",
+        )
+        # Bytes input and relative ../ URI
+        parsed_bytes = sp.parse_hls_master(master.encode("utf-8"), base_url)
+        self.assertEqual(
+            sp.pick_hls_variant(parsed_bytes, quality="720p"),
+            "https://edge1.sweet.tv/dvr/5/49/720p/index.m3u8",
+        )
+
+        # All variants exceed cap -> pick min by (height, bandwidth)
+        uhd_master = "\n".join(
+            [
+                "#EXTM3U",
+                "#EXT-X-STREAM-INF:BANDWIDTH=12000000,RESOLUTION=3840x2160",
+                "2160p/index.m3u8",
+                "#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080",
+                "1080p/index.m3u8",
+            ]
+        )
+        self.assertEqual(
+            sp.pick_hls_variant(sp.parse_hls_master(uhd_master, base_url), quality="720p"),
+            "https://edge1.sweet.tv/dvr/5/49/1080p/index.m3u8",
+        )
+
+        # No RESOLUTION declared -> pick max by bandwidth
+        no_res_master = "\n".join(
+            [
+                "#EXTM3U",
+                "#EXT-X-STREAM-INF:BANDWIDTH=1500000",
+                "low.m3u8",
+                "#EXT-X-STREAM-INF:BANDWIDTH=4500000",
+                "high.m3u8",
+            ]
+        )
+        self.assertEqual(
+            sp.pick_hls_variant(sp.parse_hls_master(no_res_master, base_url), quality="720p"),
+            "https://edge1.sweet.tv/dvr/5/49/high.m3u8",
+        )
+
+        # External audio (#EXT-X-MEDIA TYPE=AUDIO with URI=) -> has_external_audio=True, pick returns ""
+        ext_audio_master = "\n".join(
+            [
+                "#EXTM3U",
+                '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",NAME="Russian",DEFAULT=YES,URI="audio_ru.m3u8"',
+                '#EXT-X-STREAM-INF:BANDWIDTH=3500000,RESOLUTION=1280x720,AUDIO="aac"',
+                "720p/index.m3u8",
+            ]
+        )
+        parsed_ext = sp.parse_hls_master(ext_audio_master, base_url)
+        self.assertTrue(parsed_ext["has_external_audio"])
+        self.assertEqual(sp.pick_hls_variant(parsed_ext, quality="720p"), "")
+
+        # Muxed audio (#EXT-X-MEDIA TYPE=AUDIO without URI=) & subtitles with URI= -> allowed
+        muxed_master = "\n".join(
+            [
+                "#EXTM3U",
+                '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",NAME="Main",DEFAULT=YES',
+                '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="UK",URI="subs.m3u8"',
+                '#EXT-X-STREAM-INF:BANDWIDTH=3500000,RESOLUTION=1280x720,AUDIO="aac"',
+                "720p/index.m3u8",
+            ]
+        )
+        parsed_muxed = sp.parse_hls_master(muxed_master, base_url)
+        self.assertFalse(parsed_muxed["has_external_audio"])
+        self.assertEqual(
+            sp.pick_hls_variant(parsed_muxed, quality="720p"),
+            "https://edge1.sweet.tv/dvr/5/49/720p/index.m3u8",
+        )
+
+        # Unsafe URIs (non-http(s) scheme, whitespace/control chars) and non-master playlists
+        unsafe_master = "\n".join(
+            [
+                "#EXTM3U",
+                "#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720",
+                "file:///etc/passwd",
+                "#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720",
+                "bad uri/index.m3u8",
+            ]
+        )
+        parsed_unsafe = sp.parse_hls_master(unsafe_master, base_url)
+        self.assertEqual(parsed_unsafe["variants"], [])
+        self.assertEqual(sp.pick_hls_variant(parsed_unsafe, quality="720p"), "")
+
+        media_playlist = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6.0,\nseg0.ts\n"
+        parsed_media = sp.parse_hls_master(media_playlist, base_url)
+        self.assertFalse(parsed_media["is_master"])
+        self.assertEqual(sp.pick_hls_variant(parsed_media, quality="1080p"), "")
+
+    def test_resolve_hls_variant_thin_io_and_fallbacks(self):
+        sp = _require_sweetplay(self)
+        master_url = "https://edge1.sweet.tv/dvr/5/49/index.m3u8|User-Agent=Kodi&Referer=https://sweet.tv/"
+        base_url = "https://edge1.sweet.tv/dvr/5/49/index.m3u8"
+        seen = []
+
+        def ok_send(url, headers, payload, timeout):
+            seen.append((url, dict(headers), payload, timeout))
+            body = (
+                "#EXTM3U\n"
+                "#EXT-X-STREAM-INF:BANDWIDTH=1200000,RESOLUTION=854x480\n480p/index.m3u8\n"
+                "#EXT-X-STREAM-INF:BANDWIDTH=3500000,RESOLUTION=1280x720\n720p/index.m3u8\n"
+                "#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080\n1080p/index.m3u8\n"
+            ).encode("utf-8")
+            return 200, body
+
+        resolved = sp.resolve_hls_variant(master_url, quality="720p", send=ok_send)
+        self.assertEqual(resolved, "https://edge1.sweet.tv/dvr/5/49/720p/index.m3u8")
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0][0], base_url)
+        self.assertIsNone(seen[0][2])
+        self.assertEqual(seen[0][1].get("Origin"), sp.SWEET_ORIGIN)
+        self.assertEqual(seen[0][1].get("Referer"), sp.SWEET_REFERER)
+
+        # Fallback cases: HTTP 404, empty body, non-master, transport error, non-http(s) URL
+        self.assertEqual(
+            sp.resolve_hls_variant(master_url, quality="720p", send=lambda *a: (404, b"not found")),
+            base_url,
+        )
+        self.assertEqual(
+            sp.resolve_hls_variant(master_url, quality="720p", send=lambda *a: (200, b"")),
+            base_url,
+        )
+        self.assertEqual(
+            sp.resolve_hls_variant(
+                master_url,
+                quality="720p",
+                send=lambda *a: (200, b"#EXTM3U\n#EXTINF:6.0,\nseg0.ts\n"),
+            ),
+            base_url,
+        )
+
+        def boom_send(*a):
+            raise OSError("network down")
+
+        self.assertEqual(sp.resolve_hls_variant(master_url, quality="720p", send=boom_send), base_url)
+        self.assertEqual(
+            sp.resolve_hls_variant("file:///tmp/index.m3u8", quality="720p", send=boom_send),
+            "file:///tmp/index.m3u8",
+        )
+
+    def test_select_demuxer_remains_pure_zero_network_io(self):
+        sp = _require_sweetplay(self)
+        hls_stream = {"stream_url": "https://cdn.sweet.tv/dvr/5/49/720p/index.m3u8", "protocol": "hls", "drm": None}
+        with mock.patch.object(urllib.request, "urlopen", side_effect=AssertionError("select_demuxer must not do I/O")):
+            sel = sp.select_demuxer(hls_stream, kind="epg", slot_stop=DAY1_21_00, now=DAY1_23_30, quality="720p")
+        self.assertEqual(sel["demuxer"], "ffmpeg")
+        self.assertEqual(sel["properties"], {})
 
 
 class TestInitialSeekAndTimelineStateMachines(unittest.TestCase):
@@ -864,6 +1066,7 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
         self.is_playing = [False]
         self.forbid_get_playing_file = [False]
         self.open_calls = []
+        self.m3u8_calls = []
 
         test = self
 
@@ -974,6 +1177,14 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
         if "thumbs.sweet.tv" in url:
             return 200, json.dumps(
                 {"rows": 15, "columns": 15, "interval": 32, "image_url": "http://thumbs.sweet.tv/5/sheet.jpg"}
+            ).encode("utf-8")
+        if payload is None and url.split("|", 1)[0].endswith(".m3u8"):
+            self.m3u8_calls.append((url, dict(headers)))
+            return 200, (
+                "#EXTM3U\n"
+                "#EXT-X-STREAM-INF:BANDWIDTH=1200000,RESOLUTION=854x480\n480p/index.m3u8\n"
+                "#EXT-X-STREAM-INF:BANDWIDTH=3500000,RESOLUTION=1280x720\n720p/index.m3u8\n"
+                "#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080\n1080p/index.m3u8\n"
             ).encode("utf-8")
         body = json.loads(payload.decode("utf-8")) if payload else {}
         self.open_calls.append((url, body))
@@ -1391,6 +1602,73 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
             src = f.read()
         self.assertNotIn("_MsPlayer", src)
         self.assertNotIn("get_channel_list", src)
+
+    def test_start_session_preselects_hls_variant_for_finished_dvr_archive(self):
+        import mediastick_resume as ms_resume
+        import mediastick_signin as signin
+
+        sp, ctrl = self._make_controller()
+        with (
+            mock.patch.object(signin, "sweettv_setting", return_value="Bearer test-tok"),
+            mock.patch.object(ms_resume, "read_quality", return_value="720p"),
+        ):
+            # Finished DVR archive (49: 20:00..21:00, now=23:30) -> resolves 720p variant before ffmpeg
+            req = sp.build_play_notify("epg", cid="5", epg_id="49", from_start=True, title="Новости")
+            ctrl.handle_play(req["params"]["data"])
+            self.assertEqual(len(self.open_calls), 1)
+            self.assertEqual(len(self.m3u8_calls), 1)
+            self.assertEqual(self.m3u8_calls[0][0], "https://edge1.sweet.tv/dvr/5/49/index.m3u8")
+            self.assertTrue(
+                self.played[-1][1].path.startswith("https://edge1.sweet.tv/dvr/5/49/720p/index.m3u8|"),
+                f"Expected pre-selected 720p variant URL, got: {self.played[-1][1].path}",
+            )
+            self.assertNotIn("inputstream", self.played[-1][1].props)
+
+            # In-progress DVR archive (51: 23:00..00:00, now=23:30) -> inputstream.adaptive, no .m3u8 GET
+            req_live_dvr = sp.build_play_notify("epg", cid="5", epg_id="51", from_start=True, title="Пост-шоу")
+            ctrl.handle_play(req_live_dvr["params"]["data"])
+            self.assertEqual(len(self.open_calls), 2)
+            self.assertEqual(len(self.m3u8_calls), 1)
+            self.assertEqual(self.played[-1][1].props.get("inputstream"), "inputstream.adaptive")
+
+
+class TestKodi21TuningConfig(unittest.TestCase):
+    """Kodi 21 image resolution bounds and filecache settings."""
+
+    def test_advancedsettings_and_filecache_tuning(self):
+        adv_path = os.path.join(
+            ROOT, "device", "files", "home", "media", ".kodi", "userdata", "advancedsettings.xml"
+        )
+        with open(adv_path, encoding="utf-8") as f:
+            adv_xml = ET.fromstring(f.read())
+        self.assertEqual(adv_xml.findtext("./imageres"), "540")
+        self.assertEqual(adv_xml.findtext("./fanartres"), "1080")
+        self.assertIsNone(adv_xml.find("cache"))
+
+        bootstrap_path = os.path.join(ROOT, "device", "bootstrap.sh")
+        with open(bootstrap_path, encoding="utf-8") as f:
+            boot_src = f.read()
+        for token in (
+            "filecache.buffermode=2",
+            "filecache.memorysize=32",
+            "filecache.readfactor=400",
+            "filecache.chunksize=131072",
+        ):
+            self.assertIn(token, boot_src)
+
+        emu_path = os.path.join(ROOT, "tools", "emulator", "run.sh")
+        with open(emu_path, encoding="utf-8") as f:
+            emu_src = f.read()
+        for token in (
+            "<imageres>540</imageres>",
+            "<fanartres>1080</fanartres>",
+            "filecache.buffermode=2",
+            "filecache.memorysize=32",
+            "filecache.readfactor=400",
+            "filecache.chunksize=131072",
+        ):
+            self.assertIn(token, emu_src)
+        self.assertNotIn("<cache>", emu_src)
 
 
 if __name__ == "__main__":

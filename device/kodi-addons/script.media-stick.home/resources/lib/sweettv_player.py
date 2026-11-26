@@ -391,6 +391,10 @@ class SweetPlayerController(_PlayerBase):
         if res.get("thumbnails_playlist_url"):
             thumbs = sp.fetch_thumbnails_spec(res["thumbnails_playlist_url"], send=self._send)
 
+        if sp.is_finished_hls_archive(res, kind=kind, slot_stop=slot_stop, now=now_i):
+            resolved_url = sp.resolve_hls_variant(res["stream_url"], quality=quality, send=self._send)
+            res = {**res, "stream_url": resolved_url, "url": resolved_url}
+
         sel = sp.select_demuxer(res, kind=kind, slot_stop=slot_stop, now=now_i, quality=quality)
         anchor_start = int(spec.get("anchor_start") or slot_start or now_i)
         anchor_stop = int(spec.get("anchor_stop") or slot_stop or now_i)
