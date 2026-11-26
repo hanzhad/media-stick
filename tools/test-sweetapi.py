@@ -298,6 +298,36 @@ class Search(unittest.TestCase):
         past = [row("p1", NOW - 9000, 1000, False), row("p2", NOW - 3000, 500, False)]
         self.assertEqual(api._stands_for(past, NOW)["epg"], "p1")
 
+    def test_search_other_row_classifies_series_by_subtext(self):
+        # SearchService/Search.json returns Movie entries without is_serial/seasons_count/genres;
+        # subtext keywords must classify series/shows as kind="series" while plain movies stay "movie".
+        for subtext in (
+            "2025, Сериалы, Детективы",
+            "2024, Серіали, Драма",
+            "2023, Drama Series",
+            "2025, Передачи и шоу",
+            "2025, Передачі та шоу",
+            "2024, Телешоу",
+        ):
+            with self.subTest(subtext=subtext):
+                row = api._other_row(
+                    {"type": "Movie", "id": 33871, "text": "Зрадники", "subtext": subtext},
+                    "movie",
+                    MAP,
+                )
+                self.assertIsNotNone(row)
+                self.assertEqual(row["kind"], "series")
+
+        for subtext in ("2025, Боевики", "2024, Комедія", ""):
+            with self.subTest(subtext=subtext):
+                row = api._other_row(
+                    {"type": "Movie", "id": 501, "text": "Начало", "subtext": subtext},
+                    "movie",
+                    MAP,
+                )
+                self.assertIsNotNone(row)
+                self.assertEqual(row["kind"], "movie")
+
 
 class Calls(unittest.TestCase):
     def test_the_headers_are_those_of_the_addon_and_the_token_goes_only_in_the_header(self):
@@ -1798,8 +1828,15 @@ class UnreleasedEpisodesTest(unittest.TestCase):
     def test_filter_season_episodes_caps_unreleased_to_one_soon_stub(self):
         self.assertTrue(callable(getattr(api, "filter_season_episodes", None)), "mediastick_sweetapi must define filter_season_episodes()")
 
-        # 1. Fact: episodes 1..3 (duration > 0) and 4..10 (duration == 0, playable_episode_ids=[1,2,3,4])
-        #    returns 1,2,3 playable + 4 coming_soon stub, drops 5..10
+        # 1. Fact: 10 released episodes (duration > 0) with a truncated 4-item playable_ids preview
+        #    returns all 10 playable episodes (0 coming_soon) — never gated by playable_ids.
+        raw_10 = [{"id": n, "number": n, "title": f"Ep {n}", "duration": 3720 + n * 60} for n in range(1, 11)]
+        f10 = api.filter_season_episodes(raw_10, playable_ids=[1, 2, 3, 4], mid=33871, s_owner=69)
+        self.assertEqual([e["id"] for e in f10], list(range(1, 11)))
+        self.assertTrue(all(e["playable"] and not e["coming_soon"] for e in f10))
+
+        # 2. Boundary: duration > 0 not in playable_ids is still playable; duration == 0 even if in playable_ids
+        #    is unreleased and collapses to at most 1 coming_soon stub.
         raw = [
             {"id": 4, "number": 4, "title": "Ep 4", "duration": 0, "release_date": "2026-12-03"},
             {"id": 2, "number": 2, "title": "Ep 2", "duration": 2400},
@@ -1830,17 +1867,19 @@ class UnreleasedEpisodesTest(unittest.TestCase):
         self.assertEqual((stub["duration"], stub["resume"], stub["watched"], stub["resume_at"]), (0, 0, False, 0))
         self.assertEqual(stub["release_date"], "03.12.2026")
 
-        # 2. Boundary: non-empty playable_ids excludes duration > 0 episode not in playable_ids -> becomes soon stub
         non_playable_dur = [
             {"id": 11, "number": 1, "title": "R1", "duration": 1800},
-            {"id": 12, "number": 2, "title": "Unreleased despite dur", "duration": 1800, "premiere_date": "2026-12-20"},
-            {"id": 13, "number": 3, "title": "Unreleased 2", "duration": 0},
+            {"id": 12, "number": 2, "title": "R2 not in playable_ids", "duration": 1800},
+            {"id": 13, "number": 3, "title": "U1 in playable_ids", "duration": 0, "premiere_date": "2026-12-20"},
+            {"id": 14, "number": 4, "title": "U2", "duration": 0},
         ]
-        f2 = api.filter_season_episodes(non_playable_dur, playable_ids=[11], mid=9558, s_owner=69)
-        self.assertEqual([e["id"] for e in f2], [11, 12])
+        f2 = api.filter_season_episodes(non_playable_dur, playable_ids=[11, 13], mid=9558, s_owner=69)
+        self.assertEqual([e["id"] for e in f2], [11, 12, 13])
         self.assertTrue(f2[0]["playable"] and not f2[0]["coming_soon"])
-        self.assertTrue(f2[1]["coming_soon"] and not f2[1]["playable"])
-        self.assertEqual(f2[1]["release_date"], "20.12.2026")
+        self.assertTrue(f2[1]["playable"] and not f2[1]["coming_soon"])
+        self.assertTrue(f2[2]["coming_soon"] and not f2[2]["playable"])
+        self.assertEqual(f2[2]["vod_url"], "")
+        self.assertEqual(f2[2]["release_date"], "20.12.2026")
 
         # 3. Boundary: empty/None playable_ids relies on duration > 0
         f3 = api.filter_season_episodes(
@@ -1874,6 +1913,26 @@ class UnreleasedEpisodesTest(unittest.TestCase):
         ], mid=9558, s_owner=69)
         self.assertEqual(len(f5), 1)
         self.assertEqual((f5[0]["id"], f5[0]["coming_soon"], f5[0]["playable"]), (41, True, False))
+
+    def test_filter_season_episodes_preserves_api_order_when_number_missing(self):
+        # When episodes omit number (None or absent), preserve API order and assign 1-based numbers
+        raw_no_num = [
+            {"id": 50, "number": None, "title": "First in API", "duration": 2400},
+            {"id": 10, "title": "Second in API", "duration": 2400},
+            {"id": 30, "number": 0, "title": "Third in API", "duration": 2400},
+        ]
+        res = api.filter_season_episodes(raw_no_num, mid=33871, s_owner=69)
+        self.assertEqual([e["id"] for e in res], [50, 10, 30])
+        self.assertEqual([e["number"] for e in res], [1, 2, 3])
+
+        # Boundary: when at least one episode has an explicit positive number, sort by (ep_num, orig_idx)
+        raw_with_num = [
+            {"id": 50, "number": 2, "title": "Ep 2", "duration": 2400},
+            {"id": 10, "number": 1, "title": "Ep 1", "duration": 2400},
+        ]
+        res_sorted = api.filter_season_episodes(raw_with_num, mid=33871, s_owner=69)
+        self.assertEqual([e["id"] for e in res_sorted], [10, 50])
+        self.assertEqual([e["number"] for e in res_sorted], [1, 2])
 
     def test_vod_detail_filters_unreleased_episodes_and_persists_to_store(self):
         movie_doc = {
