@@ -1315,11 +1315,11 @@ class VodAndCatalog(unittest.TestCase):
         self.assertEqual(s101.get("art_mode"), "logo")
         self.assertEqual(s101["banner"], "https://static.sweet.tv/stb-banner.jpg")
 
-        # 2. Missing icon_v2_url falls back to icon_url (https), and preview_url_ext wins over channel banner_url
+        # 2. Missing icon_v2_url falls back to icon_url (https), and channel banner_url wins over preview_url_ext
         s102 = by_id["tv:102"]
         self.assertEqual(s102["poster"], "https://img.example/1plus1.png")
         self.assertEqual(s102.get("art_mode"), "logo")
-        self.assertEqual(s102["banner"], "https://static.sweet.tv/ep102-prev.jpg")
+        self.assertEqual(s102["banner"], "https://img.example/1plus1-banner.jpg")
 
         # 3. Missing preview_url and missing channel banner_url falls back banner to poster
         s103 = by_id["tv:103"]
@@ -2117,6 +2117,396 @@ class EnrichEpgRecordsTest(unittest.TestCase):
             self.assertEqual(len(sender4.calls), 2)
             self.assertEqual([len(call["body"]["id_list"]) for call in sender4.calls], [50, 50])
 
+
+
+class CatalogPaginationAndHeroArtTest(unittest.TestCase):
+    def test_catalog_page_multi_batch_skips_tvod_and_uhd_and_tracks_exact_cursor(self):
+        all_ids = list(range(101, 113))  # 12 raw IDs
+        movie_db = {}
+        for mid in all_ids:
+            if mid in (102, 105, 109):  # paid TVOD
+                movie_db[mid] = {"id": mid, "title": f"TVOD {mid}", "genres": [61], "availability_info": {"available": False}}
+            elif mid in (103, 110):  # 4K UHD
+                movie_db[mid] = {"id": mid, "title": f"UHD {mid}", "genres": [61, 57], "availability_info": {"available": True}}
+            else:  # SVOD 1080p: 101, 104, 106, 107, 108, 111, 112
+                movie_db[mid] = {"id": mid, "title": f"SVOD {mid}", "genres": [61], "availability_info": {"available": True}}
+
+        def by(call):
+            if call["url"].endswith("GetGenreMovies.json"):
+                if call["body"]["genre_id"] == 61:
+                    return reply({"status": "OK", "movies": all_ids})
+                return reply({"status": "OK", "movies": []})
+            if call["url"].endswith("GetMovieInfo.json"):
+                req_ids = call["body"]["movies"]
+                return reply({"status": "OK", "movies": [movie_db[i] for i in req_ids if i in movie_db]})
+            return reply({"status": "OK"})
+
+        c, sender = client(by=by)
+        res = api.catalog_page("movies", genre_id=0, sort_mode_id=1, offset=0, limit=4, quality="1080p", client=c)
+        self.assertTrue(res["ok"])
+        self.assertEqual([m["id"] for m in res["items"]], [101, 104, 106, 107])
+        self.assertEqual(res["offset"], 0)
+        self.assertEqual(res["limit"], 4)
+        # Batch 1: [101,102,103,104] -> 101,104; Batch 2: [105,106,107,108] -> 106,107 (108 unconsumed!)
+        self.assertEqual(res["next_offset"], 7)
+        self.assertTrue(res["has_more"])
+        self.assertEqual(res["total"], 12)
+        movie_calls = [call["body"]["movies"] for call in sender.calls if call["url"].endswith("GetMovieInfo.json")]
+        self.assertEqual(movie_calls, [[101, 102, 103, 104], [105, 106, 107, 108]])
+
+        # Next page starts at exact next_offset=7 -> 108 is not dropped and 107 is not duplicated
+        res2 = api.catalog_page("movies", genre_id=0, sort_mode_id=1, offset=res["next_offset"], limit=4, quality="1080p", client=c)
+        self.assertEqual([m["id"] for m in res2["items"]], [108, 111, 112])
+        self.assertEqual(res2["offset"], 7)
+        self.assertEqual(res2["next_offset"], 12)
+        self.assertFalse(res2["has_more"])
+
+    def test_catalog_page_respects_max_page_batches_and_boundaries(self):
+        self.assertEqual(api.MAX_PAGE_BATCHES, 5)
+        all_tvod = list(range(200, 214))  # 14 TVOD items
+
+        def make_by(id_list):
+            def by(call):
+                if call["url"].endswith("GetGenreMovies.json"):
+                    if call["body"]["genre_id"] == 61:
+                        return reply({"status": "OK", "movies": id_list})
+                    return reply({"status": "OK", "movies": []})
+                if call["url"].endswith("GetMovieInfo.json"):
+                    return reply({
+                        "status": "OK",
+                        "movies": [
+                            {"id": i, "title": f"TVOD {i}", "genres": [61], "availability_info": {"available": False}}
+                            for i in call["body"]["movies"]
+                        ],
+                    })
+                return reply({"status": "OK"})
+            return by
+
+        # Stops at MAX_PAGE_BATCHES=5 when items remain filtered
+        c, sender = client(by=make_by(all_tvod))
+        res = api.catalog_page("movies", genre_id=0, offset=0, limit=2, quality="1080p", client=c)
+        movie_calls = [call for call in sender.calls if call["url"].endswith("GetMovieInfo.json")]
+        self.assertEqual(len(movie_calls), 5)
+        self.assertEqual(res["items"], [])
+        self.assertEqual(res["next_offset"], 10)
+        self.assertTrue(res["has_more"])
+
+        # Stops early when cursor >= len(id_list)
+        c2, sender2 = client(by=make_by([200, 201, 202]))
+        res2 = api.catalog_page("movies", genre_id=0, offset=0, limit=2, quality="1080p", client=c2)
+        movie_calls2 = [call for call in sender2.calls if call["url"].endswith("GetMovieInfo.json")]
+        self.assertEqual(len(movie_calls2), 2)
+        self.assertEqual(res2["next_offset"], 3)
+        self.assertFalse(res2["has_more"])
+
+        # Negative / None offset clamps to 0; offset >= len makes 0 GetMovieInfo calls
+        c3, sender3 = client(by=make_by([200]))
+        res3 = api.catalog_page("movies", genre_id=0, offset=-5, limit=2, quality="1080p", client=c3)
+        self.assertEqual(res3["next_offset"], 1)
+        self.assertFalse(res3["has_more"])
+
+        c4, sender4 = client(by=make_by([200, 201]))
+        res4 = api.catalog_page("movies", genre_id=0, offset=5, limit=2, quality="1080p", client=c4)
+        self.assertEqual([x for x in sender4.calls if x["url"].endswith("GetMovieInfo.json")], [])
+        self.assertEqual(res4["items"], [])
+        self.assertFalse(res4["has_more"])
+
+    def test_movie_card_and_vod_detail_gate_unreleased_vod_url(self):
+        cases = (
+            (
+                "unreleased_38838",
+                {
+                    "id": 38838,
+                    "title": "Танцюють всі",
+                    "released": False,
+                    "seasons": [],
+                    "available": True,
+                    "duration": 3000,
+                    "availability_info": {"available": True},
+                    "external_id_pairs": [{"owner_id": 12}],
+                },
+                False,
+                False,
+            ),
+            (
+                "released_true",
+                {
+                    "id": 9558,
+                    "title": "Зрадники",
+                    "released": True,
+                    "duration": 3600,
+                    "availability_info": {"available": True},
+                    "external_id_pairs": [{"owner_id": 69, "preferred": True}],
+                },
+                True,
+                True,
+            ),
+            (
+                "released_omitted_without_duration",
+                {
+                    "id": 9561,
+                    "title": "Фільм без тривалості",
+                    "availability_info": {"available": True},
+                    "external_id_pairs": [{"owner_id": 12}],
+                },
+                True,
+                True,
+            ),
+        )
+        for name, movie, exp_released, exp_has_url in cases:
+            with self.subTest(name=name):
+                card = api._movie_card(movie)
+                self.assertIs(card["released"], exp_released)
+                if exp_has_url:
+                    self.assertTrue(card["vod_url"])
+                else:
+                    self.assertEqual(card["vod_url"], "")
+
+                with tempfile.TemporaryDirectory() as td:
+                    st = sweetstore.SweetStore(os.path.join(td, "rel.db"))
+                    self.addCleanup(st.close)
+                    c, _ = client(reply({"status": "OK", "movies": [movie]}))
+                    det = api.vod_detail(movie["id"], favs={f"show:vod:{movie['id']}"}, client=c, tr=ENGLISH, store=st)
+                    self.assertTrue(det["ok"])
+                    self.assertIs(det["released"], exp_released)
+                    self.assertTrue(det["favourite"])
+                    if exp_has_url:
+                        self.assertTrue(det["vod_url"])
+                    else:
+                        self.assertEqual(det["vod_url"], "")
+
+                    # Offline SweetStore reconstruction preserves released & vod_url gating
+                    c_off, _ = client((0, b""))
+                    det_off = api.vod_detail(movie["id"], favs={f"show:vod:{movie['id']}"}, client=c_off, tr=ENGLISH, store=st)
+                    self.assertIs(det_off["released"], exp_released)
+                    if not exp_has_url:
+                        self.assertEqual(det_off["vod_url"], "")
+
+    def test_movie_card_wraps_wide_art_with_hq_url(self):
+        card = api._movie_card({
+            "id": 401,
+            "title": "CDN Card",
+            "horizontal_poster_url": "https://static.sweet.tv/cdn-cgi/image/width=400,f=auto/https://static.sweet.tv/401-wide.jpg",
+            "poster_url": "https://static.sweet.tv/401-poster.jpg",
+        })
+        self.assertEqual(card["wide_art"], "https://static.sweet.tv/401-wide.jpg")
+
+    def test_shows_hero_art_priority_across_inline_single_and_multi_show_epg(self):
+        channels = {"list": [
+            {
+                "id": 15,
+                "name": "СТБ",
+                "catchup": True,
+                "catchup_duration": 7,
+                "available": True,
+                "banner_url": "https://static.sweet.tv/cdn-cgi/image/width=400/https://static.sweet.tv/stb-banner-1408.jpg",
+                "epg": [
+                    {
+                        "id": 9101,
+                        "text": "Inline Show Випуск 1",
+                        "time_start": NOW - 3600,
+                        "time_stop": NOW - 1800,
+                        "tv_show_id": 701,
+                        "available": True,
+                        "image_url": "https://static.sweet.tv/cdn-cgi/image/width=400/https://static.sweet.tv/701-img-960.jpg",
+                        "preview_url_ext": "https://static.sweet.tv/340x160/701-low.jpg",
+                    },
+                ],
+            },
+            {
+                "id": 16,
+                "name": "1+1",
+                "catchup": True,
+                "catchup_duration": 3,
+                "available": True,
+                "icon_v2_url": "https://img.example/1plus1-logo.png",
+                "epg": [
+                    {
+                        "id": 9102,
+                        "text": "Poster Only Show Випуск 1",
+                        "time_start": NOW - 3600,
+                        "time_stop": NOW - 1800,
+                        "tv_show_id": 702,
+                        "available": True,
+                        "preview_url_ext": "https://static.sweet.tv/340x160/702-low.jpg",
+                    },
+                ],
+            },
+        ]}
+
+        def by(call):
+            url = call["url"]
+            if url.endswith("GetCollections.json"):
+                if call["body"] == {"type": 3}:
+                    return reply({"status": "OK", "collection": []})
+                if call["body"] == {"type": 7}:
+                    return reply({"status": "OK", "collection": [
+                        {"id": 8838, "type": "Epg", "id_list": [15]},
+                        {"id": 8839, "type": "Epg", "id_list": [15]},
+                    ]})
+            if url.endswith("GetCollectionInfo.json"):
+                return reply({"status": "OK", "collections": [
+                    {
+                        "id": 8838,
+                        "title": "Single EPG Show",
+                        "poster_url": "https://img.example/8838-p.jpg",
+                        "secondary_id_list": [501],
+                    },
+                    {
+                        "id": 8839,
+                        "title": "Multi Show Collection",
+                        "secondary_id_list": [601, 602],
+                    },
+                ]})
+            if url.endswith("GetEpgRecords.json"):
+                return reply({"status": "OK", "epg_records": [
+                    {
+                        "id": 501,
+                        "channel_id": 15,
+                        "text": "Single Ep 1",
+                        "time_start": NOW - 3600,
+                        "time_stop": NOW - 1800,
+                        "tv_show_id": 801,
+                        "available": True,
+                        "image_url": "https://static.sweet.tv/cdn-cgi/image/width=400/https://static.sweet.tv/501-960.jpg",
+                        "preview_url_ext": "https://static.sweet.tv/340x160/501-low.jpg",
+                    },
+                    {
+                        "id": 601,
+                        "channel_id": 15,
+                        "text": "Multi Show A Ep 1",
+                        "time_start": NOW - 3600,
+                        "time_stop": NOW - 1800,
+                        "tv_show_id": 802,
+                        "available": True,
+                        "image_url": "https://static.sweet.tv/cdn-cgi/image/width=400/https://static.sweet.tv/601-960.jpg",
+                        "preview_url_ext": "https://static.sweet.tv/340x160/601-low.jpg",
+                    },
+                    {
+                        "id": 602,
+                        "channel_id": 15,
+                        "text": "Multi Show B Ep 1",
+                        "time_start": NOW - 1800,
+                        "time_stop": NOW - 900,
+                        "tv_show_id": 803,
+                        "available": True,
+                        "preview_url_ext": "https://static.sweet.tv/340x160/602-low.jpg",
+                    },
+                ]})
+            return reply({"status": "OK"})
+
+        c, _ = client(by=by)
+        res = api.shows(channels, now=NOW, client=c, tr=ENGLISH)
+        self.assertTrue(res["ok"])
+        by_id = {x["id"]: x for x in res["items"]}
+
+        # Inline show_tv with image_url + ch.banner_url must NOT use 340x160 preview_url_ext
+        s701 = by_id["tv:701"]
+        self.assertNotIn("340x160", s701["banner"])
+        self.assertNotIn("340x160", s701["wide_art"])
+        self.assertIn(s701["banner"], (
+            "https://static.sweet.tv/701-img-960.jpg",
+            "https://static.sweet.tv/stb-banner-1408.jpg",
+        ))
+
+        # Inline show_tv with poster (channel logo) and no image_url/banner_url must NOT use 340x160 preview_url_ext as banner
+        s702 = by_id["tv:702"]
+        self.assertEqual(s702["banner"], "https://img.example/1plus1-logo.png")
+
+        # Single-show EPG collection prefers image_url / ch.banner_url over 340x160 preview_url_ext
+        s8838 = by_id["epg:8838"]
+        self.assertNotIn("340x160", s8838["banner"])
+        self.assertNotIn("340x160", s8838["wide_art"])
+        self.assertIn(s8838["banner"], (
+            "https://static.sweet.tv/501-960.jpg",
+            "https://static.sweet.tv/stb-banner-1408.jpg",
+        ))
+
+        # Multi-show EPG collection prefers image_url / ch.banner_url over 340x160 preview_url_ext
+        s802 = by_id["tv:802"]
+        self.assertNotIn("340x160", s802["banner"])
+        self.assertIn(s802["banner"], (
+            "https://static.sweet.tv/601-960.jpg",
+            "https://static.sweet.tv/stb-banner-1408.jpg",
+        ))
+        s803 = by_id["tv:803"]
+        self.assertEqual(s803["banner"], "https://static.sweet.tv/stb-banner-1408.jpg")
+
+    def test_show_detail_exposes_image_url_banner_and_prefers_image_url_in_preview(self):
+        def by(call):
+            url = call["url"]
+            if url.endswith("GetCollectionInfo.json"):
+                return reply({"status": "OK", "collections": [{
+                    "id": 8838,
+                    "title": "Холостяк",
+                    "banner_url": "https://img.example/8838-banner.jpg",
+                    "image_url": "https://img.example/8838-img.jpg",
+                    "poster_url": "https://img.example/8838-poster.jpg",
+                    "secondary_id_list": [501, 502],
+                }]})
+            if url.endswith("GetEpgRecords.json"):
+                return reply({"status": "OK", "epg_records": [
+                    {
+                        "id": 501,
+                        "channel_id": 15,
+                        "text": "Випуск 1",
+                        "time_start": NOW - 7200,
+                        "time_stop": NOW - 3600,
+                        "available": True,
+                        "image_url": "https://img.example/501-960.jpg",
+                        "preview_url": "https://img.example/501-low.jpg",
+                    },
+                    {
+                        "id": 502,
+                        "channel_id": 15,
+                        "text": "Випуск 2",
+                        "time_start": NOW - 3600,
+                        "time_stop": NOW - 1800,
+                        "available": True,
+                        "preview_url": "https://img.example/502-low.jpg",
+                    },
+                ]})
+            return reply({"status": "OK"})
+
+        c, _ = client(by=by)
+        det = api.show_detail("epg:8838", CHANNELS, now=NOW, client=c, tr=ENGLISH)
+        self.assertTrue(det["ok"])
+        self.assertIn("image_url", det)
+        self.assertIn("banner", det)
+        self.assertTrue(det["banner"])
+        by_epg = {ep["epg"]: ep for ep in det["episodes"]}
+        self.assertEqual(by_epg["501"]["preview"], "https://img.example/501-960.jpg")
+        self.assertEqual(by_epg["502"]["preview"], "https://img.example/502-low.jpg")
+
+    def test_normalize_search_includes_banner_url_and_wide_art_for_channels(self):
+        ch_map = api.channel_map({"list": [
+            {
+                "id": 15,
+                "name": "СТБ HD",
+                "catchup": True,
+                "catchup_duration": 7,
+                "available": True,
+                "banner_url": "https://static.sweet.tv/cdn-cgi/image/width=400/https://static.sweet.tv/stb-banner.jpg",
+                "epg": [],
+            },
+            {
+                "id": 16,
+                "name": "1+1",
+                "catchup": False,
+                "available": True,
+                "epg": [],
+            },
+        ]})
+        search_doc = {"result": [
+            {"type": "Channel", "id": 15, "text": "СТБ HD", "subtext": "Новини"},
+            {"type": "Channel", "id": 16, "text": "1+1", "subtext": ""},
+        ]}
+        rows = api.normalize_search(search_doc, ch_map, NOW, ENGLISH, ENGLISH_N)
+        by_cid = {r["cid"]: r for r in rows if r["kind"] == "channel"}
+        self.assertEqual(by_cid["15"]["banner_url"], "https://static.sweet.tv/stb-banner.jpg")
+        self.assertEqual(by_cid["15"]["wide_art"], "https://static.sweet.tv/stb-banner.jpg")
+        self.assertEqual(by_cid["16"]["banner_url"], "")
+        self.assertEqual(by_cid["16"]["wide_art"], "")
 
 if __name__ == "__main__":
     unittest.main()

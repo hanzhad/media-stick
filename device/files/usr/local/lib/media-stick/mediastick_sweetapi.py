@@ -73,6 +73,7 @@ UHD_CATEGORY = 24
 SORT_MODE_IDS = (1, 2, 3, 5, 6)
 MIN_NEEDLE, MAX_NEEDLE = 2, 100
 MAX_ROWS = 60
+MAX_PAGE_BATCHES = 5
 DAY_PAGE = 30                       # programmes asked for before and after the moment (the API counts programmes, not hours)
 DAY_EXTEND = 2                      # more calls, each way, when a busy day did not fit in the first
 DEFAULT_FUTURE_DAYS = 3             # days of guide ahead when the channel does not say
@@ -294,10 +295,11 @@ def _other_row(item, kind, channels, quality="1080p"):
                 "live": False, "can_archive": False, "playable_in_archive": False, "playable": bool(avail and vod_url), "available": avail,
                 "vod_url": vod_url, "preview": "", "image_url": img, "repeats": 0, "more": ""}
     ch_avail = channel is not None and channel.get("available") is not False
+    ch_banner = _hq_url(channel.get("banner_url")) if (kind == "channel" and channel) else ""
     return {"kind": kind, "id": ident, "title": title, "subtitle": subtext,
             "cid": ident if kind == "channel" else "", "epg": "", "start": 0, "stop": 0, "channel_name": name, "when": "",
             "live": False, "can_archive": False, "playable_in_archive": False, "playable": ch_avail, "available": ch_avail, "preview": "",
-            "image_url": img, "repeats": 0, "more": ""}
+            "image_url": img, "banner_url": ch_banner, "wide_art": ch_banner, "repeats": 0, "more": ""}
 
 
 def _watchable(row):
@@ -856,7 +858,8 @@ def _movie_card(movie):
     owner_id = owner_of(movie)
     poster = https(movie.get("poster_url") or movie.get("original_poster_url"))
     banner = _hq_url(movie.get("banner_url") or movie.get("original_banner_url") or movie.get("horizontal_poster_url") or poster)
-    wide_art = https(movie.get("horizontal_poster_url")) or banner
+    wide_art = _hq_url(movie.get("horizontal_poster_url")) or banner
+    released = movie.get("released") is not False
     genres = [g for g in (_num(x) for x in (movie.get("genres") or ())) if g is not None]
     imdb_raw = movie.get("rating_imdb")
     imdb = float(imdb_raw) if isinstance(imdb_raw, (int, float)) and not isinstance(imdb_raw, bool) else 0.0
@@ -874,7 +877,8 @@ def _movie_card(movie):
         "description": _clean(movie.get("description"), 1200),
         "age_rating": _clean(str(movie.get("age_limit") or movie.get("age_rating") or ""), 16),
         "countries": [_clean(str(x), 48) for x in (movie.get("countries") or ()) if _clean(str(x), 48)],
-        "vod_url": ml.vod_url(mid, None, owner_id),
+        "released": released,
+        "vod_url": ml.vod_url(mid, None, owner_id) if released else "",
         "available": True,
     }
 
@@ -968,7 +972,9 @@ def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, qualit
     c = client or _default
     st = _resolve_store(store)
     gid = int(genre_id or 0)
-    swr_key = f"catalog:{section}:{gid}:{int(sort_mode_id)}:{int(offset)}:{int(limit)}:{quality}"
+    offset = max(0, int(offset or 0))
+    limit = max(1, int(limit or 30))
+    swr_key = f"catalog:{section}:{gid}:{int(sort_mode_id)}:{offset}:{limit}:{quality}"
     if section == "series":
         base, err = _genre_movie_ids(c, 1)
         if err:
@@ -1011,39 +1017,77 @@ def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, qualit
             if exclude:
                 id_list = [x for x in id_list if x not in exclude]
 
-    if not id_list:
-        res = {"ok": True, "section": section, "items": [], "total": 0}
+    total = len(id_list)
+    cursor = offset
+    if not id_list or cursor >= total:
+        res = {
+            "ok": True,
+            "section": section,
+            "items": [],
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "next_offset": cursor,
+            "has_more": False,
+        }
         _swr_put(st, swr_key, res)
         return res
-    info_reply = c.post(MOVIE_INFO, {
-        "movies": id_list,
-        "limit": int(limit),
-        "offset": int(offset),
-        "sort_mode_id": int(sort_mode_id),
-        "need_extended_info": False,
-    })
-    if not info_reply.ok:
-        if info_reply.error in ("network", "service"):
-            cached = _swr_get(st, swr_key)
-            if cached is not None:
-                return cached
-        return _failure(info_reply.error, tr)
-    allowed_ids = set(id_list)
+
     items = []
-    for m in info_reply.data.get("movies") or ():
-        if not isinstance(m, dict) or not _movie_available(m):
-            continue
-        mid = _num(m.get("id"))
-        if mid not in allowed_ids:
-            continue
-        card = _movie_card(m)
-        if not card:
-            continue
-        if quality != "unlimited" and UHD_GENRE in card["genres"]:
-            continue
-        items.append(card)
-    res = {"ok": True, "section": section, "items": items, "total": len(id_list)}
-    _swr_put(st, swr_key, res)
+    batch_err = False
+    for _ in range(MAX_PAGE_BATCHES):
+        if len(items) >= limit or cursor >= total:
+            break
+        batch_ids = id_list[cursor : cursor + limit]
+        info_reply = c.post(MOVIE_INFO, {
+            "movies": batch_ids,
+            "limit": limit,
+            "offset": 0,
+            "sort_mode_id": int(sort_mode_id),
+            "need_extended_info": False,
+        })
+        if not info_reply.ok:
+            if not items:
+                if info_reply.error in ("network", "service"):
+                    cached = _swr_get(st, swr_key)
+                    if cached is not None:
+                        return cached
+                return _failure(info_reply.error, tr)
+            batch_err = True
+            break
+        by_id = {}
+        for m in info_reply.data.get("movies") or ():
+            if isinstance(m, dict):
+                mid = _num(m.get("id"))
+                if mid:
+                    by_id[mid] = m
+        consumed = 0
+        for idx, raw_id in enumerate(batch_ids):
+            consumed = idx + 1
+            m = by_id.get(raw_id)
+            if not m or not _movie_available(m):
+                continue
+            card = _movie_card(m)
+            if not card:
+                continue
+            if quality != "unlimited" and UHD_GENRE in card["genres"]:
+                continue
+            items.append(card)
+            if len(items) >= limit:
+                break
+        cursor += consumed
+    res = {
+        "ok": True,
+        "section": section,
+        "items": items,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "next_offset": cursor,
+        "has_more": cursor < total,
+    }
+    if not batch_err:
+        _swr_put(st, swr_key, res)
     return res
 
 
@@ -1066,11 +1110,33 @@ def _base_show_title(text):
     return title
 
 
+def _epg_show_banner(ch_banner="", img="", poster="", prev="", col_banner=""):
+    """Pick high-res hero backdrop ahead of low-res preview thumbnails."""
+    return (
+        _hq_url(col_banner)
+        or _hq_url(ch_banner)
+        or _hq_url(img)
+        or https(poster)
+        or _hq_url(prev)
+    )
+
+
+def _first_ch_banner(ch_map, ch_ids):
+    for cid in ch_ids:
+        ch = ch_map.get(cid)
+        if ch and ch.get("banner_url"):
+            b = _hq_url(ch.get("banner_url"))
+            if b:
+                return b
+    return ""
+
+
 def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None):
     """Dynamically unify GetCollections(type=7) Movie & Epg shows and playable channel EPG shows."""
     c = client or _default
     st = _resolve_store(store)
     now = time.time() if now is None else now
+    ch_map = channel_map(channels)
     swr_key = f"shows:{quality}"
     col_reply = c.post(COLLECTIONS, {"type": 7})
     if not col_reply.ok:
@@ -1179,10 +1245,13 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None)
                 col_posters = [p for p in (col.get("posters") or ()) if isinstance(p, dict)]
                 poster_from_list = next((https(p.get("original_poster_url") or p.get("poster_url")) for p in col_posters if p.get("original_poster_url") or p.get("poster_url")), "")
                 horiz_from_list = next((https(p.get("original_poster_url") or p.get("poster_url")) for p in col_posters if p.get("orientation") == "Horizontal" and (p.get("original_poster_url") or p.get("poster_url"))), "")
-                poster = https(col.get("poster_url")) or poster_from_list or next((https(r.get("image_url")) for r in recs if r.get("image_url")), "")
-                banner = _hq_url(col.get("banner_url") or col.get("horizontal_poster_url")) or _hq_url(horiz_from_list) or _hq_url(next(
-                    (r.get("preview_url_ext") for r in recs if r.get("preview_url_ext")), ""))
-                wide_art = https(col.get("horizontal_poster_url")) or banner
+                rec_img = _hq_url(next((r.get("image_url") for r in recs if r.get("image_url")), ""))
+                ch_banner = _first_ch_banner(ch_map, ch_ids)
+                rec_prev = _hq_url(next((r.get("preview_url_ext") or r.get("preview_url") for r in recs if r.get("preview_url_ext") or r.get("preview_url")), ""))
+                col_banner = _hq_url(col.get("banner_url") or col.get("horizontal_poster_url")) or _hq_url(horiz_from_list)
+                poster = https(col.get("poster_url")) or poster_from_list or rec_img
+                banner = _epg_show_banner(ch_banner=ch_banner, img=rec_img, poster=poster, prev=rec_prev, col_banner=col_banner)
+                wide_art = _hq_url(col.get("horizontal_poster_url")) or banner
                 _add_item({
                     "kind": "show_epg",
                     "id": "epg:%d" % col_id,
@@ -1206,8 +1275,12 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None)
                     base = _base_show_title(grecs[0].get("text"))
                     sid = gkey[1] if gkey[0] == "id" else ""
                     ch_ids = sorted({str(_num(r.get("channel_id"))) for r in grecs if _num(r.get("channel_id"))})
-                    poster = next((https(r.get("image_url")) for r in grecs if r.get("image_url")), "")
-                    banner = _hq_url(next((r.get("preview_url_ext") for r in grecs if r.get("preview_url_ext")), ""))
+                    rec_img = _hq_url(next((r.get("image_url") for r in grecs if r.get("image_url")), ""))
+                    ch_banner = _first_ch_banner(ch_map, ch_ids)
+                    rec_prev = _hq_url(next((r.get("preview_url_ext") or r.get("preview_url") for r in grecs if r.get("preview_url_ext") or r.get("preview_url")), ""))
+                    poster = rec_img
+                    banner = _epg_show_banner(ch_banner=ch_banner, img=rec_img, poster=poster, prev=rec_prev)
+                    wide_art = _epg_show_banner(ch_banner=ch_banner, img=rec_img, prev=rec_prev) or banner
                     _add_item({
                         "kind": "show_tv",
                         "id": "tv:%s" % (sid or col_id),
@@ -1217,6 +1290,7 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None)
                         "title": base,
                         "poster": poster,
                         "banner": banner,
+                        "wide_art": wide_art,
                         "special": False,
                     })
 
@@ -1237,12 +1311,14 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None)
             if not (live or ml.archive_ok(ch, p, now)):
                 continue
             title = _base_show_title(p.get("text"))
-            prog_img = https(p.get("image_url"))
+            prog_img = _hq_url(p.get("image_url"))
             ch_icon = https(ch.get("icon_v2_url") or ch.get("icon_url"))
             poster = prog_img or ch_icon
             art_mode = "logo" if (not prog_img and ch_icon) else ""
-            wide_art = _hq_url(p.get("preview_url_ext") or p.get("preview_url") or ch.get("banner_url"))
-            banner = wide_art or poster
+            ch_banner = _hq_url(ch.get("banner_url"))
+            prog_prev = _hq_url(p.get("preview_url_ext") or p.get("preview_url"))
+            wide_art = _epg_show_banner(ch_banner=ch_banner, img=prog_img, prev=prog_prev)
+            banner = _epg_show_banner(ch_banner=ch_banner, img=prog_img, poster=poster, prev=prog_prev)
             _add_item({
                 "kind": "show_tv",
                 "id": "tv:%d" % sid,
@@ -1541,6 +1617,7 @@ def _vod_detail_from_cache(cached, mid, local, favs):
         for idx, s in enumerate(cached.get("seasons") or ())
     ]
     apply_progress_to_seasons(seasons, local, movie_id=str(mid))
+    released = cached.get("released") is not False
     return {
         "ok": True,
         "id": "vod:%d" % mid,
@@ -1561,7 +1638,8 @@ def _vod_detail_from_cache(cached, mid, local, favs):
         "favourite": is_fav,
         "resume": m_resume,
         "watched": m_watched,
-        "vod_url": cached.get("vod_url", ""),
+        "released": released,
+        "vod_url": str(cached.get("vod_url") or "") if released else "",
         "seasons": seasons,
         "next_up": resolve_next_up(seasons=seasons) if seasons else None,
     }
@@ -1655,7 +1733,8 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None, store=None
         "favourite": is_fav,
         "resume": m_resume,
         "watched": m_watched,
-        "vod_url": card["vod_url"],
+        "released": card["released"],
+        "vod_url": card["vod_url"] if card["released"] else "",
         "seasons": seasons,
         "next_up": resolve_next_up(seasons=seasons) if seasons else None,
     }
@@ -1683,6 +1762,9 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
     title = ""
     description = ""
     age_rating = ""
+    poster = ""
+    image_url = ""
+    banner = ""
     if show_key.startswith("epg:"):
         col_id = _num(show_key[4:])
         if not col_id:
@@ -1695,6 +1777,12 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
                 title = _clean(col0.get("title"), 120)
                 description = _clean(col0.get("description"), 1200)
                 age_rating = _clean(str(col0.get("age_limit") or col0.get("age_rating") or ""), 16)
+                col_posters = [p for p in (col0.get("posters") or ()) if isinstance(p, dict)]
+                poster_from_list = next((https(p.get("original_poster_url") or p.get("poster_url")) for p in col_posters if p.get("original_poster_url") or p.get("poster_url")), "")
+                horiz_from_list = next((https(p.get("original_poster_url") or p.get("poster_url")) for p in col_posters if p.get("orientation") == "Horizontal" and (p.get("original_poster_url") or p.get("poster_url"))), "")
+                poster = https(col0.get("poster_url")) or poster_from_list
+                image_url = _hq_url(col0.get("image_url"))
+                banner = _hq_url(col0.get("banner_url") or col0.get("horizontal_poster_url")) or _hq_url(horiz_from_list) or image_url
                 curated_ids = [_num(x) for x in (col0.get("secondary_id_list") or ()) if _num(x)]
                 curated_set = set(curated_ids)
             if curated_ids:
@@ -1710,6 +1798,9 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
                 title = cached.get("title", "")
                 description = cached.get("description", "")
                 age_rating = cached.get("age_rating", "")
+                poster = cached.get("poster", "")
+                banner = cached.get("banner", "")
+                image_url = cached.get("wide_art", "") or banner
                 recs = [
                     {
                         "id": ep["epg"],
@@ -1717,6 +1808,7 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
                         "text": ep["title"],
                         "time_start": ep["start"],
                         "time_stop": ep["stop"],
+                        "image_url": ep.get("image_url", ""),
                         "preview_url": ep.get("preview", ""),
                         "available": ep.get("available", True),
                     }
@@ -1787,6 +1879,8 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         ep_res, ep_done, ep_at = _local_resume_info(local, "sw:%s|%s" % (cid, epg))
         arch = bool(ch) and ml.archive_ok(ch, r, now)
         live = start <= now < stop
+        ep_img = _hq_url(r.get("image_url"))
+        ep_prev = _hq_url(r.get("preview_url_ext")) or _hq_url(r.get("preview_url"))
         airings.append({
             "epg": epg,
             "cid": cid,
@@ -1796,7 +1890,8 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
             "duration": int(stop - start),
             "when": when_text(start, now, tr),
             "channel_name": _clean(ch.get("name"), 120) if ch else "",
-            "preview": https(r.get("preview_url_ext")) or https(r.get("preview_url")) or https(r.get("image_url")),
+            "image_url": ep_img,
+            "preview": ep_img or ep_prev,
             "curated": _num(epg) in curated_set,
             "available": r.get("available") is not False,
             "live": live,
@@ -1818,12 +1913,22 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         episodes.append(max(_complete(pool), key=lambda x: x["start"]))
     episodes.sort(key=lambda x: -x["start"])
     _persist_offered_rows(st, episodes, ch_map, now, source="show_detail")
+    ep_img_first = next((ep.get("image_url") for ep in episodes if ep.get("image_url")), "")
+    ep_prev_first = next((ep.get("preview") for ep in episodes if ep.get("preview")), "")
+    ch_banner = _first_ch_banner(ch_map, [ep.get("cid", "") for ep in episodes])
+    image_url = image_url or ep_img_first or ep_prev_first
+    banner = banner or ch_banner or image_url or poster or ep_prev_first
+    poster = poster or image_url or banner
     res = {
         "ok": True,
         "id": show_key,
         "title": title,
         "description": description,
         "age_rating": age_rating,
+        "poster": poster,
+        "image_url": image_url,
+        "banner": banner,
+        "wide_art": banner,
         "genres": [],
         "genre_names": [],
         "countries": [],
