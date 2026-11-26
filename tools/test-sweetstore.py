@@ -1083,6 +1083,61 @@ class TestSweetStoreSQLiteShell(unittest.TestCase):
         ).fetchone()
         self.assertEqual(row2["image_url"], "https://img.example/epg_horizontal/601.jpg")
 
+    def test_channel_day_and_programme_summary_prefer_image_url_over_preview_url(self):
+        self.st.upsert_channels({
+            "status": "OK",
+            "list": [{"id": 15, "name": "СТБ", "catchup": True, "catchup_duration": 7, "available": True}],
+        }, now=NOW)
+        self.st.upsert_epg("15", [
+            {
+                "id": 701,
+                "text": "Both Arts",
+                "time_start": NOW - 3600,
+                "time_stop": NOW - 1800,
+                "available": True,
+                "image_url": "https://img.example/701-960.jpg",
+                "preview_url": "https://img.example/701-340.jpg",
+            },
+            {
+                "id": 702,
+                "text": "Preview Only",
+                "time_start": NOW - 1800,
+                "time_stop": NOW + 1800,
+                "available": True,
+                "preview_url": "https://img.example/702-340.jpg",
+            },
+            {
+                "id": 703,
+                "text": "Image Only",
+                "time_start": NOW + 1800,
+                "time_stop": NOW + 3600,
+                "available": True,
+                "image_url": "https://img.example/703-960.jpg",
+            },
+        ], now=NOW)
+        day_key = _local_day_key(NOW - 3600)
+        rows = self.st.channel_day("15", day_key, now=NOW)
+        by_epg = {r["epg"]: r for r in rows}
+
+        self.assertEqual(by_epg["701"]["preview"], "https://img.example/701-960.jpg")
+        self.assertEqual(by_epg["701"]["image_url"], "https://img.example/701-960.jpg")
+        self.assertEqual(by_epg["702"]["preview"], "https://img.example/702-340.jpg")
+        self.assertEqual(by_epg["702"]["image_url"], "")
+        self.assertEqual(by_epg["703"]["preview"], "https://img.example/703-960.jpg")
+        self.assertEqual(by_epg["703"]["image_url"], "https://img.example/703-960.jpg")
+
+        # _programme_summary (via programme_at & adjacent_programmes) also prefers image_url over preview_url
+        cur = self.st.programme_at("15", NOW - 2400, now=NOW)
+        self.assertIsNotNone(cur)
+        self.assertEqual(cur["preview"], "https://img.example/701-960.jpg")
+        self.assertEqual(cur["image_url"], "https://img.example/701-960.jpg")
+
+        adj = self.st.adjacent_programmes("15", NOW, now=NOW)
+        self.assertEqual(adj["prev"]["preview"], "https://img.example/701-960.jpg")
+        self.assertEqual(adj["prev"]["image_url"], "https://img.example/701-960.jpg")
+        self.assertEqual(adj["next"]["preview"], "https://img.example/703-960.jpg")
+        self.assertEqual(adj["next"]["image_url"], "https://img.example/703-960.jpg")
+
 
 if __name__ == "__main__":
     unittest.main()
