@@ -37,6 +37,16 @@ try:
 except ImportError:
     sweetstore = None
 
+try:
+    import mediastick_sweetchannels as sc
+except ImportError:
+    sc = None
+
+try:
+    import panel_lang
+except ImportError:
+    panel_lang = None
+
 PREFIX = "/api/sweettv/"
 API_STATUS = {"auth": 409, "network": 502, "service": 502, "format": 502, "unknown": 404, "bad_date": 400, "too_old": 409,
               "too_far": 409}      # what a failed call of mediastick_sweetapi is answered with
@@ -480,8 +490,8 @@ def home_view(raw, now, local_data=None, favs_data=None, quality="1080p"):
     }
 
 
-def channels_view(raw, now, favs_data=None):
-    """GET /api/sweettv/channels: all playable channels with FAST flag, categories, current/next, favourite."""
+def channels_view(raw, now, favs_data=None, lang=None):
+    """GET /api/sweettv/channels: all playable channels with curated 9-tab classification, current/next, favourite."""
     if ml is None:
         raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
     if sweetstore is not None and isinstance(raw, dict) and raw.get("list") and "updated_at" not in raw:
@@ -490,10 +500,24 @@ def channels_view(raw, now, favs_data=None):
         except Exception:
             pass
     fkeys = mr.fav_keys(favs_data) if mr else set()
+    chs = [c for c in _rows(raw.get("list") if isinstance(raw, dict) else None)
+           if c.get("id") is not None and c.get("available") is not False]
+    categories_map = {
+        str(cat.get("id")): str(cat.get("caption") or cat.get("name") or "")[:80]
+        for cat in _rows(raw.get("categories") if isinstance(raw, dict) else None)
+        if cat.get("id") is not None
+    }
+    eff_lang = lang or (panel_lang.current() if panel_lang is not None else "ru")
+    if sc is not None:
+        tabs, _, tabs_by_cid = sc.classify_channels(chs, categories_map, lang=eff_lang)
+        default_tab = sc.DEFAULT_TAB
+        cats = [{"id": k, "caption": label} for k, label in tabs]
+    else:
+        default_tab = "main"
+        tabs_by_cid = {}
+        cats = [{"id": cid_cat, "caption": label} for cid_cat, label in categories_map.items()]
     out = []
-    for c in _rows(raw.get("list") if isinstance(raw, dict) else None):
-        if c.get("id") is None or c.get("available") is False:
-            continue
+    for c in chs:
         cid = str(c["id"])
         cur_p = _on_now(c, now)
         nxt_p = _next_after(c, now)
@@ -517,10 +541,9 @@ def channels_view(raw, now, favs_data=None):
             "favourite": ("ch:" + cid) in fkeys,
             "now": now_obj,
             "next": nxt_obj,
+            "tabs": tabs_by_cid.get(cid, ["all"]),
         })
-    cats = [{"id": str(cat.get("id")), "name": str(cat.get("caption") or cat.get("name") or "")[:80]}
-            for cat in _rows(raw.get("categories") if isinstance(raw, dict) else None) if cat.get("id") is not None]
-    return {"ok": True, "channels": out, "categories": cats}
+    return {"ok": True, "default_tab": default_tab, "channels": out, "categories": cats}
 
 
 def shows_api_view(raw, now, local_data=None, favs_data=None, quality="1080p"):
