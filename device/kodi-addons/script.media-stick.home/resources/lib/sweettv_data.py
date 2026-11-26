@@ -52,6 +52,7 @@ class Programme(NamedTuple):
     epg_id: str
     available: bool
     desc: str
+    image: str = ""
 
 
 class Channel(NamedTuple):
@@ -141,7 +142,7 @@ def logo_of(*values) -> str:
 
 # ---- the channel list ------------------------------------------------------------------------
 
-def parse_programme(raw) -> Optional[Programme]:
+def parse_programme(raw, now=None) -> Optional[Programme]:
     if not isinstance(raw, dict):
         return None
     start, stop = as_time(raw.get("time_start")), as_time(raw.get("time_stop"))
@@ -151,7 +152,8 @@ def parse_programme(raw) -> Optional[Programme]:
     return Programme(start, stop, clean_text(raw.get("text"), 120) or "Programme",
                      str(epg_id) if epg_id is not None and epg_id > 0 else "",
                      raw.get("available") is not False,
-                     clean_text(raw.get("description") or raw.get("text_description"), 300))
+                     clean_text(raw.get("description") or raw.get("text_description"), 300),
+                     logo_of(raw.get("image_url"), raw.get("preview_url_ext"), raw.get("preview_url")))
 
 
 def parse_epg(raw, now, days=0) -> Tuple[Programme, ...]:

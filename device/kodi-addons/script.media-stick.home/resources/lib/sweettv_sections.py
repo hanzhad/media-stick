@@ -135,9 +135,12 @@ def channel_card(ch, cat_names, now, resume_doc=None, favs=()) -> Card:
         alt_url = data.play_url(ch.cid, current.epg_id)
     initials, plate, plate_hi, bg, tint = _palette(ch.name)
     fav_key = f"ch:{ch.cid}"
+    prog_image = current.image if current else ""
+    wide_art = prog_image or ch.banner
+    banner = prog_image or ch.banner or ch.logo
     return Card(
         kind="channel", key=ch.cid, fav_key=fav_key, title=ch.name,
-        art=ch.logo, banner=ch.banner or ch.logo, meta=meta, desc=desc,
+        art=ch.logo, banner=banner, meta=meta, desc=desc,
         play_url=data.play_url(ch.cid), alt_url=alt_url,
         cid=ch.cid, epg=current.epg_id if current else "",
         start=current.start if current else 0, stop=current.stop if current else 0,
@@ -146,7 +149,7 @@ def channel_card(ch, cat_names, now, resume_doc=None, favs=()) -> Card:
         num=str(ch.number) if ch.number else "",
         initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
         now=now_text, nowline=nowline, next=next_text, nextline=nextline,
-        resume_label="", small=len(ch.name) > 22, art_mode="logo", wide_art=ch.banner,
+        resume_label="", small=len(ch.name) > 22, art_mode="logo", wide_art=wide_art,
     )
 
 
@@ -168,9 +171,12 @@ def vod_card(item, kind="movie", resume_doc=None, favs=()) -> Card:
     url = str(item.get("vod_url") or "")
     initials, plate, plate_hi, bg, tint = _palette(title)
     fav_key = f"vod:{mid}"
+    poster = str(item.get("poster") or "")
+    banner = str(item.get("banner") or item.get("wide_art") or poster or "")
+    wide_art = str(item.get("wide_art") or banner)
     return Card(
         kind=kind, key=mid, fav_key=fav_key, title=title,
-        art=str(item.get("poster") or ""), banner=str(item.get("banner") or item.get("poster") or ""),
+        art=poster, banner=banner,
         meta="  ·  ".join(meta_parts), desc=str(item.get("description") or ""),
         play_url=url if kind == "movie" else "", alt_url=url if (kind == "movie" and pos) else "",
         cid="", epg="", start=0, stop=0, resume_pos=pos,
@@ -178,6 +184,7 @@ def vod_card(item, kind="movie", resume_doc=None, favs=()) -> Card:
         fav=fav_key in favs, catchup=False, playable=bool(url), dim=False,
         num="", initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
         now="", nowline="", next="", nextline="", resume_label=resume_label, small=len(title) > 22,
+        wide_art=wide_art,
     )
 
 
@@ -416,7 +423,32 @@ def continue_cards(resume_doc, catalog, now, favs=(), recall_prog=None, recall_t
     return out
 
 
-def favourites_cards(favs_doc, catalog, cat_names, now, resume_doc=None) -> list:
+def _recall_detail(recall_title, key: str) -> Optional[dict]:
+    if not callable(recall_title) or not key:
+        return None
+    try:
+        got = recall_title(key)
+    except Exception:
+        return None
+    return got if isinstance(got, dict) else None
+
+
+def _hydrated_fav_fields(e: dict, tdetail: Optional[dict], default_title: str, default_meta: str) -> tuple:
+    title = str((tdetail.get("title") if tdetail else "") or e.get("title") or default_title)
+    art = str(e.get("thumb") or (tdetail.get("poster") if tdetail else "") or "")
+    saved_wide = str(e.get("wide_art") or "")
+    saved_ban = str(e.get("banner") or "")
+    td_wide = str((tdetail.get("wide_art") or tdetail.get("banner")) if tdetail else "")
+    td_ban = str((tdetail.get("banner") or tdetail.get("wide_art")) if tdetail else "")
+    wide_art = td_wide or saved_wide or saved_ban or art
+    banner = td_ban or saved_ban or saved_wide or art
+    meta, desc = detail_meta_and_desc(tdetail, None) if tdetail else ("", "")
+    if not meta:
+        meta = default_meta
+    return title, art, wide_art, banner, meta, desc
+
+
+def favourites_cards(favs_doc, catalog, cat_names, now, resume_doc=None, recall_title=None) -> list:
     items = (favs_doc or {}).get("items") or {}
     fav_set = set(items.keys())
     ch_by_id = {ch.cid: ch for ch in catalog.channels} if catalog else {}
@@ -432,47 +464,59 @@ def favourites_cards(favs_doc, catalog, cat_names, now, resume_doc=None) -> list
                 continue
             title = str(e.get("title") or f"Channel {cid}")
             art = str(e.get("thumb") or "")
+            wide_art = str(e.get("wide_art") or "")
+            banner = str(e.get("banner") or wide_art or art)
             initials, plate, plate_hi, bg, tint = _palette(title)
             out.append(Card(
-                kind="channel", key=cid, fav_key=key, title=title, art=art, banner=art,
+                kind="channel", key=cid, fav_key=key, title=title, art=art, banner=banner,
                 meta=words.tr("TV Channels"), desc="", play_url=data.play_url(cid), alt_url="",
                 cid=cid, epg="", start=0, stop=0, resume_pos=0, bar="", pbar="", fav=True,
                 catchup=False, playable=True, dim=False, num="",
                 initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
                 now="", nowline="", next="", nextline="", resume_label="", small=len(title) > 22,
-                art_mode="logo",
+                art_mode="logo", wide_art=wide_art,
             ))
         elif key.startswith("show:"):
             show_id = key[5:]
-            title = str(e.get("title") or show_id)
-            art = str(e.get("thumb") or "")
+            tdetail = _recall_detail(recall_title, key)
+            if tdetail is None and show_id.startswith("vod:"):
+                tdetail = _recall_detail(recall_title, show_id)
+            title, art, wide_art, banner, meta, desc = _hydrated_fav_fields(
+                e, tdetail, show_id, words.tr("Shows"),
+            )
             initials, plate, plate_hi, bg, tint = _palette(title)
             kind = "show_vod" if show_id.startswith("vod:") else ("show_epg" if show_id.startswith("epg:") else "show_tv")
             out.append(Card(
-                kind=kind, key=show_id, fav_key=key, title=title, art=art, banner=art,
-                meta=words.tr("Shows"), desc="", play_url="", alt_url="",
+                kind=kind, key=show_id, fav_key=key, title=title, art=art, banner=banner,
+                meta=meta, desc=desc, play_url="", alt_url="",
                 cid="", epg="", start=0, stop=0, resume_pos=0, bar="", pbar="", fav=True,
                 catchup=False, playable=True, dim=False, num="",
                 initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
                 now="", nowline="", next="", nextline="", resume_label="", small=len(title) > 22,
+                wide_art=wide_art,
             ))
         elif key.startswith("vod:"):
             mid = key[4:]
-            title = str(e.get("title") or f"VOD {mid}")
-            art = str(e.get("thumb") or "")
-            pos, frac = _vod_progress(resume_doc, mid)
-            url = f"plugin://plugin.video.sweettv/playvod/{mid}|null|0"
+            tdetail = _recall_detail(recall_title, key)
+            is_series = bool(tdetail and (tdetail.get("kind") == "series" or tdetail.get("seasons")))
+            kind = "series" if is_series else "movie"
+            default_meta = words.tr("Series" if is_series else "Movies")
+            title, art, wide_art, banner, meta, desc = _hydrated_fav_fields(
+                e, tdetail, f"VOD {mid}", default_meta,
+            )
+            pos, frac = (0, 0.0) if is_series else _vod_progress(resume_doc, mid)
+            url = "" if is_series else str((tdetail.get("vod_url") if tdetail else "") or f"plugin://plugin.video.sweettv/playvod/{mid}|null|0")
             initials, plate, plate_hi, bg, tint = _palette(title)
             out.append(Card(
-                kind="movie", key=mid, fav_key=key, title=title, art=art, banner=art,
-                meta=words.tr("Movies"), desc="", play_url=url, alt_url=url if pos else "",
+                kind=kind, key=mid, fav_key=key, title=title, art=art, banner=banner,
+                meta=meta, desc=desc, play_url=url, alt_url=url if pos else "",
                 cid="", epg="", start=0, stop=0, resume_pos=pos,
                 bar=_bar_from_fraction(frac), pbar=_bar_from_fraction(frac, wide=True),
                 fav=True, catchup=False, playable=True, dim=False, num="",
                 initials=initials, plate=plate, plate_hi=plate_hi, bg=bg, tint=tint,
                 now="", nowline="", next="", nextline="",
                 resume_label=words.tr("Continue from {time}").format(time=fmt_mmss(pos)) if pos else "",
-                small=len(title) > 22,
+                small=len(title) > 22, wide_art=wide_art,
             ))
     return out
 

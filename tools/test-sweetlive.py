@@ -831,6 +831,28 @@ class Panel(unittest.TestCase):
             ps.play_request(LIST, {"cid": "x"}, NOW)
         self.assertEqual(caught.exception.message, "Неверный канал.")
 
+    def test_toggle_favourite_persists_banner_and_wide_art(self):
+        calls = []
+
+        def fake_toggle_fav(key, meta=None, now=None, path=None):
+            calls.append((key, dict(meta or {})))
+            return True, True
+
+        with mock.patch.object(ps.mr, "toggle_fav", side_effect=fake_toggle_fav):
+            res = ps.toggle_favourite({
+                "key": "vod:501",
+                "title": "Inception",
+                "thumb": "https://img/501.jpg",
+                "banner": "https://img/501-bg.jpg",
+                "wide_art": "https://img/501-wide.jpg",
+                "meta": {"year": 2010},
+            })
+        self.assertEqual(res, {"ok": True, "key": "vod:501", "favourite": True})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "vod:501")
+        self.assertEqual(calls[0][1].get("banner"), "https://img/501-bg.jpg")
+        self.assertEqual(calls[0][1].get("wide_art"), "https://img/501-wide.jpg")
+
 
 class Routes(unittest.TestCase):
     def setUp(self):

@@ -5,7 +5,7 @@ import threading
 import xbmcgui
 
 import mediastick_sweetapi as sweetapi
-from resources.lib import sweettv_demo, sweettv_sections as sections, sweettv_text as words, ui
+from resources.lib import sweettv_demo, sweettv_files as files, sweettv_sections as sections, sweettv_text as words, ui
 
 _SERIES_SUBTITLE_RE = re.compile(r"(?:сериал|серіал|series|сезон)", re.I)
 
@@ -128,7 +128,10 @@ class Find:
                 self._apply_cards(filtered, empty_msg=words.tr('Nothing found for "{q}".').format(q=query))
                 return
             if sec == "favourites":
-                cards = sections.favourites_cards(self.favs_doc, self.catalog, self.cat_names, self._now(), self.resume_doc)
+                recall = None if self.demo else files.recall_title_detail
+                cards = sections.favourites_cards(
+                    self.favs_doc, self.catalog, self.cat_names, self._now(), self.resume_doc, recall_title=recall
+                )
                 filtered = sections.filter_local_cards(cards, query)
                 self._apply_cards(filtered, empty_msg=words.tr('Nothing found for "{q}".').format(q=query))
                 return
