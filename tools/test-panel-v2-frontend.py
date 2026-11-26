@@ -247,8 +247,12 @@ class TestStaticRoutesServed(_PanelServerMixin, unittest.TestCase):
         code, _, raw = self._get("/sw.js")
         self.assertEqual(code, 200)
         src = raw.decode("utf-8")
-        self.assertIn("ms-panel-v2-2", src)
-        self.assertNotIn("ms-panel-v2-1", src)
+        self.assertIn("ms-panel-v2-3", src)
+        self.assertNotIn("ms-panel-v2-2", src)
+        self.assertIn("apple-mobile-web-app-capable", src)
+        self.assertIn("black-translucent", src)
+        self.assertIn("env(safe-area-inset-", src)
+        self.assertIn("100svh", src)
 
     def test_gzip_etag_304_and_immutable_cache_headers(self):
         code, hdrs, raw = self._get("/static/ws-client.js?v=test123", headers={"Accept-Encoding": "gzip"})
@@ -375,8 +379,9 @@ class TestStaticEsModules(_PanelServerMixin, unittest.TestCase):
 
     def test_v2_boot_wires_screenshot_buttons_and_sheet(self):
         src = self._fetch_js("v2-boot.js")
+        self.assertNotIn("shot-save-rc", src)
         for elem_id in (
-            "shot-save-rc",
+            "shot-save-act",
             "shot-save-btn",
             "f-shot",
             "shot-sheet",
@@ -437,8 +442,9 @@ class TestPanelRootPageV2(_PanelServerMixin, unittest.TestCase):
         html = raw.decode("utf-8")
 
         self.assertRegex(html, r'<symbol[^>]+id="i-cam"[^>]+viewBox="0 0 24 24"')
+        self.assertNotIn('id="shot-save-rc"', html)
         for elem_id in (
-            "shot-save-rc",
+            "shot-save-act",
             "shot-save-btn",
             "f-shot",
             "shot-sheet",

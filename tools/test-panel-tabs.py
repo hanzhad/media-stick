@@ -143,6 +143,7 @@ class Page(unittest.TestCase):
         self.assertIn("if(h==='#air'||h==='#screen'){document.querySelector('[data-go=remote]').click();setMode(h.slice(1));return}", js)
         # every settings page has its hash; a hash opens the tab and the page; no hash on the tab is the list
         self.assertIn("const SP_HASH={acc:'accounts',lang:'language',wifi:'wifi',https:'https',info:'device',act:'maintenance'}", js)
+        self.assertIn("SP_OF.apps='acc'", js)
         self.assertIn("const p=SP_OF[h.replace(/[?].*$/,'').slice(1)];", js)
         self.assertIn("if(!p){if(tab==='settings'&&spage)setPage('');return}", js)
         self.assertIn("function openAccounts(){goPage('acc')}", js)
@@ -169,7 +170,7 @@ class Page(unittest.TestCase):
         order = ["t-acc", "t-wifi", "t-https", "t-info", "t-act"]
         pos = [self.page.index('<section id="%s" data-tab="settings"' % i) for i in order]
         self.assertEqual(pos, sorted(pos))
-        for i, h in (("t-acc", "Аккаунты"), ("t-wifi", "Wi-Fi"), ("t-https", "Пульт как приложение (HTTPS)"),
+        for i, h in (("t-acc", "Приложения"), ("t-wifi", "Wi-Fi"), ("t-https", "Пульт как приложение (HTTPS)"),
                      ("t-info", "О приставке"), ("t-act", "Обслуживание")):
             sec = self.page.split('<section id="%s"' % i, 1)[1].split("</section>", 1)[0]
             self.assertRegex(sec, r"<h2[^>]*>%s</h2>" % re.escape(h))
@@ -214,10 +215,10 @@ class Page(unittest.TestCase):
 
     def test_the_buttons_mode_rows(self):
         rows = [re.findall(r'(?:data-a|id)="([\w-]+)"', g) for g in self.rc().split('<div class="grp">')[1:]]
-        self.assertEqual(rows, [["back", "home", "contextmenu", "txt-open", "shot-save-rc"], ["volumedown", "mute", "volumeup"]])
+        self.assertEqual(rows, [["back", "home", "contextmenu", "txt-open"], ["volumedown", "mute", "volumeup"]])
         self.assertIn('data-a="contextmenu" aria-label="Ещё"', self.rc())
         self.assertIn('id="txt-open" aria-label="Текст"', self.rc())
-        self.assertIn('id="shot-save-rc" type="button" aria-label="Скриншот"', self.rc())
+        self.assertNotIn("shot-save-rc", self.rc())
         for gone in ("rewind", "fastforward", "playpause", '"stop"', '"info"', '"osd"', "Инфо", "Панель"):
             self.assertNotIn(gone, self.rc())
         self.assertIn('data-a="select"', self.rc())                  # the D-pad stays
@@ -265,14 +266,11 @@ class Page(unittest.TestCase):
         lst = self.page.split('id="t-setlist"', 1)[1].split("</section>", 1)[0]
         self.assertEqual(re.findall(r'data-sp="(\w+)"', lst), ["acc", "wifi", "https", "lang", "info", "act"])
         self.assertEqual(re.findall(r'class="sname">([^<]+)<', lst),
-                         ["Аккаунты", "Wi-Fi", "Пульт как приложение", "Язык", "О приставке", "Обслуживание"])
+                         ["Приложения", "Wi-Fi", "Пульт как приложение", "Язык", "О приставке", "Обслуживание"])
         self.assertEqual(lst.count('class="chev" aria-hidden="true">›<'), 6)
-        # the video quality selector sits in the list, after the language, and is not a link to a page
-        self.assertLess(lst.index('data-sp="lang"'), lst.index('id="wt-resume"'))
-        self.assertLess(lst.index('id="wt-resume"'), lst.index('data-sp="info"'))
-        self.assertIn("До 720p", lst)
-        self.assertIn("До 1080p (Pi 3)", lst)
-        self.assertIn("Без лимита / 4K (Pi 5)", lst)
+        self.assertNotIn("wt-resume", lst)
+        self.assertNotIn("@@RESUME_ROW@@", lst)
+        self.assertNotIn("До 720p", lst)
         for i in ("sv-acc", "sv-wifi", "sv-https", "sv-info"):
             self.assertIn('id="%s"' % i, lst)
         for page, sec in (("acc", "t-acc"), ("wifi", "t-wifi"), ("https", "t-https"), ("info", "t-info"), ("act", "t-act")):
@@ -420,13 +418,38 @@ class Settings(unittest.TestCase):
         for s in ("через '+mins+' мин", "через '+Math.round(mins/60)+' ч", "'завтра в '+c[1]", "' мин назад'", "' ч назад'", "' дн назад'"):
             self.assertIn(s, self.page)
 
-    def test_the_keys_row_is_on_the_maintenance_page(self):
+    def test_keys_row_moved_to_apps_and_screenshot_moved_to_maintenance(self):
         act = self.page.split('<section id="t-act"', 1)[1].split("</section>", 1)[0]
-        self.assertIn('id="keys-row" class="srow" onclick="ykOpen()"', act)
-        self.assertIn("Ключи Google", act)
+        self.assertNotIn("keys-row", act)
+        self.assertNotIn("Ключи Google", act)
+        self.assertIn('id="shot-save-act"', act)
+        self.assertIn("Скриншот экрана", act)
+        self.assertIn("#i-cam", act)
+        self.assertLess(act.index('id="cec-wake"'), act.index('id="shot-save-act"'))
         acc = self.page.split('<section id="t-acc"', 1)[1].split("</section>", 1)[0]
-        self.assertNotIn("Ключи Google", acc)
+        self.assertIn("acc-keys-row", acc)
+        self.assertIn("ykOpen()", acc)
+        self.assertIn("Ключи Google", acc)
         self.assertIn("document.querySelectorAll('.srow[data-sp]')", self.page)   # the keys row is not a page link
+
+    def test_ios_standalone_pwa_safe_area(self):
+        p = self.page
+        self.assertIn('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">', p)
+        app_css = re.search(r"#app\{([^}]+)\}", p).group(1)
+        self.assertIn("env(safe-area-inset-top)", app_css)
+        self.assertIn("env(safe-area-inset-left)", app_css)
+        self.assertIn("env(safe-area-inset-right)", app_css)
+        self.assertIn("env(safe-area-inset-bottom)", app_css)
+        sheet_css = re.search(r"\.sheet-box\{([^}]+)\}", p).group(1)
+        self.assertIn("env(safe-area-inset-top)", sheet_css)
+        setup_tag = re.search(r'<div id="setup"[^>]*>', p).group(0)
+        self.assertIn("env(safe-area-inset-top)", setup_tag)
+        rc_lines = [line for line in p.splitlines() if ".rc{" in line]
+        self.assertTrue(any("100vh" in l and "env(safe-area-inset-top)" in l for l in rc_lines))
+        self.assertTrue(any("100svh" in l and "env(safe-area-inset-top)" in l for l in rc_lines))
+        np_lines = [line for line in p.splitlines() if "body.np .rc{" in line]
+        self.assertTrue(any("100vh" in l and "env(safe-area-inset-top)" in l for l in np_lines))
+        self.assertTrue(any("100svh" in l and "env(safe-area-inset-top)" in l for l in np_lines))
 
     def test_dead_leftovers_are_gone(self):
         for gone in ("AIR_SMOOTH", "show('a-msg'", 'id="a-msg"'):

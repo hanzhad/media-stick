@@ -235,6 +235,8 @@ class Library(Base):
         with mock.patch.object(mr, "PREFS", os.path.join(BLOCKER, "prefs")):
             self.assertFalse(mr.write_quality("720p"))
             self.assertEqual(mr.read_quality(), "1080p")
+            self.assertFalse(mr.write_preview_video(False))
+            self.assertTrue(mr.read_preview_video())
 
     def test_the_deprecated_global_local_resume_override_is_removed(self):
         self.assertFalse(hasattr(mr, "enabled"))
@@ -306,6 +308,29 @@ class Quality(Base):
         self.assertEqual([n for n in os.listdir(mr.PREFS) if n.endswith(".tmp")], [])
         self.assertTrue(mr.write_quality("4k"))
         self.assertEqual(mr.read_quality(), "unlimited")
+
+    def test_normalize_preview_video(self):
+        self.assertEqual(mr.PREVIEW_VIDEO_FILE, "preview-video")
+        self.assertIs(mr.DEFAULT_PREVIEW_VIDEO, True)
+        for raw in (True, "1", "true", "TRUE", "yes", "on", "  true \n"):
+            self.assertIs(mr.normalize_preview_video(raw), True, repr(raw))
+        for raw in (False, "0", "false", "FALSE", "no", "off", "  false \n"):
+            self.assertIs(mr.normalize_preview_video(raw), False, repr(raw))
+        for raw in (None, "", "bogus", [], {}):
+            self.assertIs(mr.normalize_preview_video(raw), True, repr(raw))
+
+    def test_read_and_write_preview_video(self):
+        self.assertIs(mr.read_preview_video(), True)
+        os.makedirs(mr.PREFS, exist_ok=True)
+        with open(os.path.join(mr.PREFS, "preview-video"), "w", encoding="utf-8") as f:
+            f.write("bogus\n")
+        self.assertIs(mr.read_preview_video(), True)
+        self.assertTrue(mr.write_preview_video(False))
+        self.assertIs(mr.read_preview_video(), False)
+        self.assertEqual(oct(os.stat(os.path.join(mr.PREFS, "preview-video")).st_mode & 0o777), "0o644")
+        self.assertEqual([n for n in os.listdir(mr.PREFS) if n.endswith(".tmp")], [])
+        self.assertTrue(mr.write_preview_video(True))
+        self.assertIs(mr.read_preview_video(), True)
 
 
 class Favourites(Base):
@@ -715,12 +740,36 @@ class PhoneSweet(Base):
 
     def test_the_quality_choice_over_the_phone_api(self):
         body, code = ps.get(ps.PREFIX + "settings", None)
-        self.assertEqual((code, body["ok"], body["quality"]), (200, True, "1080p"))
+        self.assertEqual((code, body["ok"], body["quality"], body["preview_video"]), (200, True, "1080p", True))
         for q in ("720p", "unlimited", "1080p"):
             body, code = ps.post(ps.PREFIX + "settings", {"quality": q}, None)
-            self.assertEqual((code, body["ok"], body["quality"]), (200, True, q))
+            self.assertEqual((code, body["ok"], body["quality"], body["preview_video"]), (200, True, q, True))
             self.assertEqual(mr.read_quality(), q)
             self.assertEqual(ps.get(ps.PREFIX + "settings", None)[0]["quality"], q)
+
+    def test_preview_video_choice_over_the_phone_api(self):
+        body, code = ps.post(ps.PREFIX + "settings", {"preview_video": False}, None)
+        self.assertEqual((code, body["ok"], body["quality"], body["preview_video"]), (200, True, "1080p", False))
+        self.assertIs(mr.read_preview_video(), False)
+        body, code = ps.post(ps.PREFIX + "settings", {"quality": "720p"}, None)
+        self.assertEqual((code, body["ok"], body["quality"], body["preview_video"]), (200, True, "720p", False))
+        body, code = ps.post(ps.PREFIX + "settings", {"quality": "unlimited", "preview_video": True}, None)
+        self.assertEqual((code, body["ok"], body["quality"], body["preview_video"]), (200, True, "unlimited", True))
+        self.assertIs(mr.read_preview_video(), True)
+        self.assertEqual(mr.read_quality(), "unlimited")
+
+    def test_invalid_preview_video_is_refused_and_nothing_changes(self):
+        for value in (0, 1, "true", "false", "0", "1", None, [], {}):
+            body, code = ps.post(ps.PREFIX + "settings", {"preview_video": value}, None)
+            self.assertEqual(code, 400, repr(value))
+            self.assertIn("error", body)
+        self.assertFalse(os.path.exists(os.path.join(mr.PREFS, "preview-video")))
+
+    def test_preview_video_disk_refusal_returns_500(self):
+        with mock.patch.object(mr, "write_preview_video", lambda value: False):
+            body, code = ps.post(ps.PREFIX + "settings", {"preview_video": False}, None)
+        self.assertEqual(code, 500)
+        self.assertIn("error", body)
 
     def test_invalid_quality_is_refused_and_nothing_changes(self):
         for value in ("480p", "2160p", 1080, None, True, ["1080p"], ""):
@@ -752,6 +801,10 @@ class Texts(Base):
             self.assertIn(msgid, sweettv_text.TEXT, msgid)
             self.assertTrue(sweettv_text.TEXT[msgid].get("ru") and sweettv_text.TEXT[msgid].get("uk"), msgid)
             self.assertNotEqual(sweettv_text.TEXT[msgid]["ru"], msgid)
+
+    def test_phone_tab_is_prilozheniya(self):
+        self.assertEqual(sweettv_text.PHONE_TAB, "Приложения")
+        self.assertIn("Приложения", sweettv_text.ui_texts("ru")["phone_step2"])
 
 
 def ml_url(cid, epg, offset):
