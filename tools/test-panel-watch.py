@@ -836,7 +836,7 @@ class Page(unittest.TestCase):
         self.assertIn('<section id="t-watch" data-tab="watch">', p)
         self.assertIn('<section id="t-remote" data-tab="remote" class="hide">', p)
         self.assertEqual(p.count('<div data-wtbar class="hide"></div>'), 2)   # the bar of «Смотреть» and the bar of «Пульт»
-        self.assertLess(p.index('<div data-wtbar class="hide"></div>', p.index('id="t-remote"')), p.index('class="modes"'))
+        self.assertLess(p.index('<div data-wtbar class="hide"></div>', p.index('id="t-remote"')), p.index('class="rc-shell"'))
         self.assertEqual(p.count("</body>"), 1)
 
     def test_wide_grid(self):

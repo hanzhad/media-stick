@@ -1202,7 +1202,14 @@ class TestPanelV2Routes(unittest.TestCase):
                     f"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n\r\n"
                 ).encode()
             )
-            resp = s.recv(4096).decode("utf-8", errors="replace")
+            # Read HTTP 101 headers up to \r\n\r\n without consuming the immediate on_open WS frame.
+            hdr_buf = bytearray()
+            while not hdr_buf.endswith(b"\r\n\r\n"):
+                chunk = s.recv(1)
+                if not chunk:
+                    break
+                hdr_buf.extend(chunk)
+            resp = hdr_buf.decode("utf-8", errors="replace")
             self.assertIn("101", resp.splitlines()[0])
 
             # on_open must immediately push current ui_context
