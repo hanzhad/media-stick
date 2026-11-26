@@ -85,10 +85,26 @@ CSS = r"""
 .wt-pt{font-size:20px;font-weight:600;line-height:1.25;text-align:center;overflow-wrap:anywhere}
 .wt-ps{text-align:center;color:var(--dim);font-size:14px;margin-top:-8px}
 .wt-seek{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
-.wt-seek input,.wt-vol input{flex:1;min-width:0;padding:0;min-height:44px;border:0;background:transparent;accent-color:#fff}
-.wt-tr{display:flex;justify-content:center;align-items:center;gap:14px}
-.wt-tr .wt-btn{min-width:64px;min-height:56px}
-.wt-tr .wt-btn.pri{width:72px;height:72px;border-radius:50%;padding:0}
+.wt-seekbox{display:flex;flex-direction:column;gap:4px}
+.wt-trow{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+.wt-tmid{flex:1;text-align:center;color:#fff;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wt-tmid.fine{color:#00D2C6;font-weight:700}
+.wt-scwrap{position:relative;padding:10px 0}
+.wt-track{position:relative;height:32px;display:flex;align-items:center;touch-action:none;cursor:pointer;user-select:none;-webkit-user-select:none}
+.wt-rail{position:relative;width:100%;height:6px;border-radius:999px;background:rgba(255,255,255,.18)}
+.wt-fill{height:100%;border-radius:999px;background:#fff;width:0%}
+.wt-ticks{position:absolute;inset:0;pointer-events:none}
+.wt-tick{position:absolute;top:-3px;width:2px;height:12px;margin-left:-1px;border-radius:1px;background:#FFC857}
+.wt-knob{position:absolute;top:50%;left:0%;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.45);transform:translate(-50%,-50%);pointer-events:none}
+.wt-bubble{position:absolute;bottom:44px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 8px;border-radius:12px;background:rgba(12,17,27,.94);border:1px solid rgba(255,255,255,.16);box-shadow:0 8px 20px rgba(0,0,0,.5);pointer-events:none;z-index:8;white-space:nowrap}
+.wt-bframe{width:144px;aspect-ratio:16/9;border-radius:8px;background:#1a2336 no-repeat;overflow:hidden}
+.wt-btime{font-size:12px;font-weight:600;color:#fff;font-variant-numeric:tabular-nums}
+.wt-next{text-align:center;color:var(--dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wt-tapb{text-align:center;font-size:13px;font-weight:700;color:#00D2C6;font-variant-numeric:tabular-nums}
+.wt-vol input{flex:1;min-width:0;padding:0;min-height:44px;border:0;background:transparent;accent-color:#fff}
+.wt-tr{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:nowrap}
+.wt-tr .wt-btn{min-width:52px;min-height:52px;padding:0 12px;font-size:14px}
+.wt-tr .wt-btn.pri{width:68px;height:68px;min-width:68px;border-radius:50%;padding:0}
 .wt-tr .wt-btn.pri .i{fill:currentColor;width:30px;height:30px}
 .wt-opts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 .wt-vol{display:flex;align-items:center;gap:6px}
@@ -180,28 +196,139 @@ const colorOf=s=>{let n=0;for(const c of s)n=(n*31+c.charCodeAt(0))>>>0;return C
 
 // ---- the player: one, in a sheet (opened from the bar of «Смотреть» or of «Пульт») ----
 function mkPlayer(){
-  const P={hold:0,drag:false,open:null,st:null};
+  const P={hold:0,drag:false,pid:null,open:null,st:null,min:0,max:1,val:0,mode:'file',
+    startX:0,startY:0,fine:false,fineAnchorX:0,fineAnchorVal:0,ring:[],
+    thumbs:null,thumbsKey:'',badSheets:{},coalesceTimer:null,coalesceTotal:0};
   const art=h('div',{class:'wt-art'}),title=h('div',{class:'wt-pt'}),subl=h('div',{class:'wt-ps'});
-  const t1=h('span',{text:'0:00'}),t2=h('span',{text:'0:00'});
-  const seek=h('input',{type:'range',min:0,max:1,step:1,value:0,'aria-label':'Перемотка'});
-  const seekRow=h('div',{class:'wt-seek'},t1,seek,t2);
-  seek.addEventListener('input',()=>{P.drag=true;t1.textContent=tm(+seek.value)});
-  seek.addEventListener('change',()=>{P.drag=false;P.hold=Date.now()+1500;
+  const t1=h('span',{class:'wt-t1',text:'0:00'}),tMid=h('span',{class:'wt-tmid'}),t2=h('span',{class:'wt-t2',text:'0:00'});
+  const fill=h('div',{class:'wt-fill'}),ticksEl=h('div',{class:'wt-ticks'}),rail=h('div',{class:'wt-rail'},fill,ticksEl),knob=h('div',{class:'wt-knob'});
+  const bFrame=h('div',{class:'wt-bframe hide'}),bTime=h('div',{class:'wt-btime'}),bubble=h('div',{class:'wt-bubble hide'},bFrame,bTime);
+  const track=h('div',{class:'wt-track',role:'slider',tabindex:'0','aria-label':'Перемотка','aria-valuemin':0,'aria-valuemax':1,'aria-valuenow':0},rail,knob);
+  const scWrap=h('div',{class:'wt-scwrap'},bubble,track);
+  const nextHint=h('div',{class:'wt-next hide'});
+  const seekBox=h('div',{class:'wt-seekbox'},h('div',{class:'wt-trow'},t1,tMid,t2),scWrap,nextHint);
+
+  function setVisual(v){
+    const span=Math.max(1,P.max-P.min);
+    const clamped=Math.max(P.min,Math.min(P.max,v));
+    P.val=clamped;
+    const pct=(clamped-P.min)*100/span;
+    fill.style.width=pct+'%';
+    knob.style.left=pct+'%';
+    bubble.style.left=Math.max(15,Math.min(85,pct))+'%';
+    track.setAttribute('aria-valuemin',String(Math.floor(P.min)));
+    track.setAttribute('aria-valuemax',String(Math.floor(P.max)));
+    track.setAttribute('aria-valuenow',String(Math.floor(clamped)));
+  }
+  function updateBubble(v){
     const st=P.st;
-    if(st&&st.app==='sweettv'&&!st.is_vod&&st.live&&st.prog_stop>st.prog_start){
-      const curPos=Math.max(0,Math.floor(Date.now()/1000)-st.prog_start);
-      const delta=Math.round(+seek.value-curPos);
-      if(delta<0)sctl({op:'seek_by',seconds:delta});
-    }else ctl({op:'seek',to:+seek.value})});
+    bTime.textContent=(P.mode==='wall'?hm(v):tm(v))+(P.fine?' · Точная подводка ×10':'');
+    if(P.mode==='wall'){
+      tMid.textContent=P.fine?'Точная подводка ×10':hm(v);
+      tMid.classList.toggle('fine',P.fine);
+    }else{
+      t1.textContent=tm(v);
+      tMid.textContent=P.fine?'Точная подводка ×10':'';
+      tMid.classList.toggle('fine',P.fine);
+    }
+    const th=P.thumbs;
+    if(th&&th.interval>0&&th.columns>0&&th.rows>0&&th.sheets&&th.sheets.length){
+      const base=P.mode==='wall'&&st&&st.prog_start>0?st.prog_start:P.min;
+      const offset=Math.max(0,v-base);
+      const idx=Math.max(0,Math.floor(offset/th.interval));
+      const per=th.rows*th.columns;
+      const si=Math.floor(idx/per);
+      const rem=idx%per;
+      const row=Math.floor(rem/th.columns);
+      const col=rem%th.columns;
+      const sheetUrl=si<th.sheets.length?th.sheets[si]:'';
+      if(sheetUrl&&!P.badSheets[sheetUrl]&&picture(sheetUrl)){
+        bFrame.style.backgroundImage=picture(sheetUrl);
+        bFrame.style.backgroundSize=(th.columns*100)+'% '+(th.rows*100)+'%';
+        bFrame.style.backgroundPosition=(th.columns>1?col*100/(th.columns-1):0)+'% '+(th.rows>1?row*100/(th.rows-1):0)+'%';
+        bFrame.classList.remove('hide');
+      }else bFrame.classList.add('hide');
+    }else bFrame.classList.add('hide');
+  }
+  track.addEventListener('pointerdown',e=>{
+    if(P.max<=P.min)return;
+    e.preventDefault();
+    try{track.setPointerCapture(e.pointerId)}catch(_){}
+    P.drag=true;P.pid=e.pointerId;P.startX=e.clientX;P.startY=e.clientY;P.fine=false;
+    const rect=track.getBoundingClientRect();
+    const frac=Math.max(0,Math.min(1,(e.clientX-rect.left)/Math.max(1,rect.width)));
+    const initVal=P.min+frac*(P.max-P.min);
+    P.fineAnchorX=e.clientX;P.fineAnchorVal=initVal;
+    P.ring=[{t:Date.now(),v:initVal}];
+    setVisual(initVal);updateBubble(initVal);bubble.classList.remove('hide');
+  });
+  track.addEventListener('pointermove',e=>{
+    if(!P.drag||(P.pid!=null&&e.pointerId!==P.pid))return;
+    const nowMs=Date.now();
+    const dy=Math.abs(e.clientY-P.startY);
+    const rect=track.getBoundingClientRect();
+    let val;
+    if(dy>36){
+      if(!P.fine){P.fine=true;P.fineAnchorX=e.clientX;P.fineAnchorVal=P.val}
+      val=Math.max(P.min,Math.min(P.max,P.fineAnchorVal+(e.clientX-P.fineAnchorX)*3));
+    }else{
+      P.fine=false;
+      const frac=Math.max(0,Math.min(1,(e.clientX-rect.left)/Math.max(1,rect.width)));
+      val=P.min+frac*(P.max-P.min);
+    }
+    P.ring.push({t:nowMs,v:val});
+    while(P.ring.length>1&&nowMs-P.ring[0].t>120)P.ring.shift();
+    setVisual(val);updateBubble(val);
+  });
+  const endDrag=e=>{
+    if(!P.drag||(P.pid!=null&&e.pointerId!==P.pid))return;
+    P.drag=false;P.pid=null;P.fine=false;P.hold=Date.now()+1500;
+    try{track.releasePointerCapture(e.pointerId)}catch(_){}
+    bubble.classList.add('hide');tMid.classList.remove('fine');
+    if(e.type==='pointercancel')return;
+    const cutoff=Date.now()-80;
+    let target=P.val;
+    for(let i=P.ring.length-1;i>=0;i--){
+      if(P.ring[i].t<=cutoff){target=P.ring[i].v;break}
+      target=P.ring[i].v;
+    }
+    target=Math.round(Math.max(P.min,Math.min(P.max,target)));
+    if(P.mode==='wall')sctl({op:'seek_wall',wall_ts:target});
+    else ctl({op:'seek',to:target});
+  };
+  track.addEventListener('pointerup',endDrag);
+  track.addEventListener('pointercancel',endDrag);
+
+  const tapBadge=h('div',{class:'wt-tapb hide'});
+  function pushStep(delta,isSweet){
+    buzz();
+    P.coalesceTotal+=delta;
+    tapBadge.textContent=(P.coalesceTotal>0?'+':'−')+tm(Math.abs(P.coalesceTotal));
+    tapBadge.classList.remove('hide');
+    clearTimeout(P.coalesceTimer);
+    P.coalesceTimer=setTimeout(()=>{
+      const sec=P.coalesceTotal;
+      P.coalesceTotal=0;
+      tapBadge.classList.add('hide');
+      if(!sec)return;
+      if(isSweet||(P.st&&P.st.app==='sweettv'))sctl({op:'seek_by',seconds:sec});
+      else ctl({op:'seek',by:sec});
+    },600);
+  }
+
   const pp=h('button',{class:'wt-btn pri','aria-label':'Пауза или воспроизведение',onclick:()=>{buzz();ctl({op:'playpause'})}});
-  const rw=h('button',{class:'wt-btn','aria-label':'Назад на 10 секунд',text:'−10',onclick:()=>{buzz();ctl({op:'seek',by:-10})}});
-  const ff=h('button',{class:'wt-btn','aria-label':'Вперёд на 10 секунд',text:'+10',onclick:()=>{buzz();ctl({op:'seek',by:10})}});
-  const bStart=h('button',{class:'wt-btn',text:'С начала',onclick:()=>{buzz();sctl({op:'from_start'})}});
-  const bBack15=h('button',{class:'wt-btn',text:'−15с',onclick:()=>{buzz();sctl({op:'seek_by',seconds:-15})}});
-  const bFwd30=h('button',{class:'wt-btn',text:'+30с',onclick:()=>{buzz();sctl({op:'seek_by',seconds:30})}});
-  const bFwd2m=h('button',{class:'wt-btn',text:'+2м',onclick:()=>{buzz();sctl({op:'seek_by',seconds:120})}});
-  const bLive=h('button',{class:'wt-btn pri',text:'В эфир',onclick:()=>{buzz();sctl({op:'live'})}});
-  const dvrRow=h('div',{class:'wt-dvr hide'},bStart,bBack15,bFwd30,bFwd2m,bLive);
+  const bVodBack10=h('button',{class:'wt-btn','aria-label':'Назад на 10 секунд',text:'−10с',onclick:()=>pushStep(-10,false)});
+  const bVodPrev=h('button',{class:'wt-btn','aria-label':'Предыдущий эпизод',text:'⏮',onclick:()=>{buzz();sctl({op:'prev_prog'})}});
+  const bVodNext=h('button',{class:'wt-btn','aria-label':'Следующий эпизод',text:'⏭',onclick:()=>{buzz();sctl({op:'next_prog'})}});
+  const bVodFwd30=h('button',{class:'wt-btn','aria-label':'Вперёд на 30 секунд',text:'+30с',onclick:()=>pushStep(30,false)});
+  const bTvBack15=h('button',{class:'wt-btn',text:'−15с',onclick:()=>pushStep(-15,true)});
+  const bTvPrev=h('button',{class:'wt-btn',text:'⏮ Пред.',onclick:()=>{buzz();sctl({op:'prev_prog'})}});
+  const bTvNext=h('button',{class:'wt-btn',text:'След. ⏭',onclick:()=>{buzz();sctl({op:'next_prog'})}});
+  const bTvFwd1m=h('button',{class:'wt-btn',text:'+1м',onclick:()=>pushStep(60,true)});
+  const bStart=h('button',{class:'wt-btn',text:'↺ С начала',onclick:()=>{buzz();sctl({op:'from_start'})}});
+  const bTvFwd3m=h('button',{class:'wt-btn',text:'+3м',onclick:()=>pushStep(180,true)});
+  const bLive=h('button',{class:'wt-btn pri',text:'● В эфир',onclick:()=>{buzz();sctl({op:'live'})}});
+  const dvrRow=h('div',{class:'wt-dvr hide'},bStart,bTvFwd3m,bLive);
   const bSub=h('button',{class:'wt-chip',text:'Субтитры',onclick:()=>pick('sub')});
   const bAud=h('button',{class:'wt-chip',text:'Аудио',onclick:()=>pick('aud')});
   const optBox=h('div',{class:'wt-opts hide'});
@@ -213,8 +340,9 @@ function mkPlayer(){
   const stop=h('button',{class:'wt-btn wide',text:'Остановить',onclick:()=>{buzz();ctl({op:'stop'});toast('Останавливаю…')}});
   const osd=h('button',{class:'wt-btn','data-a':'osd',text:'Меню плеера',onclick:()=>pressKey('osd')});
   const inf=h('button',{class:'wt-btn','data-a':'info',text:'Описание',onclick:()=>pressKey('info')});
-  const root=h('div',{class:'wt-p'},art,title,subl,seekRow,
-    h('div',{class:'wt-tr'},rw,pp,ff),dvrRow,h('div',{class:'wt-opts'},bSub,bAud),optBox,
+  const root=h('div',{class:'wt-p'},art,title,subl,seekBox,tapBadge,
+    h('div',{class:'wt-tr'},bVodBack10,bVodPrev,bTvBack15,bTvPrev,pp,bTvNext,bTvFwd1m,bVodNext,bVodFwd30),
+    dvrRow,h('div',{class:'wt-opts'},bSub,bAud),optBox,
     h('div',{class:'wt-vol'},vm,vol,vp),h('div',{class:'wt-two'},osd,inf),stop);
   function pick(kind){
     P.open=P.open===kind?null:kind;draw()}
@@ -233,21 +361,77 @@ function mkPlayer(){
     P.st=st;
     title.textContent=st.title||'Без названия';
     const isSw=st.app==='sweettv';
-    const liveBadge=isSw&&!st.is_vod?(st.live||(st.in_progress&&(st.lag_seconds||0)<=15)?'В эфире':(st.lag_seconds>0?'−'+tm(st.lag_seconds)+' от эфира':(st.time>0?'С начала · '+tm(st.time):''))):(st.live?'В эфире':'');
+    const isTv=isSw&&!st.is_vod;
+    const liveBadge=isTv?(st.time_label||(st.live||st.at_live_edge?'В эфире':(st.lag_seconds>0?'−'+tm(st.lag_seconds)+' от эфира':(st.time>0?'С начала · '+tm(st.time):'')))):(st.live?'В эфире':'');
     subl.textContent=[st.programme,st.channel&&st.channel!==st.title?st.channel:'',liveBadge,({youtube:'YouTube',sweettv:'SWEET.TV'})[st.app]].filter(Boolean).join(' · ');
-    dvrRow.classList.toggle('hide',!isSw);
-    if(isSw){
+
+    bVodBack10.classList.toggle('hide',isTv);
+    bVodPrev.classList.toggle('hide',isTv||!st.prev_prog);
+    bVodNext.classList.toggle('hide',isTv||!st.next_prog);
+    bVodFwd30.classList.toggle('hide',isTv);
+    bTvBack15.classList.toggle('hide',!isTv);
+    bTvPrev.classList.toggle('hide',!isTv);
+    bTvNext.classList.toggle('hide',!isTv);
+    bTvFwd1m.classList.toggle('hide',!isTv);
+    bTvPrev.disabled=!st.prev_prog;
+    bTvNext.disabled=!st.next_prog||!st.next_prog.can_archive;
+    dvrRow.classList.toggle('hide',!isTv);
+    if(isTv){
       bStart.classList.toggle('hide',!st.can_rewind&&st.live);
-      bLive.classList.toggle('hide',!st.go_live);
+      bLive.classList.toggle('hide',!!st.at_live_edge||!st.go_live);
     }
+
+    const tk=st.has_thumbs?[st.app,st.cid,st.epg,st.file].join('|'):'';
+    if(!tk){P.thumbsKey='';P.thumbs=null}
+    else if(tk!==P.thumbsKey){
+      P.thumbsKey=tk;P.thumbs=null;P.badSheets={};
+      sg('thumbs').then(t=>{
+        if(P.thumbsKey===tk&&t&&Array.isArray(t.sheets)&&t.sheets.length){
+          P.thumbs=t;
+          t.sheets.forEach(u=>{const im=new Image();im.onerror=()=>{P.badSheets[u]=true};im.src=u});
+        }
+      }).catch(()=>{});
+    }
+
     art.style.backgroundImage=picture(st.thumb);art.classList.toggle('hide',!picture(st.thumb));   // no picture: no grey box
     pp.replaceChildren(ico(st.speed===0?'i-play':'wt-i-pause'));
-    const hasProg=isSw&&!st.is_vod&&st.prog_stop>st.prog_start;
-    const total=hasProg?(st.prog_stop-st.prog_start):(st.total>0&&!st.live?st.total:0);
-    const curPos=hasProg&&st.live?Math.max(0,Math.min(total,Math.floor(Date.now()/1000)-st.prog_start)):st.time;
-    seekRow.classList.toggle('hide',!(total>0));
-    if(total>0&&!P.drag&&Date.now()>P.hold){seek.max=Math.floor(total);seek.value=Math.floor(curPos);t1.textContent=tm(curPos)}
-    t2.textContent=total>0?tm(total):'';
+
+    const isWall=st.timeline_mode==='wall'&&st.window_end>st.window_start;
+    if(isWall){
+      P.mode='wall';P.min=st.window_start;P.max=st.window_end;
+      seekBox.classList.remove('hide');
+      if(!P.drag&&Date.now()>P.hold){
+        const curVal=Math.max(P.min,Math.min(P.max,st.wall_ts||P.min));
+        setVisual(curVal);
+        t1.textContent=hm(P.min);
+        t2.textContent=hm(P.max);
+        tMid.textContent=st.time_label||hm(curVal);
+        tMid.classList.remove('fine');
+      }
+      ticksEl.replaceChildren();
+      (st.slot_ticks||[]).forEach(t=>{
+        if(t>P.min&&t<P.max){
+          ticksEl.append(h('i',{class:'wt-tick',style:'left:'+(t-P.min)*100/(P.max-P.min)+'%'}));
+        }
+      });
+      if(st.next_prog&&st.next_prog.title){
+        nextHint.textContent='Далее в '+hm(st.next_prog.start)+': '+st.next_prog.title;
+        nextHint.classList.remove('hide');
+      }else nextHint.classList.add('hide');
+    }else{
+      P.mode='file';
+      const total=st.total>0&&!st.live?st.total:0;
+      P.min=0;P.max=total;
+      ticksEl.replaceChildren();nextHint.classList.add('hide');
+      seekBox.classList.toggle('hide',!(total>0));
+      if(total>0&&!P.drag&&Date.now()>P.hold){
+        setVisual(st.time||0);
+        t1.textContent=tm(st.time||0);
+        t2.textContent=tm(total);
+        tMid.textContent='';
+        tMid.classList.remove('fine');
+      }
+    }
     bSub.classList.toggle('hide',!st.subtitles.length);bAud.classList.toggle('hide',st.audio.length<2);
     if(typeof st.volume==='number'&&!P.vdrag&&Date.now()>(P.vhold||0))vol.value=st.volume;
     draw()};
@@ -374,7 +558,7 @@ function mkBar(host){
     host.classList.toggle('hide',!st);if(!st)return;
     title.textContent=st.programme&&st.title?st.title+' · '+st.programme:st.title||'Без названия';
     const pic=picture(st.thumb);art.classList.toggle('hide',!pic);art.style.backgroundImage=pic;
-    const pct=st.total>0&&!st.live?Math.min(100,100*st.time/st.total):0;line.classList.toggle('hide',!pct);fill.style.width=pct+'%';
+    const pct=st.timeline_mode==='wall'&&st.window_end>st.window_start?Math.max(0,Math.min(100,100*(st.wall_ts-st.window_start)/(st.window_end-st.window_start))):(st.total>0&&!st.live?Math.min(100,100*st.time/st.total):0);line.classList.toggle('hide',!pct);fill.style.width=pct+'%';
     pp.replaceChildren(ico(st.speed===0?'i-play':'wt-i-pause'))}}}
 const sheetOpen=()=>!W.sheet.classList.contains('hide');
 function showSheet(){
@@ -405,7 +589,7 @@ W.sheet=h('div',{class:'sheet wt-sheet wt-psheet hide',role:'dialog','aria-label
 document.body.append(W.sheet);
 // a swipe down closes the sheet (not one that starts on a slider, and not while the sheet is scrolled)
 let swipeY=null;
-W.pbox.addEventListener('touchstart',e=>{swipeY=W.pbox.scrollTop===0&&e.target.type!=='range'?e.touches[0].clientY:null},{passive:true});
+W.pbox.addEventListener('touchstart',e=>{swipeY=W.pbox.scrollTop===0&&e.target.type!=='range'&&!e.target.closest('.wt-track')?e.touches[0].clientY:null},{passive:true});
 W.pbox.addEventListener('touchend',e=>{if(swipeY!==null&&e.changedTouches[0].clientY-swipeY>80)closeSheet();swipeY=null});
 W.bars=[...document.querySelectorAll('[data-wtbar]')].map(mkBar);
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>setTimeout(tick,0)));

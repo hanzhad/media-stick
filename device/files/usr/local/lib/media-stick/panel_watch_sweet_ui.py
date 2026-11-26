@@ -235,7 +235,18 @@ async function swChannels(out,d,live,retry){
     list.replaceChildren();
     const rows=(r.channels||[]).filter(c=>d.cat==='all'||(d.cat==='fast'?c.is_fast_channel:(c.cats||[]).includes(d.cat)));
     lazy(list,rows,c=>{
-      const n=c.now,open=()=>go({t:'swguide',cid:c.id,title:c.name});
+      const n=c.now,open=()=>{
+        const acts=[];
+        if(c.can_archive&&n)acts.push(['Смотреть с начала ('+hm(n.start)+')',{cid:c.id,epg:n.id||'',from_start:true}]);
+        acts.push(['Смотреть прямой эфир',{cid:c.id}]);
+        const close=()=>s.remove();
+        const s=h('div',{class:'sheet wt-sheet',role:'dialog','aria-label':c.name},h('div',{class:'sheet-back wt-back',onclick:close}),
+          h('div',{class:'sheet-box wt-box'},h('h3',{text:c.name}),
+            h('div',{class:'wt-sub',text:n?n.title+' ('+hm(n.start)+'–'+hm(n.stop)+')':'Прямой эфир'}),
+            acts.map(([label,b],i)=>h('button',{class:'wt-btn wide'+(i?'':' pri'),text:label,onclick:()=>{close();swPlay(b)}})),
+            h('button',{class:'wt-btn wide',text:'Программа на 7 дней',onclick:()=>{close();go({t:'swguide',cid:c.id,title:c.name})}}),
+            h('button',{class:'wt-btn wide',text:'Закрыть',onclick:close})));
+        $('t-watch').append(s);s.querySelector('button').focus()};
       return h('div',{class:'wt-item',role:'button',tabindex:'0',onclick:open,
           onkeydown:e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();open()}}},
         h('div',{class:'wt-ch',style:'background-image:'+picture(c.icon)}),
@@ -315,7 +326,7 @@ async function renderVod(b,d){
     const drawS=()=>{
       sp.replaceChildren(...seasons.map((s,i)=>h('button',{class:'sw-pill'+(i===sIdx?' on':''),text:s.title||('Сезон '+(s.number||i+1)),onclick:()=>{sIdx=i;drawS()}})));
       list.replaceChildren();
-      lazy(list,seasons[sIdx].episodes||[],ep=>swRow({pic:artOf(ep),title:ep.title||('Серия '+(ep.number||'')),
+      lazy(list,seasons[sIdx].episodes||[],ep=>swRow({pic:ep.preview||r.banner||r.poster||'',title:ep.title||('Серия '+(ep.number||'')),
         subs:[fmtMin(ep.duration||0),ep.resume>0?'с '+tm(ep.resume):'',ep.watched?'просмотрено':''].filter(Boolean),
         pct:ep.resume>0&&ep.duration>0?100*ep.resume/ep.duration:0,
         open:()=>swPlay({movie_id:mid,episode_id:ep.id,owner_id:ep.owner_id||r.owner_id||0,start:ep.resume||0})}))};
@@ -334,10 +345,10 @@ async function renderGuide(b,d){
       h('div',{class:'wt-bar'},h('i',{style:'width:'+pct+'%'})));
   }else card.append(h('div',{class:'wt-gt',text:'Нет программы'}));
   const acts=h('div',{class:'wt-acts'},h('button',{class:'wt-btn pri',text:'Смотреть эфир',onclick:()=>swPlay({cid})}));
-  if(cu&&cu.archive)acts.append(h('button',{class:'wt-btn',text:'С начала',onclick:()=>swPlay({cid,epg:cu.id,from_start:true})}));
+  if(cu&&cu.can_archive)acts.append(h('button',{class:'wt-btn',text:'С начала',onclick:()=>swPlay({cid,epg:cu.id,from_start:true})}));
   if(cu&&cu.resume>0)acts.append(h('button',{class:'wt-btn',text:'Продолжить с '+tm(cu.resume),onclick:()=>swPlay({cid,epg:cu.id,at:'resume'})}));
   card.append(acts);
-  if(!r.archive)card.append(h('div',{class:'wt-note',text:'У этого канала нет архива'}));
+  if(!r.can_archive)card.append(h('div',{class:'wt-note',text:'У этого канала нет архива'}));
   out.append(card);
   // 7-day date pills
   const daysRow=h('div',{class:'sw-days'}),dayList=h('div',{class:'wt-list'});
@@ -354,9 +365,9 @@ async function renderGuide(b,d){
     const past=r.past||[],next=r.next||[];
     if(past.length){
       dayList.append(h('h3',{class:'wt-h',text:'Ранее'}));
-      lazy(dayList,past,e=>swRow({title:e.title,subs:[dayTime(e.start)+(e.watched?' · просмотрено':''),e.archive?'':'Нет в архиве'],
-        pct:e.resume>0&&e.stop>e.start?100*e.resume/(e.stop-e.start):0,dim:!e.archive,
-        open:e.archive?()=>swSheet(e.title,dayTime(e.start)+'–'+hm(e.stop),
+      lazy(dayList,past,e=>swRow({title:e.title,subs:[dayTime(e.start)+(e.watched?' · просмотрено':''),e.can_archive?'':'Нет в архиве'],
+        pct:e.resume>0&&e.stop>e.start?100*e.resume/(e.stop-e.start):0,dim:!e.can_archive,
+        open:e.can_archive?()=>swSheet(e.title,dayTime(e.start)+'–'+hm(e.stop),
           (e.resume>0?[['Продолжить с '+tm(e.resume),{cid,epg:e.id,at:'resume'}]]:[]).concat([['Смотреть с начала',{cid,epg:e.id,at:'start'}]])):null}))}
     if(next.length){
       dayList.append(h('h3',{class:'wt-h',text:'Далее'}));
@@ -367,7 +378,7 @@ async function renderGuide(b,d){
     try{const dr=await sg('day?cid='+encodeURIComponent(cid)+'&date='+encodeURIComponent(iso));if(cur()!==d||selDay!==iso)return;
       dayList.replaceChildren();
       const items=dr.items||[];if(!items.length){dayList.append(msgCard('empty'));return}
-      const hasArch=e=>!!(e&&(e.can_archive||e.playable_in_archive||e.archive));
+      const hasArch=e=>!!(e&&e.can_archive);
       lazy(dayList,items,e=>swRow({title:e.title,subs:[hm(e.start)+'–'+hm(e.stop),e.watched?'просмотрено':''],
         pct:e.resume>0&&e.stop>e.start?100*e.resume/(e.stop-e.start):0,dim:!hasArch(e),
         open:hasArch(e)?()=>swSheet(e.title,hm(e.start)+'–'+hm(e.stop),

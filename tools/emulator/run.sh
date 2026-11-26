@@ -62,8 +62,12 @@ if [ -n "${SWEETTV_SETTINGS:-}" ] && [ -f "$SWEETTV_SETTINGS" ]; then
     ln -s "$USERDATA_TMP/plugin.video.sweettv" "$KODI_HOME/userdata/addon_data/plugin.video.sweettv"
 fi
 
+mkdir -p /var/cache/media-stick/sweettv
 if [ -n "${SWEETTV_CHANNELS:-}" ] && [ -f "$SWEETTV_CHANNELS" ]; then
-    cp "$SWEETTV_CHANNELS" "$KODI_HOME/temp/channelList.json"
+    PYTHONPATH=/usr/local/lib/media-stick python3 -c '
+import sys, mediastick_sweetstore as s
+s.default_store().seed_from_channel_file(sys.argv[1])
+' "$SWEETTV_CHANNELS"
 fi
 if [ -n "${SWEETTV_STATE_DB:-}" ] && [ -f "$SWEETTV_STATE_DB" ]; then
     cp "$SWEETTV_STATE_DB" /var/lib/media-stick/resume/state.db

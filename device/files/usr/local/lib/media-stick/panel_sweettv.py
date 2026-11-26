@@ -4,10 +4,11 @@ Routes /api/sweettv/..., answered as (body, status) like those of panel_watch. T
 list as a dict, so the tests need no files and no Kodi. Which programme to play and from where is decided by
 mediastick_sweetlive, the same function that the seek of the TV remote goes through.
 """
+import math
 import os
 import re
 import time
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 import panel_watch as pw
 
@@ -25,6 +26,16 @@ try:
     import mediastick_sweetapi as api
 except ImportError:   # likewise: search and the days of a channel refuse, the rest works
     api = None
+
+try:
+    import mediastick_sweetplay as sp
+except ImportError:
+    sp = None
+
+try:
+    import mediastick_sweetstore as sweetstore
+except ImportError:
+    sweetstore = None
 
 PREFIX = "/api/sweettv/"
 API_STATUS = {"auth": 409, "network": 502, "service": 502, "format": 502, "unknown": 404, "bad_date": 400, "too_old": 409,
@@ -49,9 +60,6 @@ HOME_LABELS = {
     "films": "Фильмы",
     "channels": "ТВ-каналы",
 }
-_slim_cache = {"key": None, "value": None}
-
-
 def _t(msgid):
     """Every string the page may show goes through the dictionary (sweettv_text.TEXT); English when there is none."""
     return ml.text(msgid) if ml else msgid
@@ -62,17 +70,14 @@ def slim(raw):
     return ml.slim(raw) if ml else {"list": [], "categories": []}
 
 
-def channels():
-    """The channel list of the add-on (reduced), read again only when the file changed; {} when there is none."""
-    path = pw._sweet_list_path()
-    try:
-        key = os.stat(path).st_mtime
-    except OSError:
+def channels(now=None):
+    """The channel list from SweetStore (GetChannels-compatible dict); {} when there is none."""
+    if sweetstore is None:
         return {}
-    if _slim_cache["key"] != key:
-        raw, _ = pw._read_json(path)
-        _slim_cache.update(key=key, value=slim(raw))
-    return _slim_cache["value"] or {}
+    try:
+        return sweetstore.default_store().get_channels_payload(now=now)
+    except Exception:
+        return {}
 
 
 def _rows(value):
@@ -128,7 +133,7 @@ def _saved_vod(local, movie_id, episode_id=""):
 
 def _entry(channel, p, now, archive=True, local=None):
     entry = {"id": str(p.get("id")), "title": str(p.get("text") or "")[:200], "start": ml._seconds(p.get("time_start")),
-             "stop": ml._seconds(p.get("time_stop")), **({"archive": archive_ok(channel, p, now)} if archive else {})}
+             "stop": ml._seconds(p.get("time_stop")), **({"can_archive": archive_ok(channel, p, now)} if archive else {})}
     if archive and local is not None:
         saved = _saved(local, channel.get("id"), p.get("id"))
         min_pos = mr.MIN_POS if mr else 15
@@ -160,7 +165,7 @@ def guide_view(raw, cid, now, local=None):
     past.sort(key=lambda p: -ml._seconds(p["time_start"]))
     upcoming.sort(key=lambda p: ml._seconds(p["time_start"]))
     return {"ok": True, "cid": str(cid), "name": str(channel.get("name") or "")[:120],
-            "archive": bool(channel.get("catchup")) and channel.get("available") is not False,
+            "can_archive": bool(channel.get("catchup")) and channel.get("available") is not False,
             "archive_days": channel.get("catchup_duration") if isinstance(channel.get("catchup_duration"), int) else 0,
             "now": int(now),
             "past": [_entry(channel, p, now, local=local) for p in past],
@@ -169,19 +174,130 @@ def guide_view(raw, cid, now, local=None):
             "counts": {"past": len(past), "next": len(upcoming)}}
 
 
-def decorate(view, raw, now):
-    """Enrich panel_watch.now_view with unified Live/DVR timeline and VOD flag."""
+def _clean_thumbs(thumbs):
+    if not isinstance(thumbs, dict):
+        return None
+    rows, cols, interval = thumbs.get("rows"), thumbs.get("columns"), thumbs.get("interval")
+    if (
+        isinstance(rows, bool) or not isinstance(rows, int) or rows <= 0
+        or isinstance(cols, bool) or not isinstance(cols, int) or cols <= 0
+        or isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0
+    ):
+        return None
+    sheets = []
+    for raw_url in thumbs.get("sheets") or ():
+        safe = pw.image_url(raw_url)
+        if not safe:
+            continue
+        host = (urlsplit(safe).hostname or "").lower()
+        if host == "sweet.tv" or host.endswith(".sweet.tv"):
+            sheets.append(safe)
+    if not sheets:
+        return None
+    return {"rows": rows, "columns": cols, "interval": interval, "sheets": sheets}
+
+
+def _prog_hint(p):
+    if not isinstance(p, dict):
+        return None
+    return {
+        "epg": str(p.get("epg") or p.get("id") or ""),
+        "title": str(p.get("title") or p.get("text") or ""),
+        "start": int(p.get("start") or p.get("time_start") or 0),
+        "stop": int(p.get("stop") or p.get("time_stop") or 0),
+        "can_archive": bool(p.get("can_archive")),
+    }
+
+
+def _adjacent_hints(cid, epg_id, now_i):
+    if sweetstore is None or not cid:
+        return None, None, None
+    try:
+        st = sweetstore.default_store()
+        cur_p = st.recall_programme(epg_id, cid=cid, now=now_i) if epg_id else st.programme_at(cid, now_i)
+        cur_epg = str((cur_p or {}).get("epg") or epg_id or "")
+        if not cur_epg:
+            return cur_p, None, None
+        p_prev, p_next = st.adjacent_programmes(cid, cur_epg)
+        return cur_p, _prog_hint(p_prev), _prog_hint(p_next)
+    except Exception:
+        return None, None, None
+
+
+def decorate(view, raw, now, session=None):
+    """Enrich panel_watch.now_view with active session, wall_timeline, prev/next, and sprite flags."""
     view = dict(view)
-    cid, epg = str(view.get("cid") or ""), str(view.get("epg") or "")
-    is_vod = bool(cid.startswith("vod:") or "playvod/" in str(view.get("file") or ""))
-    view.update(programme="", prog_start=0, prog_stop=0, in_progress=False, lag_seconds=0,
-                can_rewind=False, go_live=False, is_vod=is_vod)
+    file_str = str(view.get("file") or "")
+    app_name = str(view.get("app") or "")
+    cid = str(view.get("cid") or "")
+    epg = str(view.get("epg") or "")
+    use_session = bool(
+        isinstance(session, dict)
+        and session.get("kind") in ("live", "epg", "vod")
+        and (app_name == "sweettv" or bool(cid) or (app_name in ("", "other") and file_str.startswith(("http://", "https://"))))
+    )
+    is_vod = bool((use_session and session.get("kind") == "vod") or cid.startswith("vod:") or "playvod/" in file_str)
+    view.update(
+        programme="", prog_start=0, prog_stop=0, in_progress=False, lag_seconds=0,
+        can_rewind=False, go_live=False, is_vod=is_vod,
+        timeline_mode="file", wall_ts=0, window_start=0, window_end=0,
+        slot_ticks=[], time_label="", at_live_edge=False,
+        prev_prog=None, next_prog=None, has_thumbs=False,
+    )
+    now_i = int(now)
+    if use_session:
+        view["app"] = "sweettv"
+        view["has_thumbs"] = bool(_clean_thumbs(session.get("thumbnails")))
+        if is_vod:
+            view["live"] = False
+            if not view.get("title") and session.get("title"):
+                view["title"] = str(session["title"])[:200]
+            return view
+        kind = session["kind"]
+        cid = str(session.get("cid") or cid)
+        epg = str(session.get("epg_id") or epg)
+        view["cid"] = cid
+        view["epg"] = epg
+        view["live"] = (kind == "live")
+        if not view.get("channel") and session.get("channel_name"):
+            view["channel"] = str(session["channel_name"])[:120]
+        if not view.get("title") and session.get("title"):
+            view["title"] = str(session["title"])[:200]
+        if sp is not None:
+            wt = sp.wall_timeline(session, view.get("time", 0), now_i)
+            for k in ("timeline_mode", "wall_ts", "window_start", "window_end",
+                      "slot_ticks", "time_label", "lag_seconds", "at_live_edge"):
+                view[k] = wt[k]
+        cur_p, prev_p, next_p = _adjacent_hints(cid, epg, now_i)
+        slot_start = int(session.get("slot_start") or (cur_p or {}).get("start") or 0)
+        slot_stop = int(session.get("slot_stop") or (cur_p or {}).get("stop") or 0)
+        ch = _channel(raw, cid)
+        view["programme"] = str((cur_p or {}).get("title") or session.get("title") or "")[:120]
+        view["prog_start"] = slot_start
+        view["prog_stop"] = slot_stop
+        view["in_progress"] = bool(slot_start and slot_stop and slot_start <= now_i < slot_stop) or (kind == "live" and not slot_stop)
+        view["go_live"] = (kind == "epg")
+        view["can_rewind"] = bool(kind == "live" and ch and ch.get("catchup") and ch.get("available") is not False)
+        view["prev_prog"] = prev_p
+        view["next_prog"] = next_p
+        return view
+
     if is_vod or not cid or ml is None:
         return view
     tl = ml.live_timeline(raw, cid, epg, view.get("time", 0), view.get("total", 0), now)
     view.update(programme=tl["programme"], prog_start=tl["start"], prog_stop=tl["stop"],
                 in_progress=tl["in_progress"], lag_seconds=tl["lag_seconds"],
                 can_rewind=False if epg else tl["can_rewind"], go_live=tl["go_live"])
+    if sp is not None:
+        synth = {"kind": "epg" if epg else "live", "cid": cid, "epg_id": epg,
+                 "slot_start": tl["start"], "slot_stop": tl["stop"], "channel_name": view.get("channel") or ""}
+        wt = sp.wall_timeline(synth, view.get("time", 0), now_i)
+        for k in ("timeline_mode", "wall_ts", "window_start", "window_end",
+                  "slot_ticks", "time_label", "lag_seconds", "at_live_edge"):
+            view[k] = wt[k]
+    _cur, prev_p, next_p = _adjacent_hints(cid, epg, now_i)
+    view["prev_prog"] = prev_p
+    view["next_prog"] = next_p
     return view
 
 
@@ -198,9 +314,30 @@ def rewind(raw, file, by, now):
     return {"switched": "", "note": ""}
 
 
+def _from_store(cid, epg, now):
+    if sweetstore is None:
+        return None
+    try:
+        found = sweetstore.default_store().recall_programme(epg, cid=cid, now=now)
+    except Exception:
+        return None
+    if not found:
+        return None
+    return {
+        "id": epg,
+        "time_start": found.get("time_start") or found.get("start"),
+        "time_stop": found.get("time_stop") or found.get("stop"),
+        "available": found.get("available", True),
+    }
+
+
 def _from_api(cid, epg, now):
-    found = api.recall(cid, epg, now) if api else None
-    return {"id": epg, "time_start": found["start"], "time_stop": found["stop"], "available": found["available"]} if found else None
+    found = _from_store(cid, epg, now) or (api.recall(cid, epg, now) if api else None)
+    if not found:
+        return None
+    if "time_start" in found:
+        return found
+    return {"id": epg, "time_start": found["start"], "time_stop": found["stop"], "available": found["available"]}
 
 
 def _clean_vod_play(body, local=None):
@@ -347,11 +484,11 @@ def channels_view(raw, now, favs_data=None):
     """GET /api/sweettv/channels: all playable channels with FAST flag, categories, current/next, favourite."""
     if ml is None:
         raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
-    try:
-        import mediastick_sweetstore as _store
-        _store.default_store().upsert_channels(raw, now=now)
-    except Exception:
-        pass
+    if sweetstore is not None and isinstance(raw, dict) and raw.get("list") and "updated_at" not in raw:
+        try:
+            sweetstore.default_store().upsert_channels(raw, now=now)
+        except Exception:
+            pass
     fkeys = mr.fav_keys(favs_data) if mr else set()
     out = []
     for c in _rows(raw.get("list") if isinstance(raw, dict) else None):
@@ -376,7 +513,7 @@ def channels_view(raw, now, favs_data=None):
             "icon": pw.image_url(c.get("icon_v2_url") or c.get("icon_url")),
             "cats": [str(x) for x in (c.get("category") or []) if x is not None],
             "is_fast_channel": bool(c.get("is_fast_channel")),
-            "archive": bool(c.get("catchup")),
+            "can_archive": bool(c.get("catchup")) and c.get("available") is not False,
             "favourite": ("ch:" + cid) in fkeys,
             "now": now_obj,
             "next": nxt_obj,
@@ -504,26 +641,55 @@ def toggle_favourite(body):
 
 
 def clean_ctl(body):
-    """Validate POST /api/sweettv/ctl {op: from_start|seek_by|live, seconds?}."""
+    """Validate POST /api/sweettv/ctl {op: from_start|live|prev_prog|next_prog|seek_by|seek_wall, seconds?, wall_ts?}."""
     if not isinstance(body, dict):
         raise pw.Refused(_t("Wrong value."))
     op = body.get("op")
-    if op in ("from_start", "live"):
+    if op in ("from_start", "live", "prev_prog", "next_prog"):
         return {"op": op}
     if op == "seek_by":
         sec = body.get("seconds")
-        if isinstance(sec, bool) or not isinstance(sec, (int, float)) or sec != sec or not -SEEK_BACK_MAX <= sec <= SEEK_BACK_MAX:
+        if (
+            isinstance(sec, bool)
+            or not isinstance(sec, (int, float))
+            or not math.isfinite(sec)
+            or not -SEEK_BACK_MAX <= sec <= SEEK_BACK_MAX
+        ):
             raise pw.Refused(_t("Wrong value."))
         return {"op": "seek_by", "seconds": int(sec)}
+    if op == "seek_wall":
+        wts = body.get("wall_ts")
+        if (
+            isinstance(wts, bool)
+            or not isinstance(wts, (int, float))
+            or not math.isfinite(wts)
+            or wts <= 0
+            or wts >= 10 ** 11
+        ):
+            raise pw.Refused(_t("Wrong value."))
+        return {"op": "seek_wall", "wall_ts": int(wts)}
     raise pw.Refused(_t("Wrong value."))
 
 
+def _send_notify(rpc, req):
+    res = pw._rpc(rpc, req["method"], req["params"])
+    return not (res is None or (isinstance(res, dict) and "error" in res))
+
+
 def ctl(body, rpc):
-    """POST /api/sweettv/ctl: unified Live/DVR/VOD controls."""
+    """POST /api/sweettv/ctl: unified Live/DVR/VOD controls routed via sweettv.ctl NotifyAll."""
     if ml is None:
         raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
     c = clean_ctl(body)
     pid = pw._player_id(rpc)
+    session = sp.read_active_session() if sp is not None else None
+    if pid is None and session is None:
+        raise pw.Refused("Сейчас ничего не играет.", 409)
+    op = c["op"]
+    if sp is not None:
+        req = sp.build_ctl_notify(op=op, seconds=c.get("seconds", 0), wall_ts=c.get("wall_ts", 0))
+        if _send_notify(rpc, req):
+            return {"ok": True}
     if pid is None:
         raise pw.Refused("Сейчас ничего не играет.", 409)
     item = (pw._rpc(rpc, "Player.GetItem", {"playerid": pid, "properties": ["file"]}) or {}).get("item")
@@ -532,7 +698,6 @@ def ctl(body, rpc):
     ref = pw.sweet_ref(file)
     pos = pw.kodi_seconds(props.get("time"))
     raw, now = channels(), time.time()
-    op = c["op"]
     if op == "live":
         if not ref or str(ref[0]).startswith("vod:") or not ref[1]:
             raise pw.Refused(_t("An archived programme is not playing."), 409)
@@ -549,6 +714,8 @@ def ctl(body, rpc):
             raise pw.Refused(_t(ml.NO_ARCHIVE), 409)
         pw._rpc(rpc, "Player.Seek", {"playerid": pid, "value": pw.time_value(0)})
         return {"ok": True, "offset": 0}
+    if op in ("prev_prog", "next_prog", "seek_wall"):
+        return {"ok": True}
     # op == "seek_by"
     sec = c["seconds"]
     if ref and not str(ref[0]).startswith("vod:") and not ref[1]:
@@ -586,6 +753,34 @@ def search_view(raw, needle, now, quality="1080p", client=None):
     return _answered(api.search(needle, api.channel_map(raw), now, client=client, quality=quality))
 
 
+def _canonical_day_item(p, cid, now, local_data=None):
+    epg_id = str(p.get("epg") or p.get("id") or "")
+    start = int(p.get("start") or p.get("time_start") or 0)
+    stop = int(p.get("stop") or p.get("time_stop") or 0)
+    item = {
+        "id": epg_id,
+        "epg": epg_id,
+        "cid": str(cid),
+        "title": str(p.get("title") or p.get("text") or ""),
+        "start": start,
+        "stop": stop,
+        "when": str(p.get("when") or (api.when_text(start, now) if api and start else "")),
+        "live": bool(p.get("live")) if "live" in p else bool(start <= now < stop),
+        "can_archive": bool(p.get("can_archive")),
+        "available": p.get("available") is not False,
+        "preview": str(p.get("preview") or p.get("image_url") or ""),
+        "season": int(p.get("season") or 0),
+        "episode": int(p.get("episode") or 0),
+        "show_id": str(p.get("show_id") or ""),
+    }
+    if local_data is not None:
+        saved = _saved(local_data, cid, epg_id)
+        min_pos = mr.MIN_POS if mr else 15
+        item["resume"] = saved["pos"] if saved and not saved["done"] and saved["pos"] >= min_pos else 0
+        item["watched"] = bool(saved and saved["done"])
+    return item
+
+
 def day_view(raw, cid, date_text, now, local_data=None, client=None):
     if ml is None or api is None:
         raise pw.Refused(_t("SWEET.TV is not available on this device."), 503)
@@ -594,17 +789,31 @@ def day_view(raw, cid, date_text, now, local_data=None, client=None):
     when = api.parse_date(date_text)
     if when is None:
         raise pw.Refused(_t("Wrong date."))
-    res = _answered(api.day(cid, api.noon(when), api.channel_map(raw), now, client=client))
-    if local_data is not None:
-        min_pos = mr.MIN_POS if mr else 15
-        for p in res.get("items") or []:
-            saved = _saved(local_data, cid, p.get("epg") or p.get("id"))
-            p["resume"] = saved["pos"] if saved and not saved["done"] and saved["pos"] >= min_pos else 0
-            p["watched"] = bool(saved and saved["done"])
-            arch = bool(p.get("can_archive") or p.get("playable_in_archive") or p.get("archive"))
-            p["can_archive"] = arch
-            p["playable_in_archive"] = arch
-            p["archive"] = arch
+    ch_map = api.channel_map(raw)
+    ch = ch_map.get(str(cid))
+    code = api.check_day(ch, when, now)
+    if code:
+        return _answered({"ok": False, "error": code})
+    if sweetstore is not None:
+        try:
+            stored = sweetstore.default_store().channel_day(cid, when.isoformat(), now=now)
+        except Exception:
+            stored = []
+        if stored:
+            items = [_canonical_day_item(p, cid, now, local_data) for p in stored if (p.get("stop") or 0) > (p.get("start") or 0)]
+            if items:
+                return {
+                    "ok": True,
+                    "cid": str(cid),
+                    "name": str((ch or {}).get("name") or "")[:120],
+                    "date": when.isoformat(),
+                    "now": int(now),
+                    "archive_days": api._archive_days(ch),
+                    "future_days": api._future_days(ch),
+                    "items": items,
+                }
+    res = _answered(api.day(cid, api.noon(when), ch_map, now, client=client))
+    res["items"] = [_canonical_day_item(p, cid, now, local_data) for p in (res.get("items") or [])]
     return res
 
 
@@ -614,9 +823,41 @@ def open_url(url, rpc):
     pw._rpc(rpc, "Player.Open", {"item": {"file": url}})
 
 
+def _play_notify_req(body, epg, offset):
+    if isinstance(body, dict) and "movie_id" in body and "cid" not in body:
+        ep_raw = body.get("episode_id")
+        ep_id = "" if ep_raw in (None, "", "null") else str(ep_raw)
+        owner_raw = body.get("owner_id", 0)
+        owner_id = int(owner_raw) if owner_raw not in (None, "") else 0
+        return sp.build_play_notify(
+            kind="vod",
+            movie_id=str(body.get("movie_id")),
+            episode_id=ep_id,
+            owner_id=owner_id,
+            start_offset=offset,
+            title=str(body.get("title") or ""),
+        )
+    cid = str(body.get("cid"))
+    if epg:
+        return sp.build_play_notify(
+            kind="epg",
+            cid=cid,
+            epg_id=str(epg),
+            start_offset=offset,
+            from_start=(body.get("from_start") is True),
+            title=str(body.get("title") or ""),
+        )
+    return sp.build_play_notify(kind="live", cid=cid, from_start=False, title=str(body.get("title") or ""))
+
+
 def play(body, rpc):
     url, epg, offset = play_request(channels(), body, time.time(), local())
-    open_url(url, rpc)
+    if sp is not None:
+        req = _play_notify_req(body, epg, offset)
+        if not _send_notify(rpc, req):
+            open_url(url, rpc)
+    else:
+        open_url(url, rpc)
     res = {"ok": True, "epg": epg, "offset": offset}
     if isinstance(body, dict) and "movie_id" in body and "cid" not in body:
         res["movie_id"] = str(body.get("movie_id"))
@@ -633,8 +874,22 @@ def golive(rpc):
     ref = pw.sweet_ref((item or {}).get("file"))
     if not ref or str(ref[0]).startswith("vod:") or not ref[1]:
         raise pw.Refused(_t("An archived programme is not playing."), 409)
-    open_url(ml.url(ref[0]), rpc)
+    if sp is not None:
+        req = sp.build_play_notify(kind="live", cid=str(ref[0]))
+        if not _send_notify(rpc, req):
+            open_url(ml.url(ref[0]), rpc)
+    else:
+        open_url(ml.url(ref[0]), rpc)
     return {"ok": True}
+
+
+def thumbs_view():
+    """GET /api/sweettv/thumbs: validated https://*.sweet.tv sprite cues for active stream."""
+    raw = sp.read_active_thumbnails() if sp is not None else None
+    clean = _clean_thumbs(raw)
+    if clean is None:
+        raise pw.Refused("Миниатюры недоступны.", 404)
+    return {"ok": True, **clean}
 
 
 # ---- routes ----------------------------------------------------------------------------------
@@ -668,6 +923,8 @@ def get(path, rpc):
             return search_view(channels(), (args.get("q") or [""])[0], time.time(), _quality()), 200
         if route == PREFIX + "day":
             return day_view(channels(), (args.get("cid") or [""])[0], (args.get("date") or [""])[0], time.time(), local()), 200
+        if route == PREFIX + "thumbs":
+            return thumbs_view(), 200
     except pw.Refused as e:
         return {"error": e.message}, e.code
     return {"error": "not found"}, 404
