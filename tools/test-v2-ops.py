@@ -210,6 +210,35 @@ class TestV2Documentation(unittest.TestCase):
             with self.subTest(topic=topic):
                 self.assertIn(topic, text, f"README.md missing v2 highlight {topic!r}")
 
+    def test_emulator_wslg_and_sweetstore_documented_in_readme_and_agents(self):
+        required_tokens = (
+            "tools/emulator/start.sh",
+            "--live",
+            "--demo",
+            "--headless",
+            "--build",
+            "/dev/shm",
+            "18080",
+            "http://localhost:18080",
+            ":9090",
+            "SweetStore",
+            "/var/cache/media-stick/sweettv/sweettv.db",
+            "SweetPlayerController",
+            "sweettv_player",
+            "mediastick_sweetplay",
+        )
+        for doc_name, doc_path in (("README.md", README_MD), ("AGENTS.md", AGENTS_MD)):
+            text = _read_text(doc_path)
+            for token in required_tokens:
+                with self.subTest(doc=doc_name, token=token):
+                    self.assertTrue(token in text, f"{doc_name} missing required topic {token!r}")
+            for rx_label, pattern in (("WSLg", r"(?i)\bwslg\b"), ("Xvfb", r"(?i)\bxvfb\b")):
+                with self.subTest(doc=doc_name, topic=rx_label):
+                    self.assertIsNotNone(re.search(pattern, text), f"{doc_name} missing {rx_label} display mode")
+
+        readme_text = _read_text(README_MD)
+        self.assertFalse(":8080" in readme_text, "README.md must not reference stale emulator port :8080")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

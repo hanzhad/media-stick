@@ -106,6 +106,72 @@ class PureCoreSecrets(unittest.TestCase):
         for val in safe_values:
             self.assertFalse(ms.contains_secret(val), repr(val))
 
+    def test_contains_secret_allows_boolean_values_and_capability_flags(self):
+        safe_capability_and_bool_cases = [
+            {"available_without_auth": False},
+            {"available_without_auth": True},
+            {"AVAILABLE_WITHOUT_AUTH": False},
+            {"available_without_auth": 0},
+            {"available_without_auth": 1},
+            {"without_auth": 0},
+            {"without_auth": 1},
+            {"without_auth": False},
+            {"requires_auth": True},
+            {"requires_auth": False},
+            {"requires_auth": 1},
+            {"require_auth": True},
+            {"require_auth": 0},
+            {"auth_required": True},
+            {"auth_required": 0},
+            {"auth": False},
+            {"auth": True},
+            {"token": False},
+            {"has_token": True},
+            {"cookie": False},
+            {
+                "status": "OK",
+                "list": [
+                    {"id": 15, "name": "СТБ HD", "available_without_auth": False, "requires_auth": True},
+                    {"id": 16, "name": "FAST TV", "available_without_auth": True, "without_auth": 1},
+                ],
+            },
+        ]
+        for val in safe_capability_and_bool_cases:
+            with self.subTest(safe=val):
+                self.assertFalse(ms.contains_secret(val), repr(val))
+
+        # Adjacent negative / boundary cases: actual credentials and secret string patterns still refused
+        jwt_sample = (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IlRlc3QifQ."
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        )
+        still_secret_cases = [
+            {"token": "abc123"},
+            {"password": "pw"},
+            {"passwd": "pw"},
+            {"secret": "sec"},
+            {"cookie": "sid=1"},
+            {"authorization": "Basic dXNlcjpwYXNz"},
+            {"bearer": "tok"},
+            {"refresh_token": "ref"},
+            {"access_token": "acc"},
+            {"api_key": "key-1"},
+            {"client_secret": "csec"},
+            {"auth": "secret-sig"},
+            {"auth": 12345},
+            {"auth": ["sig"]},
+            {"auth": {"k": "v"}},
+            {"available_without_auth": "Bearer secret123"},
+            {"requires_auth": "https://cdn.example.com/stream.m3u8?token=sig123"},
+            {"without_auth": {"access_token": "secret"}},
+            jwt_sample,
+            {"jwt_field": jwt_sample},
+        ]
+        for bad in still_secret_cases:
+            with self.subTest(secret=bad):
+                self.assertTrue(ms.contains_secret(bad), repr(bad))
+
 
 class PureCoreEncodingAndClassification(unittest.TestCase):
     def test_encode_decode_payload_roundtrip_and_compression(self):
@@ -413,6 +479,18 @@ class CacheStoreTests(unittest.TestCase):
         self.assertIsNone(self.cache.load_snapshot("sweettv", "default"))
         # Existing safe entry untouched
         self.assertEqual(self.cache.get_page("sweettv:main", "safe", version=1, lang="uk", ttl=60, max_age=600, now=NOW).data, {"ok": True})
+
+    def test_capability_flags_allowed_and_non_bool_auth_refused_on_store_writes(self):
+        cap_page = {
+            "cards": [{"id": 15, "available_without_auth": False, "requires_auth": True, "without_auth": 0}],
+        }
+        self.cache.put_page("sweettv:main", "channels", cap_page, version=4, lang="uk", now=NOW)
+        hit = self.cache.get_page("sweettv:main", "channels", version=4, lang="uk", ttl=60, max_age=600, now=NOW)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.data, cap_page)
+
+        with self.assertRaises(ms.SecretRefused):
+            self.cache.put_page("sweettv:main", "bad_auth", {"auth": "secret-sig"}, version=4, lang="uk", now=NOW)
 
     def test_drop_namespace_alias_and_drop_service_prefix(self):
         for ns in ("youtube:1", "youtube:2", "youtubers:x", "sweettv:main"):

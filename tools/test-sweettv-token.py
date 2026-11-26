@@ -31,6 +31,7 @@ os.environ["MEDIASTICK_SWEETSTORE_DB"] = os.path.join(TMP, "sweettv", "sweettv.d
 sys.path.insert(0, LIB)
 
 import mediastick_signin as ms  # noqa: E402
+import mediastick_store as ms_store  # noqa: E402
 import mediastick_sweetstore as sweetstore  # noqa: E402
 
 WARNING, ERROR, DEBUG, INFO = 2, 1, 0, 3
@@ -374,6 +375,29 @@ class SweetStoreIngestAndLogout(unittest.TestCase):
         self.assertEqual(Settings.values["bearer"], "")
         self.assertEqual(st.get_channels_payload(), {})
         self.assertEqual(st.search_channels("one", available_only=False), [])
+
+    def test_refresh_channel_list_logs_warning_type_only_when_sweetstore_raises(self):
+        failures = (
+            ms_store.SecretRefused(f"channels payload leaked {TOKEN} {BODY}"),
+            RuntimeError(f"sqlite disk error {TOKEN} {BODY}"),
+        )
+        for exc in failures:
+            with self.subTest(exc_type=type(exc).__name__):
+                sweet = load_sweettv(bearer_at_import="Bearer " + TOKEN)
+                st = sweetstore.default_store()
+                with mock.patch.object(st, "upsert_channels", side_effect=exc):
+                    reply = sweet.refreshChannelList()
+                self.assertEqual(reply["status"], "OK")
+                self.assertEqual(sweet.written, ["/tmp/channelList.json"])
+                warnings = [m for lvl, m in sweet.logs if lvl == WARNING]
+                self.assertEqual(
+                    warnings,
+                    [f"media-stick: SWEET.TV SweetStore sync failed: {type(exc).__name__}"],
+                )
+                for _lvl, message in sweet.logs:
+                    self.assertNotIn(TOKEN, message)
+                    self.assertNotIn(BODY, message)
+                    self.assertNotIn(str(exc), message)
 
 
 class RefreshTokenResilience(unittest.TestCase):
