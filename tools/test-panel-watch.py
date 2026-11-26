@@ -32,6 +32,7 @@ os.environ["MEDIASTICK_ADDONS_ROOT"] = os.path.join(TMP, ".kodi", "addons")
 os.environ["MEDIASTICK_SWEETNOW_DIR"] = os.path.join(TMP, "now")      # what the SWEET.TV add-on wrote down about its streams
 os.environ["MEDIASTICK_PREFS_DIR"] = os.path.join(TMP, "prefs")
 os.environ["MEDIASTICK_RESUME_DIR"] = os.path.join(TMP, "resume")
+os.environ["MEDIASTICK_SWEETSTORE_DB"] = os.path.join(TMP, "sweettv", "sweettv.db")
 os.environ.pop("MEDIASTICK_APP_ART", None)
 sys.dont_write_bytecode = True
 sys.path.insert(0, LIB)
@@ -39,11 +40,60 @@ sys.path.insert(0, LIB)
 import panel_accounts  # noqa: E402
 import panel_lang  # noqa: E402
 import mediastick_sweetlive as ml  # noqa: E402
+import mediastick_sweetplay as sp  # noqa: E402
+import mediastick_sweetstore as sweetstore  # noqa: E402
 import panel_watch as pw  # noqa: E402
+
+sp.SESSION_FILE = os.path.join(TMP, "sweettv-session.json")
 
 NOW = 1_800_000_000
 YT = "plugin://plugin.video.youtube/"
 VID = YT + "play/?video_id=abcdefghijk"
+
+
+def _unbalanced(js):
+    """Return snippet of the first mismatched bracket in JS, or None if balanced."""
+    stack, i, n, prev = [], 0, len(js), ""
+    pairs = {")": "(", "]": "[", "}": "{"}
+    while i < n:
+        c = js[i]
+        if c in "'\"`":
+            j = i + 1
+            while j < n and js[j] != c:
+                j += 2 if js[j] == "\\" else 1
+            i, prev = j + 1, "x"
+            continue
+        if js.startswith("//", i):
+            i = js.find("\n", i)
+            i = n if i < 0 else i
+            continue
+        if js.startswith("/*", i):
+            end = js.find("*/", i + 2)
+            if end < 0:
+                return js[i:i + 40]
+            i = end + 2
+            continue
+        if c == "/" and (prev == "" or prev in "(,=:[!&|?{};"):
+            j, cls = i + 1, False
+            while j < n and (cls or js[j] != "/"):
+                if js[j] == "\\":
+                    j += 1
+                elif js[j] == "[":
+                    cls = True
+                elif js[j] == "]":
+                    cls = False
+                j += 1
+            i, prev = j + 1, "x"
+            continue
+        if c in "([{":
+            stack.append((c, i))
+        elif c in pairs:
+            if not stack or stack.pop()[0] != pairs[c]:
+                return js[max(0, i - 60):i + 20]
+        if not c.isspace():
+            prev = c
+        i += 1
+    return js[stack[-1][1]:stack[-1][1] + 80] if stack else None
 
 
 def put(path, text):
@@ -334,15 +384,35 @@ class NowPlaying(unittest.TestCase):
         self.assertEqual(pw.item_title({"title": "Фильм", "label": "f"}), "Фильм")
         self.assertEqual(pw.item_title(None), "")
 
-    def test_the_name_comes_from_the_add_ons_channel_list(self):
+    def test_sweetstore_cutover_removes_channel_list_json_and_sweet_list_path(self):
+        import panel_sweettv as ps
+        for mod_name in ("panel_watch.py", "panel_sweettv.py"):
+            with open(os.path.join(LIB, mod_name), encoding="utf-8") as f:
+                src = f.read()
+            self.assertNotIn("channelList.json", src, mod_name)
+            self.assertNotIn("_sweet_list_path", src, mod_name)
+        self.assertFalse(hasattr(pw, "_sweet_list_path"))
+
         pw._cache.clear()
-        path = os.path.join(TMP, ".kodi", "temp", "channelList.json")
-        put(path, '{"list": [{"id": 5, "name": "Первый канал"}, {"id": 6}, "x"]}')
+        sweetstore.default_store().clear()
+        # Legacy channelList.json on disk is never read when SweetStore is empty
+        legacy = os.path.join(TMP, ".kodi", "temp", "channelList.json")
+        put(legacy, '{"list": [{"id": 5, "name": "Legacy"}]}')
+        self.assertEqual(pw.sweet_name("5"), "")
+        self.assertEqual(ps.channels(), {})
+        os.remove(legacy)
+
+        # Seeding SweetStore provides channel names and channels() payload
+        sweetstore.default_store().upsert_channels(
+            {"status": "OK", "list": [{"id": 5, "name": "Первый канал"}, {"id": 6}, "x"]},
+            now=NOW,
+        )
+        pw._cache.clear()
         self.assertEqual(pw.sweet_name("5"), "Первый канал")
         self.assertEqual(pw.sweet_name("6"), "")
         self.assertEqual(pw.sweet_name("404"), "")
+        sweetstore.default_store().clear()
         pw._cache.clear()
-        os.remove(path)
         self.assertEqual(pw.sweet_name("5"), "")
 
     def test_odd_input_does_not_raise(self):
@@ -529,6 +599,8 @@ class Art(unittest.TestCase):
 class Routes(unittest.TestCase):
     def setUp(self):
         pw._cache.clear()
+        sweetstore.default_store().clear()
+        sp.clear_active_session()
         shutil.rmtree(os.path.join(TMP, ".kodi"), ignore_errors=True)
         self.calls = []
 
@@ -579,15 +651,17 @@ class Routes(unittest.TestCase):
         self.assertEqual(pw.get("/api/watch/youtube?path=" + YT + "channel/UC1/", self.rpc)[1], 200)
 
     def test_sweettv_missing_file_is_signin(self):
+        # Empty SweetStore (even with legacy channelList.json on disk) never leaks data
+        put(os.path.join(TMP, ".kodi", "temp", "channelList.json"), json.dumps(FIXTURE))
         self.assertEqual(pw.get("/api/watch/sweettv", self.rpc)[0]["state"], "signin")
 
     def test_sweettv_file(self):
-        import json
-        put(os.path.join(TMP, ".kodi", "temp", "channelList.json"), json.dumps(FIXTURE))
+        sweetstore.default_store().upsert_channels(FIXTURE, now=NOW)
         put(os.path.join(os.environ["MEDIASTICK_ADDON_DATA"], "plugin.video.sweettv", "settings.xml"),
             '<settings><setting id="logged">true</setting></settings>')
         body, code = pw.get("/api/watch/sweettv", self.rpc)
         self.assertEqual((code, body["state"]), (200, "data"))
+        self.assertEqual([c["id"] for c in body["channels"]], ["5", "6"])
 
     def test_play(self):
         self.assertEqual(pw.post("/api/watch/play", {"file": VID}, self.rpc)[0], {"ok": True})
@@ -793,7 +867,7 @@ class Page(unittest.TestCase):
         for gone in ("W.rp", "wtdp", "wtnp", "wt-pfull", "wt-pback", "Крестовина", "wt-npbox", "wt-now", "'player'", "wt-toast"):
             self.assertNotIn(gone, everything)
         for text in ("Меню плеера", "Описание", "Остановить", "Закрыть", "pressKey('osd')", "pressKey('info')", "Субтитры", "Аудио",
-                     "'Перемотка'", "'Громкость'", "text:'−10'", "text:'+10'"):
+                     "'Перемотка'", "'Громкость'"):
             self.assertIn(text, js)
         # the sheet closes on the backdrop, on «Закрыть» and on a swipe down
         self.assertIn("h('div',{class:'sheet-back wt-back',onclick:closeSheet})", js)
@@ -859,20 +933,65 @@ class Page(unittest.TestCase):
             self.assertIn(pill, js)
         for call in ("sg('home')", "sg('shows')", "sg('show?id='", "sg('movies", "sg('series", "sg('vod?id='",
                      "sg('channels')", "sg('guide?cid='", "sg('day?cid='", "sg('top')", "sg('search?q='",
-                     "spst('favourite'", "spst('play'", "spst('ctl'", "sg('settings')", "spst('settings'"):
+                     "sg('thumbs')", "spst('favourite'", "spst('play'", "spst('ctl'", "sg('settings')", "spst('settings'"):
             self.assertIn(call, js)
         for page in ("swguide", "swshow", "swvod"):
             self.assertIn(page, js)
         for day_lbl in ("Сегодня", "Вчера"):
             self.assertIn(day_lbl, js)
-        # upgraded Live/DVR/VOD player sheet controls
-        for ctl_text in ("С начала", "−15с", "+30с", "+2м", "В эфир", "В эфире", "от эфира"):
-            self.assertIn(ctl_text, js)
-        for ctl_op in ("op:'from_start'", "op:'seek_by'", "op:'live'", "st.prog_start", "st.prog_stop", "st.lag_seconds"):
-            self.assertIn(ctl_op, js)
         # no markup from the API, no image that is not a picture() one
         self.assertNotIn("innerHTML", js)
         self.assertNotRegex(js, r"style:'background-image:'\s*\+\s*(?!picture)")
+
+    def test_wall_vs_file_timeline_modes_and_next_programme_hint(self):
+        import panel_watch_ui as ui
+        js_src = re.search(r"<script>(.*?)</script>", ui.JS, re.S).group(1)
+        self.assertIsNone(_unbalanced(js_src), "panel_watch_ui.JS has unbalanced brackets")
+        js = ui.JS
+        for field in ("timeline_mode", "'wall'", "'file'", "wall_ts", "window_start", "window_end",
+                      "slot_ticks", "time_label", "next_prog"):
+            self.assertIn(field, js, field)
+        self.assertRegex(js, r"op\s*:\s*['\"]seek_wall['\"]")
+        self.assertNotIn("st.prog_stop-st.prog_start", js)
+        self.assertIn("Далее в ", js)
+
+    def test_pointer_events_fine_scrubber_anti_jitter_and_sprite_preview(self):
+        import panel_watch_ui as ui
+        js, css = ui.JS, ui.CSS
+        # Seek <input type="range"> replaced by custom PointerEvents scrubber; only Volume keeps range input
+        self.assertEqual(js.count("type:'range'") + js.count('type:"range"'), 1)
+        for ev in ("pointerdown", "pointermove", "pointerup"):
+            self.assertIn(ev, js, ev)
+        self.assertRegex(css, r"touch-action\s*:\s*none")
+        # Vertical drag |Δy| > 36 -> ×10 fine scrubbing (1 px = 3s) + hint
+        self.assertRegex(js, r"\b36\b")
+        self.assertIn("Точная подводка ×10", js)
+        # Release anti-jitter: 120 ms rolling ring buffer & now - 80 ms freeze lookback
+        self.assertRegex(js, r"\b120\b")
+        self.assertRegex(js, r"-\s*80\b")
+        # Live sprite-sheet frame preview bubble (16:9, columns*100% / rows*100%, Math.floor(offset / interval), onerror)
+        self.assertIn("has_thumbs", js)
+        self.assertIn("sg('thumbs')", js)
+        self.assertRegex(css + js, r"16\s*/\s*9")
+        self.assertIn("backgroundSize", js)
+        self.assertIn("backgroundPosition", js)
+        self.assertIn("Math.floor", js)
+        self.assertIn("interval", js)
+        self.assertIn("onerror", js)
+
+    def test_smart_transport_rows_and_600ms_tap_coalescing(self):
+        import panel_watch_ui as ui
+        js = ui.JS
+        # Duplicate legacy buttons (+10, +2м) eliminated
+        self.assertNotIn("'+10'", js)
+        self.assertNotIn("'+2м'", js)
+        # VOD (−10с / +30с) and TV/Archive (−15с, Пред., След., +1м, С начала, +3м, В эфир) controls
+        for btn_label in ("−10с", "+30с", "−15с", "Пред.", "След.", "+1м", "С начала", "+3м", "В эфир"):
+            self.assertIn(btn_label, js, btn_label)
+        for ctl_op in ("from_start", "live", "prev_prog", "next_prog", "seek_by"):
+            self.assertRegex(js, rf"op\s*:\s*['\"]{ctl_op}['\"]", ctl_op)
+        # 600 ms rapid-tap coalescing window on step buttons
+        self.assertRegex(js, r"\b600\b")
 
     def test_the_script_is_one_piece_with_the_sweettv_part(self):
         import panel_watch_ui as ui
@@ -913,10 +1032,14 @@ class SweetRoutes(unittest.TestCase):
         import panel_sweettv as ps
         self.ps = ps
         self.mr = mr
+        pw._cache.clear()
         shutil.rmtree(os.environ["MEDIASTICK_RESUME_DIR"], ignore_errors=True)
         shutil.rmtree(os.environ["MEDIASTICK_PREFS_DIR"], ignore_errors=True)
         shutil.rmtree(os.environ["MEDIASTICK_SWEETNOW_DIR"], ignore_errors=True)
-        put(os.path.join(TMP, ".kodi", "temp", "channelList.json"), json.dumps(FIXTURE))
+        shutil.rmtree(os.path.join(TMP, ".kodi"), ignore_errors=True)
+        sweetstore.default_store().clear()
+        sweetstore.default_store().upsert_channels(FIXTURE, now=NOW)
+        sp.clear_active_session()
         self.calls = []
         self.players = [{"playerid": 1, "type": "video"}]
         self.item = {"file": "plugin://plugin.video.sweettv/playvid/5|null", "title": "", "label": "5"}
@@ -1012,68 +1135,297 @@ class SweetRoutes(unittest.TestCase):
 
     def test_play_live_archive_from_start_and_vod(self):
         with mock.patch("time.time", return_value=NOW):
-            # live channel
+            # live channel -> JSONRPC.NotifyAll sweettv.play (kind="live")
             b, c = self.ps.post(self.ps.PREFIX + "play", {"cid": 5}, self.rpc)
-            self.assertEqual((c, b["ok"]), (200, True))
-            self.assertEqual(self.calls[-1][1]["item"]["file"], "plugin://plugin.video.sweettv/playvid/5|null")
+            self.assertEqual((c, b.get("ok")), (200, True))
+            method, params = self.calls[-1]
+            self.assertEqual((method, params.get("sender"), params.get("message")),
+                             ("JSONRPC.NotifyAll", "script.media-stick.home", "sweettv.play"))
+            data = params.get("data") or {}
+            self.assertEqual((data.get("kind"), data.get("cid"), data.get("from_start")),
+                             ("live", "5", False))
+
+            # channel from_start=True without epg -> resolves current programme 50 from SweetStore
+            b, c = self.ps.post(self.ps.PREFIX + "play", {"cid": 5, "from_start": True}, self.rpc)
+            self.assertEqual((c, b.get("ok"), b.get("epg"), b.get("offset")), (200, True, "50", 0))
+            method, params = self.calls[-1]
+            data = params.get("data") or {}
+            self.assertEqual((method, params.get("message")), ("JSONRPC.NotifyAll", "sweettv.play"))
+            self.assertEqual((data.get("kind"), data.get("cid"), data.get("epg_id"), data.get("from_start")),
+                             ("epg", "5", "50", True))
+
             # in-progress EPG programme from_start=True -> offset 0
             b, c = self.ps.post(self.ps.PREFIX + "play", {"cid": 5, "epg": 50, "from_start": True}, self.rpc)
-            self.assertEqual((c, b["ok"], b["epg"], b["offset"]), (200, True, "50", 0))
-            # VOD movie/episode -> playvod/...
+            self.assertEqual((c, b.get("ok"), b.get("epg"), b.get("offset")), (200, True, "50", 0))
+            method, params = self.calls[-1]
+            data = params.get("data") or {}
+            self.assertEqual((method, params.get("message")), ("JSONRPC.NotifyAll", "sweettv.play"))
+            self.assertEqual((data.get("kind"), data.get("cid"), data.get("epg_id"), data.get("start_offset")),
+                             ("epg", "5", "50", 0))
+
+            # VOD movie/episode -> JSONRPC.NotifyAll sweettv.play (kind="vod")
             b, c = self.ps.post(self.ps.PREFIX + "play", {"movie_id": 9558, "episode_id": 101, "owner_id": 69, "start": 120}, self.rpc)
-            self.assertEqual((c, b["ok"]), (200, True))
-            self.assertEqual(self.calls[-1][1]["item"]["file"], "plugin://plugin.video.sweettv/playvod/9558|101|69?start=120")
-            # invalid
-            self.assertEqual(self.ps.post(self.ps.PREFIX + "play", {"cid": "bad"}, self.rpc)[1], 400)
-            self.assertEqual(self.ps.post(self.ps.PREFIX + "play", {"movie_id": "bad"}, self.rpc)[1], 400)
+            self.assertEqual((c, b.get("ok")), (200, True))
+            method, params = self.calls[-1]
+            data = params.get("data") or {}
+            self.assertEqual((method, params.get("message")), ("JSONRPC.NotifyAll", "sweettv.play"))
+            self.assertEqual(
+                (data.get("kind"), data.get("movie_id"), data.get("episode_id"),
+                 data.get("owner_id"), data.get("start_offset")),
+                ("vod", "9558", "101", 69, 120),
+            )
+
+            # Invalid requests are refused with zero RPC calls
+            before = len(self.calls)
+            for bad, exp_code in (({"cid": "bad"}, 400), ({"cid": True}, 400), ({"cid": 5, "epg": 999}, 404), ({"movie_id": "bad"}, 400)):
+                self.assertEqual(self.ps.post(self.ps.PREFIX + "play", bad, self.rpc)[1], exp_code, bad)
+            self.assertEqual(len(self.calls), before)
+
+            # Clean fallback when resident controller /NotifyAll is unavailable in unit mocks
+            def rpc_no_notify(m, p=None, timeout=3):
+                self.calls.append((m, p))
+                return None if m == "JSONRPC.NotifyAll" else {}
+
+            if hasattr(self.ps, "sp"):
+                with mock.patch.object(self.ps, "sp", None):
+                    b_fb, c_fb = self.ps.post(self.ps.PREFIX + "play", {"cid": 5}, rpc_no_notify)
+                    self.assertEqual((c_fb, b_fb["ok"]), (200, True))
 
     def test_ctl_from_start_seek_by_live_handoff_and_go_live(self):
+        sp.write_active_session({
+            "kind": "epg", "cid": "5", "epg_id": "50", "title": "Сейчас Первый",
+            "channel_name": "Первый", "slot_start": NOW - 1800, "slot_stop": NOW + 1800,
+            "anchor_start": NOW - 1800, "anchor_stop": NOW + 1800, "updated_at": NOW,
+        })
         with mock.patch("time.time", return_value=NOW):
-            # from_start on live catchup channel -> switches to current programme at 0:00
-            b, c = self.ps.post(self.ps.PREFIX + "ctl", {"op": "from_start"}, self.rpc)
-            self.assertEqual((c, b["ok"]), (200, True))
-            self.assertEqual(self.calls[-1][1]["item"]["file"], "plugin://plugin.video.sweettv/playvid/5|50")
-            # seek_by -15 on live catchup channel -> rewinds into archive
-            b, c = self.ps.post(self.ps.PREFIX + "ctl", {"op": "seek_by", "seconds": -15}, self.rpc)
-            self.assertEqual((c, b["ok"], b["switched"]), (200, True, "archive"))
-            # seek_by on in-progress archive within <= 15s of live edge -> forward_handoff to live
-            self.item = {"file": "plugin://plugin.video.sweettv/playvid/5|50", "title": "Сейчас Первый"}
-            self.props = {"time": {"hours": 0, "minutes": 29, "seconds": 50}, "totaltime": {"hours": 1, "minutes": 0, "seconds": 0}}
-            # NOW - (NOW - 1800) = 1800s is live edge; 1790 + 30 = 1820 >= 1800 - 15 -> handoff to live
-            b, c = self.ps.post(self.ps.PREFIX + "ctl", {"op": "seek_by", "seconds": 30}, self.rpc)
-            self.assertEqual((c, b["ok"]), (200, True))
-            self.assertEqual(self.calls[-1][1]["item"]["file"], "plugin://plugin.video.sweettv/playvid/5|null")
-            # seek_by on in-progress archive staying > 15s behind live edge -> Player.Seek, no handoff
-            self.props = {"time": {"hours": 0, "minutes": 10, "seconds": 0}, "totaltime": {"hours": 1, "minutes": 0, "seconds": 0}}
-            b, c = self.ps.post(self.ps.PREFIX + "ctl", {"op": "seek_by", "seconds": 120}, self.rpc)
-            self.assertEqual((c, b["ok"]), (200, True))
-            self.assertEqual(self.calls[-1][0], "Player.Seek")
-            # live op on archive -> returns to live
-            b, c = self.ps.post(self.ps.PREFIX + "ctl", {"op": "live"}, self.rpc)
-            self.assertEqual((c, b["ok"]), (200, True))
-            self.assertEqual(self.calls[-1][1]["item"]["file"], "plugin://plugin.video.sweettv/playvid/5|null")
-        # invalid ops and no player
-        for bad in ({}, None, {"op": "bogus"}, {"op": "seek_by", "seconds": "10"}, {"op": "seek_by", "seconds": True}):
+            for body, expected_op, expected_sec, expected_wall in (
+                ({"op": "from_start"}, "from_start", 0, 0),
+                ({"op": "live"}, "live", 0, 0),
+                ({"op": "prev_prog"}, "prev_prog", 0, 0),
+                ({"op": "next_prog"}, "next_prog", 0, 0),
+                ({"op": "seek_by", "seconds": -15}, "seek_by", -15, 0),
+                ({"op": "seek_by", "seconds": 180}, "seek_by", 180, 0),
+                ({"op": "seek_wall", "wall_ts": NOW - 600}, "seek_wall", 0, NOW - 600),
+            ):
+                with self.subTest(body=body):
+                    b, c = self.ps.post(self.ps.PREFIX + "ctl", body, self.rpc)
+                    self.assertEqual((c, b.get("ok")), (200, True), b)
+                    notify_calls = [call for call in self.calls if call[0] == "JSONRPC.NotifyAll"]
+                    self.assertTrue(notify_calls, f"expected JSONRPC.NotifyAll for {body}")
+                    _, params = notify_calls[-1]
+                    data = params.get("data") or {}
+                    self.assertEqual((params.get("sender"), params.get("message")), ("script.media-stick.home", "sweettv.ctl"))
+                    self.assertEqual(
+                        (data.get("op"), data.get("seconds"), data.get("wall_ts")),
+                        (expected_op, expected_sec, expected_wall),
+                    )
+
+        # Invalid ops and boundary rejections -> 400
+        for bad in (
+            {}, None, {"op": "bogus"}, {"op": "stop"},
+            {"op": "seek_by", "seconds": "10"}, {"op": "seek_by", "seconds": True},
+            {"op": "seek_by", "seconds": float("nan")}, {"op": "seek_by", "seconds": 10 ** 9},
+            {"op": "seek_wall"}, {"op": "seek_wall", "wall_ts": 0}, {"op": "seek_wall", "wall_ts": -10},
+            {"op": "seek_wall", "wall_ts": True}, {"op": "seek_wall", "wall_ts": "1800000000"},
+            {"op": "seek_wall", "wall_ts": float("nan")},
+        ):
             self.assertEqual(self.ps.post(self.ps.PREFIX + "ctl", bad, self.rpc)[1], 400, bad)
+
+        # Nothing playing and no active session -> 409
+        sp.clear_active_session()
         self.players = []
         self.assertEqual(self.ps.post(self.ps.PREFIX + "ctl", {"op": "from_start"}, self.rpc)[1], 409)
 
+        # Clean fallback when mediastick_sweetplay is unavailable in unit mocks
+        self.players = [{"playerid": 1, "type": "video"}]
+        if hasattr(self.ps, "sp"):
+            with mock.patch.object(self.ps, "sp", None), mock.patch("time.time", return_value=NOW):
+                b_fb, c_fb = self.ps.post(self.ps.PREFIX + "ctl", {"op": "seek_by", "seconds": -15}, self.rpc)
+                self.assertEqual((c_fb, b_fb["ok"]), (200, True))
+
     def test_decorate_exposes_unified_live_catchup_timeline(self):
-        live_view = {"playing": True, "app": "sweettv", "cid": "5", "epg": "", "live": True, "time": 10, "total": 60}
-        d = self.ps.decorate(live_view, FIXTURE, NOW)
-        self.assertEqual(d["programme"], "Сейчас Первый")
-        self.assertEqual((d["prog_start"], d["prog_stop"]), (NOW - 1800, NOW + 1800))
-        self.assertTrue(d["in_progress"])
-        self.assertTrue(d["can_rewind"])
-        self.assertFalse(d["go_live"])
-        self.assertFalse(d["is_vod"])
-        self.assertGreaterEqual(d["lag_seconds"], 0)
-        vod_view = {"playing": True, "app": "sweettv", "cid": "", "epg": "", "live": False,
-                    "file": "plugin://plugin.video.sweettv/playvod/9558|101|69", "time": 100, "total": 2400}
-        dv = self.ps.decorate(vod_view, FIXTURE, NOW)
-        self.assertTrue(dv["is_vod"])
-        self.assertFalse(dv["can_rewind"])
-        self.assertFalse(dv["go_live"])
+        day1_21 = int(time.mktime((2026, 11, 25, 21, 0, 0, 0, 0, -1)))
+        day1_23 = day1_21 + 7200
+        day1_2330 = day1_21 + 9000
+        day1_24 = day1_23 + 3600
+        day4_14 = int(time.mktime((2026, 11, 28, 14, 0, 0, 0, 0, -1)))
+
+        sweetstore.default_store().clear()
+        sweetstore.default_store().upsert_channels({
+            "status": "OK",
+            "categories": [{"id": 1, "caption": "Общие"}],
+            "list": [{
+                "id": 5, "name": "Первый", "number": 1, "catchup": True, "catchup_duration": 7,
+                "available": True, "category": [1],
+                "epg": [
+                    {"id": 49, "text": "Новости", "time_start": day1_21 - 3600, "time_stop": day1_21, "available": True},
+                    {"id": 50, "text": "Холостяк", "time_start": day1_21, "time_stop": day1_23, "available": True},
+                    {"id": 51, "text": "Пост-шоу", "time_start": day1_23, "time_stop": day1_24, "available": True},
+                    {"id": 52, "text": "Ночной эфир", "time_start": day1_24, "time_stop": day1_24 + 3600, "available": True},
+                ],
+            }],
+        }, now=day1_2330)
+
+        # 1. Active Live session -> wall timeline at live edge + prev_prog / next_prog
+        sp.write_active_session({
+            "kind": "live", "cid": "5", "epg_id": "", "title": "Первый", "channel_name": "Первый",
+            "slot_start": day1_23, "slot_stop": day1_24, "anchor_start": day1_23, "anchor_stop": day1_24,
+            "updated_at": day1_2330,
+        })
+        self.item = {"file": "https://cdn.sweet.tv/live/5/manifest.mpd", "title": "Первый"}
+        self.props = {"time": {"hours": 0, "minutes": 0, "seconds": 12}, "totaltime": {"hours": 0, "minutes": 1, "seconds": 0}}
+        with mock.patch("time.time", return_value=day1_2330):
+            now_live, code = pw.get("/api/watch/now", self.rpc)
+        self.assertEqual(code, 200)
+        self.assertEqual((now_live.get("app"), now_live.get("timeline_mode"), now_live.get("is_vod")), ("sweettv", "wall", False))
+        self.assertEqual((now_live.get("wall_ts"), now_live.get("window_start"), now_live.get("window_end")), (day1_2330, day1_23, day1_2330))
+        self.assertTrue(now_live.get("at_live_edge"))
+        self.assertTrue(now_live.get("in_progress"))
+        self.assertIn("В эфире", now_live.get("time_label") or "")
+        self.assertFalse(now_live.get("has_thumbs"))
+        self.assertEqual((now_live.get("prev_prog") or {}).get("title"), "Холостяк")
+        self.assertEqual((now_live.get("next_prog") or {}).get("title"), "Ночной эфир")
+
+        # 2. Rolled-over in-progress DVR session with sprite thumbnails -> monotonic wall tape + slot_ticks
+        sp.write_active_session({
+            "kind": "epg", "cid": "5", "epg_id": "51", "title": "Пост-шоу", "channel_name": "Первый",
+            "slot_start": day1_23, "slot_stop": day1_24, "anchor_start": day1_21, "anchor_stop": day1_23,
+            "thumbnails": {"rows": 5, "columns": 5, "interval": 10, "sheets": ["https://thumbs.sweet.tv/5/51/0.jpg"]},
+            "updated_at": day1_2330,
+        })
+        self.item = {"file": "https://cdn.sweet.tv/dvr/5/51/manifest.mpd", "title": "Пост-шоу"}
+        self.props = {"time": {"hours": 0, "minutes": 5, "seconds": 0}, "totaltime": {"hours": 1, "minutes": 0, "seconds": 0}}
+        with mock.patch("time.time", return_value=day1_2330):
+            now_dvr, _ = pw.get("/api/watch/now", self.rpc)
+        self.assertEqual(now_dvr["timeline_mode"], "wall")
+        self.assertEqual((now_dvr["wall_ts"], now_dvr["window_start"], now_dvr["window_end"]),
+                         (day1_23 + 300, day1_21, day1_2330))
+        self.assertEqual(now_dvr["slot_ticks"], [day1_23])
+        self.assertEqual(now_dvr["lag_seconds"], 1500)
+        self.assertFalse(now_dvr["at_live_edge"])
+        self.assertIn("от эфира", now_dvr["time_label"])
+        self.assertTrue(now_dvr["has_thumbs"])
+        self.assertEqual((now_dvr["prev_prog"]["title"], now_dvr["next_prog"]["title"]), ("Холостяк", "Ночной эфир"))
+
+        # 3. Past-day archive -> +30m overrun window & "в записи"
+        sp.write_active_session({
+            "kind": "epg", "cid": "5", "epg_id": "50", "title": "Холостяк", "channel_name": "Первый",
+            "slot_start": day1_21, "slot_stop": day1_23, "anchor_start": day1_21, "anchor_stop": day1_23,
+            "updated_at": day4_14,
+        })
+        self.item = {"file": "https://cdn.sweet.tv/dvr/5/50/manifest.mpd", "title": "Холостяк"}
+        self.props = {"time": {"hours": 0, "minutes": 30, "seconds": 0}, "totaltime": {"hours": 2, "minutes": 0, "seconds": 0}}
+        with mock.patch("time.time", return_value=day4_14):
+            now_arch, _ = pw.get("/api/watch/now", self.rpc)
+        self.assertEqual(now_arch["timeline_mode"], "wall")
+        self.assertEqual((now_arch["window_start"], now_arch["window_end"]), (day1_21, day1_23 + 1800))
+        self.assertIn("в записи", now_arch["time_label"])
+        self.assertFalse(now_arch["in_progress"])
+        self.assertFalse(now_arch["at_live_edge"])
+
+        # 4. VOD session -> timeline_mode == "file"
+        sp.write_active_session({
+            "kind": "vod", "movie_id": "9558", "episode_id": "101", "title": "Зрадники", "updated_at": day1_2330,
+        })
+        self.item = {"file": "https://vod.sweet.tv/9558/101/manifest.mpd", "title": "Зрадники"}
+        with mock.patch("time.time", return_value=day1_2330):
+            now_vod, _ = pw.get("/api/watch/now", self.rpc)
+        self.assertEqual((now_vod["app"], now_vod["is_vod"], now_vod["timeline_mode"]), ("sweettv", True, "file"))
+
+        # 5. YouTube video ignores any stale sweettv-session.json -> app="youtube", timeline_mode="file"
+        self.item = {"file": VID, "title": "Ролик"}
+        with mock.patch("time.time", return_value=day1_2330):
+            now_yt, _ = pw.get("/api/watch/now", self.rpc)
+        self.assertEqual((now_yt["app"], now_yt["is_vod"], now_yt["timeline_mode"], now_yt["has_thumbs"]),
+                         ("youtube", False, "file", False))
+
+    def test_thumbs_route_serves_validated_https_sweettv_sprites(self):
+        # Missing active session -> 404 or empty sheets
+        sp.clear_active_session()
+        body0, code0 = self.ps.get(self.ps.PREFIX + "thumbs", self.rpc)
+        self.assertTrue(code0 == 404 or (code0 == 200 and not body0.get("sheets")))
+
+        # Mixed valid *.sweet.tv sheets + hostile/non-sweettv URLs -> strictly filtered via pw.image_url & *.sweet.tv
+        sp.write_active_session({
+            "kind": "epg", "cid": "5", "epg_id": "50",
+            "thumbnails": {
+                "rows": 5,
+                "columns": 4,
+                "interval": 10,
+                "sheets": [
+                    "https://thumbs.sweet.tv/5/50/s0.jpg",
+                    "https://sweet.tv/sprites/s1.jpg",
+                    "https://i.ytimg.com/vi/abc/hq.jpg",
+                    "https://evil.example/s2.jpg",
+                    "https://sweet.tv.evil.example/s3.jpg",
+                    "https://thumbs.sweet.tv:8443/s4.jpg",
+                    "https://u:p@thumbs.sweet.tv/s5.jpg",
+                    "ftp://thumbs.sweet.tv/s6.jpg",
+                    "javascript:alert(1)",
+                ],
+            },
+            "updated_at": NOW,
+        })
+        body, code = self.ps.get(self.ps.PREFIX + "thumbs", self.rpc)
+        self.assertEqual(code, 200)
+        self.assertEqual((body["rows"], body["columns"], body["interval"]), (5, 4, 10))
+        self.assertEqual(body["sheets"], [
+            "https://thumbs.sweet.tv/5/50/s0.jpg",
+            "https://sweet.tv/sprites/s1.jpg",
+        ])
+
+        # All sheets invalid -> 404 or empty sheets, never leaking bad URLs
+        sp.write_active_session({
+            "kind": "epg", "cid": "5", "epg_id": "50",
+            "thumbnails": {
+                "rows": 5, "columns": 4, "interval": 10,
+                "sheets": ["https://evil.example/s.jpg", "https://i.ytimg.com/vi/abc/hq.jpg"],
+            },
+            "updated_at": NOW,
+        })
+        body_bad, code_bad = self.ps.get(self.ps.PREFIX + "thumbs", self.rpc)
+        self.assertTrue(code_bad == 404 or (code_bad == 200 and not body_bad.get("sheets")))
+
+    def test_canonical_can_archive_and_sweetstore_channel_day(self):
+        with open(os.path.join(LIB, "panel_sweettv.py"), encoding="utf-8") as f:
+            ps_src = f.read()
+        self.assertNotIn("playable_in_archive", ps_src)
+
+        with mock.patch("time.time", return_value=NOW):
+            ch_body, ch_code = self.ps.get(self.ps.PREFIX + "channels", self.rpc)
+            self.assertEqual(ch_code, 200)
+            ch5 = next(c for c in ch_body["channels"] if c["id"] == "5")
+            self.assertIn("can_archive", ch5)
+            self.assertTrue(ch5["can_archive"])
+            self.assertNotIn("archive", ch5)
+            self.assertNotIn("playable_in_archive", ch5)
+
+            g_body, g_code = self.ps.get(self.ps.PREFIX + "guide?cid=5", self.rpc)
+            self.assertEqual(g_code, 200)
+            self.assertIn("can_archive", g_body)
+            self.assertTrue(g_body["can_archive"])
+            self.assertNotIn("archive", g_body)
+            self.assertIn("can_archive", g_body["current"])
+            self.assertNotIn("archive", g_body["current"])
+            self.assertNotIn("playable_in_archive", g_body["current"])
+
+            # Day programmes present in SweetStore.channel_day are served with zero HTTP calls and canonical can_archive
+            today_iso = time.strftime("%Y-%m-%d", time.localtime(NOW))
+            http_calls = []
+
+            class ForbiddenClient:
+                def post(self, *args, **kwargs):
+                    http_calls.append((args, kwargs))
+                    raise AssertionError("SweetStore.channel_day hit must not make network calls")
+
+            d_body = self.ps.day_view(self.ps.channels(), "5", today_iso, NOW, local_data=self.ps.local(), client=ForbiddenClient())
+            self.assertEqual(http_calls, [])
+            self.assertTrue(d_body["ok"])
+            self.assertTrue(d_body["items"])
+            for row in d_body["items"]:
+                self.assertIn("can_archive", row)
+                self.assertNotIn("playable_in_archive", row)
+                self.assertNotIn("archive", row)
 
     def test_legacy_sweettv_compat_wrappers_and_routes_are_removed(self):
         for attr in ("sections", "sections_view", "shows_view", "show_view", "films_view"):
@@ -1144,7 +1496,8 @@ class SweetRoutes(unittest.TestCase):
         self.assertIn("python3 /usr/local/bin/panel", script)
         self.assertIn("/home/media/.kodi", script)
         self.assertIn("SWEETTV_CHANNELS", script)
-        self.assertIn("channelList.json", script)
+        self.assertIn("mediastick_sweetstore", script)
+        self.assertRegex(script, r"seed_from_channel_file|upsert_channels")
         self.assertIn("<webserver>false</webserver>", script)
         self.assertIn("<tcpport>9090</tcpport>", script)
         ks_match = re.search(r"^\s*/usr/local/bin/kodi-settings\b(.*?)(?:>/dev/null|\bfi\b)", script, re.M | re.S)
@@ -1203,11 +1556,24 @@ class MobileSweetVodTest(unittest.TestCase):
     def test_mobile_vod_uses_numeric_movie_id_and_static_fav(self):
         with open(os.path.join(LIB, "panel_watch_sweet_ui.py"), encoding="utf-8") as f:
             src = f.read()
-        self.assertIn(".wt-acts .sw-fav{position:static", src)
+        self.assertIn(".wt-acts .sw-fav{position:static;width:44px;height:44px", src)
         self.assertIn("String(r.movie_id||String(r.id||'').replace(/^vod:/,''))", src)
-        self.assertIn("const fmtMin=s=>s>=60?Math.round(s/60)+' мин'", src)
+        self.assertRegex(src, r"Math\.round\([^)]*\/60\)\s*\+\s*' мин'")
+        vod_fn = src[src.index("async function renderVod"):src.index("async function renderGuide")]
+        self.assertNotIn("pic:artOf(ep),", vod_fn)
+        self.assertRegex(vod_fn, r"ep\.preview.*r\.banner.*r\.poster|artOf\(ep,\s*(?:heroArt|r\.banner)")
 
-
+    def test_spoiler_safe_channel_entry_sheet_and_canonical_can_archive(self):
+        with open(os.path.join(LIB, "panel_watch_sweet_ui.py"), encoding="utf-8") as f:
+            src = f.read()
+        for action_lbl in ("Смотреть с начала", "Смотреть прямой эфир", "Программа на 7 дней"):
+            self.assertIn(action_lbl, src, action_lbl)
+        # Quick ▶ button starts live immediately without opening action sheet
+        self.assertRegex(src, r"class:'wt-go'[\s\S]{0,160}stopPropagation\(\)[\s\S]{0,80}swPlay\(\{\s*cid\s*:")
+        # Canonical can_archive replaces triple archive flags
+        self.assertIn("can_archive", src)
+        self.assertNotIn("playable_in_archive", src)
+        self.assertNotRegex(src, r"\b(?:cu|r|e)\.archive\b")
 
     def test_mobile_vod_uses_next_up_season_and_episode(self):
         with open(os.path.join(LIB, "panel_watch_sweet_ui.py"), encoding="utf-8") as f:

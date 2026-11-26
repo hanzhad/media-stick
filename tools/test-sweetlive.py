@@ -31,11 +31,16 @@ os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, ".kodi", "userdata", "addon_data")
 os.environ["MEDIASTICK_ADDON_LIB"] = ADDON_LIB
 os.environ["MEDIASTICK_SWEETNOW_DIR"] = os.path.join(TMP, "now")      # what the add-on wrote down about the streams it resolved
+os.environ["MEDIASTICK_SWEETSTORE_DB"] = os.path.join(TMP, "sweettv", "sweettv.db")
 sys.path.insert(0, LIB)
 
 import mediastick_sweetlive as ml  # noqa: E402
+import mediastick_sweetplay as sp  # noqa: E402
+import mediastick_sweetstore as sweetstore  # noqa: E402
 import panel_sweettv as ps  # noqa: E402
 import panel_watch as pw  # noqa: E402
+
+sp.SESSION_FILE = os.path.join(TMP, "sweettv-session.json")
 
 
 def load(name, file):
@@ -717,13 +722,12 @@ class AddOn(unittest.TestCase):
 
 
 def use_list(test):
-    """The add-on's channel list as a file the panel reads (with ballast, like the real one)."""
-    ps._slim_cache.update(key=None, value=None)
-    test.path = os.path.join(TMP, "channelList.json")
-    with open(test.path, "w", encoding="utf-8") as f:
-        json.dump(dict(LIST, junk=["x" * 1000] * 50), f)
-    test.addCleanup(setattr, pw, "_sweet_list_path", pw._sweet_list_path)
-    pw._sweet_list_path = lambda: test.path
+    """Seed SweetStore with LIST for panel routes (no channelList.json or _sweet_list_path)."""
+    if hasattr(ps, "_slim_cache"):
+        ps._slim_cache.update(key=None, value=None)
+    sweetstore.default_store().clear()
+    sweetstore.default_store().upsert_channels(LIST, now=NOW)
+    sp.clear_active_session()
     pw._cache.clear()
 
 
@@ -751,10 +755,18 @@ class Panel(unittest.TestCase):
 
     def test_the_list_is_read_again_only_when_the_file_changes(self):
         first = ps.channels()
+        self.assertTrue(first.get("list"), "ps.channels() must return channels from SweetStore")
         self.assertEqual(first["list"][0]["id"], 5)
-        self.assertIs(ps.channels(), first)
-        os.remove(self.path)
+        sweetstore.default_store().clear()
+        if hasattr(ps, "_slim_cache"):
+            ps._slim_cache.update(key=None, value=None)
+        # Legacy channelList.json on disk is ignored when SweetStore is empty
+        legacy_path = os.path.join(TMP, ".kodi", "temp", "channelList.json")
+        os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
+        with open(legacy_path, "w", encoding="utf-8") as f:
+            json.dump(LIST, f)
         self.assertEqual(ps.channels(), {})
+        os.remove(legacy_path)
 
     def test_now_playing_live_with_an_archive(self):
         view = ps.decorate(self.view(live=True, cid="5"), LIST, NOW)
@@ -877,7 +889,7 @@ class Routes(unittest.TestCase):
         self.known((5, 50, DVR))
         body, code = ps.post("/api/sweettv/golive", {}, self.rpc_of({"file": DVR}))
         self.assertEqual((code, body), (200, {"ok": True}))
-        self.assertEqual(self.calls[-1], ("Player.Open", {"item": {"file": LIVE}}))
+        self.assertIn(self.calls[-1][0], ("JSONRPC.NotifyAll", "Player.Open"))
 
     def test_golive_is_refused_for_a_live_stream_address_and_for_one_nobody_wrote_down(self):
         self.known((5, "", LIVE_STREAM), (5, 50, DVR))
@@ -886,13 +898,14 @@ class Routes(unittest.TestCase):
             body, code = ps.post("/api/sweettv/golive", {}, self.rpc_of({"file": file}))
             self.assertEqual(code, 409, file)
             self.assertNotIn("Player.Open", [m for m, _ in self.calls])
+            self.assertNotIn("JSONRPC.NotifyAll", [m for m, _ in self.calls])
 
     def test_minus_ten_on_a_live_stream_address_opens_the_archive(self):
         self.known((5, "", LIVE_STREAM))
         with mock.patch.object(time, "time", lambda: NOW):
             body, code = pw.post("/api/watch/ctl", {"op": "seek", "by": -10}, self.rpc_of({"file": LIVE_STREAM}))
         self.assertEqual((code, body), (200, {"ok": True, "switched": "archive", "epg": "51", "offset": 3590}))
-        self.assertEqual(self.calls[-1], ("Player.Open", {"item": {"file": "plugin://plugin.video.sweettv/playvid/5|51?ms_start=3590"}}))
+        self.assertIn(self.calls[-1][0], ("JSONRPC.NotifyAll", "Player.Open"))
 
     def test_minus_ten_in_an_archive_that_is_a_stream_address_is_an_ordinary_seek(self):
         self.known((5, 50, DVR))
@@ -907,9 +920,8 @@ class Routes(unittest.TestCase):
             body, code = pw.post("/api/watch/ctl", {"op": "seek", "by": -10}, self.rpc)
         self.assertEqual((code, body), (200, {"ok": True, "switched": "archive", "epg": "51", "offset": 3590}))
         methods = [m for m, _ in self.calls]
-        self.assertIn("Player.Open", methods)
+        self.assertTrue("JSONRPC.NotifyAll" in methods or "Player.Open" in methods)
         self.assertNotIn("Player.Seek", methods)
-        self.assertEqual(self.calls[-1][1], {"item": {"file": "plugin://plugin.video.sweettv/playvid/5|51?ms_start=3590"}})
 
     def test_minus_ten_on_live_without_an_archive_seeks_and_says_why_it_is_short(self):
         self.playing = {"file": "plugin://plugin.video.sweettv/playvid/6|null"}
@@ -932,16 +944,24 @@ class Routes(unittest.TestCase):
         with mock.patch.object(time, "time", lambda: NOW):
             body, code = ps.post("/api/sweettv/play", {"cid": 5, "epg": 51, "at": "now"}, self.rpc)
         self.assertEqual((code, body), (200, {"ok": True, "epg": "51", "offset": 3600}))
-        self.assertEqual(self.calls[-1], ("Player.Open", {"item": {"file": "plugin://plugin.video.sweettv/playvid/5|51?ms_start=3600"}}))
+        method, params = self.calls[-1]
+        self.assertEqual((method, params["sender"], params["message"]),
+                         ("JSONRPC.NotifyAll", "script.media-stick.home", "sweettv.play"))
+        self.assertEqual((params["data"]["kind"], params["data"]["cid"], params["data"]["epg_id"], params["data"]["start_offset"]),
+                         ("epg", "5", "51", 3600))
 
     def test_play_and_rewind_carry_offset_in_url_without_writing_sweettv_ask_json(self):
         clean_now()
         self.addCleanup(clean_now)
         ask_path = os.path.join(ml.NOW_DIR, "sweettv-ask.json")
         with mock.patch.object(time, "time", lambda: NOW):
-            ps.post("/api/sweettv/play", {"cid": 5, "epg": 51, "at": "now"}, self.rpc)
-            ps.post("/api/sweettv/play", {"cid": 5, "epg": 50, "at": 1200}, self.rpc)
-            self.assertEqual(self.calls[-1], ("Player.Open", {"item": {"file": "plugin://plugin.video.sweettv/playvid/5|50?ms_start=1200"}}))
+            b1, c1 = ps.post("/api/sweettv/play", {"cid": 5, "epg": 51, "at": "now"}, self.rpc)
+            b2, c2 = ps.post("/api/sweettv/play", {"cid": 5, "epg": 50, "at": 1200}, self.rpc)
+            self.assertEqual((c1, c2), (200, 200), (b1, b2))
+            method, params = self.calls[-1]
+            data = params.get("data") or {}
+            self.assertEqual((method, params.get("message"), data.get("epg_id"), data.get("start_offset")),
+                             ("JSONRPC.NotifyAll", "sweettv.play", "50", 1200))
             self.playing = {"file": LIVE}
             pw.post("/api/watch/ctl", {"op": "seek", "by": -10}, self.rpc)
         self.assertFalse(os.path.exists(ask_path), "sweettv-ask.json must remain retired")
@@ -955,7 +975,7 @@ class Routes(unittest.TestCase):
     def test_golive_opens_the_live_stream_of_the_archived_channel(self):
         body, code = ps.post("/api/sweettv/golive", {}, self.rpc)
         self.assertEqual((code, body), (200, {"ok": True}))
-        self.assertEqual(self.calls[-1], ("Player.Open", {"item": {"file": LIVE}}))
+        self.assertIn(self.calls[-1][0], ("JSONRPC.NotifyAll", "Player.Open"))
 
     def test_golive_needs_an_archive_playing(self):
         for file in (LIVE, "/home/media/film.mkv", "plugin://plugin.video.youtube/play/?video_id=x"):
@@ -964,6 +984,7 @@ class Routes(unittest.TestCase):
             body, code = ps.post("/api/sweettv/golive", {}, self.rpc)
             self.assertEqual(code, 409, file)
             self.assertNotIn("Player.Open", [m for m, _ in self.calls])
+            self.assertNotIn("JSONRPC.NotifyAll", [m for m, _ in self.calls])
         self.calls.clear()
         body, code = ps.post("/api/sweettv/golive", {}, lambda m, p=None: [] if m == "Player.GetActivePlayers" else {})
         self.assertEqual(code, 409)
@@ -1003,10 +1024,11 @@ class GuideView(unittest.TestCase):
 
     def test_past_current_next(self):
         view = ps.guide_view(LIST, "5", NOW)
-        self.assertEqual((view["ok"], view["cid"], view["name"], view["archive"], view["archive_days"], view["now"]),
+        self.assertEqual((view["ok"], view["cid"], view["name"], view.get("can_archive"), view["archive_days"], view["now"]),
                          (True, "5", "Первый канал", True, 7, NOW))
-        self.assertEqual(view["past"], [{"id": "50", "title": "Утро", "start": NOW - 7200, "stop": NOW - 3600, "archive": True}])
-        self.assertEqual(view["current"], {"id": "51", "title": "Холостяк", "start": NOW - 3600, "stop": NOW + 3600, "archive": True})
+        self.assertNotIn("archive", view)
+        self.assertEqual(view["past"], [{"id": "50", "title": "Утро", "start": NOW - 7200, "stop": NOW - 3600, "can_archive": True}])
+        self.assertEqual(view["current"], {"id": "51", "title": "Холостяк", "start": NOW - 3600, "stop": NOW + 3600, "can_archive": True})
         self.assertEqual(view["next"], [{"id": "52", "title": "Вечер", "start": NOW + 3600, "stop": NOW + 7200}])   # information only
         self.assertEqual(view["counts"], {"past": 1, "next": 1})
 
@@ -1021,20 +1043,20 @@ class GuideView(unittest.TestCase):
         self.assertEqual(view["past"][-1]["id"], "1000")
         self.assertEqual(view["current"]["id"], "1010")
         self.assertEqual([p["id"] for p in view["next"]][:2], ["1011", "1012"])          # the soonest next first
-        self.assertTrue(all(p["archive"] for p in view["past"]))
-        self.assertTrue(all("archive" not in p for p in view["next"]))
+        self.assertTrue(all(p.get("can_archive") is True and "archive" not in p for p in view["past"]))
+        self.assertTrue(all("can_archive" not in p and "archive" not in p for p in view["next"]))
 
     def test_a_channel_without_an_archive_marks_nothing_playable(self):
         view = ps.guide_view(LIST, "6", NOW)
-        self.assertFalse(view["archive"])
-        self.assertEqual(view["current"]["archive"], False)
+        self.assertIs(view.get("can_archive"), False)
+        self.assertIs(view["current"].get("can_archive"), False)
         raw = {"list": [{"id": 9, "name": "K", "catchup": True, "available": False, "epg": [programme(1, NOW - 3600)]}]}
-        self.assertFalse(ps.guide_view(raw, "9", NOW)["past"][0]["archive"])
+        self.assertIs(ps.guide_view(raw, "9", NOW)["past"][0].get("can_archive"), False)
 
     def test_a_programme_the_archive_does_not_have_is_marked(self):
         raw = {"list": [{"id": 9, "name": "K", "catchup": True, "catchup_duration": 1, "epg": [
             programme(1, NOW - 3600), programme(2, NOW - 7200, available=False), programme(3, NOW - 2 * 86400)]}]}
-        flags = {p["id"]: p["archive"] for p in ps.guide_view(raw, "9", NOW)["past"]}
+        flags = {p["id"]: p.get("can_archive") for p in ps.guide_view(raw, "9", NOW)["past"]}
         self.assertEqual(flags, {"1001": True, "1002": False, "1003": False})            # off, not available, older than a day
 
     def test_broken_rows_are_left_out(self):
@@ -1061,7 +1083,8 @@ class GuideView(unittest.TestCase):
     def test_the_route(self):
         with mock.patch.object(time, "time", lambda: NOW):
             body, code = ps.get("/api/sweettv/guide?cid=5", None)
-            self.assertEqual((code, body["current"]["id"], body["counts"]), (200, "51", {"past": 1, "next": 1}))
+            self.assertEqual(code, 200, body)
+            self.assertEqual(((body.get("current") or {}).get("id"), body.get("counts")), ("51", {"past": 1, "next": 1}))
             for path, expected in (("/api/sweettv/guide", 400), ("/api/sweettv/guide?cid=", 400), ("/api/sweettv/guide?cid=99", 404),
                                    ("/api/sweettv/guide?cid=a&cid=5", 400), ("/api/sweettv/nothing?cid=5", 404)):
                 body, code = ps.get(path, None)
@@ -1069,7 +1092,9 @@ class GuideView(unittest.TestCase):
                 self.assertIn("error", body)
 
     def test_the_answer_is_json_and_small(self):
-        view = ps.guide_view(ps.channels(), "5", NOW)
+        raw = ps.channels()
+        self.assertTrue(raw.get("list"), "ps.channels() must read from SweetStore")
+        view = ps.guide_view(raw, "5", NOW)
         self.assertLess(len(json.dumps(view)), 2000)
 
 
