@@ -36,6 +36,7 @@ XML = "script-media-stick-youtube.xml"
 RAIL, AVATAR, GRID, ACTION = 100, 150, 200, 300
 KIND_BUTTONS = {401 + n: kind.key for n, kind in enumerate(data.KINDS)}     # the row of choices above the results of a search
 ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_PAGE_UP, ACTION_PAGE_DOWN = 1, 2, 3, 4, 5, 6
+ACTION_CONTEXT_MENU = 117
 MOVES = (ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN, ACTION_PAGE_UP, ACTION_PAGE_DOWN)
 COLUMNS = 4                      # the grid's columns (the panel in the skin)
 AHEAD = 2 * COLUMNS              # the next page is asked for when the cursor is this close to the last card
@@ -685,6 +686,13 @@ class YouTube(xbmcgui.WindowXML):
         if action_id in ui.BACK_ACTIONS:
             if not self._back():
                 self.close()
+            return
+        if action_id == ACTION_CONTEXT_MENU:
+            if not self.splash and self.mode:
+                if self._focus() == RAIL:
+                    self._focus_content()
+                else:
+                    self._focus_on(RAIL, 0)
             return
         if action_id == ACTION_MOVE_RIGHT and self._focus() == RAIL and self.mode != data.DATA:
             self._focus_content()                # no grid to go to: the card's button

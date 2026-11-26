@@ -3548,5 +3548,240 @@ class NoChannel(WindowCase):
         self.assertEqual(self.card(window)[0], "Nothing here")
 
 
+class MenuKey(WindowCase):
+    """The remote's Menu key (ACTION_CONTEXT_MENU = 117): toggles focus between content and the section rail."""
+    MENU = 117
+
+    def menu_id(self):
+        return getattr(youtube_app, "ACTION_CONTEXT_MENU", self.MENU)
+
+    def test_constant_is_117_and_adjacent_actions_leave_focus_alone(self):
+        self.assertEqual(getattr(youtube_app, "ACTION_CONTEXT_MENU", None), 117)
+        self.rec(vid(1, "One"), vid(2, "Two"))
+        window = self.open()
+        for action_id in (116, 118, 7):
+            window.focus = GRID
+            self.press(window, action_id)
+            self.assertEqual(window.focus, GRID, action_id)
+            window.focus = RAIL
+            self.press(window, action_id)
+            self.assertEqual(window.focus, RAIL, action_id)
+
+    def test_menu_key_toggles_between_grid_and_rail_and_swallows_action(self):
+        self.rec(vid(1, "One"), vid(2, "Two"), vid(3, "Three"))
+        mix = R + "playlist/PL1/"
+        self.site.routes[D.SECTIONS[4].route] = answer(folder(mix, "Mix"))
+        self.site.routes[mix] = answer(vid(9, "Inside"))
+        window = self.open()
+        window.controls[GRID].selected = 2
+        with mock.patch.object(WindowXML, "onAction") as base:
+            self.press(window, self.menu_id())
+            self.assertEqual((window.focus, window.controls[GRID].selected), (RAIL, 2))
+            base.assert_not_called()
+            self.press(window, self.menu_id())
+            self.assertEqual((window.focus, window.controls[GRID].selected), (GRID, 2))
+            base.assert_not_called()
+        self.go(window, "lists")
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Mix"]))
+        window.focus = GRID
+        window.controls[GRID].selected = 0
+        window.onClick(GRID)
+        self.assertTrue(wait_for(lambda: self.shown(window) == ["Inside"]))
+        self.press(window, self.menu_id())
+        self.assertEqual((window.focus, window.closed, self.shown(window), window.controls[RAIL].selected),
+                         (RAIL, False, ["Inside"], 4))
+        self.press(window, self.menu_id())
+        self.assertEqual((window.focus, window.closed, self.shown(window)), (GRID, False, ["Inside"]))
+        window.stop()
+
+        demo_win = self.open(demo=True)
+        self.assertEqual(demo_win.focus, GRID)
+        self.press(demo_win, self.menu_id())
+        self.assertEqual(demo_win.focus, RAIL)
+        self.press(demo_win, self.menu_id())
+        self.assertEqual(demo_win.focus, GRID)
+
+    def test_menu_key_focuses_rail_from_buttons_and_returns_to_content(self):
+        cards = (
+            (D.SIGNIN, lambda: setattr(Fake, "signed", False)),
+            (D.NEEDKEY, lambda: setattr(Fake, "keys", False)),
+            (D.ERROR, lambda: self.site.routes.update({D.SECTIONS[0].route: {"error": {"code": -32100, "message": "boom"}}})),
+            (D.UNAVAILABLE, lambda: self.site.routes.update({D.SECTIONS[0].route: INVALID})),
+        )
+        for mode, setup_world in cards:
+            Fake.signed, Fake.keys = True, True
+            self.site.routes.pop(D.SECTIONS[0].route, None)
+            setup_world()
+            window = self.open()
+            self.assertEqual((window.mode, window.focus), (mode, ACTION), mode)
+            self.press(window, self.menu_id())
+            self.assertEqual(window.focus, RAIL, mode)
+            self.press(window, self.menu_id())
+            self.assertEqual(window.focus, ACTION, mode)
+            if mode == D.SIGNIN:
+                window.focus = AVATAR
+                self.press(window, self.menu_id())
+                self.assertEqual(window.focus, RAIL)
+                self.press(window, self.menu_id())
+                self.assertEqual(window.focus, ACTION)
+            window.stop()
+
+        Fake.signed, Fake.keys = True, True
+        self.site.routes.pop(D.SECTIONS[0].route, None)
+        empty_search = self.open(state={"section": "search", "query": "zzz"})
+        self.assertEqual((empty_search.mode, empty_search.focus), (D.EMPTY, ACTION))
+        self.press(empty_search, self.menu_id())
+        self.assertEqual(empty_search.focus, RAIL)
+        self.press(empty_search, self.menu_id())
+        self.assertEqual(empty_search.focus, ACTION)
+        empty_search.focus = KIND_IDS[0]
+        self.press(empty_search, self.menu_id())
+        self.assertEqual(empty_search.focus, RAIL)
+        self.press(empty_search, self.menu_id())
+        self.assertEqual(empty_search.focus, ACTION)
+        empty_search.stop()
+
+        prompt = self.open(wait=False, state={"section": "search", "query": ""})
+        self.assertEqual((prompt.mode, prompt.focus), (D.PROMPT, ACTION))
+        self.press(prompt, self.menu_id())
+        self.assertEqual(prompt.focus, RAIL)
+        self.press(prompt, self.menu_id())
+        self.assertEqual(prompt.focus, ACTION)
+        prompt.focus = KIND_IDS[0]
+        self.press(prompt, self.menu_id())
+        self.assertEqual(prompt.focus, RAIL)
+        self.press(prompt, self.menu_id())
+        self.assertEqual(prompt.focus, ACTION)
+        prompt.stop()
+
+        self.site.routes[D.search_route("cats", D.KIND_VIDEO)] = answer(vid(1, "Cat"))
+        search = self.open(state={"section": "search", "query": "cats"})
+        self.assertEqual(search.focus, GRID)
+        for button in KIND_IDS:
+            search.focus = button
+            self.press(search, self.menu_id())
+            self.assertEqual(search.focus, RAIL, button)
+            self.press(search, self.menu_id())
+            self.assertEqual(search.focus, GRID, button)
+        search.stop()
+
+        self.rec(vid(1, "One"))
+        data_win = self.open(state={"section": D.DEFAULT_SECTION})
+        data_win.focus = AVATAR
+        self.press(data_win, self.menu_id())
+        self.assertEqual(data_win.focus, RAIL)
+        self.press(data_win, self.menu_id())
+        self.assertEqual(data_win.focus, GRID)
+        data_win.focus = 0
+        self.press(data_win, self.menu_id())
+        self.assertEqual(data_win.focus, RAIL)
+        data_win.focus = 0
+        real_get_focus = data_win.getFocusId
+
+        def focus_or_raise():
+            if data_win.focus == 0:
+                raise RuntimeError("no control focused")
+            return real_get_focus()
+
+        with mock.patch.object(data_win, "getFocusId", side_effect=focus_or_raise):
+            self.press(data_win, self.menu_id())
+        self.assertEqual(data_win.focus, RAIL)
+
+    def test_menu_key_from_avatar_on_card_without_button_focuses_rail_and_stays_there(self):
+        self.rec(vid(1, "One"))
+        hold = threading.Event()
+        self.addCleanup(hold.set)
+        self.site.held[D.SECTIONS[1].route] = hold
+        window = self.open()
+        window.focus = RAIL
+        window.controls[RAIL].selected = 1
+        window.onClick(RAIL)
+        self.assertTrue(wait_for(lambda: window.mode == D.LOADING))
+        self.assertEqual((window.splash, window.getProperty("action"), window.focus), (False, "", RAIL))
+        window.focus = AVATAR
+        self.press(window, self.menu_id())
+        self.assertEqual(window.focus, RAIL)
+        self.press(window, self.menu_id())
+        self.assertEqual(window.focus, RAIL)
+        hold.set()
+        self.assertTrue(wait_for(lambda: window.loads >= 2))
+
+    def test_menu_key_focuses_rail_without_waiting_on_ui_thread(self):
+        self.rec(vid(1, "One"))
+        window = self.open()
+        looks = []
+
+        def visible(cond):
+            match = re.fullmatch(r"Control\.IsVisible\((\d+)\)", cond)
+            if match:
+                control_id = int(match.group(1))
+                looks.append(control_id)
+                return control_id != RAIL
+            return True
+
+        with mock.patch.object(xbmc, "getCondVisibility", visible), \
+                mock.patch.object(xbmc, "sleep", side_effect=AssertionError("UI thread must not wait")):
+            self.press(window, self.menu_id())
+        self.assertEqual(looks, [RAIL])
+        self.assertEqual(window.focus, GRID)
+        self.press(window, self.menu_id())
+        self.assertEqual(window.focus, RAIL)
+
+    def test_menu_key_is_ignored_during_splash_and_becomes_active_once_splash_ends(self):
+        hold = threading.Event()
+        self.addCleanup(hold.set)
+        self.rec(vid(1, "One"))
+        self.site.held[D.SECTIONS[0].route] = hold
+        window = self.open(wait=False)
+        self.assertTrue(window.splash)
+        asked = []
+        real_set_focus = window.setFocusId
+        window.setFocusId = lambda cid: (asked.append(cid), real_set_focus(cid))
+        self.press(window, self.menu_id())
+        self.assertEqual((window.focus, asked), (0, []))
+        window.focus = RAIL
+        self.press(window, self.menu_id())
+        self.assertEqual((window.focus, asked), (RAIL, []))
+        window.focus = 0
+        hold.set()
+        self.assertTrue(wait_for(lambda: window.loads >= 1 and not window.splash))
+        self.assertEqual(window.focus, GRID)
+        self.press(window, self.menu_id())
+        self.assertEqual(window.focus, RAIL)
+        window.stop()
+
+        demo_loading = self.open(wait=False, demo=True, scenario="loading")
+        self.assertTrue(demo_loading.splash)
+        self.press(demo_loading, self.menu_id())
+        self.assertEqual(demo_loading.focus, 0)
+        timer = demo_loading._timers["splash"]
+        timer.cancel()
+        timer.function(*timer.args)
+        self.assertFalse(demo_loading.splash)
+        demo_loading.focus = 0
+        self.press(demo_loading, self.menu_id())
+        self.assertEqual(demo_loading.focus, RAIL)
+
+    def test_menu_key_is_ignored_when_mode_is_empty_and_works_after_init(self):
+        self.rec(vid(1, "One"))
+        window = self.make()
+        self.assertEqual((window.mode, window.splash, window.focus), ("", False, 0))
+        asked = []
+        real_set_focus = window.setFocusId
+        window.setFocusId = lambda cid: (asked.append(cid), real_set_focus(cid))
+        self.press(window, self.menu_id())
+        self.assertEqual((window.focus, asked), (0, []))
+        for focused in (RAIL, GRID, ACTION):
+            window.focus = focused
+            self.press(window, self.menu_id())
+            self.assertEqual((window.focus, asked), (focused, []), focused)
+        window.focus = 0
+        window.onInit()
+        self.assertTrue(wait_for(lambda: window.loads >= 1))
+        self.assertEqual((window.mode, window.focus), (D.DATA, GRID))
+        self.press(window, self.menu_id())
+        self.assertEqual(window.focus, RAIL)
+
+
 if __name__ == "__main__":
     unittest.main()
