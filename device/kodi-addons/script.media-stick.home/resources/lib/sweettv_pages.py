@@ -29,14 +29,19 @@ def catalog_key(section, genre_id=0, sort_mode_id=1, offset=0) -> Optional[str]:
     return f"{section}:{int(genre_id or 0)}:{int(sort_mode_id or 1)}:{int(offset or 0)}"
 
 
-def to_value(title, items, total) -> dict:
-    return {
+def to_value(title, items, total, next_offset=None, has_more=None) -> dict:
+    val = {
         "v": VERSION,
         "lang": words.LANG,
         "title": str(title or "")[:200],
         "total": int(total or 0),
         "items": list(items or ()),
     }
+    if next_offset is not None:
+        val["next_offset"] = max(0, int(next_offset))
+    if has_more is not None:
+        val["has_more"] = bool(has_more)
+    return val
 
 
 def _int(value) -> bool:
@@ -72,6 +77,10 @@ def from_value(section, raw) -> Optional[Tuple[str, list, int]]:
         if not _text(title, 200) or not _int(total) or not isinstance(items, list):
             return None
         if not 0 < len(items) <= MAX_SLICE or not len(items) <= total <= MAX_COUNT:
+            return None
+        if "next_offset" in raw and (not _int(raw["next_offset"]) or raw["next_offset"] < 0):
+            return None
+        if "has_more" in raw and not isinstance(raw["has_more"], bool):
             return None
         if not all(_item_ok(item) for item in items):
             return None

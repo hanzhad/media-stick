@@ -4143,7 +4143,7 @@ class SectionSwitchWideGridAndHydrationTests(WindowCase):
         self.assertEqual(hydrated["15|555"].title, "Супермама")
         self.assertEqual((hydrated["15|555"].start, hydrated["15|555"].stop), (NOW - 7200, NOW - 3600))
         self.assertEqual((hydrated["15|555"].wide_art, hydrated["15|555"].banner),
-                         ("https://img/555-prev.jpg", "https://img/555-prev.jpg"))
+                         ("https://img/555-prev.jpg", "https://img/15-ban.jpg"))
         self.assertEqual(hydrated["15|555"].now, "СТБ HD  ·  Continue from 15:00")
 
         self.assertEqual(hydrated["501|"].title, "Дюна")
@@ -5007,11 +5007,15 @@ class Issue108PaginationWarmEmptyShowAndHeroArtTests(WindowCase):
         page_cache.put(NS, PG.catalog_key("top_search"), PG.to_value("top_search", [cached_row], 1), now=stale_ts)
         refreshed = threading.Event()
 
-        def fake_swr_top():
+        def fake_swr_top(*_a, **_kw):
             refreshed.set()
             return {"ok": True, "items": [fresh_row], "count": 1}
 
         with mock.patch.object(API, "top_search", side_effect=fake_swr_top):
+            window.stop()
+            sweettv_app.quick_resume.drop_snapshots("sweettv")
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
             window.controls[MENU].selected = 0
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: self.shown(window) == ["Cached Top"]))
@@ -5027,11 +5031,15 @@ class Issue108PaginationWarmEmptyShowAndHeroArtTests(WindowCase):
         gate = threading.Event()
         many_top = [dict(cached_row, id=str(800 + i), title=f"Top {i}") for i in range(60)]
 
-        def slow_top():
+        def slow_top(*_a, **_kw):
             gate.wait(2.0)
             return {"ok": True, "items": many_top, "count": 60}
 
         with mock.patch.object(API, "top_search", side_effect=slow_top):
+            window.stop()
+            sweettv_app.quick_resume.drop_snapshots("sweettv")
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
             window.controls[MENU].selected = 0
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) > 0 and window.cards[0].key.startswith("skel:")))
@@ -5091,7 +5099,7 @@ class Issue108PaginationWarmEmptyShowAndHeroArtTests(WindowCase):
             "vod_url": "plugin://plugin.video.sweettv/playvod/501|null|10",
         }
         m_card = sweettv_app.sections.vod_card(_sample_movie(501, "Inception"), "movie")
-        with mock.patch.object(API, "movie_detail", return_value=movie_detail):
+        with mock.patch.object(API, "vod_detail", return_value=movie_detail):
             window._open_detail_modal(m_card)
             self.assertTrue(wait_for(lambda: window.getProperty("has_play") == "1" and window.focus == 210))
 
@@ -5146,8 +5154,8 @@ class Issue108PaginationWarmEmptyShowAndHeroArtTests(WindowCase):
 
         # 4. _continue_epg_card prefers image_url > ch.banner > preview
         cat = D.parse_catalog(answer(
-            chan(10, "Ten", number=10, icon_v2_url="https://img/l10.png", banner_url="https://img/b10.jpg"),
-            chan(11, "Eleven", number=11, icon_v2_url="https://img/l11.png"),
+            chan(10, "Ten", number=10, catchup=True, catchup_duration=3, icon_v2_url="https://img/l10.png", banner_url="https://img/b10.jpg"),
+            chan(11, "Eleven", number=11, catchup=True, catchup_duration=3, icon_v2_url="https://img/l11.png"),
         ), NOW)
         resume_doc = {
             "v": 1,

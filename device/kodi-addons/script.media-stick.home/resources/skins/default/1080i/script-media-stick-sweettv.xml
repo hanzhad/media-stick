@@ -982,7 +982,7 @@
                 <orientation>horizontal</orientation>
                 <itemgap>14</itemgap>
                 <usecontrolcoords>false</usecontrolcoords>
-                <ondown condition="!String.IsEmpty(Window.Property(guide))">410</ondown>
+                <ondown condition="!String.IsEmpty(Window.Property(guide)) + Integer.IsGreater(Container(410).NumItems,0)">410</ondown>
                 <animation type="Conditional" condition="String.IsEqual(Window.Property(modal),show)">
                     <effect type="slide" start="0,0" end="0,140" time="0" />
                 </animation>

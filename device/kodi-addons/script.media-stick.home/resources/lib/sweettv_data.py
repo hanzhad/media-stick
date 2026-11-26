@@ -53,6 +53,7 @@ class Programme(NamedTuple):
     available: bool
     desc: str
     image: str = ""
+    hero_image: str = ""
 
 
 class Channel(NamedTuple):
@@ -130,12 +131,26 @@ def clean_text(value, limit=200) -> str:
     return " ".join(text.replace("[", "(").replace("]", ")").split())[:limit]
 
 
+_CF_IMG_RE = re.compile(r"^(https?://[^/]+)/cdn-cgi/image/[^/]+/(https?://.+|.+)$")
+
+
+def strip_cdn_cgi(url: str) -> str:
+    """Strip Cloudflare /cdn-cgi/image/.../ resize proxy when present."""
+    m = _CF_IMG_RE.match(url)
+    if not m:
+        return url
+    rest = m.group(2)
+    return rest if rest.startswith(("http://", "https://")) else f"{m.group(1)}/{rest.lstrip('/')}"
+
+
 def logo_of(*values) -> str:
     """The first usable picture address: a web address, or a local path (the demo's logos)."""
     for value in values:
         if isinstance(value, str):
             text = value.strip()
-            if text.startswith(("http://", "https://", "special://")) or os.path.isabs(text):
+            if text.startswith(("http://", "https://")):
+                return strip_cdn_cgi(text)
+            if text.startswith("special://") or os.path.isabs(text):
                 return text
     return ""
 
@@ -153,7 +168,8 @@ def parse_programme(raw, now=None) -> Optional[Programme]:
                      str(epg_id) if epg_id is not None and epg_id > 0 else "",
                      raw.get("available") is not False,
                      clean_text(raw.get("description") or raw.get("text_description"), 300),
-                     logo_of(raw.get("image_url"), raw.get("preview_url_ext"), raw.get("preview_url")))
+                     logo_of(raw.get("image_url"), raw.get("preview_url_ext"), raw.get("preview_url")),
+                     logo_of(raw.get("image_url")))
 
 
 def parse_epg(raw, now, days=0) -> Tuple[Programme, ...]:

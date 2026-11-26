@@ -253,6 +253,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             else:
                 self._open_section("shows")
             self._show_mode(data.DATA, {})
+        self._start_warm()
         return True
 
     def _snapshot(self, now) -> files.Snapshot:
@@ -351,6 +352,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self._show_favourites()
         elif self.section in ("movies", "series", "shows", "search"):
             self._open_section(self.section, focus_cid=focus_cid)
+        if not self.demo and self.signed:
+            self._start_warm()
 
     def _refresh_channels(self, now):
         cards = [sections.channel_card(c, self.cat_names, now, self.resume_doc, self.fav_keys) for c in self.shown]
@@ -437,25 +440,26 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             if follow and key == self.section:
                 self.getControl(MENU).selectItem(idx)
 
+    def _build_card_items(self, cards, start_idx=0, wide=False) -> list:
+        cid = WIDE_ROW if wide else ROW
+        out = []
+        for idx, c in enumerate(cards):
+            li = items.card_item(c, wide=wide)
+            self._shown_props[(cid, start_idx + idx)] = dict(li.props) if hasattr(li, "props") else items.card_props(c, wide=wide)
+            out.append(li)
+        return out
+
     def _apply_cards(self, cards, focus_key="", empty_msg="", keep_pos=False):
         ctrl = self.getControl(ROW)
         old_pos = self._active_grid_pos() if keep_pos else 0
         self.cards = list(cards)
         self._shown_props = {}
-        list_items = []
-        for idx, c in enumerate(self.cards):
-            li = items.card_item(c, wide=False)
-            self._shown_props[(ROW, idx)] = dict(li.props) if hasattr(li, "props") else items.card_props(c, wide=False)
-            list_items.append(li)
+        list_items = self._build_card_items(self.cards, wide=False)
         ctrl.reset()
         ctrl.addItems(list_items)
         try:
             wctrl = self.getControl(WIDE_ROW)
-            wide_items = []
-            for idx, c in enumerate(self.cards):
-                wli = items.card_item(c, wide=True)
-                self._shown_props[(WIDE_ROW, idx)] = dict(wli.props) if hasattr(wli, "props") else items.card_props(c, wide=True)
-                wide_items.append(wli)
+            wide_items = self._build_card_items(self.cards, wide=True)
             wctrl.reset()
             wctrl.addItems(wide_items)
         except Exception:
@@ -470,6 +474,21 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 pass
         self._prop("emptycat", "" if self.cards else empty_msg)
         self._sync_hero()
+
+    def _append_cards(self, new_cards):
+        if not new_cards:
+            return
+        ctrl = self.getControl(ROW)
+        base = len(self.cards)
+        self.cards.extend(new_cards)
+        ctrl.addItems(self._build_card_items(new_cards, start_idx=base, wide=False))
+        try:
+            self.getControl(WIDE_ROW).addItems(self._build_card_items(new_cards, start_idx=base, wide=True))
+        except Exception:
+            pass
+        self._prop("emptycat", "")
+        if base == 0:
+            self._sync_hero()
 
     def _select_grid(self, pos):
         if 0 <= pos < len(self.cards):
@@ -546,7 +565,6 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 if self.search_cards:
                     self._apply_cards(self.search_cards)
                 else:
-                    self._apply_cards([], empty_msg=words.tr("Loading…"))
                     self._load_top_search()
             elif key == "continue":
                 self._set_chips("continue", [])

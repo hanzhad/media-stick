@@ -5,7 +5,8 @@ import threading
 import xbmcgui
 
 import mediastick_sweetapi as sweetapi
-from resources.lib import sweettv_demo, sweettv_files as files, sweettv_sections as sections, sweettv_text as words, ui
+from resources.lib import page_cache, sweettv_demo, sweettv_files as files, sweettv_pages as pages, \
+    sweettv_sections as sections, sweettv_text as words, ui
 
 _SERIES_SUBTITLE_RE = re.compile(r"(?:сериал|серіал|series|сезон)", re.I)
 
@@ -30,7 +31,26 @@ class Find:
             raw = self.raw_catalog
             resume_doc = self.resume_doc
             favs = self.fav_keys
-            self._prop("emptycat", words.tr("Loading…"))
+            ns = None if demo else pages.namespace()
+            ckey = pages.catalog_key("top_search") if ns else None
+            hit = page_cache.get(ns, ckey, ttl=pages.PAGE_TTL, max_age=pages.PAGE_MAX_AGE) if (ns and ckey) else None
+            if hit:
+                parsed = pages.from_value("top_search", hit.value)
+                if parsed:
+                    _, rows, _ = parsed
+                    cards = [sections.search_card(r, resume_doc, favs) for r in rows]
+                    self.search_cards = cards
+                    self._apply_cards(
+                        sections.filter_search(cards, self.search_filter),
+                        empty_msg=words.tr("Press OK to type what to look for."),
+                    )
+                    if not hit.stale:
+                        return
+                    t = threading.Timer(0.02, self._run_top_search, args=(gen, demo, raw, resume_doc, favs))
+                    t.daemon = True
+                    t.start()
+                    return
+            self._apply_cards(sections.skeleton_cards(5), empty_msg="")
         threading.Thread(target=self._run_top_search, args=(gen, demo, raw, resume_doc, favs), daemon=True).start()
 
     def _run_top_search(self, gen, demo, raw, resume_doc, favs):
@@ -38,6 +58,12 @@ class Find:
             res = sweettv_demo.demo_top_search(self._now(), self.DEMO_LOGOS) if demo else sweetapi.top_search(
                 raw or {}, now=self._now(), tr=words.tr, tr_n=words.tr_n)
             rows = res.get("items") or [] if res.get("ok") else []
+            if not demo and rows:
+                ns = pages.namespace()
+                ckey = pages.catalog_key("top_search") if ns else None
+                if ns and ckey:
+                    sliced = list(rows)[:pages.MAX_SLICE]
+                    page_cache.put(ns, ckey, pages.to_value("top_search", sliced, len(sliced)))
             cards = [sections.search_card(r, resume_doc, favs) for r in rows]
         except Exception as e:
             ui.log(f"SWEET.TV top_search failed: {e!r}")
