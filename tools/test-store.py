@@ -331,7 +331,53 @@ class CacheStoreTests(unittest.TestCase):
         }
         self.assertEqual(mode.lower(), "wal")
         self.assertGreaterEqual(timeout, 3000)
-        self.assertTrue({"pages", "ui_snapshots", "api_cache"}.issubset(tables))
+        self.assertTrue({"pages", "ui_snapshots"}.issubset(tables))
+        self.assertNotIn("api_cache", tables)
+        self.assertFalse(hasattr(ms.CacheStore, "get_api"))
+        self.assertFalse(hasattr(ms.CacheStore, "put_api"))
+
+    def test_init_db_drops_retired_api_cache_table_and_updates_architecture_doc(self):
+        legacy_db = os.path.join(self.dir, "legacy_cache.db")
+        seed_con = sqlite3.connect(legacy_db)
+        try:
+            seed_con.execute(
+                "CREATE TABLE api_cache ("
+                "endpoint TEXT NOT NULL, req_hash TEXT NOT NULL, payload BLOB NOT NULL, "
+                "size_bytes INTEGER NOT NULL, fetched_at REAL NOT NULL, "
+                "ttl_s REAL NOT NULL, last_used_at REAL NOT NULL, "
+                "PRIMARY KEY(endpoint, req_hash))"
+            )
+            seed_con.execute(
+                "INSERT INTO api_cache (endpoint, req_hash, payload, size_bytes, fetched_at, ttl_s, last_used_at) "
+                "VALUES ('/ep', 'h1', X'00', 1, 1.0, 60.0, 1.0)"
+            )
+            seed_con.commit()
+        finally:
+            seed_con.close()
+
+        migrated = ms.CacheStore(db_path=legacy_db)
+        self.addCleanup(migrated.close)
+        migrated.put_page("sweettv:main", "k1", {"ok": True}, version=1, lang="uk", now=NOW)
+
+        check_con = sqlite3.connect(legacy_db)
+        try:
+            tables = {
+                r[0] for r in check_con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            }
+        finally:
+            check_con.close()
+        self.assertNotIn("api_cache", tables)
+        self.assertTrue({"pages", "ui_snapshots"}.issubset(tables))
+        self.assertEqual(
+            migrated.get_page("sweettv:main", "k1", version=1, lang="uk", ttl=60, max_age=600, now=NOW).data,
+            {"ok": True},
+        )
+
+        arch_path = os.path.join(ROOT, "docs", "architecture.md")
+        with open(arch_path, encoding="utf-8") as f:
+            arch_text = f.read()
+        self.assertNotIn("api_cache", arch_text)
+        self.assertIn("/var/cache/media-stick/sweettv/sweettv.db", arch_text)
 
     def test_page_swr_version_and_lang_semantics(self):
         self.cache.put_page("sweettv:main", "movies:p1", {"cards": [1, 2]}, version=4, lang="uk", now=NOW)
@@ -361,12 +407,9 @@ class CacheStoreTests(unittest.TestCase):
             with self.assertRaises(ms.SecretRefused):
                 self.cache.put_page("sweettv:main", "bad", bad, version=1, lang="uk", now=NOW)
             with self.assertRaises(ms.SecretRefused):
-                self.cache.put_api("/Auth/Login", "h1", bad, ttl_s=60, now=NOW)
-            with self.assertRaises(ms.SecretRefused):
                 self.cache.save_snapshot("sweettv", "default", {"schema_v": 1, "media_ref": bad}, now=NOW)
 
         self.assertIsNone(self.cache.get_page("sweettv:main", "bad", version=1, lang="uk", ttl=60, max_age=600, now=NOW))
-        self.assertIsNone(self.cache.get_api("/Auth/Login", "h1", now=NOW))
         self.assertIsNone(self.cache.load_snapshot("sweettv", "default"))
         # Existing safe entry untouched
         self.assertEqual(self.cache.get_page("sweettv:main", "safe", version=1, lang="uk", ttl=60, max_age=600, now=NOW).data, {"ok": True})
@@ -384,7 +427,7 @@ class CacheStoreTests(unittest.TestCase):
         self.assertIsNotNone(self.cache.get_page("youtubers:x", "k", version=1, lang="en", ttl=60, max_age=600, now=NOW))
         self.assertIsNotNone(self.cache.get_page("sweettv:main", "k", version=1, lang="en", ttl=60, max_age=600, now=NOW))
 
-    def test_lru_eviction_keeps_pages_plus_api_cache_within_max_bytes(self):
+    def test_lru_eviction_keeps_pages_within_max_bytes(self):
         small_db = os.path.join(self.dir, "small_cache.db")
         small = ms.CacheStore(db_path=small_db, max_bytes=20_000)
         self.addCleanup(small.close)
@@ -392,21 +435,17 @@ class CacheStoreTests(unittest.TestCase):
         # Each incompressible blob is ~8KB compressed
         for i in range(4):
             blob = {"i": i, "data": os.urandom(6000).hex()}
-            if i < 2:
-                small.put_page("ns", f"p{i}", blob, version=1, lang="en", now=NOW + i)
-            else:
-                small.put_api("/ep", f"a{i}", blob, ttl_s=600, now=NOW + i)
+            small.put_page("ns", f"p{i}", blob, version=1, lang="en", now=NOW + i)
 
         con = sqlite3.connect(small_db)
         self.addCleanup(con.close)
         total_bytes = con.execute(
-            "SELECT COALESCE((SELECT SUM(size_bytes) FROM pages), 0) + "
-            "COALESCE((SELECT SUM(size_bytes) FROM api_cache), 0)"
+            "SELECT COALESCE((SELECT SUM(size_bytes) FROM pages), 0)"
         ).fetchone()[0]
         self.assertLessEqual(total_bytes, 20_000)
         # Oldest entry evicted, newest kept
         self.assertIsNone(small.get_page("ns", "p0", version=1, lang="en", ttl=600, max_age=600, now=NOW + 10))
-        self.assertIsNotNone(small.get_api("/ep", "a3", now=NOW + 10))
+        self.assertIsNotNone(small.get_page("ns", "p3", version=1, lang="en", ttl=600, max_age=600, now=NOW + 10))
 
     def test_quick_resume_snapshot_roundtrip_oversize_and_drop(self):
         snap = {
