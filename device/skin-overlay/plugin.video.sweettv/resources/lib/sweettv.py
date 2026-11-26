@@ -816,10 +816,23 @@ def _ms_apply_quality_cap(listitem, quality):
 
 
 def _ms_names(cid, epg):
-    """(channel name, programme text, start, stop) from the saved channel list (falling back to sweetapi.recall)."""
+    """(channel name, programme text, start, stop) from SweetStore (falling back to channelList and sweetapi.recall)."""
     name = ''
+    now = int(time.time())
+    if _ms_store is not None:
+        try:
+            st = _ms_store.default_store()
+            rec = st.recall_programme(epg, cid=cid, now=now) if epg else st.programme_at(cid, now)
+            if isinstance(rec, dict):
+                return (str(rec.get('channel_name') or ''), str(rec.get('title') or ''),
+                        int(rec.get('start') or 0), int(rec.get('stop') or 0))
+            for ch in (st.get_channels_payload(now=now).get('list') or ()):
+                if str(ch.get('id')) == str(cid):
+                    name = str(ch.get('name') or '')
+                    break
+        except Exception:
+            pass
     try:
-        now = int(time.time())
         for channel in helper.get_channel_list().get('list') or []:
             if str(channel.get('id')) != str(cid):
                 continue
@@ -855,7 +868,7 @@ def _ms_use_ffmpeg(cid, epg, protocol, drm):
 
 
 def _ms_name_the_item(cid, epg, offset=0):
-    """Wraps setResolvedUrl until the returned function is called: names the item, sets ResumeTime/TotalTime/DVR,
+    """Wraps setResolvedUrl until the returned function is called: names the item, sets ResumeTime/TotalTime,
     and applies the device's inputstream.adaptive max_resolution cap."""
     name, text, begin, end = _ms_names(cid, epg)
     quality = _ms_quality()
@@ -876,9 +889,7 @@ def _ms_name_the_item(cid, epg, offset=0):
                 in_progress = bool(use_is and epg and begin and end and begin <= now < end)
                 if epg and offset:
                     listitem.setProperty('ResumeTime', str(offset))
-                if in_progress:
-                    listitem.setProperty('inputstream.adaptive.manifest_update_parameter', 'full')
-                elif epg and end > begin:
+                if not in_progress and epg and end > begin:
                     listitem.setProperty('TotalTime', str(end - begin))   # the bar is the programme (upstream says 1 s)
                 _ms_apply_quality_cap(listitem, quality)
         except Exception as e:
@@ -944,6 +955,15 @@ def playvod(videoid):
 @plugin.route('/golive')
 def ms_golive():
     # an archived programme is playing: its channel live (the remote's red key; the phone has a button of its own)
+    try:
+        import json as _ms_json
+        import mediastick_sweetplay as _ms_play
+        sess = _ms_play.read_active_session()
+        if isinstance(sess, dict) and sess.get('kind') == 'epg' and sess.get('cid') and hasattr(xbmc, 'executeJSONRPC'):
+            xbmc.executeJSONRPC(_ms_json.dumps(_ms_play.build_ctl_notify('live')))
+            return
+    except Exception:
+        pass
     path = xbmc.getInfoLabel('Player.Filenameandpath')
     prefix = 'plugin://plugin.video.sweettv/playvid/'
     cid, rest = '', ''

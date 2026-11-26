@@ -1,5 +1,6 @@
 # Keeps the launcher window on screen whenever Kodi is on the skin Home.
 # show() plus waitForAbort() is what lets the window's callbacks run.
+import json
 import os
 import sys
 import threading
@@ -57,15 +58,36 @@ _MonitorBase = getattr(xbmc, "Monitor", object)
 
 
 class HomeMonitor(_MonitorBase):
-    """Wakes the real launcher immediately when Kodi opens Home."""
+    """Wakes the real launcher immediately when Kodi opens Home and dispatches SWEET.TV RPCs."""
 
-    def __init__(self, on_home=None):
+    def __init__(self, on_home=None, sweet_player=None):
         super().__init__()
         self._on_home = on_home
+        self._sweet_player = sweet_player
 
     def onNotification(self, sender, method, data):
-        if self._on_home is not None and "home_shown" in (method or ""):
+        m = method or ""
+        if self._on_home is not None and "home_shown" in m:
             self._on_home()
+            return
+        if self._sweet_player is None:
+            return
+        is_play = m == "sweettv.play" or m.endswith(".sweettv.play")
+        is_ctl = m == "sweettv.ctl" or m.endswith(".sweettv.ctl")
+        if not (is_play or is_ctl):
+            return
+        try:
+            payload = json.loads(data) if isinstance(data, str) and data.strip() else data
+            if isinstance(payload, str) and payload.strip():
+                payload = json.loads(payload)
+            if not isinstance(payload, dict):
+                return
+            if is_play:
+                self._sweet_player.handle_play(payload)
+            else:
+                self._sweet_player.handle_ctl(payload)
+        except Exception as e:
+            xbmc.log(f"{LOG} notification {m!r} failed: {e!r}", xbmc.LOGWARNING)
 
 
 def _set_home_ready(value):
@@ -129,6 +151,16 @@ def start_recorder():
         return None
 
 
+def start_sweet_player():
+    """Resident SWEET.TV playback & timeline controller; None when unavailable."""
+    try:
+        from resources.lib import sweettv_player
+        return sweettv_player.SweetPlayerController()
+    except Exception as e:
+        xbmc.log(f"{LOG} sweet player not started: {type(e).__name__}", xbmc.LOGERROR)
+        return None
+
+
 def sample(watcher):
     try:
         watcher.tick()
@@ -142,6 +174,7 @@ def main():
     watcher = start_recorder()
     lock = threading.RLock()
     player = PlaybackNotifier()
+    sweet_player = start_sweet_player()
     launcher = None
 
     def show_launcher():
@@ -154,7 +187,7 @@ def main():
             launcher.show()
         return True
 
-    monitor = HomeMonitor(on_home=show_launcher)
+    monitor = HomeMonitor(on_home=show_launcher, sweet_player=sweet_player)
     _set_home_ready("1")
     last_status = last_sample = time.monotonic()
     try:
@@ -185,17 +218,22 @@ def main():
                     drop(launcher)
                     launcher = None
                 monitor.waitForAbort(5)
+            if sweet_player is not None:
+                sample(sweet_player)
             if watcher is not None and time.monotonic() - last_sample >= SAMPLE_EVERY:
                 last_sample = time.monotonic()
                 sample(watcher)
-            if monitor.waitForAbort(poll_interval(player.playing)):
+            hint_fn = getattr(sweet_player, "poll_hint", None) if sweet_player is not None else None
+            hint = hint_fn() if callable(hint_fn) else None
+            wait_s = hint if hint is not None else poll_interval(player.playing)
+            if monitor.waitForAbort(wait_s):
                 break
     finally:
         _set_home_ready("")
         with lock:
             drop(launcher)
             launcher = None
-    del player
+    del sweet_player, player
 
 
 main()

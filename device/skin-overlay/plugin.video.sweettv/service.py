@@ -6,109 +6,6 @@ import xbmc
 from resources.lib.helper import Helper
 from resources.lib.sweettv import refreshToken, initSettings, refreshChannelList
 
-# media-stick begin: going back on a live channel plays the archive of the programme on now (the window of a live stream is
-# about a minute): a seek back, and a pause that outlasts the window. The deciding is mediastick_sweetlive.plan, which the
-# phone's -10 asks too. An archive asked to start somewhere other than its beginning is put there once it has begun (Kodi
-# ignores the start place of a plugin item), and an item whose address is a stream's is known from what the plugin wrote down
-import sys as _ms_sys
-import threading as _ms_threading
-
-import xbmcgui as _ms_gui
-from resources.lib import sweettv as _ms_sweettv
-
-try:
-    _ms_sys.path.insert(0, '/usr/local/lib/media-stick')
-    import mediastick_sweetlive as _ml
-except Exception:  # not a media-stick device: the add-on behaves as upstream
-    _ml = None
-
-
-class _MsPlayer(xbmc.Player):
-    def __init__(self):
-        xbmc.Player.__init__(self)
-        self.paused_at = 0
-        self.quiet_until = 0
-
-    def _live(self):
-        # the channel id of the live SWEET.TV stream that is playing, else ''
-        try:
-            found = _ml.identify(self.getPlayingFile(), time.time())
-        except Exception:
-            return ''
-        return found[0] if found and not found[1] else ''
-
-    def onAVStarted(self):
-        # an archive that was asked to start at second N: the stream starts at 0 and the player is told where it should be
-        try:
-            file = self.getPlayingFile()
-            entry = _ml.start_place(file, time.time())
-            if entry:
-                _ms_threading.Thread(target=self._to_place, args=(entry, file), daemon=True).start()
-        except Exception as e:
-            xbmc.log('media-stick: SWEET.TV start place not looked at: ' + repr(e)[:120], xbmc.LOGWARNING)
-
-    def _to_place(self, entry, file):
-        try:
-            result = _ml.follow(self, entry, file)
-            xbmc.log('media-stick: SWEET.TV start place %ss: %s' % (entry['offset'], result), xbmc.LOGINFO)
-        except Exception as e:
-            xbmc.log('media-stick: SWEET.TV start place not set: ' + repr(e)[:120], xbmc.LOGWARNING)
-
-    def _rewind(self, cid, back):
-        if time.time() < self.quiet_until:   # a held key sends several seeks: the first one counts
-            return
-        self.quiet_until = time.time() + 8
-        try:
-            plan = _ml.plan(_ms_sweettv.helper.get_channel_list(), cid, back, int(time.time()))
-        except Exception as e:
-            xbmc.log('media-stick: SWEET.TV rewind not planned: ' + repr(e)[:120], xbmc.LOGWARNING)
-            return
-        if plan['ok']:
-            _ml.ask_url(plan['url'])   # the add-on that resolves it is told the place here too: the path may lose its query
-            xbmc.executebuiltin('PlayMedia(%s)' % plan['url'])
-        elif plan['reason'] == 'no_archive':
-            _ms_gui.Dialog().notification('SWEET.TV', _ml.text(_ml.NO_ARCHIVE), _ms_gui.NOTIFICATION_INFO)
-
-    def onPlayBackSeek(self, seek_time, seek_offset):
-        if seek_offset < 0:
-            cid = self._live()
-            if cid:
-                self._rewind(cid, -seek_offset / 1000.0)
-            return
-        try:
-            found = _ml.identify(self.getPlayingFile(), time.time())
-            if found and not found[0].startswith('vod:') and found[1]:
-                handoff = _ml.forward_handoff(_ms_sweettv.helper.get_channel_list(), found[0], found[1],
-                                              self.getTime(), int(time.time()))
-                if handoff and handoff.get('ok'):
-                    xbmc.executebuiltin('PlayMedia(%s)' % handoff['url'])
-        except Exception:
-            pass
-
-    def onPlayBackPaused(self):
-        self.paused_at = time.time() if self._live() else 0
-
-    def onPlayBackResumed(self):
-        paused, self.paused_at = self.paused_at, 0
-        cid = self._live() if paused else ''
-        if cid and time.time() - paused > _ml.PAUSE_LIMIT:
-            self._rewind(cid, time.time() - paused)
-
-    def onPlayBackStopped(self):
-        self.paused_at = 0
-
-    def onPlayBackEnded(self):
-        self.paused_at = 0
-        try:
-            found = _ml.identify(self.getPlayingFile(), time.time())
-            if found and not found[0].startswith('vod:') and found[1]:
-                nxt = _ml.ended_plan(_ms_sweettv.helper.get_channel_list(), found[0], found[1], int(time.time()))
-                if nxt:
-                    xbmc.executebuiltin('PlayMedia(%s)' % nxt)
-        except Exception:
-            pass
-# media-stick end
-
 if __name__ == '__main__':
     monitor = xbmc.Monitor()
     helper = Helper()
@@ -117,9 +14,6 @@ if __name__ == '__main__':
     ms_failed = 0   # fetches in a row that did not give a channel list
     # media-stick end
     initSettings()
-    # media-stick begin
-    ms_player = _MsPlayer() if _ml else None
-    # media-stick end
 
     while not monitor.abortRequested():
         try:
