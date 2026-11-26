@@ -1,8 +1,7 @@
 """The Смотреть part of the page: markup, style and script, as strings. No logic worth testing here;
 inject() puts them into the panel's page at its four @@WATCH_...@@ markers (the first tab, the section before the
-remote's, the remote's bar, the page's tail) and at @@RESUME_ROW@@ (the switch «remember where I stopped» in the
-settings list), and raises when one is missing: a page that silently lost the whole tab is worse than one that does
-not start. Everything is prefixed `wt` / `wt-` so it
+remote's, the remote's bar, the page's tail), and raises when one is missing: a page that silently lost the whole tab
+is worse than one that does not start. Everything is prefixed `wt` / `wt-` so it
 cannot collide with the page's own ids, classes and functions (the page already uses w-ssid, w-btn...).
 Pure DOM and fetch; text goes in with textContent, pictures only as https addresses."""
 
@@ -23,14 +22,9 @@ SECTION = """<section id="t-watch" data-tab="watch">
       <div id="wt-body"></div>
     </div>
   </section>
-  <section id="wt-rcard" class="wt-rcoff" data-tab="settings"><div class="card wt-sw wt-qrow"><span class="wt-swt"><b id="wt-rl2">Качество видео</b><small id="wt-rh2">Ограничение разрешения для SWEET.TV</small></span><div class="wt-qseg" id="wt-qseg2" role="radiogroup" aria-label="Качество видео"><button type="button" class="wt-qbtn" data-q="720p">До 720p</button><button type="button" class="wt-qbtn" data-q="1080p">До 1080p (Pi 3)</button><button type="button" class="wt-qbtn" data-q="unlimited">Без лимита / 4K (Pi 5)</button></div></div></section>
   """
 
 BAR = """<div data-wtbar class="hide"></div>"""
-
-# a row of the settings list: video quality cap for SWEET.TV
-RESUME_ROW = """<div id="wt-resume" class="srow wt-sw wt-qrow"><span class="wt-swt"><b id="wt-rl">Качество видео</b><small id="wt-rh">Ограничение разрешения для SWEET.TV</small></span><div class="wt-qseg" id="wt-qseg1" role="radiogroup" aria-label="Качество видео"><button type="button" class="wt-qbtn" data-q="720p">До 720p</button><button type="button" class="wt-qbtn" data-q="1080p">До 1080p (Pi 3)</button><button type="button" class="wt-qbtn" data-q="unlimited">Без лимита / 4K (Pi 5)</button></div></div>
-      """
 
 CSS = r"""
 <style>
@@ -122,30 +116,8 @@ CSS = r"""
 .wt-pbox .wt-p{gap:12px}
 .wt-dvr{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
 .wt-dvr .wt-btn{min-width:56px;min-height:42px;padding:0 12px;font-size:13px}
-.wt-qrow{flex-direction:column;align-items:stretch;gap:8px;cursor:default}
-.wt-qseg{display:flex;flex-wrap:wrap;gap:6px}
-.wt-qbtn{flex:1 1 auto;min-height:38px;padding:6px 10px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:#fff;font-size:13px;font-weight:500;touch-action:manipulation}
-.wt-qbtn.on{background:#00D2C6;color:#0C111B;border-color:#00D2C6;font-weight:700}
-.wt-qbtn:disabled{opacity:.5}
 /*@@SWEET_CSS@@*/
-/* the switch «remember where I stopped» in the settings list */
-.wt-sw{display:flex;align-items:center;gap:12px;cursor:pointer}
-.wt-swt{flex:1 1 0;min-width:0}
-.wt-swt b{display:block;font-weight:400;font-size:17px}
-.wt-swt small{display:block;margin-top:2px;color:var(--faint);font-size:13px;line-height:1.35}
-/* the page gives every input width:100% and min-height:52px: the track says its own size, min- and max- both */
-.wt-sw input[type=checkbox]{flex:none;position:relative;box-sizing:border-box;width:51px;min-width:51px;height:31px;min-height:31px;max-height:31px;margin:0;padding:0;border:0;border-radius:999px;background:rgba(255,255,255,.22);-webkit-appearance:none;appearance:none;outline:none;transition:background .15s}
-.wt-sw input[type=checkbox]::before{content:"";position:absolute;left:-6px;right:-6px;top:-8px;bottom:-8px}
-.wt-sw input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.35);transition:transform .15s}
-.wt-sw input[type=checkbox]:checked{background:var(--ok)}
-.wt-sw input[type=checkbox]:checked::after{transform:translateX(20px)}
-.wt-sw input[type=checkbox]:focus-visible{box-shadow:0 0 0 3px rgba(255,255,255,.45)}
-.wt-sw input[type=checkbox]:disabled{opacity:.5}
-/* the same switch as a card of its own, for the wide layout (where the settings list is hidden and every page is a card) */
-#wt-rcard{display:none!important}
 @media (min-width:900px){
-  #wt-rcard{display:block!important;grid-column:1/-1}
-  #wt-rcard.wt-rcoff{display:none!important}
   #t-watch{grid-area:watch}
   #t-remote>[data-wtbar]{display:none!important}
   .wt-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
@@ -453,12 +425,12 @@ const cur=()=>W.stack[W.stack.length-1];
 function go(d){W.stack.push(d);render()}
 function back(){if(W.stack.length>1){W.stack.pop();render()}}
 function msgCard(state,retry,name){
-  const T={needkey:['Сначала настройте ключ','Для '+name+' нужен личный ключ Google. Он настраивается в «Настройки» → «Аккаунты».'],
-    signin:['Сначала войдите','Войдите в '+name+' в «Настройки» → «Аккаунты».'],
+  const T={needkey:['Сначала настройте ключ','Для '+name+' нужен личный ключ Google. Он настраивается в «Настройки» → «Приложения».'],
+    signin:['Сначала войдите','Войдите в '+name+' в «Настройки» → «Приложения».'],
     error:['Не получилось загрузить','Проверьте сеть и попробуйте ещё раз.'],
     empty:['Здесь пока пусто',''],prompt:['Поиск на YouTube','Введите, что хотите посмотреть.']}[state]||['Не получилось',''];
   const c=h('div',{class:'wt-card wt-msg'},h('b',{text:T[0]}),T[1]);
-  if(state==='needkey'||state==='signin')c.append(h('div',{},h('button',{class:'wt-btn pri',text:'Открыть «Аккаунты»',onclick:openAccounts})));
+  if(state==='needkey'||state==='signin')c.append(h('div',{},h('button',{class:'wt-btn pri',text:'Открыть «Приложения»',onclick:openAccounts})));
   else if(state==='error')c.append(h('div',{},h('button',{class:'wt-btn pri',text:'Повторить',onclick:retry})));
   return c}
 function lazy(list,items,make){
@@ -595,23 +567,6 @@ W.bars=[...document.querySelectorAll('[data-wtbar]')].map(mkBar);
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>setTimeout(tick,0)));
 setInterval(tick,1500);
 
-// ---- video quality cap: a row of the settings list (phone) and a card of its own (wide), one state ----
-async function loadQuality(){
-  const row=$('wt-resume'),card=$('wt-rcard'),btns=[...document.querySelectorAll('.wt-qbtn[data-q]')];
-  if(!row||!btns.length)return;
-  const set=q=>btns.forEach(b=>b.classList.toggle('on',b.dataset.q===q));
-  set('1080p');
-  if(card)card.classList.remove('wt-rcoff');
-  let curQ='1080p';
-  try{const r=await sg('settings');if(r&&r.quality){curQ=r.quality;set(curQ)}}catch(e){}
-  btns.forEach(btn=>{btn.onclick=async()=>{
-    const want=btn.dataset.q;if(want===curQ)return;
-    btns.forEach(b=>{b.disabled=true});buzz();set(want);
-    try{const a=await spst('settings',{quality:want});curQ=a.quality||want;set(curQ)}
-    catch(e){set(curQ);toast(errText(e))}
-    btns.forEach(b=>{b.disabled=false})}})}
-loadQuality();
-document.querySelectorAll('[data-go=settings]').forEach(b=>b.addEventListener('click',loadQuality));
 render();tick();
 })();
 </script>"""
@@ -620,7 +575,7 @@ CSS = CSS.replace("/*@@SWEET_CSS@@*/", sweet.CSS.strip(), 1)
 JS = JS.replace("//@@SWEET_JS@@", sweet.JS.strip(), 1)
 
 MARKERS = {"@@WATCH_NAV@@": NAV, "@@WATCH_SECTION@@": SECTION, "@@WATCH_BAR@@": BAR,
-           "@@WATCH_TAIL@@": CSS + JS, "@@RESUME_ROW@@": RESUME_ROW}
+           "@@WATCH_TAIL@@": CSS + JS}
 
 def inject(page):
     """The page with the Смотреть tab put at its four markers. A marker the page does not have raises ValueError:

@@ -9,9 +9,33 @@ the card and the result stay right. The old sheet opens only when there is no do
 import json
 
 SECTION = """<section id="t-acc" data-tab="settings" data-spage="acc" class="hide">
-    <h2 class="acc-title">Аккаунты</h2>
+    <h2 class="acc-title">Приложения</h2>
     <button id="acc-yk-cont" class="btn sm acc wide hide"></button>
-    <div id="acc-list" class="acc-list"><div class="cap">Загружаю…</div></div>
+    <div id="acc-list" class="acc-list">
+      <div id="acc-g-youtube" class="acc-grp">
+        <div class="acc-gt">YouTube на ТВ</div>
+        <div class="acc-rows hide"></div>
+        <div class="acc-note hide">Пустые профили не показываются, приставка использует их сама.</div>
+        <div class="acc-help hide"><button type="button" class="acc-hlp" aria-expanded="false">На ТВ пусто в «Подписках»? Как исправить ›</button><div class="acc-ch hide"></div></div>
+        <div class="acc-m"></div>
+        <div class="acc-rows acc-cfg">
+          <button id="acc-keys-row" class="acc-row" type="button" onclick="ykOpen()"><span class="acc-tx"><b>Ключи Google</b><small>для входа в YouTube</small></span><span class="chev" aria-hidden="true">›</span></button>
+        </div>
+      </div>
+      <div id="acc-g-sweettv" class="acc-grp">
+        <div class="acc-gt">SWEET.TV</div>
+        <div class="acc-rows hide"></div>
+        <div class="acc-m"></div>
+        <div id="acc-sw-cfg" class="acc-rows acc-cfg">
+          <div class="acc-row acc-sw acc-qrow"><span class="acc-swt"><b id="acc-sw-ql">Качество видео</b><small id="acc-sw-qh">Ограничение разрешения для SWEET.TV</small></span><div class="acc-qseg" id="acc-sw-qseg" role="radiogroup" aria-label="Качество видео"><button type="button" class="acc-qbtn" data-q="720p">До 720p</button><button type="button" class="acc-qbtn" data-q="1080p">До 1080p (Pi 3)</button><button type="button" class="acc-qbtn" data-q="unlimited">Без лимита / 4K (Pi 5)</button></div></div>
+          <label class="acc-row acc-sw"><span class="acc-swt"><b>Предпросмотр эфира в фоне</b><small>Воспроизводить выбранный канал в фоне при просмотре списка</small></span><input type="checkbox" id="acc-sw-preview" checked></label>
+        </div>
+      </div>
+      <div id="acc-g-out" class="acc-grp hide">
+        <div class="acc-gt">Выход</div>
+        <div class="acc-rows"></div>
+      </div>
+    </div>
   </section>"""
 
 # @@HOSTS@@ is filled in with the links' whitelist: one list, kept in panel_accounts.py
@@ -38,7 +62,26 @@ button.acc-row.wait:disabled{opacity:1}
 .acc-hlp{display:block;margin:6px 0 0;padding:6px;min-height:36px;background:none;border:0;color:var(--dim);font:inherit;font-size:13px;text-align:left}
 .acc-ch{margin:0 6px;color:var(--dim);font-size:14px;line-height:1.45}
 .acc-m{margin:8px 6px 0;color:var(--dim);font-size:14px;min-height:1.4em}
+.acc-m:empty{display:none}
 .acc-m.bad{color:var(--bad)}
+.acc-cfg{margin-top:8px}
+.acc-rows.hide+.acc-note+.acc-help+.acc-m:empty+.acc-cfg,.acc-rows.hide+.acc-m:empty+.acc-cfg{margin-top:0}
+.acc-qrow{flex-direction:column;align-items:stretch;gap:8px;cursor:default}
+.acc-qseg{display:flex;flex-wrap:wrap;gap:6px}
+.acc-qbtn{flex:1 1 auto;min-height:38px;padding:6px 10px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:#fff;font-size:13px;font-weight:500;touch-action:manipulation}
+.acc-qbtn.on{background:#00D2C6;color:#0C111B;border-color:#00D2C6;font-weight:700}
+.acc-qbtn:disabled{opacity:.5}
+.acc-sw{display:flex;align-items:center;gap:12px;cursor:pointer}
+.acc-swt{flex:1 1 0;min-width:0}
+.acc-swt b{display:block;font-weight:500;font-size:17px}
+.acc-swt small{display:block;margin-top:1px;color:var(--dim);font-size:13px;line-height:1.35}
+.acc-sw input[type=checkbox]{flex:none;position:relative;box-sizing:border-box;width:51px;min-width:51px;height:31px;min-height:31px;max-height:31px;margin:0;padding:0;border:0;border-radius:999px;background:rgba(255,255,255,.22);-webkit-appearance:none;appearance:none;outline:none;transition:background .15s}
+.acc-sw input[type=checkbox]::before{content:"";position:absolute;left:-6px;right:-6px;top:-8px;bottom:-8px}
+.acc-sw input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.35);transition:transform .15s}
+.acc-sw input[type=checkbox]:checked{background:var(--ok)}
+.acc-sw input[type=checkbox]:checked::after{transform:translateX(20px)}
+.acc-sw input[type=checkbox]:focus-visible{box-shadow:0 0 0 3px rgba(255,255,255,.45)}
+.acc-sw input[type=checkbox]:disabled{opacity:.5}
 .acc-hd{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .acc-hd b{font-size:18px;font-weight:600}
 .acc-box .acc-hd{margin-bottom:12px}
@@ -139,8 +182,12 @@ function accRowText(){
 const ACC_TICK='<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 // the groups of the page; each keeps its own message line (.acc-m), which a redraw of the rows leaves alone
 const ACC_GROUPS=[['youtube','YouTube на ТВ'],['sweettv','SWEET.TV'],['out','Выход']];
+function accBindHelp(g){
+  const b=g&&g.querySelector('.acc-hlp'), ch=g&&g.querySelector('.acc-ch');
+  if(b&&ch&&!b.onclick)b.onclick=()=>{b.setAttribute('aria-expanded',String(ch.classList.toggle('hide')===false))};
+}
 function accCard(id){
-  let g=$('acc-g-'+id);if(g)return g;
+  let g=$('acc-g-'+id);if(g){if(id==='youtube')accBindHelp(g);return g}
   ACC_GROUPS.forEach(([k,title])=>{
     if($('acc-g-'+k))return;
     const e=accEl('div','acc-grp');e.id='acc-g-'+k;
@@ -171,7 +218,8 @@ function accMsg(svc,t,bad){const m=accCard(svc).querySelector('.acc-m');m.textCo
 const accSub=p=>p.channel_title?'Канал YouTube':p.channel==='no'?'Аккаунт Google без канала':'Аккаунт Google';
 function accFillYouTube(a){
   const g=accCard('youtube'), rows=g.querySelector('.acc-rows');rows.textContent='';
-  g.classList.toggle('hide',!a);if(!a)return;
+  rows.classList.toggle('hide',!a);
+  if(!a){g.querySelector('.acc-note').classList.add('hide');g.querySelector('.acc-help').classList.add('hide');return}
   const cur=a.profiles.find(p=>p.current), waiting=!!(a.signin&&a.signin.state==='waiting');
   const signed=a.profiles.filter(p=>p.signed_in);
   const busy=accSwId(a.service);   // one switch at a time: the TV answers the first, the other rows wait
@@ -189,7 +237,7 @@ function accFillYouTube(a){
 }
 function accFillSweet(a){
   const g=accCard('sweettv'), rows=g.querySelector('.acc-rows');rows.textContent='';
-  g.classList.toggle('hide',!a);if(!a)return;
+  rows.classList.toggle('hide',!a);if(!a)return;
   const waiting=!!(a.signin&&a.signin.state==='waiting');
   if(a.signed_in)rows.append(accRow({title:'Вход выполнен',tick:true}));
   else if(accExpired[a.service])rows.append(accRow({text:'Обновить код',cls:'add',go:()=>accRenew(a.service),off:waiting}));
@@ -368,7 +416,48 @@ $('acc-cancel').onclick=async()=>{
   try{await accCall('cancel',{service:accSheet.svc});accWatch(20000)}
   catch(e){b.disabled=false;b.textContent='Отмена';$('acc-hint').textContent=e.message}
 };
-document.querySelector('[data-go=settings]').addEventListener('click',accPoll);
+// ---- SWEET.TV app settings: quality cap & background live preview ----
+let accSwState={quality:'1080p',preview_video:true};
+function accSwDraw(){
+  document.querySelectorAll('#acc-sw-qseg button[data-q]').forEach(b=>b.classList.toggle('on',b.dataset.q===accSwState.quality));
+  const pv=$('acc-sw-preview');if(pv)pv.checked=!!accSwState.preview_video;
+}
+function accSwBusy(on){
+  document.querySelectorAll('#acc-sw-qseg button[data-q]').forEach(b=>{b.disabled=on});
+  const pv=$('acc-sw-preview');if(pv)pv.disabled=on;
+}
+async function accSwLoad(){
+  if(!$('acc-sw-cfg'))return;
+  accSwDraw();
+  try{
+    const r=await api('/api/sweettv/settings');
+    if(r&&r.quality)accSwState.quality=r.quality;
+    if(r&&typeof r.preview_video==='boolean')accSwState.preview_video=r.preview_video;
+    accSwDraw();
+  }catch(e){}
+}
+async function accSwSave(patch){
+  const prev={quality:accSwState.quality,preview_video:accSwState.preview_video};
+  accSwState={...prev,...patch};
+  accSwDraw();accSwBusy(true);
+  try{
+    const r=await api('/api/sweettv/settings',patch);
+    if(r&&r.quality)accSwState.quality=r.quality;
+    if(r&&typeof r.preview_video==='boolean')accSwState.preview_video=r.preview_video;
+    accSwDraw();
+  }catch(e){
+    accSwState=prev;accSwDraw();
+    if(typeof toast==='function')toast(tvErr(e));
+  }finally{accSwBusy(false)}
+}
+document.querySelectorAll('#acc-sw-qseg button[data-q]').forEach(b=>{
+  b.addEventListener('click',()=>{const q=b.dataset.q;if(q===accSwState.quality)return;buzz();accSwSave({quality:q})});
+});
+if($('acc-sw-preview'))$('acc-sw-preview').addEventListener('change',e=>{
+  buzz();accSwSave({preview_video:!!e.target.checked});
+});
+accCard('youtube');accSwLoad();
+document.querySelector('[data-go=settings]').addEventListener('click',()=>{accPoll();accSwLoad()});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&(accLive()||wide()))accPoll()});
 if(wide()||tab==='settings')accPoll();   // the panel's boot has already opened the tab a link or the last visit asked for
 </script>

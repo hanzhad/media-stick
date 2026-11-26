@@ -851,7 +851,7 @@ class Page(unittest.TestCase):
 
     def test_a_missing_marker_raises(self):
         # the page must not come out without the tab, or with half of it
-        for marker in ("@@WATCH_NAV@@", "@@WATCH_SECTION@@", "@@WATCH_BAR@@", "@@WATCH_TAIL@@", "@@RESUME_ROW@@"):
+        for marker in ("@@WATCH_NAV@@", "@@WATCH_SECTION@@", "@@WATCH_BAR@@", "@@WATCH_TAIL@@"):
             self.assertIn(marker, self.base)
             with self.assertRaises(ValueError) as e:
                 pw.inject(self.base.replace(marker, ""))
@@ -889,25 +889,17 @@ class Page(unittest.TestCase):
         self.assertIn("if(document.hidden||W.busy||!(wide()||tab==='watch'||tab==='remote'))return;", js)
         self.assertNotIn("'/api/watch/'+p,b)).catch(()=>{})", js)
 
-    def test_the_resume_switch_sits_in_the_settings_list_after_the_language_row(self):
-        p = self.page
-        self.assertNotIn("@@RESUME_ROW@@", p)
-        row = p.index('id="wt-resume"')
-        self.assertLess(p.index('data-sp="lang"'), row)
-        self.assertLess(row, p.index('data-sp="info"'))
-        self.assertGreater(row, p.index('id="t-setlist"'))
-        for label in ("До 720p", "До 1080p (Pi 3)", "Без лимита / 4K (Pi 5)"):
-            self.assertIn(label, p)
-        panel_text = open(PANEL, encoding="utf-8").read()
-        self.assertIn("@@LANG_ROW@@@@RESUME_ROW@@", panel_text)
+    def test_quality_card_and_resume_row_removed_from_watch_ui_and_copy_uses_apps(self):
         import panel_watch_ui as ui
-        self.assertIn("sg('settings')", ui.JS)
-        self.assertIn("spst('settings',{quality:", ui.JS)
-        self.assertIn("toast(errText(e))", ui.JS)
-        # the wide layout has no settings list: the same quality selector is a card of its own there
-        self.assertIn('<section id="wt-rcard"', p)
-        self.assertIn("#wt-rcard{display:none!important}", ui.CSS)
-        self.assertIn("#wt-rcard{display:block!important;grid-column:1/-1}", ui.CSS)
+        p = self.page
+        self.assertNotIn("@@RESUME_ROW@@", self.base)
+        self.assertNotIn("@@RESUME_ROW@@", p)
+        self.assertFalse(hasattr(ui, "RESUME_ROW"))
+        self.assertNotIn("wt-rcard", p)
+        self.assertNotIn("wt-rcard", ui.CSS + ui.SECTION + ui.JS)
+        self.assertNotIn("loadQuality", ui.JS)
+        self.assertIn("«Приложения»", ui.JS)
+        self.assertNotIn("«Аккаунты»", ui.JS)
 
     def test_the_play_button_and_the_sections_look_right(self):
         import panel_watch_ui as ui
@@ -933,7 +925,7 @@ class Page(unittest.TestCase):
             self.assertIn(pill, js)
         for call in ("sg('home')", "sg('shows')", "sg('show?id='", "sg('movies", "sg('series", "sg('vod?id='",
                      "sg('channels')", "sg('guide?cid='", "sg('day?cid='", "sg('top')", "sg('search?q='",
-                     "sg('thumbs')", "spst('favourite'", "spst('play'", "spst('ctl'", "sg('settings')", "spst('settings'"):
+                     "sg('thumbs')", "spst('favourite'", "spst('play'", "spst('ctl'"):
             self.assertIn(call, js)
         for page in ("swguide", "swshow", "swvod"):
             self.assertIn(page, js)
@@ -1084,10 +1076,11 @@ class SweetRoutes(unittest.TestCase):
             body, code = self.ps.get(self.ps.PREFIX + "shows", self.rpc)
             self.assertEqual(code, 200)
             self.assertTrue(body["items"][0]["favourite"])
-            body, code = self.ps.get(self.ps.PREFIX + "show?id=vod:10", self.rpc)
-            self.assertEqual(code, 200)
-            self.assertEqual(body["id"], "vod:10")
-        for bad in ("", "bogus", "vod:abc", "epg:", "tv:x"):
+            for sid in ("vod:10", "epg:12", "tv:5", "tv_s:12345", "tv_s:123456789012"):
+                body, code = self.ps.get(self.ps.PREFIX + "show?id=" + sid, self.rpc)
+                self.assertEqual(code, 200, sid)
+                self.assertEqual(body["id"], "vod:10")
+        for bad in ("", "bogus", "vod:abc", "epg:", "tv:x", "tv_s:", "tv_s:abc", "tv_s:-1", "tv_s:1234567890123", "other:5"):
             _, code = self.ps.get(self.ps.PREFIX + "show?id=" + bad, self.rpc)
             self.assertEqual(code, 400, bad)
 

@@ -50,7 +50,7 @@ function boot() {
     castBanner: byId('shot-cast'),
     castText: byId('shot-cast-t'),
     returnBtn: byId('shot-cast-ret'),
-    saveBtns: [byId('shot-save-rc'), byId('shot-save-btn'), byId('f-shot')].filter(Boolean),
+    saveBtns: [byId('shot-save-act'), byId('shot-save-btn'), byId('f-shot')].filter(Boolean),
     shotSheet: byId('shot-sheet'),
     shotSheetBack: byId('shot-sheet-back'),
     shotSheetImg: byId('shot-sheet-img'),

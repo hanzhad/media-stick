@@ -7,7 +7,7 @@ end of this file): the language is the device's, set once when the window is mad
 from typing import NamedTuple
 
 WAIT_LIMIT = 300                # s without a channel list after sign-in before it is called a failure
-PHONE_TAB = "Аккаунты"          # the tab's name on the phone page (that page is in Russian)
+PHONE_TAB = "Приложения"        # the tab's name on the phone page (that page is in Russian)
 ACCENT, RED, DIM = "FFFFC857", "FFFF6B5E", "99FFFFFF"      # the skin's amber, an error red, a muted white
 
 

@@ -651,8 +651,32 @@ class ListPage(unittest.TestCase):
 
     def test_a_page_title_and_no_card_label(self):
         sec = self.page.split('<section id="t-acc"', 1)[1].split("</section>", 1)[0]
-        self.assertIn('<h2 class="acc-title">Аккаунты</h2>', sec)
+        self.assertIn('<h2 class="acc-title">Приложения</h2>', sec)
         self.assertNotIn('class="card"', sec)
+
+    def test_all_ids_prefixed_and_no_markers(self):
+        import re
+        import panel_accounts_ui as ui
+        raw = ui.SECTION + ui.TAIL
+        for elem_id in re.findall(r'\bid="([^"]+)"', raw):
+            self.assertTrue(elem_id.startswith(("acc-", "t-acc")), elem_id)
+        self.assertEqual(re.findall(r"@@\w+@@", self.page), [])
+
+    def test_eager_youtube_and_sweettv_app_settings(self):
+        p = self.page
+        self.assertIn("accCard('youtube')", p)
+        self.assertIn("acc-keys-row", p)
+        self.assertIn("Ключи Google", p)
+        self.assertIn("ykOpen()", p)
+        self.assertIn("acc-sw-cfg", p)
+        self.assertIn("acc-sw-qseg", p)
+        for q in ("720p", "1080p", "unlimited"):
+            self.assertIn(q, p)
+        self.assertIn("acc-sw-preview", p)
+        self.assertIn("Предпросмотр эфира в фоне", p)
+        self.assertIn("/api/sweettv/settings", p)
+        self.assertIn("data-go=settings", p)
+        self.assertIn("toast(tvErr(e))", p)
 
     def test_three_groups_in_order(self):
         for title in ("YouTube на ТВ", "SWEET.TV", "Выход"):
@@ -834,7 +858,8 @@ class Page(unittest.TestCase):
         bar = page.split('id="acc-yk-cont"', 1)[1].split(">", 1)[0]
         self.assertIn("hide", bar)                                      # hidden until the wizard script shows it
         self.assertLess(page.index('id="acc-yk-cont"'), page.index('id="acc-list"'))
-        self.assertNotIn("Ключи Google", page)                          # the keys row lives on the maintenance page
+        self.assertIn('id="acc-keys-row"', page)
+        self.assertIn("Ключи Google", page)                          # the keys row lives inside YouTube on Apps page
 
     def test_no_browser_dialogs(self):
         page = pa.inject("@@ACC_SECTION@@@@ACC_TAIL@@")
