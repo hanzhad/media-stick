@@ -466,10 +466,10 @@
                 <control type="grouplist" id="419">
                     <left>36</left>
                     <top>356</top>
-                    <width>960</width>
+                    <width>984</width>
                     <height>56</height>
                     <orientation>horizontal</orientation>
-                    <itemgap>12</itemgap>
+                    <itemgap>10</itemgap>
                     <usecontrolcoords>false</usecontrolcoords>
                     <onleft>100</onleft>
                     <onup condition="!String.IsEmpty(Window.Property(filters))">409</onup>
@@ -483,7 +483,7 @@
                         <focusedcolor>FF0C111B</focusedcolor>
                         <texturenofocus border="24" colordiffuse="FF1B263B">sweettv-chip.png</texturenofocus>
                         <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                        <textoffsetx>24</textoffsetx>
+                        <textoffsetx>18</textoffsetx>
                         <align>center</align>
                         <aligny>center</aligny>
                         <label>$INFO[Window.Property(hero_play)]</label>
@@ -497,21 +497,21 @@
                         <focusedcolor>FF0C111B</focusedcolor>
                         <texturenofocus border="24" colordiffuse="FF1B263B">sweettv-chip.png</texturenofocus>
                         <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                        <textoffsetx>24</textoffsetx>
+                        <textoffsetx>18</textoffsetx>
                         <align>center</align>
                         <aligny>center</aligny>
                         <label>$INFO[Window.Property(hero_alt)]</label>
                         <visible>!String.IsEmpty(Window.Property(has_alt))</visible>
                     </control>
                     <control type="button" id="416">
-                        <width min="180" max="300">auto</width>
+                        <width min="180" max="340">auto</width>
                         <height>52</height>
                         <font>Reg22</font>
                         <textcolor>FFFFFFFF</textcolor>
                         <focusedcolor>FF0C111B</focusedcolor>
                         <texturenofocus border="24" colordiffuse="FF1B263B">sweettv-chip.png</texturenofocus>
                         <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                        <textoffsetx>24</textoffsetx>
+                        <textoffsetx>18</textoffsetx>
                         <align>center</align>
                         <aligny>center</aligny>
                         <label>$INFO[Window.Property(l_guide)]</label>
@@ -525,7 +525,7 @@
                         <focusedcolor>FF0C111B</focusedcolor>
                         <texturenofocus border="24" colordiffuse="FF1B263B">sweettv-chip.png</texturenofocus>
                         <texturefocus border="24" colordiffuse="FF00D2C6">sweettv-chip.png</texturefocus>
-                        <textoffsetx>24</textoffsetx>
+                        <textoffsetx>18</textoffsetx>
                         <align>center</align>
                         <aligny>center</aligny>
                         <label>$INFO[Window.Property(hero_fav)]</label>
@@ -809,7 +809,7 @@
                     <control type="label">
                         <left>20</left>
                         <top>4</top>
-                        <width>200</width>
+                        <width>168</width>
                         <height>64</height>
                         <font>Reg25</font>
                         <textcolor>FFB0BCCF</textcolor>
@@ -818,9 +818,9 @@
                         <label>$INFO[ListItem.Label]</label>
                     </control>
                     <control type="label">
-                        <left>220</left>
+                        <left>192</left>
                         <top>4</top>
-                        <width>44</width>
+                        <width>72</width>
                         <height>64</height>
                         <font>Reg22</font>
                         <textcolor>FF8594AB</textcolor>
@@ -842,7 +842,7 @@
                     <control type="label">
                         <left>20</left>
                         <top>4</top>
-                        <width>200</width>
+                        <width>168</width>
                         <height>64</height>
                         <font>Bold25</font>
                         <textcolor>FF0C111B</textcolor>
@@ -851,9 +851,9 @@
                         <label>$INFO[ListItem.Label]</label>
                     </control>
                     <control type="label">
-                        <left>220</left>
+                        <left>192</left>
                         <top>4</top>
-                        <width>44</width>
+                        <width>72</width>
                         <height>64</height>
                         <font>Reg22</font>
                         <textcolor>FF0C111B</textcolor>

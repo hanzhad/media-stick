@@ -527,15 +527,35 @@ def channel_chips(categories) -> list:
     return chips[:8]
 
 
+UMBRELLA_GENRE_IDS = frozenset((1, 3, 57, 61))
+
+
+def valid_sort_modes(sort_modes) -> list:
+    modes = [
+        {"id": m.get("id"), "name": str(m.get("name") or "").strip()}
+        for m in (sort_modes or ())
+        if isinstance(m, dict) and str(m.get("name") or "").strip()
+    ]
+    return modes or list(SORT_MODES_DEFAULT)
+
+
 def catalog_chips(genres, sort_modes, sort_idx) -> list:
-    modes = sort_modes or SORT_MODES_DEFAULT
+    modes = valid_sort_modes(sort_modes)
     mode = modes[sort_idx % len(modes)]
     chips = [("all", words.tr("All items")), ("sort", words.tr(mode["name"]))]
-    for g in (genres or ())[:6]:
+    for g in (genres or ()):
+        if not isinstance(g, dict):
+            continue
         gid = g.get("id")
-        name = g.get("name")
-        if gid and name:
-            chips.append((f"g:{gid}", str(name)))
+        try:
+            gid_num = int(gid) if not isinstance(gid, bool) and gid is not None else None
+        except (TypeError, ValueError):
+            gid_num = None
+        name = str(g.get("name") or "").strip()
+        if gid_num and gid_num not in UMBRELLA_GENRE_IDS and name:
+            chips.append((f"g:{gid_num}", name))
+            if len(chips) >= 8:
+                break
     return chips[:8]
 
 

@@ -867,6 +867,10 @@ def _movie_card(movie):
     }
 
 
+def _cfg_label(item):
+    return _clean(item.get("title"), 80) or _clean(item.get("name"), 80)
+
+
 def configuration(client=None, tr=None):
     """Fetch and normalize MovieService/GetConfiguration.json, cached in memory for CONFIG_TTL (600s)."""
     c = client or _default
@@ -880,13 +884,34 @@ def configuration(client=None, tr=None):
     if not reply.ok:
         return _failure(reply.error, tr)
     raw_genres = reply.data.get("genres") if isinstance(reply.data.get("genres"), list) else ()
-    genres = [{"id": _num(g.get("id")), "name": _clean(g.get("name"), 80)}
-              for g in raw_genres if isinstance(g, dict) and _num(g.get("id")) is not None and _clean(g.get("name"), 80)]
+    genres = []
+    for g in raw_genres:
+        if not isinstance(g, dict):
+            continue
+        gid = _num(g.get("id"))
+        gname = _cfg_label(g)
+        if gid is not None and gname:
+            genres.append({"id": gid, "name": gname})
     raw_modes = reply.data.get("sort_modes") if isinstance(reply.data.get("sort_modes"), list) else ()
-    modes_by_id = {_num(m.get("id")): _clean(m.get("name"), 80)
-                   for m in raw_modes if isinstance(m, dict) and _num(m.get("id")) in SORT_MODE_IDS}
+    modes_by_id = {}
+    for m in raw_modes:
+        if not isinstance(m, dict):
+            continue
+        mid = _num(m.get("id"))
+        mname = _cfg_label(m)
+        if mid in SORT_MODE_IDS and mname:
+            modes_by_id[mid] = mname
     sort_modes = [{"id": sid, "name": modes_by_id[sid]} for sid in SORT_MODE_IDS if sid in modes_by_id]
-    res = {"ok": True, "genres": genres, "sort_modes": sort_modes}
+    raw_countries = reply.data.get("countries") if isinstance(reply.data.get("countries"), list) else ()
+    countries = []
+    for co in raw_countries:
+        if not isinstance(co, dict):
+            continue
+        cid = _num(co.get("id"))
+        cname = _cfg_label(co)
+        if cid is not None and cname:
+            countries.append({"id": cid, "name": cname})
+    res = {"ok": True, "genres": genres, "sort_modes": sort_modes, "countries": countries}
     with _config_lock:
         _config_cache[ckey] = (now, res)
     return res
@@ -1435,12 +1460,23 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None, store=None
     if not card:
         return _failure("format", tr)
     genre_ids = card.get("genres", [])
+    raw_countries = card.get("countries", [])
+    has_num_country = any(_num(c_val) is not None for c_val in raw_countries)
     genre_names = []
-    if genre_ids:
+    cmap = {}
+    if genre_ids or has_num_country:
         cfg = configuration(client=c, tr=tr)
         if cfg.get("ok"):
             gmap = {g["id"]: g["name"] for g in cfg.get("genres", ())}
             genre_names = [gmap[gid] for gid in genre_ids if gid in gmap]
+            cmap = {co["id"]: co["name"] for co in cfg.get("countries", ())}
+    countries = []
+    for c_val in raw_countries:
+        cid = _num(c_val)
+        if cid is None:
+            countries.append(c_val)
+        elif cid in cmap:
+            countries.append(cmap[cid])
     fav_keys = _fav_set(favs)
     is_fav = ("show:vod:%d" % mid) in fav_keys or ("vod:%d" % mid) in fav_keys
     m_resume, m_watched = _vod_resume(local, mid)
@@ -1488,7 +1524,7 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None, store=None
         "age_rating": card.get("age_rating", ""),
         "genres": genre_ids,
         "genre_names": genre_names,
-        "countries": card.get("countries", []),
+        "countries": countries,
         "poster": card["poster"],
         "banner": card["banner"],
         "year": card["year"],
