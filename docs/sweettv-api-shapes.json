@@ -1,0 +1,322 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-11-26",
+  "max_age_days": 30,
+  "base_url": "https://api.sweet.tv/",
+  "endpoints": {
+    "TvService/GetChannels.json": {
+      "request": {
+        "channels": ["int"],
+        "epg_current_time": "int",
+        "epg_limit_prev": "int",
+        "epg_limit_next": "int",
+        "need_epg": "bool",
+        "need_list": "bool",
+        "need_categories": "bool",
+        "need_offsets": "bool",
+        "need_hash": "bool",
+        "need_icons": "bool",
+        "need_big_icons": "bool"
+      },
+      "response": {
+        "status": "str",
+        "categories": [
+          {
+            "id": "int",
+            "caption": "str",
+            "name": "str",
+            "order": "int"
+          }
+        ],
+        "list": [
+          {
+            "id": "int",
+            "name": "str",
+            "slug": "str",
+            "number": "int",
+            "icon_url": "str",
+            "icon_v2_url": "str",
+            "banner_url": "str",
+            "category": ["int"],
+            "catchup": "bool",
+            "catchup_duration": "int",
+            "epg_days_past": "int",
+            "epg_days_future": "int",
+            "available": "bool",
+            "available_without_auth": "bool",
+            "live_blackout": "bool",
+            "is_fast_channel": "bool",
+            "epg": [
+              {
+                "id": "int|str",
+                "text": "str",
+                "time_start": "int|str",
+                "time_stop": "int|str",
+                "available": "bool",
+                "tv_show_id": "int|str",
+                "season_number": "int",
+                "episode_number": "int",
+                "description": "str",
+                "text_description": "str",
+                "image_url": "str",
+                "preview_url": "str",
+                "preview_url_ext": "str",
+                "external_id": "str",
+                "is_downloadable": "bool"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "TvService/GetEpgRecords.json": {
+      "request": {
+        "id_list": ["int"],
+        "image_type": "int",
+        "need_extended_info": "bool"
+      },
+      "response": {
+        "status": "str",
+        "epg_records": [
+          {
+            "id": "int|str",
+            "channel_id": "int|str",
+            "text": "str",
+            "time_start": "int|str",
+            "time_stop": "int|str",
+            "available": "bool",
+            "tv_show_id": "int|str",
+            "season_number": "int",
+            "episode_number": "int",
+            "description": "str",
+            "image_url": "str",
+            "epg_horizontal": "str",
+            "preview_url": "str",
+            "preview_url_ext": "str"
+          }
+        ]
+      }
+    },
+    "MovieService/GetConfiguration.json": {
+      "request": {},
+      "response": {
+        "status": "str",
+        "genres": [
+          {
+            "id": "int",
+            "title": "str",
+            "name": "str"
+          }
+        ],
+        "sort_modes": [
+          {
+            "id": "int",
+            "title": "str",
+            "name": "str"
+          }
+        ],
+        "countries": [
+          {
+            "id": "int|str",
+            "title": "str",
+            "name": "str"
+          }
+        ]
+      }
+    },
+    "MovieService/GetCollections.json": {
+      "request": {
+        "type": "int"
+      },
+      "response": {
+        "status": "str",
+        "collection": [
+          {
+            "id": "int",
+            "type": "str",
+            "title": "str",
+            "id_list": ["int"]
+          }
+        ]
+      }
+    },
+    "MovieService/GetCollectionInfo.json": {
+      "request": {
+        "id_list": ["int"],
+        "need_translations": "bool"
+      },
+      "response": {
+        "status": "str",
+        "collections": [
+          {
+            "id": "int",
+            "title": "str",
+            "description": "str",
+            "age_limit": "str",
+            "age_rating": "str",
+            "poster_url": "str",
+            "banner_url": "str",
+            "horizontal_poster_url": "str",
+            "posters": [
+              {
+                "orientation": "str",
+                "poster_url": "str",
+                "original_poster_url": "str"
+              }
+            ],
+            "secondary_id_list": ["int"]
+          }
+        ]
+      }
+    },
+    "MovieService/GetGenreMovies.json": {
+      "request": {
+        "genre_id": "int"
+      },
+      "response": {
+        "status": "str",
+        "movies": ["int"]
+      }
+    },
+    "MovieService/GetMovieInfo.json": {
+      "request": {
+        "movies": ["int"],
+        "limit": "int",
+        "offset": "int",
+        "sort_mode_id": "int",
+        "need_extended_info": "bool"
+      },
+      "response": {
+        "status": "str",
+        "movies": [
+          {
+            "id": "int",
+            "title": "str",
+            "description": "str",
+            "year": "int",
+            "duration": "int",
+            "file_size": "str",
+            "rating_imdb": "float",
+            "age_limit": "str",
+            "age_rating": "str",
+            "genres": ["int"],
+            "countries": ["int|str"],
+            "poster_url": "str",
+            "original_poster_url": "str",
+            "banner_url": "str",
+            "original_banner_url": "str",
+            "horizontal_poster_url": "str",
+            "external_id_pairs": [
+              {
+                "owner_id": "int",
+                "preferred": "bool"
+              }
+            ],
+            "owners": ["int"],
+            "available": "bool",
+            "availability_info": {
+              "available": "bool"
+            },
+            "watch_info": {
+              "position": "int"
+            },
+            "playable_episode_ids": ["int"],
+            "seasons": [
+              {
+                "id": "int",
+                "number": "int",
+                "title": "str",
+                "owner_id": "int",
+                "episodes": [
+                  {
+                    "id": "int",
+                    "number": "int",
+                    "title": "str",
+                    "duration": "int",
+                    "file_size": "str",
+                    "preview_url": "str",
+                    "image_url": "str",
+                    "available": "bool"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "MovieService/GetLink.json": {
+      "request": {
+        "movie_id": "int",
+        "owner_id": "int",
+        "video_quality_id": "int",
+        "audio_track": "int",
+        "preferred_link_type": "int",
+        "subtitle": "str",
+        "episode_id": "int"
+      },
+      "response": {
+        "status": "str",
+        "scheme": "str",
+        "license_url": "str",
+        "http_stream": {
+          "host": {
+            "address": "str"
+          },
+          "url": "str"
+        }
+      }
+    },
+    "SearchService/Search.json": {
+      "request": {
+        "needle": "str"
+      },
+      "response": {
+        "status": "str",
+        "result": [
+          {
+            "type": "str",
+            "id": "int|str",
+            "sub_id": "int|str",
+            "tv_show_id": "int|str",
+            "text": "str",
+            "subtext": "str",
+            "slug": "str",
+            "time_start": "int|str",
+            "time_stop": "int|str",
+            "image_url": "str",
+            "genres": ["int"],
+            "category": ["int"],
+            "categories": ["int"],
+            "is_serial": "bool",
+            "seasons_count": "int",
+            "available": "bool",
+            "availability_info": {
+              "available": "bool"
+            }
+          }
+        ]
+      }
+    },
+    "SearchService/GetTop.json": {
+      "request": {},
+      "response": {
+        "status": "str",
+        "result": [
+          {
+            "type": "str",
+            "id": "int|str",
+            "text": "str",
+            "year": "int",
+            "genres": "str|list",
+            "category": ["int"],
+            "image_url": "str",
+            "availability_info": {
+              "available": "bool"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
