@@ -38,15 +38,16 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zlib
 from datetime import date, timedelta
 from typing import NamedTuple
 
 import mediastick_sweetlive as ml
 
 try:
-    import mediastick_sweetstore as store
+    import mediastick_sweetstore as _sweetstore
 except ImportError:
-    store = None
+    _sweetstore = None
 
 try:
     import mediastick_signin as signin
@@ -74,7 +75,7 @@ MAX_ROWS = 60
 DAY_PAGE = 30                       # programmes asked for before and after the moment (the API counts programmes, not hours)
 DAY_EXTEND = 2                      # more calls, each way, when a busy day did not fit in the first
 DEFAULT_FUTURE_DAYS = 3             # days of guide ahead when the channel does not say
-KNOWN_MAX, KNOWN_TTL = 1000, 7200   # programmes recall() remembers, and for how many seconds
+SWR_TTL, SWR_MAX_AGE = 300, 86400   # s catalog SWR entries stay fresh / usable offline in SweetStore
 ADDON_VERSION = "0.1.13"            # the add-on's, as its x-device header says (kodi-addons.want)
 HEADERS = {"user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
            "x-device": "1;22;0;2;" + ADDON_VERSION, "origin": "https://sweet.tv", "referer": "https://sweet.tv/",
@@ -235,6 +236,12 @@ def _is_uhd_channel(item, channel=None):
     return isinstance(genres, str) and "ultra hd" in genres.casefold()
 
 
+def _resolve_store(store=None):
+    if store is not None:
+        return store
+    return _sweetstore.default_store() if _sweetstore is not None else None
+
+
 def _programme_row(item, channels, now, tr):
     epg, cid, start, stop = _id(item.get("id")), _id(item.get("sub_id")), _time(item.get("time_start")), _time(item.get("time_stop"))
     title = _clean(item.get("text"))
@@ -249,7 +256,8 @@ def _programme_row(item, channels, now, tr):
     return {"kind": "programme", "id": epg, "title": title, "base_title": base_title, "show_id": show_id,
             "subtitle": "", "cid": cid, "epg": epg, "start": start, "stop": stop,
             "channel_name": _clean(channel.get("name"), 120) if channel else "", "when": when_text(start, now, tr),
-            "live": live, "playable_in_archive": archive, "playable": archive or (live and channel is not None),
+            "live": live, "can_archive": archive, "playable_in_archive": archive,
+            "playable": archive or (live and channel is not None),
             "available": True, "preview": "", "image_url": https(item.get("image_url")), "repeats": 0, "more": ""}
 
 
@@ -273,12 +281,12 @@ def _other_row(item, kind, channels, quality="1080p"):
         is_series = bool(item.get("is_serial") or (item.get("seasons_count") or 0) > 0 or any(_num(g) == 1 for g in genres))
         return {"kind": "series" if is_series else kind, "id": ident, "title": title, "subtitle": _clean(item.get("subtext")),
                 "cid": "", "epg": "", "start": 0, "stop": 0, "channel_name": "", "when": "",
-                "live": False, "playable_in_archive": False, "playable": bool(avail and vod_url), "available": avail,
+                "live": False, "can_archive": False, "playable_in_archive": False, "playable": bool(avail and vod_url), "available": avail,
                 "vod_url": vod_url, "preview": "", "image_url": img, "repeats": 0, "more": ""}
     ch_avail = channel is not None and channel.get("available") is not False
     return {"kind": kind, "id": ident, "title": title, "subtitle": _clean(item.get("subtext")),
             "cid": ident if kind == "channel" else "", "epg": "", "start": 0, "stop": 0, "channel_name": name, "when": "",
-            "live": False, "playable_in_archive": False, "playable": ch_avail, "available": ch_avail, "preview": "",
+            "live": False, "can_archive": False, "playable_in_archive": False, "playable": ch_avail, "available": ch_avail, "preview": "",
             "image_url": img, "repeats": 0, "more": ""}
 
 
@@ -316,7 +324,7 @@ def collapse(rows, now, tr_n=None):
     tr_n = tr_n or ml.text_n
     groups = {}
     for row in rows:
-        norm_title = store.strip_programme_prefix(row["title"]) if store else row["title"]
+        norm_title = _sweetstore.strip_programme_prefix(row["title"]) if _sweetstore else row["title"]
         groups.setdefault(" ".join(norm_title.casefold().split()), []).append(row)
     out = []
     for airings in groups.values():
@@ -331,22 +339,8 @@ def collapse(rows, now, tr_n=None):
 KINDS = {"EpgRecord": "programme", "Channel": "channel", "Movie": "movie", "Person": "person"}
 
 
-_SEARCH_SHOWS = {}
-_SEARCH_SHOWS_LOCK = threading.Lock()
-
-
-def _remember_search_shows(rows, now):
-    with _SEARCH_SHOWS_LOCK:
-        for k in list(_SEARCH_SHOWS.keys()):
-            if now - _SEARCH_SHOWS[k][0] > KNOWN_TTL:
-                del _SEARCH_SHOWS[k]
-        for r in rows:
-            if r.get("kind") == "show_tv" and r.get("episodes"):
-                _SEARCH_SHOWS[r["id"]] = (now, list(r["episodes"]))
-
-
 def _group_search_programmes(programmes, now, tr_n):
-    by_show, order, singles = {}, [], []
+    singles = []
     # First pass: bucket by tv_show_id or stripped base_title
     buckets = {}
     for p in programmes:
@@ -366,8 +360,13 @@ def _group_search_programmes(programmes, now, tr_n):
             grp_sorted = collapse(grp, now, tr_n)
             best = _stands_for(grp_sorted, now)
             base = best.get("base_title") or best["title"]
-            show_key = f"tv:{key[1]}" if key[0] == "tv" else f"tv_s:{abs(hash(key[1])) % 10**9}"
+            show_key = (
+                f"tv:{key[1]}"
+                if key[0] == "tv"
+                else f"tv_s:{zlib.crc32(key[1].encode('utf-8')) % 10**9}"
+            )
             img = next((r["image_url"] for r in grp_sorted if r.get("image_url")), "")
+            arch = any(r.get("can_archive", r["playable_in_archive"]) for r in grp_sorted)
             shows.append({
                 "kind": "show_tv",
                 "id": show_key,
@@ -381,7 +380,8 @@ def _group_search_programmes(programmes, now, tr_n):
                 "channel_name": best["channel_name"],
                 "when": best["when"],
                 "live": any(r["live"] for r in grp_sorted),
-                "playable_in_archive": any(r["playable_in_archive"] for r in grp_sorted),
+                "can_archive": arch,
+                "playable_in_archive": arch,
                 "playable": any(r["playable"] for r in grp_sorted),
                 "available": True,
                 "preview": img,
@@ -414,7 +414,6 @@ def normalize_search(reply, channels, now, tr=None, tr_n=None, quality="1080p", 
                     continue
                 others[row["kind"]].append(row)
     grouped_shows, single_progs = _group_search_programmes(programmes, now, tr_n)
-    _remember_search_shows(grouped_shows, now)
     ch_rows = others["channel"]
     if needle:
         q = needle.strip().casefold()
@@ -586,41 +585,79 @@ class Client:
 
 
 _default = Client()
-_known = {}
-_known_lock = threading.Lock()
 
 
 def _failure(code, tr):
     return {"ok": False, "error": code, "message": (tr or ml.text)(MESSAGES.get(code, MESSAGES["service"]))}
 
 
-def _remember(rows, now):
-    """What the play route may check a programme against: the programmes shown lately (cid, epg -> start, stop)."""
-    with _known_lock:
-        for row in rows:
-            for item in (row.get("episodes") or (row,)):
-                if item.get("epg") and item.get("cid"):
-                    _known[(item["cid"], item["epg"])] = (item["start"], item["stop"], now, item.get("available") is not False)
-        if len(_known) > KNOWN_MAX:
-            for key in sorted(_known, key=lambda k: _known[k][2])[:len(_known) - KNOWN_MAX]:
-                del _known[key]
+def _persist_offered_rows(st, rows, channels, now, source="search"):
+    if st is None or not rows:
+        return
+    ch_map = channel_map(channels)
+    by_cid = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("kind") == "show_tv" and row.get("episodes"):
+            try:
+                st.upsert_title_detail(
+                    {"ok": True, "id": row["id"], "kind": "show_tv", "title": row["title"], "episodes": row["episodes"]},
+                    now=now,
+                )
+            except Exception:
+                pass
+        for item in (row.get("episodes") or (row,)):
+            if not isinstance(item, dict):
+                continue
+            cid = _id(item.get("cid"))
+            epg = _id(item.get("epg"))
+            start = _num(item.get("start"))
+            stop = _num(item.get("stop"))
+            if not cid or not epg or start is None:
+                continue
+            by_cid.setdefault(cid, []).append({
+                "id": epg,
+                "text": item.get("title") or "-",
+                "time_start": start,
+                "time_stop": stop if stop is not None and stop > start else start,
+                "tv_show_id": item.get("show_id") or "",
+                "season_number": item.get("season") or 0,
+                "episode_number": item.get("episode") or 0,
+                "image_url": item.get("image_url") or "",
+                "preview_url": item.get("preview") or "",
+                "available": item.get("available") is not False,
+            })
+    for cid, recs in by_cid.items():
+        ch = _known_channel(ch_map, cid)
+        try:
+            st.upsert_epg(
+                cid,
+                recs,
+                now=now,
+                source=source,
+                catchup=bool(ch.get("catchup")) if ch else False,
+                catchup_duration=_archive_days(ch) if ch else 0,
+            )
+        except Exception:
+            pass
 
 
-def recall(cid, epg, now=None):
-    """{"start", "stop", "available"} of a programme search() or day() returned within KNOWN_TTL s; None for any other."""
-    now = time.time() if now is None else now
-    with _known_lock:
-        found = _known.get((str(cid), str(epg)))
-    if found and 0 <= now - found[2] <= KNOWN_TTL:
-        return {"start": found[0], "stop": found[1], "available": found[3]}
-    if store is not None:
-        rec = store.default_store().recall_programme(epg)
-        if rec and str(rec.get("cid")) == str(cid):
-            return {"start": rec["time_start"], "stop": rec["time_stop"], "available": rec["available"]}
-    return None
+def recall(cid, epg, now=None, store=None):
+    """{"start", "stop", "available"} of a programme persisted in SweetStore; None for any other."""
+    st = _resolve_store(store)
+    if st is None:
+        return None
+    try:
+        rec = st.recall_programme(epg, cid=cid, now=now)
+    except Exception:
+        return None
+    if not rec:
+        return None
+    return {"start": rec["time_start"], "stop": rec["time_stop"], "available": rec["available"]}
 
 
-def search(needle, channels, now=None, client=None, tr=None, tr_n=None, quality="1080p", include_unavailable=False):
+def search(needle, channels, now=None, client=None, tr=None, tr_n=None, quality="1080p", include_unavailable=False, store=None):
     """{"ok": True, "query", "items": [row, ...], "count"}; with a needle shorter than MIN_NEEDLE characters nothing is asked
     ("short": True, no items); {"ok": False, "error", "message"} when SWEET.TV could not answer."""
     now = time.time() if now is None else now
@@ -631,18 +668,18 @@ def search(needle, channels, now=None, client=None, tr=None, tr_n=None, quality=
     if not reply.ok:
         return _failure(reply.error, tr)
     rows = normalize_search(reply.data, channels, now, tr, tr_n, quality=quality, include_unavailable=include_unavailable, needle=query)
-    _remember(rows, now)
+    _persist_offered_rows(_resolve_store(store), rows, channels, now, source="search")
     return {"ok": True, "query": query, "items": rows, "count": len(rows)}
 
 
-def top_search(channels, now=None, quality="1080p", client=None, tr=None, tr_n=None, include_unavailable=False):
+def top_search(channels, now=None, quality="1080p", client=None, tr=None, tr_n=None, include_unavailable=False, store=None):
     """{"ok": True, "items": [row, ...]} from SearchService/GetTop.json, marking playable movies and hiding UHD."""
     now = time.time() if now is None else now
     reply = (client or _default).post(TOP_SEARCH, {})
     if not reply.ok:
         return _failure(reply.error, tr)
     rows = normalize_search(reply.data, channels, now, tr, tr_n, quality=quality, include_unavailable=include_unavailable)
-    _remember(rows, now)
+    _persist_offered_rows(_resolve_store(store), rows, channels, now, source="top_search")
     return {"ok": True, "items": rows, "count": len(rows)}
 
 
@@ -677,13 +714,14 @@ def _cover(client, cid, found, lo, hi):
             break
 
 
-def day(cid, day_unix, channels, now=None, client=None, tr=None):
+def day(cid, day_unix, channels, now=None, client=None, tr=None, store=None):
     """{"ok": True, "cid", "name", "date" (YYYY-MM-DD), "now", "archive_days", "future_days", "items": [row, ...]}: the programmes of
     channel `cid` on the local day that holds `day_unix`; {"ok": False, "error", "message"} for a channel that is not in the list,
     a day outside what the channel keeps, or when SWEET.TV could not answer."""
     now = time.time() if now is None else now
     cid = str(cid)
-    channel = _known_channel(channels, cid) if ID_RE.fullmatch(cid) else None
+    ch_map = channel_map(channels)
+    channel = _known_channel(ch_map, cid) if ID_RE.fullmatch(cid) else None
     if isinstance(day_unix, bool) or not isinstance(day_unix, (int, float)):
         return _failure("bad_date", tr)
     try:
@@ -693,27 +731,59 @@ def day(cid, day_unix, channels, now=None, client=None, tr=None):
     code = check_day(channel, when, now)
     if code:
         return _failure(code, tr)
-    use_store_fallback = client is None
+    st = _resolve_store(store)
     client = client or _default
     lo, hi = _midnight(when), _midnight(when + timedelta(days=1))
     found = {}
     error = _fetch(client, cid, (lo + hi) // 2, found)
     if error:
-        if use_store_fallback and error in ("network", "service") and store is not None:
-            cached = store.default_store().channel_day(cid, when.isoformat(), now=now)
+        if error in ("network", "service") and st is not None:
+            try:
+                cached = st.channel_day(cid, when.isoformat(), now=now)
+            except Exception:
+                cached = []
             if cached:
-                _remember(cached, now)
-                return {"ok": True, "cid": cid, "name": _clean(channel.get("name"), 120), "date": when.isoformat(), "now": int(now),
-                        "archive_days": _archive_days(channel), "future_days": _future_days(channel), "items": cached}
+                formatted = []
+                for r in cached:
+                    if r["stop"] <= r["start"]:
+                        continue
+                    arch = ml.archive_ok(channel, {"time_start": r["start"], "available": r["available"]}, now)
+                    live = r["start"] <= now < r["stop"]
+                    formatted.append({
+                        "epg": r["epg"],
+                        "cid": cid,
+                        "title": r["title"],
+                        "start": r["start"],
+                        "stop": r["stop"],
+                        "when": when_text(r["start"], now, tr),
+                        "live": live,
+                        "can_archive": arch,
+                        "playable_in_archive": arch,
+                        "archive": arch,
+                        "available": r["available"],
+                        "preview": r.get("preview", ""),
+                        "season": r.get("season", 0),
+                        "episode": r.get("episode", 0),
+                        "show_id": r.get("show_id", ""),
+                    })
+                if formatted:
+                    return {"ok": True, "cid": cid, "name": _clean(channel.get("name"), 120), "date": when.isoformat(), "now": int(now),
+                            "archive_days": _archive_days(channel), "future_days": _future_days(channel), "items": formatted}
         return _failure(error, tr)
     _cover(client, cid, found, lo, hi)
-    if store is not None:
-        store.default_store().upsert_epg(
-            cid, list(found.values()), now=now,
-            catchup=bool(channel.get("catchup")), catchup_duration=channel.get("catchup_duration") or 0,
-        )
+    valid_records = [p for p in found.values() if _day_row(p, cid, channel, now, tr) is not None]
+    if st is not None and valid_records:
+        try:
+            st.upsert_epg(
+                cid,
+                valid_records,
+                now=now,
+                catchup=bool(channel.get("catchup")),
+                catchup_duration=_archive_days(channel),
+            )
+        except Exception:
+            pass
     rows = normalize_day(list(found.values()), cid, channel, when, now, tr)
-    _remember(rows, now)
     return {"ok": True, "cid": cid, "name": _clean(channel.get("name"), 120), "date": when.isoformat(), "now": int(now),
             "archive_days": _archive_days(channel), "future_days": _future_days(channel), "items": rows}
 
@@ -830,13 +900,40 @@ def _genre_movie_ids(c, genre_id):
     return [x for x in ids if x and x > 0], ""
 
 
-def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, quality="1080p", client=None, tr=None):
+def _swr_put(st, key, value, now=None):
+    if st is None:
+        return
+    try:
+        st.put_swr(key, value, ttl_s=SWR_TTL, now=now)
+    except Exception:
+        pass
+
+
+def _swr_get(st, key, now=None):
+    if st is None:
+        return None
+    try:
+        hit = st.get_swr(key, max_age_s=SWR_MAX_AGE, now=now)
+    except Exception:
+        return None
+    if hit is not None and isinstance(hit.data, dict):
+        return dict(hit.data)
+    return None
+
+
+def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, quality="1080p", client=None, tr=None, store=None):
     """Paginated movies or series catalog from api.sweet.tv, filtering out TVOD and 4K UHD (unless unlimited)."""
     c = client or _default
+    st = _resolve_store(store)
     gid = int(genre_id or 0)
+    swr_key = f"catalog:{section}:{gid}:{int(sort_mode_id)}:{int(offset)}:{int(limit)}:{quality}"
     if section == "series":
         base, err = _genre_movie_ids(c, 1)
         if err:
+            if err in ("network", "service"):
+                cached = _swr_get(st, swr_key)
+                if cached is not None:
+                    return cached
             return _failure(err, tr)
         col_reply = c.post(COLLECTIONS, {"type": 3})
         seen = set(base)
@@ -858,6 +955,10 @@ def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, qualit
         target_gid = gid or 61
         id_list, err = _genre_movie_ids(c, target_gid)
         if err:
+            if err in ("network", "service"):
+                cached = _swr_get(st, swr_key)
+                if cached is not None:
+                    return cached
             return _failure(err, tr)
         if target_gid == 61:
             exclude = set()
@@ -869,7 +970,9 @@ def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, qualit
                 id_list = [x for x in id_list if x not in exclude]
 
     if not id_list:
-        return {"ok": True, "section": section, "items": [], "total": 0}
+        res = {"ok": True, "section": section, "items": [], "total": 0}
+        _swr_put(st, swr_key, res)
+        return res
     info_reply = c.post(MOVIE_INFO, {
         "movies": id_list,
         "limit": int(limit),
@@ -878,6 +981,10 @@ def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, qualit
         "need_extended_info": False,
     })
     if not info_reply.ok:
+        if info_reply.error in ("network", "service"):
+            cached = _swr_get(st, swr_key)
+            if cached is not None:
+                return cached
         return _failure(info_reply.error, tr)
     allowed_ids = set(id_list)
     items = []
@@ -893,11 +1000,15 @@ def catalog_page(section, genre_id=0, sort_mode_id=1, offset=0, limit=30, qualit
         if quality != "unlimited" and UHD_GENRE in card["genres"]:
             continue
         items.append(card)
-    return {"ok": True, "section": section, "items": items, "total": len(id_list)}
+    res = {"ok": True, "section": section, "items": items, "total": len(id_list)}
+    _swr_put(st, swr_key, res)
+    return res
 
 
 def _base_show_title(text):
     title = _clean(text, 120)
+    if _sweetstore is not None:
+        return _sweetstore.base_show_title(title)
     stripped = SHOW_MARKER_RE.sub("", title).strip()
     if stripped and stripped != title:
         return stripped
@@ -913,12 +1024,18 @@ def _base_show_title(text):
     return title
 
 
-def shows(channels, now=None, quality="1080p", client=None, tr=None):
+def shows(channels, now=None, quality="1080p", client=None, tr=None, store=None):
     """Dynamically unify GetCollections(type=7) Movie & Epg shows and playable channel EPG shows."""
     c = client or _default
+    st = _resolve_store(store)
     now = time.time() if now is None else now
+    swr_key = f"shows:{quality}"
     col_reply = c.post(COLLECTIONS, {"type": 7})
     if not col_reply.ok:
+        if col_reply.error in ("network", "service"):
+            cached = _swr_get(st, swr_key, now=now)
+            if cached is not None:
+                return cached
         return _failure(col_reply.error, tr)
 
     movie_ids, movie_seen = [], set()
@@ -1086,7 +1203,9 @@ def shows(channels, now=None, quality="1080p", client=None, tr=None):
                 "banner": _hq_url(p.get("preview_url_ext") or p.get("preview_url")),
                 "special": False,
             })
-    return {"ok": True, "items": items}
+    res = {"ok": True, "items": items}
+    _swr_put(st, swr_key, res, now=now)
+    return res
 
 
 def _fav_set(favs):
@@ -1233,9 +1352,58 @@ def apply_progress_to_seasons(seasons, local, movie_id=""):
             ep["resume_at"] = at
 
 
-def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
+def _vod_detail_from_cache(cached, mid, local, favs):
+    fav_keys = _fav_set(favs)
+    is_fav = ("show:vod:%d" % mid) in fav_keys or ("vod:%d" % mid) in fav_keys
+    m_resume, m_watched = _vod_resume(local, mid)
+    seasons = [
+        {
+            "id": s.get("id", 0),
+            "number": s.get("number", idx + 1),
+            "title": s.get("title", ""),
+            "owner_id": s.get("owner_id", cached.get("owner_id", 0)),
+            "episodes": [
+                {
+                    **ep,
+                    "resume": 0,
+                    "watched": False,
+                    "resume_at": 0,
+                }
+                for ep in (s.get("episodes") or ())
+            ],
+        }
+        for idx, s in enumerate(cached.get("seasons") or ())
+    ]
+    apply_progress_to_seasons(seasons, local, movie_id=str(mid))
+    return {
+        "ok": True,
+        "id": "vod:%d" % mid,
+        "movie_id": str(mid),
+        "title": cached.get("title", ""),
+        "description": cached.get("description", ""),
+        "age_rating": cached.get("age_rating", ""),
+        "genres": list(cached.get("genres") or ()),
+        "genre_names": list(cached.get("genre_names") or ()),
+        "countries": list(cached.get("countries") or ()),
+        "poster": cached.get("poster", ""),
+        "banner": cached.get("banner", ""),
+        "year": cached.get("year", 0),
+        "duration": cached.get("duration", 0),
+        "imdb": cached.get("imdb", 0.0),
+        "owner_id": cached.get("owner_id", 0),
+        "favourite": is_fav,
+        "resume": m_resume,
+        "watched": m_watched,
+        "vod_url": cached.get("vod_url", ""),
+        "seasons": seasons,
+        "next_up": resolve_next_up(seasons=seasons) if seasons else None,
+    }
+
+
+def vod_detail(movie_id, local=None, favs=None, client=None, tr=None, store=None):
     """Detailed VOD movie/series metadata with seasons/episodes, local resume/watched, and local favourites."""
     c = client or _default
+    st = _resolve_store(store)
     if isinstance(movie_id, str) and movie_id.startswith("vod:"):
         movie_id = movie_id[4:]
     mid = _num(movie_id)
@@ -1243,6 +1411,13 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
         return _failure("format", tr)
     reply = c.post(MOVIE_INFO, {"movies": [mid], "need_extended_info": True})
     if not reply.ok:
+        if reply.error in ("network", "service") and st is not None:
+            try:
+                cached = st.get_title_detail("vod:%d" % mid)
+            except Exception:
+                cached = None
+            if cached:
+                return _vod_detail_from_cache(cached, mid, local, favs)
         return _failure(reply.error, tr)
     movies = reply.data.get("movies") or ()
     movie = movies[0] if isinstance(movies, list) and movies and isinstance(movies[0], dict) else None
@@ -1251,6 +1426,13 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
     card = _movie_card(movie)
     if not card:
         return _failure("format", tr)
+    genre_ids = card.get("genres", [])
+    genre_names = []
+    if genre_ids:
+        cfg = configuration(client=c, tr=tr)
+        if cfg.get("ok"):
+            gmap = {g["id"]: g["name"] for g in cfg.get("genres", ())}
+            genre_names = [gmap[gid] for gid in genre_ids if gid in gmap]
     fav_keys = _fav_set(favs)
     is_fav = ("show:vod:%d" % mid) in fav_keys or ("vod:%d" % mid) in fav_keys
     m_resume, m_watched = _vod_resume(local, mid)
@@ -1280,6 +1462,7 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
                 "watched": ep_done,
                 "resume_at": ep_at,
             })
+        eps.sort(key=lambda e: (e["number"], e["id"]))
         seasons.append({
             "id": _num(s.get("id")) or 0,
             "number": _season_number_of(s, len(seasons)),
@@ -1287,7 +1470,7 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
             "owner_id": s_owner,
             "episodes": eps,
         })
-    seasons.sort(key=lambda s: s["number"])
+    seasons.sort(key=lambda s: (s["number"], s["id"]))
     res = {
         "ok": True,
         "id": "vod:%d" % mid,
@@ -1295,7 +1478,8 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
         "title": card["title"],
         "description": card.get("description", ""),
         "age_rating": card.get("age_rating", ""),
-        "genres": card.get("genres", []),
+        "genres": genre_ids,
+        "genre_names": genre_names,
         "countries": card.get("countries", []),
         "poster": card["poster"],
         "banner": card["banner"],
@@ -1310,24 +1494,30 @@ def vod_detail(movie_id, local=None, favs=None, client=None, tr=None):
         "seasons": seasons,
         "next_up": resolve_next_up(seasons=seasons) if seasons else None,
     }
-    if store is not None:
-        store.default_store().upsert_title_detail(res)
+    if st is not None:
+        try:
+            st.upsert_title_detail(res)
+        except Exception:
+            pass
     return res
 
 
-def show_detail(show_key, channels, now=None, local=None, favs=None, client=None, tr=None):
+def show_detail(show_key, channels, now=None, local=None, favs=None, client=None, tr=None, store=None):
     """Detail for show_key ('vod:<id>', 'epg:<col_id>', or 'tv:<show_id>')."""
     if not isinstance(show_key, str):
         return _failure("format", tr)
     if show_key.startswith("vod:"):
-        return vod_detail(show_key[4:], local=local, favs=favs, client=client, tr=tr)
+        return vod_detail(show_key[4:], local=local, favs=favs, client=client, tr=tr, store=store)
     c = client or _default
+    st = _resolve_store(store)
     now = time.time() if now is None else now
     fav_keys = _fav_set(favs)
     curated_ids = []
     curated_set = set()
     recs = []
     title = ""
+    description = ""
+    age_rating = ""
     if show_key.startswith("epg:"):
         col_id = _num(show_key[4:])
         if not col_id:
@@ -1336,13 +1526,37 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         if ci.ok:
             cols = ci.data.get("collections") or ci.data.get("collection") or []
             if isinstance(cols, list) and cols and isinstance(cols[0], dict):
-                title = _clean(cols[0].get("title"), 120)
-                curated_ids = [_num(x) for x in (cols[0].get("secondary_id_list") or ()) if _num(x)]
+                col0 = cols[0]
+                title = _clean(col0.get("title"), 120)
+                description = _clean(col0.get("description"), 1200)
+                age_rating = _clean(str(col0.get("age_limit") or col0.get("age_rating") or ""), 16)
+                curated_ids = [_num(x) for x in (col0.get("secondary_id_list") or ()) if _num(x)]
                 curated_set = set(curated_ids)
-        if curated_ids:
-            er = c.post(EPG_RECORDS, {"id_list": curated_ids, "image_type": 0, "need_extended_info": True})
-            if er.ok:
-                recs = [r for r in (er.data.get("epg_records") or er.data.get("list") or ()) if isinstance(r, dict)]
+            if curated_ids:
+                er = c.post(EPG_RECORDS, {"id_list": curated_ids, "image_type": 0, "need_extended_info": True})
+                if er.ok:
+                    recs = [r for r in (er.data.get("epg_records") or er.data.get("list") or ()) if isinstance(r, dict)]
+        elif ci.error in ("network", "service") and st is not None:
+            try:
+                cached = st.get_title_detail(show_key)
+            except Exception:
+                cached = None
+            if cached and cached.get("episodes"):
+                title = cached.get("title", "")
+                description = cached.get("description", "")
+                age_rating = cached.get("age_rating", "")
+                recs = [
+                    {
+                        "id": ep["epg"],
+                        "channel_id": ep["cid"],
+                        "text": ep["title"],
+                        "time_start": ep["start"],
+                        "time_stop": ep["stop"],
+                        "preview_url": ep.get("preview", ""),
+                        "available": ep.get("available", True),
+                    }
+                    for ep in cached["episodes"]
+                ]
     elif show_key.startswith(("tv:", "tv_s:")):
         if show_key.startswith("tv:"):
             target_sid = _num(show_key[3:])
@@ -1354,18 +1568,45 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
                         recs.append({**p, "channel_id": ch.get("id")})
                         if not title:
                             title = _base_show_title(p.get("text"))
-        with _SEARCH_SHOWS_LOCK:
-            cached_eps = _SEARCH_SHOWS.get(show_key)
-            cached_list = list(cached_eps[1]) if cached_eps else []
-        seen_epg = {_id(r.get("id")) for r in recs}
-        for ep in cached_list:
-            if ep["epg"] not in seen_epg:
-                seen_epg.add(ep["epg"])
-                recs.append({"id": ep["epg"], "channel_id": ep["cid"], "text": ep["title"],
-                             "time_start": ep["start"], "time_stop": ep["stop"],
-                             "image_url": ep.get("image_url", ""), "available": ep.get("available", True)})
+                        if not description and p.get("description"):
+                            description = _clean(p.get("description"), 1200)
+            if st is not None:
+                seen_epg = {_id(r.get("id")) for r in recs}
+                try:
+                    stored_progs = st.programmes_for_show(target_sid)
+                except Exception:
+                    stored_progs = []
+                for p in stored_progs:
+                    if _id(p.get("id")) not in seen_epg:
+                        seen_epg.add(_id(p.get("id")))
+                        recs.append(p)
+                        if not title:
+                            title = _base_show_title(p.get("text"))
+                        if not description and p.get("description"):
+                            description = _clean(p.get("description"), 1200)
+        if st is not None:
+            try:
+                cached_title = st.get_title_detail(show_key)
+            except Exception:
+                cached_title = None
+            if cached_title:
                 if not title:
-                    title = ep.get("base_title") or _base_show_title(ep["title"])
+                    title = cached_title.get("title", "")
+                if not description:
+                    description = cached_title.get("description", "")
+                seen_epg = {_id(r.get("id")) for r in recs}
+                for ep in (cached_title.get("episodes") or ()):
+                    if ep.get("epg") and ep["epg"] not in seen_epg:
+                        seen_epg.add(ep["epg"])
+                        recs.append({
+                            "id": ep["epg"],
+                            "channel_id": ep["cid"],
+                            "text": ep["title"],
+                            "time_start": ep["start"],
+                            "time_stop": ep["stop"],
+                            "image_url": ep.get("image_url", "") or ep.get("preview", ""),
+                            "available": ep.get("available", True),
+                        })
     else:
         return _failure("format", tr)
 
@@ -1379,6 +1620,8 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
             continue
         ch = _known_channel(ch_map, cid)
         ep_res, ep_done, ep_at = _local_resume_info(local, "sw:%s|%s" % (cid, epg))
+        arch = bool(ch) and ml.archive_ok(ch, r, now)
+        live = start <= now < stop
         airings.append({
             "epg": epg,
             "cid": cid,
@@ -1391,7 +1634,10 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
             "preview": https(r.get("preview_url_ext")) or https(r.get("preview_url")) or https(r.get("image_url")),
             "curated": _num(epg) in curated_set,
             "available": r.get("available") is not False,
-            "playable": bool(ch) and (start <= now < stop or ml.archive_ok(ch, r, now)),
+            "live": live,
+            "can_archive": arch,
+            "playable_in_archive": arch,
+            "playable": bool(ch) and (live or arch),
             "resume": ep_res,
             "watched": ep_done,
             "resume_at": ep_at,
@@ -1406,15 +1652,26 @@ def show_detail(show_key, channels, now=None, local=None, favs=None, client=None
         pool = curated_g if curated_g else g
         episodes.append(max(_complete(pool), key=lambda x: x["start"]))
     episodes.sort(key=lambda x: -x["start"])
-    _remember(episodes, now)
-    return {
+    _persist_offered_rows(st, episodes, ch_map, now, source="show_detail")
+    res = {
         "ok": True,
         "id": show_key,
         "title": title,
+        "description": description,
+        "age_rating": age_rating,
+        "genres": [],
+        "genre_names": [],
+        "countries": [],
         "favourite": ("show:" + show_key) in fav_keys,
         "episodes": episodes,
         "next_up": resolve_next_up(episodes=episodes) if episodes else None,
     }
+    if st is not None and episodes and title:
+        try:
+            st.upsert_title_detail(res, now=now)
+        except Exception:
+            pass
+    return res
 
 
 def vod_link(movie_id, episode_id=None, owner_id=0, quality="1080p", client=None, tr=None):

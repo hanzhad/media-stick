@@ -24,6 +24,7 @@ os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
 os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(TMP, "onboarding")
 os.environ["MEDIASTICK_YTCHANNEL_OFF"] = "1"       # never ask Google from a test
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
+os.environ["MEDIASTICK_SWEETSTORE_DB"] = os.path.join(TMP, "sweettv", "sweettv.db")
 
 
 class Fake:
@@ -375,6 +376,33 @@ class Arguments(unittest.TestCase):
             "RunScript(plugin.video.youtube,users/add?ms_name=Zo%C3%AB%20O%27Neil&ms_switch=1)",
             "RunPlugin(plugin://plugin.video.youtube/sign/out/?confirmed=true)",
             "RunPlugin(plugin://plugin.video.sweettv/logout)"])
+
+    def test_signing_out_of_sweettv_clears_sweetstore_and_youtube_does_not(self):
+        import mediastick_sweetstore as sweetstore
+        Fake.builtins.clear()
+        Fake.enabled = True
+        st = sweetstore.default_store()
+        st.upsert_channels({"status": "OK", "list": [{"id": 7, "name": "СТБ HD", "available": True}]}, now=1000)
+        self.assertEqual(len(st.search_channels("стб", available_only=False)), 1)
+
+        # Signing out of YouTube must not touch SweetStore
+        self.assertTrue(accounts.sign_out("youtube"))
+        self.assertEqual(len(st.search_channels("стб", available_only=False)), 1)
+
+        # Missing/disabled add-on must not sign out or clear SweetStore
+        Fake.enabled = False
+        try:
+            self.assertFalse(accounts.sign_out("sweettv"))
+        finally:
+            Fake.enabled = True
+        self.assertEqual(len(st.search_channels("стб", available_only=False)), 1)
+
+        # Signing out of SWEET.TV clears SweetStore and runs plugin logout
+        self.assertTrue(accounts.sign_out("sweettv"))
+        self.assertEqual(st.search_channels("стб", available_only=False), [])
+        self.assertTrue(callable(getattr(st, "get_channels_payload", None)))
+        self.assertEqual(st.get_channels_payload(), {})
+        self.assertEqual(Fake.builtins[-1], "RunPlugin(plugin://plugin.video.sweettv/logout)")
 
     def test_nothing_is_sent_to_an_add_on_that_is_not_there(self):
         Fake.builtins.clear()

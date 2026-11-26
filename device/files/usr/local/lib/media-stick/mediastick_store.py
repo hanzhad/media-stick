@@ -10,7 +10,7 @@ Pure Core (no filesystem or database I/O):
 
 Thin I/O Shell (SQLite WAL mode, stdlib only, zero xbmc imports):
   - StateStore: durable resume, favourites, app_recent, prefs + legacy JSON migration
-  - CacheStore: SWR pages, API cache with combined LRU eviction, UI snapshots
+  - CacheStore: SWR pages with LRU eviction, UI snapshots
 """
 from __future__ import annotations
 
@@ -573,7 +573,9 @@ class StateStore(_SQLiteStore):
 
 
 class CacheStore(_SQLiteStore):
-    """Evictable SWR page/API cache and Quick Resume UI snapshot store."""
+    """Evictable SWR page cache and Quick Resume UI snapshot store."""
+
+    _OWNED_TABLES = frozenset({"pages", "ui_snapshots"})
 
     _SCHEMA_SQL = """
     CREATE TABLE IF NOT EXISTS pages (
@@ -598,23 +600,25 @@ class CacheStore(_SQLiteStore):
         updated_at REAL NOT NULL,
         PRIMARY KEY (app_id, profile_id)
     );
-
-    CREATE TABLE IF NOT EXISTS api_cache (
-        endpoint TEXT NOT NULL,
-        req_hash TEXT NOT NULL,
-        payload BLOB NOT NULL,
-        size_bytes INTEGER NOT NULL,
-        fetched_at REAL NOT NULL,
-        ttl_s REAL NOT NULL,
-        last_used_at REAL NOT NULL,
-        PRIMARY KEY (endpoint, req_hash)
-    );
-    CREATE INDEX IF NOT EXISTS idx_api_cache_last_used ON api_cache(last_used_at);
     """
 
     def __init__(self, db_path: str = DEFAULT_CACHE_DB, max_bytes: int = DEFAULT_MAX_CACHE_BYTES):
         self.max_bytes = int(max_bytes)
         super().__init__(db_path)
+
+    def _init_db(self) -> None:
+        super()._init_db()
+        with self._tx() as con:
+            retired = [
+                row[0]
+                for row in con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                ).fetchall()
+                if row[0] not in self._OWNED_TABLES
+            ]
+            for tbl in retired:
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", tbl):
+                    con.execute(f'DROP TABLE IF EXISTS "{tbl}"')
 
     def _evict_lru(self, con: sqlite3.Connection) -> None:
         rows: list[tuple[str, str, int, float]] = []
@@ -627,19 +631,9 @@ class CacheStore(_SQLiteStore):
             rows.append(("pages", ident, int(size_bytes), float(last_used_at)))
             pk_map[("pages", ident)] = (ns, key)
 
-        for endpoint, req_hash, size_bytes, last_used_at in con.execute(
-            "SELECT endpoint, req_hash, size_bytes, last_used_at FROM api_cache"
-        ):
-            ident = f"{endpoint}\x00{req_hash}"
-            rows.append(("api_cache", ident, int(size_bytes), float(last_used_at)))
-            pk_map[("api_cache", ident)] = (endpoint, req_hash)
-
         for scope, ident in compute_eviction_keys(rows, self.max_bytes):
             pk1, pk2 = pk_map[(scope, ident)]
-            if scope == "pages":
-                con.execute("DELETE FROM pages WHERE namespace = ? AND key = ?", (pk1, pk2))
-            else:
-                con.execute("DELETE FROM api_cache WHERE endpoint = ? AND req_hash = ?", (pk1, pk2))
+            con.execute("DELETE FROM pages WHERE namespace = ? AND key = ?", (pk1, pk2))
 
     def get_page(
         self,
@@ -768,65 +762,3 @@ class CacheStore(_SQLiteStore):
                 con.execute("DELETE FROM ui_snapshots")
             else:
                 con.execute("DELETE FROM ui_snapshots WHERE app_id = ?", (app_id,))
-
-    def get_api(
-        self,
-        endpoint: str,
-        req_hash: str,
-        max_age: float | None = None,
-        now: float | None = None,
-    ) -> CacheHit | None:
-        with self._lock:
-            row = self._con.execute(
-                "SELECT payload, fetched_at, ttl_s FROM api_cache WHERE endpoint = ? AND req_hash = ?",
-                (endpoint, req_hash),
-            ).fetchone()
-            if row is None:
-                return None
-            payload, fetched_at, ttl_s = row
-            cur_now = time.time() if now is None else float(now)
-            eff_max_age = float(ttl_s) if max_age is None else float(max_age)
-            status = classify_cache_entry(fetched_at, cur_now, float(ttl_s), eff_max_age)
-            if status == "expired":
-                return None
-            try:
-                data = decode_payload(payload)
-            except (ValueError, zlib.error):
-                return None
-            self._con.execute(
-                "UPDATE api_cache SET last_used_at = ? WHERE endpoint = ? AND req_hash = ?",
-                (cur_now, endpoint, req_hash),
-            )
-            return CacheHit(
-                data=data,
-                stale=(status == "stale"),
-                fetched_at=float(fetched_at),
-                age_s=max(0.0, cur_now - float(fetched_at)),
-            )
-
-    def put_api(
-        self,
-        endpoint: str,
-        req_hash: str,
-        value,
-        ttl_s: float = 300.0,
-        now: float | None = None,
-    ) -> None:
-        if contains_secret(value):
-            raise SecretRefused("api payload contains secret data")
-        blob = encode_payload(value)
-        size_bytes = len(blob)
-        if size_bytes > self.max_bytes:
-            raise ValueError(f"api payload size {size_bytes} exceeds max_bytes {self.max_bytes}")
-        ts = time.time() if now is None else float(now)
-        with self._tx() as con:
-            con.execute(
-                "INSERT INTO api_cache (endpoint, req_hash, payload, size_bytes, fetched_at, ttl_s, last_used_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(endpoint, req_hash) DO UPDATE SET "
-                "payload = excluded.payload, size_bytes = excluded.size_bytes, "
-                "fetched_at = excluded.fetched_at, ttl_s = excluded.ttl_s, "
-                "last_used_at = excluded.last_used_at",
-                (endpoint, req_hash, sqlite3.Binary(blob), size_bytes, ts, float(ttl_s), ts),
-            )
-            self._evict_lru(con)

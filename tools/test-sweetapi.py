@@ -8,6 +8,7 @@ import sys
 
 sys.dont_write_bytecode = True  # before any import: no __pycache__ in the add-on
 
+import inspect  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
 import tempfile  # noqa: E402
@@ -25,6 +26,7 @@ os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
 os.environ["MEDIASTICK_ADDON_LIB"] = ADDON_LIB
 os.environ["MEDIASTICK_PREFS_DIR"] = os.path.join(TMP, "prefs")
+os.environ["MEDIASTICK_SWEETSTORE_DB"] = os.path.join(TMP, "sweettv", "sweettv.db")
 os.environ["TZ"] = "UTC"
 time.tzset()
 sys.path.insert(0, LIB)
@@ -32,8 +34,17 @@ sys.path.insert(0, LIB)
 import mediastick_signin as signin  # noqa: E402
 import mediastick_sweetapi as api  # noqa: E402
 import mediastick_sweetlive as ml  # noqa: E402
+import mediastick_sweetstore as sweetstore  # noqa: E402
 import panel_sweettv as ps  # noqa: E402
 import panel_watch as pw  # noqa: E402
+
+
+def _clear_default_sweetstore():
+    st = sweetstore.default_store()
+    if hasattr(st, "clear"):
+        st.clear()
+    if hasattr(api, "_known"):
+        api._known.clear()
 
 
 def fixture(name):
@@ -201,6 +212,7 @@ class Search(unittest.TestCase):
         self.assertEqual(len(api.normalize_search({"result": items}, MAP, NOW, ENGLISH, ENGLISH_N)), api.MAX_ROWS)
 
     def test_search_asks_with_the_needle_and_remembers_what_it_showed(self):
+        _clear_default_sweetstore()
         c, sender = client(reply(SEARCH))
         found = api.search("  Холостяк ", MAP, NOW, client=c, tr=ENGLISH, tr_n=ENGLISH_N)
         self.assertTrue(found["ok"])
@@ -209,7 +221,6 @@ class Search(unittest.TestCase):
                          [("https://api.sweet.tv/SearchService/Search.json", {"needle": "Холостяк"})])
         self.assertEqual(api.recall("15", "9002", NOW), {"start": 1795255200, "stop": 1795260600, "available": True})
         self.assertIsNone(api.recall("15", "9001", NOW))                                            # folded into 9002: not offered
-        self.assertIsNone(api.recall("15", "9002", NOW + api.KNOWN_TTL + 1))
         self.assertIsNone(api.recall("16", "9002", NOW))
 
     def test_a_needle_of_under_two_characters_asks_nothing(self):
@@ -383,6 +394,9 @@ class Calls(unittest.TestCase):
 
 
 class Day(unittest.TestCase):
+    def setUp(self):
+        _clear_default_sweetstore()
+
     def rows(self, day=DAY_START + 43200):
         c, _ = client(reply(DAY))
         return api.day("15", day, MAP, NOW, client=c, tr=ENGLISH)
@@ -503,7 +517,7 @@ class Routes(unittest.TestCase):
         self.api = api._default
         self.addCleanup(setattr, api, "_default", self.api)
         self.slim = ml.slim(CHANNELS)
-        api._known.clear()
+        _clear_default_sweetstore()
 
     def serve(self, *answers, by=None):
         api._default, sender = client(*answers, by=by)
@@ -978,7 +992,7 @@ class VodAndCatalog(unittest.TestCase):
             self.assertEqual(len(d_raw["episodes"]), len(d_map["episodes"]), show_key)
 
     def test_show_detail_epg_remembers_episodes_for_recall_and_play_and_exposes_fields(self):
-        api._known.clear()
+        _clear_default_sweetstore()
 
         def by(call):
             url = call["url"]
@@ -1086,17 +1100,240 @@ class GroupedSearchTest(unittest.TestCase):
     def test_search_groups_episodes_into_show_tv_and_detects_series(self):
         ch_list = {"list": [{"id": 15, "name": "1+1", "catchup": True, "catchup_duration": 7}]}
         now = 1750000000
-        reply = {"result": [
+        search_doc = {"status": "OK", "result": [
             {"type": "EpgRecord", "id": "901", "sub_id": "15", "tv_show_id": 111, "text": "Холостяк. Випуск 5", "time_start": now - 7200, "time_stop": now - 3600},
             {"type": "EpgRecord", "id": "902", "sub_id": "15", "tv_show_id": 111, "text": "Холостяк. Випуск 6", "time_start": now - 3600, "time_stop": now - 1800},
             {"type": "Movie", "id": "500", "text": "Футурама", "genres": [1]},
         ]}
-        rows = api.normalize_search(reply, ch_list, now=now)
+        rows = api.normalize_search(search_doc, ch_list, now=now)
         self.assertEqual([r["kind"] for r in rows], ["series", "show_tv"])
         self.assertEqual(rows[1]["episodes_count"], 2)
-        det = api.show_detail(rows[1]["id"], ch_list, now=now)
+        self.assertIn("store", inspect.signature(api.search).parameters, "api.search must accept store parameter")
+        self.assertIn("store", inspect.signature(api.show_detail).parameters, "api.show_detail must accept store parameter")
+        with tempfile.TemporaryDirectory() as td:
+            st = sweetstore.SweetStore(os.path.join(td, "sweettv.db"))
+            self.addCleanup(st.close)
+            c, _ = client(reply(search_doc))
+            found = api.search("Холостяк", ch_list, now=now, client=c, store=st)
+            self.assertTrue(found["ok"])
+            det = api.show_detail(rows[1]["id"], ch_list, now=now, client=client((0, b""))[0], store=st)
+            self.assertTrue(det["ok"])
+            self.assertEqual(len(det["episodes"]), 2)
+
+
+class SweetStoreIntegrationTest(unittest.TestCase):
+    """Verify SweetStore ACL wiring, zero _known/_SEARCH_SHOWS globals, can_archive, and rich metadata."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.st = sweetstore.SweetStore(os.path.join(self.tmp.name, "main.db"))
+        self.other_st = sweetstore.SweetStore(os.path.join(self.tmp.name, "other.db"))
+
+    def tearDown(self):
+        self.other_st.close()
+        self.st.close()
+        self.tmp.cleanup()
+
+    def test_no_module_level_known_or_search_shows_globals(self):
+        for forbidden in ("_known", "_known_lock", "_SEARCH_SHOWS", "_SEARCH_SHOWS_LOCK"):
+            self.assertFalse(hasattr(api, forbidden), f"mediastick_sweetapi must not define {forbidden}")
+
+    def test_canonical_can_archive_matches_playable_in_archive_across_outputs(self):
+        search_rows = api.normalize_search(SEARCH, MAP, NOW, ENGLISH, ENGLISH_N)
+        prog_rows = [r for r in search_rows if r["kind"] == "programme"]
+        show_eps = [ep for r in search_rows if r["kind"] == "show_tv" for ep in r.get("episodes", ())]
+        self.assertTrue(prog_rows and show_eps)
+        for r in prog_rows + show_eps:
+            self.assertIn("can_archive", r)
+            self.assertEqual(r["can_archive"], r["playable_in_archive"])
+        self.assertTrue(any(r["can_archive"] for r in prog_rows + show_eps))
+        self.assertTrue(any(not r["can_archive"] for r in prog_rows + show_eps))
+
+        c_day, _ = client(reply(DAY))
+        day_res = api.day("15", DAY_START + 43200, MAP, NOW, client=c_day, tr=ENGLISH)
+        self.assertTrue(day_res["ok"])
+        for item in day_res["items"]:
+            self.assertIn("can_archive", item)
+            self.assertEqual(item["can_archive"], item["playable_in_archive"])
+
+    def test_injectable_store_isolation_and_offline_fallbacks(self):
+        entrypoints = (
+            ("recall", api.recall),
+            ("day", api.day),
+            ("vod_detail", api.vod_detail),
+            ("show_detail", api.show_detail),
+            ("search", api.search),
+            ("top_search", api.top_search),
+            ("shows", api.shows),
+            ("catalog_page", api.catalog_page),
+        )
+        missing_store = [name for name, fn in entrypoints if "store" not in inspect.signature(fn).parameters]
+        self.assertEqual(missing_store, [], f"Entrypoints missing injectable store parameter: {missing_store}")
+
+        # 1. search() + top_search() + recall() isolated to self.st
+        c_search, _ = client(reply(SEARCH))
+        s_res = api.search("Холостяк", MAP, NOW, client=c_search, tr=ENGLISH, tr_n=ENGLISH_N, store=self.st)
+        self.assertTrue(s_res["ok"])
+        self.assertEqual(
+            api.recall("15", "9002", NOW, store=self.st),
+            {"start": 1795255200, "stop": 1795260600, "available": True},
+        )
+        self.assertIsNone(api.recall("15", "9002", NOW, store=self.other_st))
+
+        c_top, _ = client(reply(TOP))
+        top_res = api.top_search(MAP, now=NOW, quality="1080p", client=c_top, tr=ENGLISH, store=self.st)
+        self.assertTrue(top_res["ok"])
+
+        # 2. day() persists EPG into self.st and falls back to self.st on network failure
+        c_day, _ = client(reply(DAY))
+        d_ok = api.day("15", DAY_START + 43200, MAP, NOW, client=c_day, tr=ENGLISH, store=self.st)
+        self.assertTrue(d_ok["ok"])
+        self.assertEqual(
+            api.recall("15", "8002", NOW, store=self.st),
+            {"start": 1795393800, "stop": 1795402800, "available": True},
+        )
+        self.assertIsNone(api.recall("15", "8002", NOW, store=self.other_st))
+
+        c_offline, _ = client((0, b""))
+        d_cached = api.day("15", DAY_START + 43200, MAP, NOW, client=c_offline, tr=ENGLISH, store=self.st)
+        self.assertTrue(d_cached["ok"])
+        self.assertEqual([r["epg"] for r in d_cached["items"]], ["8001", "8002", "8003", "8004"])
+
+        # Empty other_st still returns network failure cleanly
+        d_miss = api.day("15", DAY_START + 43200, MAP, NOW, client=client((0, b""))[0], tr=ENGLISH, store=self.other_st)
+        self.assertFalse(d_miss["ok"])
+        self.assertEqual(d_miss["error"], "network")
+
+        # 3. catalog_page() and shows() persist SWR/catalog into self.st and fall back when offline
+        def by_catalog(call):
+            url = call["url"]
+            if url.endswith("GetGenreMovies.json"):
+                return reply({"status": "OK", "movies": [9558] if call["body"]["genre_id"] == 61 else []})
+            if url.endswith("GetMovieInfo.json"):
+                return reply(MOVIES)
+            if url.endswith("GetCollections.json"):
+                return reply(COLLECTIONS)
+            return reply({"status": "OK"})
+
+        cat_ok = api.catalog_page("movies", genre_id=0, sort_mode_id=1, offset=0, limit=30,
+                                  quality="1080p", client=client(by=by_catalog)[0], tr=ENGLISH, store=self.st)
+        self.assertTrue(cat_ok["ok"])
+        cat_offline = api.catalog_page("movies", genre_id=0, sort_mode_id=1, offset=0, limit=30,
+                                       quality="1080p", client=client((0, b""))[0], tr=ENGLISH, store=self.st)
+        self.assertTrue(cat_offline["ok"])
+        self.assertEqual([m["id"] for m in cat_offline["items"]], [9558])
+
+        shows_ok = api.shows(CHANNELS, now=NOW, quality="1080p", client=client(by=by_catalog)[0], tr=ENGLISH, store=self.st)
+        self.assertTrue(shows_ok["ok"])
+        shows_offline = api.shows(CHANNELS, now=NOW, quality="1080p", client=client((0, b""))[0], tr=ENGLISH, store=self.st)
+        self.assertTrue(shows_offline["ok"])
+        self.assertTrue(any(x["id"] == "vod:9558" for x in shows_offline["items"]))
+
+    def test_vod_detail_and_show_detail_include_rich_metadata_and_sorted_seasons_episodes(self):
+        self.assertIn("store", inspect.signature(api.vod_detail).parameters, "vod_detail() must accept store")
+        self.assertIn("store", inspect.signature(api.show_detail).parameters, "show_detail() must accept store")
+        unsorted_series = {
+            "status": "OK",
+            "movies": [{
+                "id": 9558,
+                "title": "Зрадники",
+                "description": "Детективне реаліті-шоу у замку.",
+                "age_limit": "16+",
+                "age_rating": "16+",
+                "genres": [3, 12],
+                "countries": ["Україна", "Польща"],
+                "year": 2024,
+                "duration": 3600,
+                "rating_imdb": 8.2,
+                "poster_url": "https://img.example/9558-p.jpg",
+                "external_id_pairs": [{"owner_id": 69, "preferred": True}],
+                "availability_info": {"available": True},
+                "seasons": [
+                    {
+                        "id": 20,
+                        "number": 2,
+                        "title": "Сезон 2",
+                        "owner_id": 69,
+                        "episodes": [
+                            {"id": 202, "number": 2, "title": "S2E2", "duration": 2400, "available": True},
+                            {"id": 201, "number": 1, "title": "S2E1", "duration": 2400, "available": True},
+                        ],
+                    },
+                    {
+                        "id": 10,
+                        "number": 1,
+                        "title": "Сезон 1",
+                        "owner_id": 69,
+                        "episodes": [
+                            {"id": 103, "number": 3, "title": "S1E3", "duration": 2400, "available": True},
+                            {"id": 101, "number": 1, "title": "S1E1", "duration": 2400, "available": True},
+                            {"id": 102, "number": 2, "title": "S1E2", "duration": 2400, "available": True},
+                        ],
+                    },
+                ],
+            }],
+        }
+
+        def by(call):
+            if call["url"].endswith("GetConfiguration.json"):
+                return reply(CONFIG)
+            if call["url"].endswith("GetMovieInfo.json"):
+                return reply(unsorted_series)
+            if call["url"].endswith("GetCollectionInfo.json"):
+                return reply({
+                    "status": "OK",
+                    "collections": [{
+                        "id": 8838,
+                        "title": "Холостяк",
+                        "description": "Романтичне шоу",
+                        "secondary_id_list": [931394511],
+                    }],
+                })
+            if call["url"].endswith("GetEpgRecords.json"):
+                return reply({
+                    "status": "OK",
+                    "epg_records": [{
+                        "id": 931394511,
+                        "channel_id": 15,
+                        "text": "Холостяк. Випуск 6",
+                        "time_start": NOW - 20000,
+                        "time_stop": NOW - 2480,
+                        "available": True,
+                    }],
+                })
+            return reply({"status": "OK"})
+
+        c, _ = client(by=by)
+        det = api.vod_detail(9558, client=c, tr=ENGLISH, store=self.st)
         self.assertTrue(det["ok"])
-        self.assertEqual(len(det["episodes"]), 2)
+        for field in ("description", "age_rating", "genres", "genre_names", "countries", "seasons"):
+            self.assertIn(field, det, field)
+        self.assertEqual(det["description"], "Детективне реаліті-шоу у замку.")
+        self.assertEqual(det["age_rating"], "16+")
+        self.assertEqual(det["genres"], [3, 12])
+        self.assertEqual(det["genre_names"], ["Шоу", "Комедия"])
+        self.assertTrue(det["countries"])
+        self.assertEqual([s["number"] for s in det["seasons"]], [1, 2])
+        self.assertEqual([e["number"] for e in det["seasons"][0]["episodes"]], [1, 2, 3])
+        self.assertEqual([e["number"] for e in det["seasons"][1]["episodes"]], [1, 2])
+
+        # Offline fallback from self.st reconstructs sorted seasons & episodes and applies fresh local resume
+        local = {"v": 1, "items": {"sw:vod:9558|102": {"pos": 600, "total": 2400, "done": False, "at": NOW}}, "live": {}}
+        det_offline = api.show_detail("vod:9558", CHANNELS, now=NOW, local=local, favs={"show:vod:9558"},
+                                      client=client((0, b""))[0], tr=ENGLISH, store=self.st)
+        self.assertTrue(det_offline["ok"])
+        self.assertTrue(det_offline["favourite"])
+        self.assertEqual([s["number"] for s in det_offline["seasons"]], [1, 2])
+        self.assertEqual([e["number"] for e in det_offline["seasons"][0]["episodes"]], [1, 2, 3])
+        self.assertEqual(det_offline["seasons"][0]["episodes"][1]["resume"], 600)
+
+        # EPG show_detail also exposes rich metadata fields and falls back via self.st
+        epg_det = api.show_detail("epg:8838", CHANNELS, now=NOW, client=client(by=by)[0], tr=ENGLISH, store=self.st)
+        self.assertTrue(epg_det["ok"])
+        for field in ("description", "age_rating", "genres", "genre_names", "countries", "episodes"):
+            self.assertIn(field, epg_det, field)
+        self.assertIn("can_archive", epg_det["episodes"][0])
+        self.assertEqual(epg_det["episodes"][0]["can_archive"], epg_det["episodes"][0]["playable_in_archive"])
 
 
 

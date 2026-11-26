@@ -27,9 +27,11 @@ os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
 os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(TMP, "onboarding")
 os.environ["MEDIASTICK_YTCHANNEL_OFF"] = "1"       # never ask Google from a test
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
+os.environ["MEDIASTICK_SWEETSTORE_DB"] = os.path.join(TMP, "sweettv", "sweettv.db")
 sys.path.insert(0, LIB)
 
 import mediastick_signin as ms  # noqa: E402
+import mediastick_sweetstore as sweetstore  # noqa: E402
 
 WARNING, ERROR, DEBUG, INFO = 2, 1, 0, 3
 TOKEN = "TOKEN-VALUE-NEVER-LOGGED"
@@ -57,10 +59,13 @@ class StaleHelper:
     """The add-on Helper as far as this is concerned: the bearer is read and the headers are built once, in __init__.
     The API answers the channel list to the bearer it knows and with an error status to anything else."""
     auth_url, check_auth_url = "https://sweet/auth", "https://sweet/check"
+    token_url, logout_url = "https://sweet/token", "https://sweet/logout"
     base_api_url, channelListPath, countryCode = "https://sweet/{}", "/tmp/channelList.json", "ua"
     addon_name = "plugin.video.sweettv"
     calls = []                                        # (url, copy of the headers) of every request
     api_answer = None                                 # None: the real one (by the bearer), else a fixed reply
+    token_answer = None
+    confirm_logout = True
 
     def __init__(self, base_url=None, handle=None):
         self.bearer = self.get_setting("bearer")
@@ -82,12 +87,21 @@ class StaleHelper:
     def refresh(self):
         pass
 
+    def dialog_choice(self, *a, **kw):
+        return StaleHelper.confirm_logout
+
     def request_sess(self, url, method="get", headers=None, **kw):
         StaleHelper.calls.append((url, dict(headers or {})))
         if url == self.auth_url:
             return {"result": "OK", "auth_code": "12345"}
         if url == self.check_auth_url:
             return {"result": "COMPLETED", "access_token": TOKEN, "refresh_token": "ref", "expires_in": 3600}
+        if url == self.token_url:
+            if callable(StaleHelper.token_answer):
+                return StaleHelper.token_answer()
+            return StaleHelper.token_answer
+        if url == self.logout_url:
+            return {"result": "OK"}
         if StaleHelper.api_answer is not None:
             return StaleHelper.api_answer
         if (headers or {}).get("authorization") == "Bearer " + Settings.values.get("valid", TOKEN):
@@ -111,6 +125,7 @@ def load_sweettv(with_library=True, bearer_at_import="", helper_class=None, xbmc
     the add-on's Helper, xbmcplugin for Kodi's, translate for xbmcvfs.translatePath."""
     Settings.values = {"bearer": bearer_at_import, "logged": True} if bearer_at_import else {}
     StaleHelper.calls, StaleHelper.api_answer = [], None
+    StaleHelper.token_answer, StaleHelper.confirm_logout = None, True
     logs, written = [], []
     clock = Clock()
 
@@ -139,6 +154,7 @@ def load_sweettv(with_library=True, bearer_at_import="", helper_class=None, xbmc
         "six.moves.urllib": types.ModuleType("six.moves.urllib"), "six.moves.urllib.parse": parse,
         "sweettv_addon": package, "sweettv_addon.helper": helper_module,
         "mediastick_signin": ms if with_library else None,
+        "mediastick_sweetstore": sweetstore if with_library else None,
     }
     path = os.path.join(ADDON, "resources", "lib", "sweettv.py")
     import importlib.util
@@ -304,6 +320,141 @@ class ServiceRetry(unittest.TestCase):
         failed = {"status": "NO"}
         asked = self.run_service([failed] * 6 + [CHANNELS, failed], 40)
         self.assertEqual(asked[6:], [21, 37, 38, 39])
+
+
+class SweetStoreIngestAndLogout(unittest.TestCase):
+    """refreshChannelList() ingests into SweetStore alongside channelListPath; logout() clears SweetStore."""
+
+    def setUp(self):
+        if hasattr(sweetstore, "reset_default_store"):
+            sweetstore.reset_default_store()
+        st = sweetstore.default_store()
+        if hasattr(st, "clear"):
+            st.clear()
+
+    def test_refresh_channel_list_ingests_into_sweetstore_and_preserves_file_write(self):
+        overlay_path = os.path.join(ADDON, "resources", "lib", "sweettv.py")
+        with open(overlay_path, encoding="utf-8") as f:
+            overlay_src = f.read()
+        self.assertNotIn("_ms.store", overlay_src)
+        self.assertIn("_ms_store", overlay_src)
+
+        sweet = load_sweettv(bearer_at_import="Bearer " + TOKEN)
+        self.assertIs(getattr(sweet, "_ms_store", None), sweetstore)
+        reply = sweet.refreshChannelList()
+        self.assertEqual(reply["status"], "OK")
+        self.assertEqual(sweet.written, ["/tmp/channelList.json"])
+
+        st = sweetstore.default_store()
+        self.assertTrue(callable(getattr(st, "get_channels_payload", None)))
+        payload = st.get_channels_payload()
+        self.assertEqual(payload.get("status"), "OK")
+        self.assertEqual([int(c["id"]) for c in payload["list"]], [7])
+        self.assertEqual(payload["list"][0]["category"], [1])
+        self.assertEqual(payload["updated_at"], int(sweet.time.time()))
+
+    def test_logout_clears_sweetstore_only_when_confirmed(self):
+        sweet = load_sweettv(bearer_at_import="Bearer " + TOKEN)
+        Settings.values.update(logged="true", refresh_token="ref-tok")
+        sweet.refreshChannelList()
+        st = sweetstore.default_store()
+        self.assertTrue(callable(getattr(st, "clear", None)))
+        self.assertTrue(st.search_channels("one", available_only=False))
+
+        # Declining logout dialog keeps session and SweetStore intact
+        StaleHelper.confirm_logout = False
+        sweet.logout()
+        self.assertEqual(Settings.values["logged"], "true")
+        self.assertTrue(st.search_channels("one", available_only=False))
+
+        # Confirming logout clears logged, bearer, and SweetStore
+        StaleHelper.confirm_logout = True
+        sweet.logout()
+        self.assertEqual(Settings.values["logged"], "false")
+        self.assertEqual(Settings.values["bearer"], "")
+        self.assertEqual(st.get_channels_payload(), {})
+        self.assertEqual(st.search_channels("one", available_only=False), [])
+
+
+class RefreshTokenResilience(unittest.TestCase):
+    """refreshToken() preserves logged/refresh_token across transient failures, rotates refresh_token, and logs out only on auth revocation."""
+
+    def _due_sweettv(self):
+        sweet = load_sweettv(bearer_at_import="Bearer OLD_ACC")
+        Settings.values.update(
+            logged="true",
+            bearer="Bearer OLD_ACC",
+            refresh_token="orig-refresh",
+            access_token_last_update="0",
+            access_token_lifetime="3600",
+        )
+        return sweet
+
+    def test_transient_network_5xx_and_non_dict_preserve_logged_and_refresh_token(self):
+        transient_cases = (
+            ("none", None),
+            ("network_exc", lambda: (_ for _ in ()).throw(OSError("network unreachable"))),
+            ("html_gateway", "<html>502 Bad Gateway</html>"),
+            ("json_list", []),
+            ("http_500_dict", {"status": "ERROR", "code": 500}),
+            ("service_unavailable", {"status": "SERVICE_UNAVAILABLE"}),
+            ("empty_dict", {}),
+        )
+        for label, ans in transient_cases:
+            with self.subTest(case=label):
+                sweet = self._due_sweettv()
+                StaleHelper.token_answer = ans
+                try:
+                    sweet.refreshToken()
+                except Exception as exc:
+                    self.fail(f"refreshToken() raised on transient failure {label}: {exc!r}")
+                self.assertIn(Settings.values["logged"], ("true", True), label)
+                self.assertEqual(Settings.values["refresh_token"], "orig-refresh", label)
+                self.assertEqual(Settings.values["bearer"], "Bearer OLD_ACC", label)
+
+    def test_token_refresh_rotates_refresh_token_when_returned_and_preserves_otherwise(self):
+        sweet = self._due_sweettv()
+        StaleHelper.token_answer = {
+            "result": "OK",
+            "access_token": "NEW_ACC_1",
+            "refresh_token": "rotated-refresh-2",
+            "expires_in": 7200,
+        }
+        self.assertTrue(sweet.refreshToken())
+        self.assertEqual(Settings.values["bearer"], "Bearer NEW_ACC_1")
+        self.assertEqual(Settings.values["refresh_token"], "rotated-refresh-2")
+        self.assertIn(Settings.values["logged"], ("true", True))
+
+        # Subsequent refresh omitting refresh_token keeps the rotated one
+        Settings.values["access_token_last_update"] = "0"
+        StaleHelper.token_answer = {
+            "result": "OK",
+            "access_token": "NEW_ACC_2",
+            "expires_in": 7200,
+        }
+        self.assertTrue(sweet.refreshToken())
+        self.assertEqual(Settings.values["bearer"], "Bearer NEW_ACC_2")
+        self.assertEqual(Settings.values["refresh_token"], "rotated-refresh-2")
+
+    def test_explicit_auth_revocation_clears_logged_unlike_transient_5xx(self):
+        # Boundary guard: transient 5xx must NOT clear logged
+        sweet_5xx = self._due_sweettv()
+        StaleHelper.token_answer = {"status": "SERVICE_UNAVAILABLE"}
+        sweet_5xx.refreshToken()
+        self.assertIn(Settings.values["logged"], ("true", True))
+
+        # Explicit auth rejection replies DO clear logged='false'
+        revocation_cases = (
+            {"status": "UNAUTHORIZED"},
+            {"result": "UNAUTHORIZED"},
+            {"error": "invalid_grant"},
+        )
+        for ans in revocation_cases:
+            with self.subTest(reply=ans):
+                sweet = self._due_sweettv()
+                StaleHelper.token_answer = ans
+                self.assertFalse(sweet.refreshToken())
+                self.assertEqual(Settings.values["logged"], "false")
 
 
 if __name__ == "__main__":

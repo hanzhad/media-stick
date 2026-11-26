@@ -16,7 +16,6 @@ from resources.lib import store
 
 LOG = "[script.media-stick.home]"
 SAMPLE_EVERY = 5                      # s between two looks at the player (the place of a stop is at most this old)
-CHANNEL_LIST = "special://temp/channelList.json"   # SWEET.TV add-on's own cache: the title and times of an archived programme
 
 
 class Recorder:
@@ -79,11 +78,25 @@ class Recorder:
 
 
 def programme_meta(cid, epg):
-    """{"title", "start", "stop"} of a SWEET.TV programme from the add-on's own channel list; {} when it is not there."""
-    import json
-    import xbmcvfs
-    with open(xbmcvfs.translatePath(CHANNEL_LIST), encoding="utf-8") as f:
-        return store.resume.programme_meta(json.load(f), cid, epg)
+    """{"title", "start", "stop"} of a SWEET.TV programme from SweetStore; {} when it is not there."""
+    import mediastick_sweetstore as sweetstore
+    rec = sweetstore.default_store().recall_programme(epg, cid=cid)
+    if not rec:
+        return {}
+    out = {
+        "title": str(rec.get("title") or "")[:120],
+        "start": int(rec.get("start") or rec.get("time_start") or 0),
+        "stop": int(rec.get("stop") or rec.get("time_stop") or 0),
+    }
+    if rec.get("show_id"):
+        out["show_id"] = rec["show_id"]
+    if rec.get("season"):
+        out["season"] = rec["season"]
+    if rec.get("episode"):
+        out["episode"] = rec["episode"]
+    if rec.get("preview") or rec.get("image_url"):
+        out["thumb"] = rec.get("preview") or rec.get("image_url")
+    return out
 
 
 class Watcher(xbmc.Player):

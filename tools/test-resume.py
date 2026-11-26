@@ -28,6 +28,7 @@ for name, folder in (("SIGNIN", "signin"), ("ONBOARDING", "onboarding"), ("PREFS
 os.environ["MEDIASTICK_YTCHANNEL_OFF"] = "1"
 os.environ["MEDIASTICK_ADDON_DATA"] = os.path.join(TMP, "addon_data")
 os.environ["MEDIASTICK_ADDON_LIB"] = ADDON_LIB
+os.environ["MEDIASTICK_SWEETSTORE_DB"] = os.path.join(TMP, "sweettv", "sweettv.db")
 BLOCKER = os.path.join(TMP, "blocker")            # a file where a directory is wanted: every write under it fails
 with open(BLOCKER, "w", encoding="utf-8") as _f:
     _f.write("x")
@@ -84,6 +85,7 @@ sys.path.insert(0, ADDON)
 sys.path.insert(0, LIB)
 
 import mediastick_resume as mr  # noqa: E402
+import mediastick_sweetstore as sweetstore  # noqa: E402
 import panel_sweettv as ps  # noqa: E402
 import panel_watch as pw  # noqa: E402
 from resources.lib import resume_recorder, store, sweettv_files, sweettv_state as saved, sweettv_text, youtube_files  # noqa: E402
@@ -100,10 +102,13 @@ LIST = {"status": "OK", "list": [
 
 
 def clean_dirs():
-    for folder in (mr.PREFS, mr.DIR, os.environ["MEDIASTICK_SWEETNOW_DIR"]):
+    for folder in (mr.PREFS, mr.DIR, os.environ["MEDIASTICK_SWEETNOW_DIR"], os.path.join(TMP, "temp")):
         if os.path.isdir(folder):
             for name in os.listdir(folder):
                 os.unlink(os.path.join(folder, name))
+    st = sweetstore.default_store()
+    if hasattr(st, "clear"):
+        st.clear()
 
 
 class Base(unittest.TestCase):
@@ -492,13 +497,38 @@ class Recorder(Base):
             r.sample(VID, 100, 600)
         self.assertTrue(any("not written" in line for line in State.logs))
 
-    def test_the_programme_is_read_from_the_add_ons_channel_list(self):
-        path = os.path.join(TMP, "temp", "channelList.json")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+    def test_the_programme_is_recalled_from_sweetstore_without_channel_list_json(self):
+        rec_src_path = os.path.join(ADDON_LIB, "resume_recorder.py")
+        with open(rec_src_path, encoding="utf-8") as f:
+            rec_src = f.read()
+        self.assertNotIn("channelList.json", rec_src)
+        self.assertFalse(hasattr(resume_recorder, "CHANNEL_LIST"))
+
+        # Legacy channelList.json on disk is NOT read when SweetStore is empty
+        legacy_path = os.path.join(TMP, "temp", "channelList.json")
+        os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
+        with open(legacy_path, "w", encoding="utf-8") as f:
             json.dump(LIST, f)
-        self.assertEqual(resume_recorder.programme_meta("5", "50"), {"title": "Утро", "start": NOW - 7200, "stop": NOW - 3600})
+        self.assertEqual(resume_recorder.programme_meta("5", "50"), {})
+        os.unlink(legacy_path)
+
+        # Populating SweetStore resolves programme metadata for matching (cid, epg) and rejects wrong cid / epg
+        sweetstore.default_store().upsert_channels(LIST, now=NOW)
+        got = resume_recorder.programme_meta("5", "50")
+        self.assertEqual((got.get("title"), got.get("start"), got.get("stop")), ("Утро", NOW - 7200, NOW - 3600))
         self.assertEqual(resume_recorder.programme_meta("5", "99"), {})
+        self.assertEqual(resume_recorder.programme_meta("6", "50"), {})
+
+        # End-to-end Watcher tick + stop records archive programme times from SweetStore with no channelList.json
+        w = resume_recorder.start()
+        State.file, State.time, State.total = ARCHIVE, 720.0, 3600.0
+        w.tick()
+        w.onPlayBackStopped()
+        saved_item = mr.load()["items"]["sw:5|50"]
+        self.assertEqual(
+            (saved_item["title"], saved_item["start"], saved_item["stop"], saved_item["pos"]),
+            ("Утро", NOW - 7200, NOW - 3600, 720),
+        )
 
 
 class Watching(Base):
