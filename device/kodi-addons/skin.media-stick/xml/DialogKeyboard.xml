@@ -55,8 +55,26 @@
 					<height>44</height>
 					<font>Reg25</font>
 					<textcolor>MutedColour</textcolor>
+					<label>Введите текст с телефона в пульте или нажмите «Клавиатура»</label>
+					<visible>!Skin.HasSetting(ms_tvkeys) + !String.IsEqual(Window(Home).Property(media-stick.lang),uk) + !String.IsEqual(Window(Home).Property(media-stick.lang),en)</visible>
+				</control>
+				<control type="label">
+					<top>148</top>
+					<width>988</width>
+					<height>44</height>
+					<font>Reg25</font>
+					<textcolor>MutedColour</textcolor>
+					<label>Введіть текст з телефона в пульті або натисніть «Клавіатура»</label>
+					<visible>!Skin.HasSetting(ms_tvkeys) + String.IsEqual(Window(Home).Property(media-stick.lang),uk)</visible>
+				</control>
+				<control type="label">
+					<top>148</top>
+					<width>988</width>
+					<height>44</height>
+					<font>Reg25</font>
+					<textcolor>MutedColour</textcolor>
 					<label>Type on your phone: the remote shows a text box</label>
-					<visible>!Skin.HasSetting(ms_tvkeys)</visible>
+					<visible>!Skin.HasSetting(ms_tvkeys) + String.IsEqual(Window(Home).Property(media-stick.lang),en)</visible>
 				</control>
 				<control type="group">
 					<top>148</top>
@@ -234,6 +252,29 @@
 						<onright>7000</onright>
 						<orientation>horizontal</orientation>
 						<control id="9101" type="togglebutton">
+							<visible>!String.IsEqual(Window(Home).Property(media-stick.lang),uk) + !String.IsEqual(Window(Home).Property(media-stick.lang),en)</visible>
+							<width>260</width>
+							<onup condition="Skin.HasSetting(ms_tvkeys)">302</onup>
+							<onup condition="!Skin.HasSetting(ms_tvkeys)">312</onup>
+							<onclick>Skin.ToggleSetting(ms_tvkeys)</onclick>
+							<label>Клавиатура</label>
+							<altlabel>Скрыть</altlabel>
+							<usealttexture>Skin.HasSetting(ms_tvkeys)</usealttexture>
+							<include>KeyboardButtons</include>
+						</control>
+						<control id="9101" type="togglebutton">
+							<visible>String.IsEqual(Window(Home).Property(media-stick.lang),uk)</visible>
+							<width>260</width>
+							<onup condition="Skin.HasSetting(ms_tvkeys)">302</onup>
+							<onup condition="!Skin.HasSetting(ms_tvkeys)">312</onup>
+							<onclick>Skin.ToggleSetting(ms_tvkeys)</onclick>
+							<label>Клавіатура</label>
+							<altlabel>Сховати</altlabel>
+							<usealttexture>Skin.HasSetting(ms_tvkeys)</usealttexture>
+							<include>KeyboardButtons</include>
+						</control>
+						<control id="9101" type="togglebutton">
+							<visible>String.IsEqual(Window(Home).Property(media-stick.lang),en)</visible>
 							<width>260</width>
 							<onup condition="Skin.HasSetting(ms_tvkeys)">302</onup>
 							<onup condition="!Skin.HasSetting(ms_tvkeys)">312</onup>

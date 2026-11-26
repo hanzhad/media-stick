@@ -10,7 +10,7 @@ PANEL_PORT=${PANEL_PORT:-18080}
 EMU_DISPLAY="${EMU_DISPLAY:-auto}"
 
 mkdir -p "$KODI_HOME/addons" "$KODI_HOME/userdata/addon_data/plugin.video.youtube" "$KODI_HOME/temp" "$USERDATA_TMP" "$ADDONS_CACHE"
-mkdir -p /var/lib/media-stick/prefs /var/lib/media-stick/resume /run/media-stick
+mkdir -p /var/lib/media-stick/prefs /var/lib/media-stick/resume /run/media-stick /run/media-stick/shots
 mkdir -p /home/media
 rm -rf /home/media/.kodi
 ln -s "$KODI_HOME" /home/media/.kodi
@@ -119,7 +119,8 @@ if [ -x /usr/local/bin/kodi-settings ]; then
         "videoscreen.screenmode=$SCREEN_MODE" \
         filecache.buffermode=2 \
         window.width=1920 \
-        window.height=1080 >/dev/null
+        window.height=1080 \
+        debug.screenshotpath=/run/media-stick/shots/ >/dev/null
 fi
 
 # Enable JSON-RPC on :9090 (disable webserver to avoid passwordless-webserver dialog)
@@ -208,6 +209,49 @@ except Exception:
     pass
 PYEOF
 ) >/dev/null 2>&1 &
+
+# Pre-seed Addons33.db so Kodi starts with bundled and system addons enabled on frame 1
+mkdir -p "$KODI_HOME/userdata/Database"
+python3 - "$KODI_HOME/userdata/Database/Addons33.db" "$KODI_HOME/addons" <<'PYEOF'
+import os, sqlite3, sys, time
+
+db_path, addons_dir = sys.argv[1], sys.argv[2]
+now = time.strftime("%Y-%m-%d %H:%M:%S")
+addons = {
+    "skin.estuary",
+    "inputstream.adaptive",
+    "game.controller.default",
+    "game.controller.keyboard",
+    "game.controller.mouse",
+    "resource.language.en_gb",
+    "resource.uisounds.kodi",
+    "webinterface.default",
+}
+if os.path.isdir(addons_dir):
+    for name in os.listdir(addons_dir):
+        if os.path.isdir(os.path.join(addons_dir, name)) and name not in ("packages", "temp") and not name.startswith("."):
+            addons.add(name)
+
+db = sqlite3.connect(db_path)
+db.execute("CREATE TABLE IF NOT EXISTS version (idVersion INTEGER, iCompressCount INTEGER)")
+if not db.execute("SELECT 1 FROM version").fetchone():
+    db.execute("INSERT INTO version (idVersion, iCompressCount) VALUES (33, 0)")
+db.execute(
+    "CREATE TABLE IF NOT EXISTS installed ("
+    "id INTEGER PRIMARY KEY, addonID TEXT UNIQUE, enabled BOOLEAN, "
+    "installDate TEXT, lastUpdated TEXT, lastUsed TEXT, "
+    "origin TEXT NOT NULL DEFAULT '', disabledReason INTEGER NOT NULL DEFAULT 0)"
+)
+for aid in sorted(addons):
+    db.execute(
+        "INSERT INTO installed (addonID, enabled, installDate, lastUpdated, lastUsed, origin, disabledReason) "
+        "VALUES (?, 1, ?, ?, ?, '', 0) "
+        "ON CONFLICT(addonID) DO UPDATE SET enabled=1, disabledReason=0",
+        (aid, now, now, now),
+    )
+db.commit()
+db.close()
+PYEOF
 
 # Start phone panel on $PANEL_PORT if present
 if [ -f /usr/local/bin/panel ]; then

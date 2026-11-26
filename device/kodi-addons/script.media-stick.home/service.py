@@ -181,6 +181,11 @@ def main():
         nonlocal launcher
         if xbmc.getCondVisibility(BLOCKED):
             return False
+        if xbmc.getCondVisibility("Player.HasVideo") and not xbmc.getCondVisibility("Window.IsActive(12005)"):
+            try:
+                xbmc.Player().stop()
+            except Exception as e:
+                xbmc.log(f"{LOG} stop background video failed: {e!r}", xbmc.LOGWARNING)
         with lock:
             if launcher is None:
                 launcher = Launcher("script-media-stick-home.xml", ADDON_PATH, "default", "1080i")
