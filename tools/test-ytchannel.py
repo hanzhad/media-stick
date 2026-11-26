@@ -119,6 +119,16 @@ class Peek(unittest.TestCase):
             pass
         users({"0": signed()})
 
+    def tearDown(self):
+        self.wait_idle()
+
+    def wait_idle(self):
+        for _ in range(100):
+            with yc._lock:
+                if not yc._busy:
+                    return
+            time.sleep(0.02)
+
     def wait_cache(self):
         for _ in range(100):
             if os.path.exists(yc.CACHE):
@@ -130,7 +140,7 @@ class Peek(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", g):
             first = yc.peek("0")
             self.wait_cache()
-            time.sleep(0.05)
+            self.wait_idle()
             second = yc.peek("0")
         self.assertEqual(first["state"], "unknown")
         self.assertEqual(second, {"state": "no", "title": ""})
@@ -154,6 +164,7 @@ class Peek(unittest.TestCase):
                 if len(g.seen) > n:
                     break
                 time.sleep(0.02)
+            self.wait_idle()
         self.assertGreater(len(g.seen), n)
 
     def test_signing_in_again_is_a_new_question(self):

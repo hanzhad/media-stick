@@ -232,10 +232,15 @@ class WsHub:
         for sock in targets:
             self._send_frame(sock, frame)
 
-    def serve_client(self, sock, on_text=None, on_pointer=None, idle_timeout: float = 120.0) -> None:
+    def serve_client(self, sock, on_text=None, on_pointer=None, idle_timeout: float = 120.0, on_open=None) -> None:
         """Read and dispatch RFC 6455 frames until client closes or errors."""
         self.add(sock)
         try:
+            if on_open is not None:
+                try:
+                    on_open(sock)
+                except Exception:
+                    pass
             sock.settimeout(idle_timeout)
             while True:
                 try:

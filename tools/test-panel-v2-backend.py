@@ -201,9 +201,9 @@ class TestKodiBus(unittest.TestCase):
             pending.append((conn, req))
             if len(pending) == 2:
                 # Reply to second request BEFORE first request
+                ready.set()
                 for c, r in reversed(pending):
                     self.srv.send_json(c, {"jsonrpc": "2.0", "id": r["id"], "result": {"echo": r["method"]}})
-                ready.set()
 
         self.srv.on_request = handler
         bus = kb_mod.KodiBus(host="127.0.0.1", port=self.srv.port, timeout=3.0)
@@ -639,6 +639,77 @@ class TestWsHub(unittest.TestCase):
             self.assertEqual(json.loads(payload.decode("utf-8")), {"type": "state", "kodi": "up"})
         finally:
             for s in (a_srv, a_cli):
+                try:
+                    s.close()
+                except OSError:
+                    pass
+
+    def test_serve_client_on_open_delivers_initial_state(self):
+        ws_mod = _require_module(self, "panel_core.ws_hub")
+        import inspect
+        self.assertIn(
+            "on_open",
+            inspect.signature(ws_mod.WsHub.serve_client).parameters,
+            "WsHub.serve_client must accept on_open=None",
+        )
+        hub = ws_mod.WsHub()
+        srv, cli = socket.socketpair()
+        cli.settimeout(2.0)
+        opened_counts = []
+
+        def on_open(sock):
+            opened_counts.append(hub.count())
+            hub.send_json(sock, {"type": "ui_context", "v": 1, "app": "sweettv"})
+
+        t = threading.Thread(target=hub.serve_client, args=(srv,), kwargs={"on_open": on_open}, daemon=True)
+        t.start()
+        try:
+            op, payload = _read_ws_frame(cli)
+            self.assertEqual(op, 0x1)
+            self.assertEqual(json.loads(payload.decode("utf-8")), {"type": "ui_context", "v": 1, "app": "sweettv"})
+            self.assertEqual(opened_counts, [1], "on_open must run right after self.add(sock)")
+            cli.sendall(_ws_frame(0x8, b""))
+            t.join(timeout=2.0)
+            self.assertFalse(t.is_alive())
+        finally:
+            for s in (srv, cli):
+                try:
+                    s.close()
+                except OSError:
+                    pass
+
+    def test_serve_client_on_open_exception_is_ignored(self):
+        ws_mod = _require_module(self, "panel_core.ws_hub")
+        import inspect
+        self.assertIn(
+            "on_open",
+            inspect.signature(ws_mod.WsHub.serve_client).parameters,
+            "WsHub.serve_client must accept on_open=None",
+        )
+        hub = ws_mod.WsHub()
+        srv, cli = socket.socketpair()
+        cli.settimeout(2.0)
+        seen_text = []
+
+        def bad_open(_sock):
+            raise RuntimeError("boom in on_open")
+
+        t = threading.Thread(
+            target=hub.serve_client,
+            args=(srv,),
+            kwargs={"on_text": lambda msg, _s: seen_text.append(msg), "on_open": bad_open},
+            daemon=True,
+        )
+        t.start()
+        try:
+            cli.sendall(_ws_frame(0x1, json.dumps({"ping": 1})))
+            cli.sendall(_ws_frame(0x8, b""))
+            op, _ = _read_ws_frame(cli)
+            self.assertEqual(op, 0x8)
+            t.join(timeout=2.0)
+            self.assertEqual(seen_text, [{"ping": 1}])
+        finally:
+            for s in (srv, cli):
                 try:
                     s.close()
                 except OSError:
