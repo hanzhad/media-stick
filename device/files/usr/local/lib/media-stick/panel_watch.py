@@ -37,6 +37,16 @@ try:
 except ImportError:
     sweetlive = None
 
+try:
+    import mediastick_sweetstore as sweetstore
+except ImportError:
+    sweetstore = None
+
+try:
+    import mediastick_sweetplay as sweetplay
+except ImportError:
+    sweetplay = None
+
 PREFIX = "/api/watch/"
 LAUNCHER = "script.media-stick.home"
 KODI_DOWN = "ТВ не отвечает. Подождите минуту и попробуйте снова."
@@ -280,7 +290,7 @@ def sweet_channel(sw, c, now):
 
 
 def sweet_view(sw, raw, now, signed=True, mtime=None):
-    """channelList.json (already read as JSON, None when there is no readable file) -> the page's answer. The
+    """Channels payload (already read as JSON, None when empty) -> the page's answer. The
     parsing is the add-on's: sweettv_data.parse_catalog."""
     if raw is None:
         return {"state": "signin", "channels": [], "categories": []}
@@ -341,12 +351,20 @@ def sweet_ref(file):
 
 
 def sweet_name(cid):
-    """The name of a SWEET.TV channel from the add-on's own channel list ("" when there is none)."""
+    """The name of a SWEET.TV channel from SweetStore ("" when there is none)."""
     def make():
-        raw, _ = _read_json(_sweet_list_path())
+        if sweetstore is None:
+            return None
+        try:
+            raw = sweetstore.default_store().get_channels_payload()
+        except Exception:
+            return None
         rows = raw.get("list") if isinstance(raw, dict) else None
-        names = {str(c["id"]): str(c["name"])[:120] for c in rows if isinstance(c, dict) and c.get("id") is not None
-                 and c.get("name")} if isinstance(rows, list) else {}
+        names = {
+            str(c["id"]): str(c["name"])[:120]
+            for c in rows
+            if isinstance(c, dict) and c.get("id") is not None and c.get("name") and str(c["name"]) != str(c["id"])
+        } if isinstance(rows, list) else {}
         return names or None
     return (_cached("sweetnames", 120, make) or {}).get(str(cid), "")
 
@@ -676,17 +694,18 @@ def youtube_view(query, rpc):
             "keys": keys, "error": listing.error}
 
 
-def _sweet_list_path():
-    return os.path.join(os.path.dirname(os.path.dirname(signin.USERDATA)), "temp", "channelList.json")
-
-
 def sweettv_view():
     sw = sweet()
     if sw is None:
         raise Refused("SWEET.TV недоступен на этом устройстве.", 503)
-    raw, mtime = _read_json(_sweet_list_path())
+    now = time.time()
+    raw = sweetstore.default_store().get_channels_payload(now=now) if sweetstore else None
+    if not isinstance(raw, dict) or not raw.get("list"):
+        raw, mtime = None, None
+    else:
+        mtime = raw.get("updated_at")
     signed = signin.sweettv_signed_in()
-    return sweet_view(sw, raw, time.time(), signed, mtime)
+    return sweet_view(sw, raw, now, signed, mtime)
 
 
 def _player_id(rpc):
@@ -714,10 +733,12 @@ def now_state(rpc):
     app = _rpc(rpc, "Application.GetProperties", {"properties": ["volume", "muted"]})
     view = now_view(item, props, app)
     try:
-        import panel_sweettv   # the channel list adds the programme, can_rewind and go_live of a SWEET.TV item
+        import panel_sweettv   # SweetStore + active session enrich SWEET.TV live/DVR/VOD streams
     except ImportError:
         return view
-    return panel_sweettv.decorate(view, panel_sweettv.channels() if view.get("cid") else {}, time.time())
+    session = sweetplay.read_active_session() if sweetplay is not None else None
+    raw = panel_sweettv.channels() if (view.get("cid") or session) else {}
+    return panel_sweettv.decorate(view, raw, time.time(), session=session)
 
 
 def _seek_when_started(rpc, seconds):
