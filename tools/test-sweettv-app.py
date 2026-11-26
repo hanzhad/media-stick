@@ -88,6 +88,9 @@ class ListItem:
     def getProperty(self, key):
         return self.props.get(key, "")
 
+    def setLabel(self, value):
+        self.label = value
+
     def setLabel2(self, value):
         self.label2 = value
 
@@ -2758,6 +2761,73 @@ class Skin(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(keep_logos_in_200), 1, "Grid 200 must render padded keep logos for art_mode=logo cards")
 
+    def test_section_title_hides_when_rail_focused_and_backdrop_fa080c14_within_34_textures(self):
+        root = self.tree()
+        sec_labels = [
+            c for c in root.findall(".//control[@type='label']")
+            if (c.findtext("label") or "").strip() == "$INFO[Window.Property(section_title)]"
+        ]
+        self.assertEqual(len(sec_labels), 1, "Expected single top-left section_title label")
+        sec_lbl = sec_labels[0]
+        self.assertEqual((int(sec_lbl.findtext("left")), int(sec_lbl.findtext("top"))), (96, 28))
+        sec_vis = (sec_lbl.findtext("visible") or "").strip()
+        self.assertIn("!Control.HasFocus(100)", sec_vis)
+
+        rail_titles = [
+            c for c in root.findall(".//control[@type='label']")
+            if (c.findtext("label") or "").strip() == "SWEET.TV"
+        ]
+        self.assertEqual(len(rail_titles), 1)
+        rail_vis = (rail_titles[0].findtext("visible") or "").strip()
+
+        # Mutual exclusion between SWEET.TV rail header and section_title across focus states
+        base_props = {"mode": "data", "modal": ""}
+        self.assertFalse(_eval_kodi_cond(sec_vis, base_props, focus_id=100))
+        self.assertTrue(_eval_kodi_cond(rail_vis, base_props, focus_id=100))
+        for grid_focus in (200, 201, 409, 415):
+            self.assertTrue(_eval_kodi_cond(sec_vis, base_props, focus_id=grid_focus), grid_focus)
+            self.assertFalse(_eval_kodi_cond(rail_vis, base_props, focus_id=grid_focus), grid_focus)
+
+        rail_backdrops = [
+            c for c in root.findall(".//control[@type='image']")
+            if (c.findtext("width") or "").strip() == "340"
+            and (c.findtext("visible") or "").strip() == "Control.HasFocus(100)"
+        ]
+        self.assertEqual(len(rail_backdrops), 1, "Expected expanded width=340 rail backdrop")
+        bg_col = (rail_backdrops[0].findtext("colordiffuse") or "").strip().upper()
+        self.assertEqual(bg_col, "FA080C14")
+
+        chip_props = {f"chip_{cid}": f"Chip {cid}" for cid in range(401, 409)}
+        chip_props["chip_active_401"] = "1"
+        poster_items = {
+            100: [({"title": f"Sec {i}"}, "") for i in range(7)],
+            200: [({"title": f"Film {i}", "meta": "2025", "bar": ""}, f"https://img/{i}.jpg") for i in range(10)],
+        }
+        wide_items = {
+            100: [({"title": f"Sec {i}"}, "") for i in range(7)],
+            201: [({"title": f"Ch {i}", "now": "Live", "bar": "sweettv-bar-10.png"}, f"https://img/{i}.jpg") for i in range(4)],
+        }
+        for state_name, wprops, focus_id, c_items in (
+            ("poster_rail_focused", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1", **chip_props}, 100, poster_items),
+            ("wide_still_rail_focused", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1",
+                                         "hero_art": "https://img/bg.jpg", "hero_is_logo": "",
+                                         "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
+                                         "has_guide": "1", "has_fav": "1", **chip_props}, 100, wide_items),
+            ("wide_logo_rail_focused", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1",
+                                        "hero_art": "https://img/logo.png", "hero_is_logo": "1",
+                                        "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
+                                        "has_guide": "1", "has_fav": "1", **chip_props}, 100, wide_items),
+            ("poster_grid_focused", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1", **chip_props}, 200, poster_items),
+            ("wide_grid_focused", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1",
+                                   "hero_art": "https://img/bg.jpg", "hero_is_logo": "",
+                                   "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
+                                   "has_guide": "1", "has_fav": "1", **chip_props}, 201, wide_items),
+        ):
+            with self.subTest(state=state_name):
+                vis_count = count_visible_textures(root, wprops, focus_id, container_items=c_items)
+                self.assertGreater(vis_count, 0, state_name)
+                self.assertLessEqual(vis_count, 34, f"{state_name} exceeded 34 GPU textures: {vis_count}")
+
     def test_framed_browse_hero_419_and_mutually_exclusive_logo_vs_still(self):
         root = self.tree()
         row_419 = self.control(root, 419)
@@ -3577,6 +3647,435 @@ class HubsNavigationAndFixesTests(WindowCase):
             self.assertTrue(wait_for(lambda: len(window.controls[410].items) == 2))
         self.assertEqual([li.label for li in window.controls[410].items], ["1 сезон", "2 сезон"])
         self.assertEqual(window.controls[400].items[0].label, "1 серия")
+
+
+class SectionSwitchWideGridAndHydrationTests(WindowCase):
+    """Issue #72: togglebutton RuntimeError safety, independent 200/201 ListItems, 16:9 banners, and Continue hydration."""
+
+    def test_togglebutton_runtime_error_across_all_seven_sections_and_stub_fallback(self):
+        Fake.now = NOW
+        raw = answer(
+            chan(10, "СТБ HD", number=1, category=[1], catchup=True, catchup_duration=7,
+                 icon_v2_url="https://img/stb-logo.png", banner_url="https://img/stb-ban.jpg",
+                 epg=[prog(NOW - 600, NOW + 1200, "МастерШеф", 101)]),
+            chan(20, "24/7 Комедия", number=2, category=[2], is_fast_channel=True,
+                 icon_v2_url="https://img/fast-logo.png", banner_url="https://img/fast-ban.jpg"),
+            categories=[{"id": 1, "caption": "Шоу"}, {"id": 2, "caption": "Комедия"}],
+        )
+        write_list(raw)
+        doc = MR.record(MR.empty(), "plugin://plugin.video.sweettv/playvod/501|null|10", 600, 3600, NOW - 15,
+                        {"title": "Continue Film", "thumb": "https://img/501.jpg"})
+        MR.save(doc)
+        MR.toggle_fav("vod:502", {"title": "Fav Film", "thumb": "https://img/502.jpg"}, now=NOW)
+
+        movies_resp = {"ok": True, "section": "movies", "items": [_sample_movie(501, "Film One")], "total": 1}
+        series_resp = {"ok": True, "section": "series", "items": [_sample_movie(601, "Series One")], "total": 1}
+        top_resp = {"ok": True, "items": [
+            {"kind": "movie", "id": "701", "title": "Top Search Hit", "subtitle": "2025", "cid": "", "epg": "",
+             "start": 0, "stop": 0, "channel_name": "", "when": "", "live": False, "playable_in_archive": False,
+             "playable": True, "available": True, "vod_url": "plugin://plugin.video.sweettv/playvod/701|null|0",
+             "preview": "", "image_url": "https://img/701.jpg", "repeats": 0, "more": ""},
+        ], "count": 1}
+
+        with mock.patch.object(API, "shows", return_value=_sample_shows()), \
+                mock.patch.object(API, "configuration", return_value=_sample_config()), \
+                mock.patch.object(API, "catalog_page", side_effect=lambda sec, **kw: series_resp if sec == "series" else movies_resp), \
+                mock.patch.object(API, "top_search", return_value=top_resp):
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+
+            # Adjacent positive case: normal stubbed controls still receive setLabel()
+            window._set_chips("shows", sweettv_app.sections.show_chips())
+            self.assertEqual(window.controls[401].getLabel(), "All items")
+            self.assertEqual(window.controls[408].getLabel(), "")
+
+            # Real Kodi 21.3 C++ wrapper raises RuntimeError on togglebutton 401..408
+            orig_get_control = window.getControl
+
+            def kodi_get_control(cid):
+                if 401 <= cid <= 408:
+                    raise RuntimeError("Unknown control type for python")
+                return orig_get_control(cid)
+
+            window.getControl = kodi_get_control
+
+            try:
+                window._set_chips("shows", sweettv_app.sections.show_chips())
+            except RuntimeError as exc:
+                self.fail(f"_set_chips must guard RuntimeError on togglebutton 401..408, raised: {exc!r}")
+
+            rail_order = [k for k, _ in sweettv_app.sections.RAIL]
+            expected_by_section = (
+                ("shows", 200, ["Holostyak", "MasterChef"], "1"),
+                ("series", 200, ["Series One"], "1"),
+                ("movies", 200, ["Film One"], "1"),
+                ("channels", 201, ["СТБ HD", "24/7 Комедия"], "1"),
+                ("continue", 201, ["Continue Film"], ""),
+                ("favourites", 200, ["Fav Film"], ""),
+                ("search", 200, ["Top Search Hit"], "1"),
+            )
+            for sec, grid_cid, expected_labels, expected_filters in expected_by_section:
+                with self.subTest(section=sec):
+                    window.controls[MENU].selected = rail_order.index(sec)
+                    window.onClick(MENU)
+                    self.assertTrue(
+                        wait_for(lambda g=grid_cid, exp=expected_labels: [i.label for i in window.controls[g].items] == exp),
+                        f"Section {sec!r} failed to populate expected cards; got {[i.label for i in window.controls[grid_cid].items]}",
+                    )
+                    self.assertEqual(window.section, sec)
+                    self.assertEqual(window.getProperty("filters"), expected_filters)
+                    if expected_filters:
+                        self.assertTrue(window.getProperty("chip_401"))
+                        active_cid = "chip_active_402" if sec == "search" else "chip_active_401"
+                        self.assertEqual(window.getProperty(active_cid), "1")
+                    else:
+                        self.assertEqual(window.getProperty("chip_401"), "")
+                        self.assertEqual(window.getProperty("chip_active_401"), "")
+
+            # Clicking chip 403 ("24/7") on channels also succeeds when getControl(401..408) raises RuntimeError
+            window.controls[MENU].selected = rail_order.index("channels")
+            window.onClick(MENU)
+            self.assertTrue(wait_for(lambda: len(window.controls[201].items) == 2))
+            window.onClick(403)
+            self.assertEqual([i.label for i in window.controls[201].items], ["24/7 Комедия"])
+            self.assertEqual(window.getProperty("chip_active_403"), "1")
+
+    def test_channel_banner_hero_logo_mode_and_wide_vs_poster_card_props(self):
+        import inspect
+
+        ch_banner = D.parse_channel({
+            "id": 15, "name": "СТБ HD", "number": 1, "available": True, "catchup": True, "catchup_duration": 7,
+            "icon_v2_url": "https://img/stb-sq.png", "banner_url": "https://img/stb-wide.jpg", "epg": [],
+        }, NOW)
+        self.assertTrue(hasattr(ch_banner, "banner"), "Channel NamedTuple must expose trailing banner field")
+        self.assertEqual(ch_banner.logo, "https://img/stb-sq.png")
+        self.assertEqual(ch_banner.banner, "https://img/stb-wide.jpg")
+
+        for bad_banner in ("", None, "   ", "ftp://bad.example/x.jpg", 123):
+            ch_no_ban = D.parse_channel({
+                "id": 16, "name": "Demo Ch", "number": 2, "available": True,
+                "icon_v2_url": "https://img/demo-sq.png", "banner_url": bad_banner, "epg": [],
+            }, NOW)
+            self.assertEqual(ch_no_ban.banner, "", repr(bad_banner))
+        self.assertEqual(D.Channel("1", "C", 1, "https://img/l.png", (), False, ()).banner, "")
+
+        c_with_ban = sweettv_app.sections.channel_card(ch_banner, {}, NOW)
+        ch_bannerless = D.parse_channel({
+            "id": 16, "name": "Demo Ch", "number": 2, "available": True,
+            "icon_v2_url": "https://img/demo-sq.png", "epg": [],
+        }, NOW)
+        c_no_ban = sweettv_app.sections.channel_card(ch_bannerless, {}, NOW)
+        self.assertTrue(hasattr(c_with_ban, "wide_art"), "Card NamedTuple must expose trailing wide_art field")
+        self.assertEqual((c_with_ban.art, c_with_ban.art_mode, c_with_ban.wide_art, c_with_ban.banner),
+                         ("https://img/stb-sq.png", "logo", "https://img/stb-wide.jpg", "https://img/stb-wide.jpg"))
+        self.assertEqual((c_no_ban.art, c_no_ban.art_mode, c_no_ban.wide_art, c_no_ban.banner),
+                         ("https://img/demo-sq.png", "logo", "", "https://img/demo-sq.png"))
+
+        c_vod = sweettv_app.sections.vod_card(_sample_movie(501, "Dune"), "movie")
+        for label, card_obj, expected_is_logo in (
+            ("channel_with_banner", c_with_ban, ""),
+            ("channel_bannerless_logo", c_no_ban, "1"),
+            ("vod_movie_backdrop", c_vod, ""),
+            ("none_card", None, ""),
+        ):
+            with self.subTest(hero=label):
+                self.assertEqual(sweettv_app.sections.hero_info(card_obj)["hero_is_logo"], expected_is_logo)
+
+        for fn_name, fn in (("card_props", IT.card_props), ("apply_card", IT.apply_card), ("card_item", IT.card_item)):
+            self.assertIn("wide", inspect.signature(fn).parameters, f"{fn_name} must accept wide=False")
+
+        # Combinatoric wide=False vs wide=True artwork & art_mode matrix
+        cases = (
+            ("channel_with_banner_poster", c_with_ban, False, "https://img/stb-sq.png", "logo"),
+            ("channel_with_banner_wide", c_with_ban, True, "https://img/stb-wide.jpg", ""),
+            ("channel_bannerless_poster", c_no_ban, False, "https://img/demo-sq.png", "logo"),
+            ("channel_bannerless_wide", c_no_ban, True, "https://img/demo-sq.png", "logo"),
+            ("vod_poster", c_vod, False, "https://img/501.jpg", ""),
+            ("vod_wide", c_vod, True, "https://img/501-bg.jpg", ""),
+        )
+        for name, card_obj, is_wide, exp_icon, exp_mode in cases:
+            with self.subTest(case=name):
+                props = IT.card_props(card_obj, wide=is_wide)
+                self.assertEqual(props["art_mode"], exp_mode)
+                li = IT.card_item(card_obj, wide=is_wide)
+                self.assertEqual(li.art.get("icon"), exp_icon)
+                self.assertEqual(li.getProperty("art_mode"), exp_mode)
+
+        # show_card passes art_mode and wide_art through and integrates with sweetapi.shows() inline EPG shows
+        sc_direct = sweettv_app.sections.show_card({
+            "id": "tv:444", "kind": "show_tv", "title": "Супермама",
+            "poster": "https://img/stb-sq.png", "banner": "https://img/stb-wide.jpg",
+            "art_mode": "logo", "wide_art": "https://img/stb-wide.jpg",
+        })
+        self.assertEqual((sc_direct.art, sc_direct.art_mode, sc_direct.wide_art, sc_direct.banner),
+                         ("https://img/stb-sq.png", "logo", "https://img/stb-wide.jpg", "https://img/stb-wide.jpg"))
+        self.assertEqual(sweettv_app.sections.hero_info(sc_direct)["hero_is_logo"], "")
+
+        raw_for_shows = {"list": [
+            {
+                "id": 15, "name": "СТБ HD", "catchup": True, "catchup_duration": 7, "available": True,
+                "icon_v2_url": "https://img/stb-sq.png", "banner_url": "https://img/stb-wide.jpg",
+                "epg": [{"id": 701, "text": "Супермама Випуск 2", "time_start": NOW - 3600, "time_stop": NOW - 1800,
+                         "tv_show_id": 301, "available": True}],
+            },
+            {
+                "id": 16, "name": "LogoOnly", "catchup": True, "catchup_duration": 7, "available": True,
+                "icon_v2_url": "https://img/only-sq.png",
+                "epg": [{"id": 702, "text": "Нічний ефір Випуск 1", "time_start": NOW - 3600, "time_stop": NOW - 1800,
+                         "tv_show_id": 302, "available": True}],
+            },
+        ]}
+        fake_client = API.Client(token=lambda: "Bearer T", send=lambda *a, **k: (200, b'{"status":"OK"}'))
+        shows_res = API.shows(raw_for_shows, now=NOW, client=fake_client, tr=lambda s: s)
+        by_sid = {x["id"]: sweettv_app.sections.show_card(x) for x in shows_res["items"]}
+        self.assertEqual((by_sid["tv:301"].art, by_sid["tv:301"].art_mode, by_sid["tv:301"].banner),
+                         ("https://img/stb-sq.png", "logo", "https://img/stb-wide.jpg"))
+        self.assertEqual(sweettv_app.sections.hero_info(by_sid["tv:301"])["hero_is_logo"], "")
+        self.assertEqual((by_sid["tv:302"].art, by_sid["tv:302"].art_mode, by_sid["tv:302"].wide_art),
+                         ("https://img/only-sq.png", "logo", ""))
+        self.assertEqual(sweettv_app.sections.hero_info(by_sid["tv:302"])["hero_is_logo"], "1")
+
+    def test_separate_listitems_per_grid_and_label_sync_on_refresh(self):
+        c1 = sweettv_app.sections.vod_card(_sample_movie(501, "New Title"), "movie")
+        stale_li = ListItem("Stale Label")
+        IT.apply_card(stale_li, c1)
+        self.assertEqual(stale_li.label, "New Title", "apply_card must sync ListItem.setLabel(card.title)")
+
+        # Adjacent boundary: minimal item stub without setLabel must not raise
+        class MinimalItem:
+            def __init__(self):
+                self.props, self.art = {}, {}
+
+            def setProperty(self, k, v):
+                self.props[k] = v
+
+            def setArt(self, d):
+                self.art = dict(d)
+
+        minimal = MinimalItem()
+        IT.apply_card(minimal, c1)
+        self.assertEqual(minimal.props.get("title"), "New Title")
+
+        Fake.now = NOW
+        raw = answer(
+            chan(15, "СТБ HD", number=1, catchup=True, catchup_duration=7,
+                 icon_v2_url="https://img/15-sq.png", banner_url="https://img/15-wide.jpg",
+                 epg=[prog(NOW - 600, NOW + 600, "Ранок", 501), prog(NOW + 600, NOW + 2400, "День", 502)]),
+            chan(16, "Новий Канал", number=2, catchup=True, catchup_duration=7,
+                 icon_v2_url="https://img/16-sq.png", banner_url="https://img/16-wide.jpg",
+                 epg=[prog(NOW - 600, NOW + 600, "Шоу", 601), prog(NOW + 600, NOW + 2400, "Кіно", 602)]),
+        )
+        write_list(raw)
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        window._open_section("channels")
+
+        items_200 = window.controls[200].items
+        items_201 = window.controls[201].items
+        self.assertEqual(len(items_200), 2)
+        self.assertEqual(len(items_201), 2)
+        self.assertTrue(
+            {id(x) for x in items_200}.isdisjoint({id(y) for y in items_201}),
+            "controls[200] and controls[201] must never share ListItem object references",
+        )
+        self.assertEqual((items_200[0].art.get("icon"), items_200[0].getProperty("art_mode")),
+                         ("https://img/15-sq.png", "logo"))
+        self.assertEqual((items_201[0].art.get("icon"), items_201[0].getProperty("art_mode")),
+                         ("https://img/15-wide.jpg", ""))
+
+        # Mutate in-place order + advance clock via _refresh_channels: labels & per-grid wide/poster props stay isolated
+        window.shown = list(reversed(window.shown))
+        window._refresh_channels(NOW + 700)
+        self.assertEqual([x.label for x in window.controls[200].items], ["Новий Канал", "СТБ HD"])
+        self.assertEqual([x.label for x in window.controls[201].items], ["Новий Канал", "СТБ HD"])
+        self.assertEqual((window.controls[200].items[0].art.get("icon"), window.controls[200].items[0].getProperty("art_mode")),
+                         ("https://img/16-sq.png", "logo"))
+        self.assertEqual((window.controls[201].items[0].art.get("icon"), window.controls[201].items[0].getProperty("art_mode")),
+                         ("https://img/16-wide.jpg", ""))
+        self.assertEqual(window.controls[201].items[0].getProperty("now"), "Кіно")
+
+    def test_continue_cards_hydrates_sweetstore_skips_expired_deduplicates_generic_and_sets_now(self):
+        import inspect
+
+        raw = answer(
+            chan(15, "СТБ HD", number=1, catchup=True, catchup_duration=3,
+                 icon_v2_url="https://img/15-logo.png", banner_url="https://img/15-ban.jpg",
+                 epg=[prog(NOW - 3600, NOW - 1800, "Холостяк", 301)]),
+            chan(16, "1+1", number=2, catchup=False,
+                 icon_v2_url="https://img/16-logo.png", banner_url="https://img/16-ban.jpg"),
+            chan(17, "ICTV2", number=3, catchup=True, catchup_duration=3,
+                 icon_v2_url="https://img/17-logo.png", banner_url="https://img/17-ban.jpg"),
+        )
+        catalog = D.parse_catalog(raw, NOW)
+        resume_doc = {
+            "v": 1,
+            "items": {
+                # 1. Saved with channel-only title 'СТБ HD' and start=0 -> hydrates 'Холостяк' from ch.epg
+                "sw:15|301": {"cid": "15", "epg": "301", "title": "СТБ HD", "start": 0, "stop": 0,
+                              "pos": 600, "total": 1800, "done": False, "at": NOW - 10},
+                # 2. Expired DVR entry (> 3 days old on 3-day catchup channel) -> skipped
+                "sw:15|299": {"cid": "15", "epg": "299", "title": "Старий ефір",
+                              "start": NOW - 4 * 86400, "stop": NOW - 4 * 86400 + 1800,
+                              "pos": 500, "total": 1800, "done": False, "at": NOW - 20},
+                # 3. Inside 3-day catchup window with distinct title -> kept alongside 15|301
+                "sw:15|298": {"cid": "15", "epg": "298", "title": "МастерШеф",
+                              "start": NOW - 3 * 86400 + 60, "stop": NOW - 3 * 86400 + 1860,
+                              "pos": 300, "total": 1800, "done": False, "at": NOW - 25},
+                # 4. Non-catchup channel with start > 0 -> skipped
+                "sw:16|401": {"cid": "16", "epg": "401", "title": "Новини",
+                              "start": NOW - 1800, "stop": NOW - 900,
+                              "pos": 300, "total": 900, "done": False, "at": NOW - 30},
+                # 5 & 6. Two unnamed/channel-named entries on cid=15 -> deduplicated to 1 generic entry without 'СТБ HD · ...'
+                "sw:15|991": {"cid": "15", "epg": "991", "title": "", "start": 0, "stop": 0,
+                              "pos": 120, "total": 1800, "done": False, "at": NOW - 40},
+                "sw:15|992": {"cid": "15", "epg": "992", "title": "СТБ HD", "start": 0, "stop": 0,
+                              "pos": 240, "total": 1800, "done": False, "at": NOW - 50},
+                # 7. Generic entry on a DIFFERENT channel cid=17 -> also kept (dedup is per-cid)
+                "sw:17|701": {"cid": "17", "epg": "701", "title": "ICTV2", "start": 0, "stop": 0,
+                              "pos": 180, "total": 1800, "done": False, "at": NOW - 55},
+                # 8. Unknown channel not in catalog (ch is None) -> boundary: NOT dropped by catchup check
+                "sw:99|888": {"cid": "99", "epg": "888", "title": "Archived Special",
+                              "start": NOW - 10 * 86400, "stop": NOW - 10 * 86400 + 1800,
+                              "pos": 300, "total": 1800, "done": False, "at": NOW - 60},
+            },
+            "live": {},
+        }
+        cards = sweettv_app.sections.continue_cards(resume_doc, catalog, NOW)
+        by_key = {c.key: c for c in cards}
+
+        self.assertNotIn("15|299", by_key, "Expired DVR catchup item must be skipped")
+        self.assertNotIn("16|401", by_key, "Non-catchup channel DVR item with start > 0 must be skipped")
+        self.assertIn("15|301", by_key)
+        self.assertEqual(by_key["15|301"].title, "Холостяк")
+        self.assertEqual(by_key["15|301"].meta, "СТБ HD  ·  Continue from 10:00")
+        self.assertEqual(by_key["15|301"].now, "СТБ HD  ·  Continue from 10:00")
+        self.assertEqual(by_key["15|301"].wide_art, "https://img/15-ban.jpg")
+        self.assertEqual(by_key["15|301"].banner, "https://img/15-ban.jpg")
+
+        self.assertIn("15|298", by_key)
+        self.assertEqual(by_key["15|298"].title, "МастерШеф")
+        self.assertEqual(by_key["15|298"].now, "СТБ HD  ·  Continue from 05:00")
+
+        # Generic channel-named entries: at most 1 per cid, meta == resume_label (no 'СТБ HD · Continue...' repetition)
+        self.assertIn("15|991", by_key)
+        self.assertNotIn("15|992", by_key)
+        self.assertEqual(by_key["15|991"].title, "СТБ HD")
+        self.assertEqual(by_key["15|991"].meta, "Continue from 02:00")
+        self.assertEqual(by_key["15|991"].now, "Continue from 02:00")
+        self.assertNotIn("СТБ HD", by_key["15|991"].meta)
+        self.assertIn("17|701", by_key)
+        self.assertEqual(by_key["17|701"].meta, "Continue from 03:00")
+        self.assertIn("99|888", by_key)
+
+        # Injectable recall_prog & recall_title hydration (Pure Core)
+        sig = inspect.signature(sweettv_app.sections.continue_cards).parameters
+        self.assertIn("recall_prog", sig)
+        self.assertIn("recall_title", sig)
+
+        prog_db = {
+            ("15", "555"): {"title": "Супермама", "start": NOW - 7200, "stop": NOW - 3600, "preview": "https://img/555-prev.jpg"},
+            ("15", "556"): {"title": "Прострочений", "start": NOW - 9 * 86400, "stop": NOW - 9 * 86400 + 1800, "preview": ""},
+        }
+        title_db = {
+            "vod:501": {"title": "Дюна", "poster": "https://img/dune-p.jpg", "banner": "https://img/dune-b.jpg", "seasons": []},
+            "vod:9558": {
+                "title": "Зрадники", "poster": "https://img/zr-p.jpg", "banner": "https://img/zr-b.jpg",
+                "seasons": [{"number": 1, "episodes": [
+                    {"id": 102, "episode_id": 102, "number": 2, "title": "Епізод 2", "preview": "https://img/zr-ep102.jpg"},
+                    {"id": 103, "episode_id": 103, "number": 3, "title": "Епізод 3", "preview": ""},
+                ]}],
+            },
+        }
+        recall_doc = {
+            "v": 1,
+            "items": {
+                "sw:15|555": {"cid": "15", "epg": "555", "title": "", "start": 0, "stop": 0,
+                              "pos": 900, "total": 3600, "done": False, "at": NOW - 5},
+                "sw:15|556": {"cid": "15", "epg": "556", "title": "СТБ HD", "start": 0, "stop": 0,
+                              "pos": 300, "total": 1800, "done": False, "at": NOW - 6},
+                "sw:vod:501": {"movie_id": "501", "episode_id": "", "title": "", "thumb": "",
+                               "pos": 900, "total": 5400, "done": False, "at": NOW - 7},
+                "sw:vod:9558|102": {"movie_id": "9558", "episode_id": "102", "title": "", "thumb": "",
+                                    "pos": 420, "total": 2400, "done": False, "at": NOW - 8},
+                "sw:vod:9558|103": {"movie_id": "9558", "episode_id": "103", "title": "Зрадники S1E3", "thumb": "",
+                                    "pos": 300, "total": 2400, "done": False, "at": NOW - 9},
+            },
+            "live": {},
+        }
+        hydrated = {
+            c.key: c for c in sweettv_app.sections.continue_cards(
+                recall_doc, catalog, NOW,
+                recall_prog=lambda cid, epg: prog_db.get((str(cid), str(epg))),
+                recall_title=lambda tkey: title_db.get(str(tkey)),
+            )
+        }
+        self.assertNotIn("15|556", hydrated, "Hydrated start outside catchup_duration must be skipped")
+        self.assertEqual(hydrated["15|555"].title, "Супермама")
+        self.assertEqual((hydrated["15|555"].start, hydrated["15|555"].stop), (NOW - 7200, NOW - 3600))
+        self.assertEqual((hydrated["15|555"].wide_art, hydrated["15|555"].banner),
+                         ("https://img/555-prev.jpg", "https://img/555-prev.jpg"))
+        self.assertEqual(hydrated["15|555"].now, "СТБ HD  ·  Continue from 15:00")
+
+        self.assertEqual(hydrated["501|"].title, "Дюна")
+        self.assertEqual((hydrated["501|"].art, hydrated["501|"].wide_art, hydrated["501|"].banner),
+                         ("https://img/dune-p.jpg", "https://img/dune-b.jpg", "https://img/dune-b.jpg"))
+        self.assertEqual(hydrated["501|"].now, "Continue from 15:00")
+
+        self.assertNotEqual(hydrated["9558|102"].title, "VOD 9558")
+        self.assertTrue("Зрадники" in hydrated["9558|102"].title or "Епізод 2" in hydrated["9558|102"].title)
+        self.assertEqual((hydrated["9558|102"].art, hydrated["9558|102"].wide_art, hydrated["9558|102"].banner),
+                         ("https://img/zr-p.jpg", "https://img/zr-ep102.jpg", "https://img/zr-ep102.jpg"))
+        self.assertEqual(hydrated["9558|102"].now, "Continue from 07:00")
+        # Episode without preview falls back wide_art to title banner
+        self.assertEqual((hydrated["9558|103"].wide_art, hydrated["9558|103"].banner),
+                         ("https://img/zr-b.jpg", "https://img/zr-b.jpg"))
+
+        # Thin SweetStore recall wrappers in sweettv_files + SweetTV Continue wiring
+        self.assertTrue(hasattr(files, "recall_programme"), "sweettv_files must define recall_programme(cid, epg, now=None)")
+        self.assertTrue(hasattr(files, "recall_title_detail"), "sweettv_files must define recall_title_detail(title_key)")
+
+        Fake.now = NOW
+        write_list(raw)
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+
+        st = sweetstore.default_store()
+        st.upsert_epg("15", [{
+            "id": 888, "text": "Вечірнє шоу", "time_start": NOW - 5400, "time_stop": NOW - 1800,
+            "preview_url": "https://img/888-prev.jpg", "available": True,
+        }], now=NOW, catchup=True, catchup_duration=3)
+        st.upsert_title_detail({
+            "ok": True, "id": "vod:501", "kind": "movie", "title": "Дюна",
+            "poster": "https://img/dune-p.jpg", "banner": "https://img/dune-b.jpg", "seasons": [],
+        }, now=NOW)
+
+        rec_p = files.recall_programme("15", "888", now=NOW)
+        self.assertIsNotNone(rec_p)
+        self.assertEqual((rec_p["title"], rec_p["preview"]), ("Вечірнє шоу", "https://img/888-prev.jpg"))
+        self.assertIsNone(files.recall_programme("16", "888", now=NOW))
+        rec_t = files.recall_title_detail("vod:501")
+        self.assertIsNotNone(rec_t)
+        self.assertEqual((rec_t["title"], rec_t["banner"]), ("Дюна", "https://img/dune-b.jpg"))
+        self.assertIsNone(files.recall_title_detail("vod:404"))
+
+        with mock.patch.object(sweetstore, "default_store", side_effect=OSError("db unavailable")):
+            self.assertIsNone(files.recall_programme("15", "888", now=NOW))
+            self.assertIsNone(files.recall_title_detail("vod:501"))
+
+        live_resume = MR.empty()
+        live_resume = MR.record(live_resume, "plugin://plugin.video.sweettv/playvid/15|888", 600, 3600, NOW - 5,
+                                {"title": "СТБ HD", "start": 0, "stop": 0})
+        live_resume = MR.record(live_resume, "plugin://plugin.video.sweettv/playvod/501|null|0", 900, 5400, NOW - 10,
+                                {"title": "", "thumb": ""})
+        MR.save(live_resume)
+
+        window._open_section("continue")
+        w_items = window.controls[201].items
+        self.assertEqual([li.label for li in w_items], ["Вечірнє шоу", "Дюна"])
+        self.assertEqual((w_items[0].art.get("icon"), w_items[0].getProperty("art_mode"), w_items[0].getProperty("now")),
+                         ("https://img/888-prev.jpg", "", "СТБ HD  ·  Continue from 10:00"))
+        self.assertEqual((w_items[1].art.get("icon"), w_items[1].getProperty("art_mode"), w_items[1].getProperty("now")),
+                         ("https://img/dune-b.jpg", "", "Continue from 15:00"))
 
 
 if __name__ == "__main__":
