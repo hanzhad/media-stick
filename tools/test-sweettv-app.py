@@ -103,8 +103,7 @@ class WindowXML:
         self._props, self.focus = {}, 0
         self.controls = {100: Control(), 200: Control(), 201: Control(), 209: Control(), 210: Control(), 211: Control(), 212: Control(), 213: Control(),
                          300: Control(), 301: Control(), 400: Control(), 409: Control(), 410: Control(), 415: Control(), 416: Control(),
-                         417: Control(), 418: Control(), 419: Control(), 420: Control(), 421: Control(),
-                         **{i: Control() for i in range(401, 409)}}
+                         417: Control(), 418: Control(), 419: Control(), 420: Control(), 421: Control()}
         self.closed = False
 
     def setProperty(self, key, value):
@@ -900,7 +899,7 @@ class Words(unittest.TestCase):
             self.assertIn(key + "[/COLOR]", everything)
         self.assertNotIn("0-9", bare)
         self.assertNotIn("Up", bare)
-        self.assertIn("Favourite", bare)
+        self.assertNotIn("Favourite", bare)
         self.assertNotIn("Up", W.hint_line(True, False))
         self.assertNotIn("0-9", W.hint_line(False, True))
         self.assertEqual(everything.count("[COLOR"), everything.count("[/COLOR]"))
@@ -1470,7 +1469,7 @@ class Channels(WindowCase):
             window.controls[window._grid_id()].selected = 1
             window.onClick(417)
             window.focus = window._grid_id()
-            self.press(window, 117)
+            window.onClick(420)
             self.assertTrue(wait_for(lambda: "ch:20" in MR.fav_keys() and self.saved()["last"] == "20"))
             window.stop()
         self.assertTrue(calls)
@@ -1505,72 +1504,75 @@ class Channels(WindowCase):
         self.assertTrue(wait_for(lambda: window.focus == window._grid_id()))
         self.assertEqual(window.controls[window._grid_id()].selected, 1)
 
-    def test_the_menu_key_toggles_the_star_and_it_survives_a_restart(self):
+    def test_hero_favourite_button_toggles_star_and_it_survives_a_restart(self):
         window = self.ready()
-        window.controls[ROW].selected = 1
-        window.focus = ROW
-        self.press(window, 117)
-        self.assertEqual(window.controls[ROW].items[1].props["fav"], "1")
+        window.controls[window._grid_id()].selected = 1
+        window.focus = window._grid_id()
+        window.onClick(420)
+        self.assertEqual(window.controls[window._grid_id()].items[1].props["fav"], "1")
         self.assertEqual(window.controls[MENU].items[2].label2, "1")
         self.assertTrue(wait_for(lambda: "ch:20" in MR.fav_keys()))
         window.stop()
         again = self.open()
         self.assertTrue(wait_for(lambda: again.mode == D.DATA))
-        self.assertEqual(again.controls[ROW].items[1].props["fav"], "1")
-        self.assertEqual(again.controls[ROW].items[0].props["fav"], "")
+        self.assertEqual(again.controls[again._grid_id()].items[1].props["fav"], "1")
+        self.assertEqual(again.controls[again._grid_id()].items[0].props["fav"], "")
         again.controls[MENU].selected = 2
         again.onClick(MENU)
-        self.assertEqual(self.shown(again), ["Twenty"])
-        again.focus = ROW
-        self.press(again, 117)                                      # off again, in the favourites view
-        self.assertEqual(self.shown(again), [])
+        self.assertEqual([i.label for i in again.controls[again._grid_id()].items], ["Twenty"])
+        again.focus = again._grid_id()
+        again.onClick(420)                                          # off again, in the favourites view
+        self.assertEqual([i.label for i in again.controls[again._grid_id()].items], [])
         self.assertTrue(wait_for(lambda: "ch:20" not in MR.fav_keys()))
-        again.focus = MENU
-        self.press(again, 117)                                      # on the menu the key does nothing
-        self.assertEqual(self.shown(again), [])
 
     def test_removing_a_favourite_keeps_the_focus_close(self):
         window = self.ready(state={"favourites": ["10", "20", "30"], "recent": [], "last": ""})
         window.controls[MENU].selected = 2
         window.onClick(MENU)
-        window.controls[ROW].selected = 1
-        window.focus = ROW
-        self.press(window, 117)
-        self.assertEqual((self.shown(window), window.controls[ROW].selected), (["Ten", "Thirty"], 1))
-        window.controls[ROW].selected = 1
-        self.press(window, 117)
-        self.assertEqual((self.shown(window), window.controls[ROW].selected), (["Ten"], 0))
+        gid = window._grid_id()
+        window.controls[gid].selected = 1
+        window.focus = gid
+        window.onClick(420)
+        self.assertEqual(([i.label for i in window.controls[gid].items], window.controls[gid].selected), (["Ten", "Thirty"], 1))
+        window.controls[gid].selected = 1
+        window.onClick(420)
+        self.assertEqual(([i.label for i in window.controls[gid].items], window.controls[gid].selected), (["Ten"], 0))
 
     def test_number_keys_jump_to_a_channel_when_the_data_has_numbers(self):
         window = self.ready(raw=answer(chan(1, "A", number=1, category=[1]), chan(2, "B", number=12, category=[2]),
                                        chan(3, "C", number=40, category=[1]),
                                        categories=[{"id": 1, "caption": "X"}, {"id": 2, "caption": "Y"}]))
-        window.onClick(404)
-        self.assertEqual(self.shown(window), ["A", "C"])
+        window.controls[MENU].selected = 6
+        window.onClick(MENU)
+        self.assertTrue(wait_for(lambda: len(window.controls[201].items) == 3))
+        idx_c1 = next(i for i, item in enumerate(window.controls[409].items) if item.getProperty("key") == "c:1")
+        window.controls[409].selectItem(idx_c1)
+        window.onClick(409)
+        self.assertEqual([i.label for i in window.controls[201].items], ["A", "C"])
         self.press(window, 58 + 4)
         self.press(window, 0, 0xF000 + ord("0"))                    # "40": a keyboard digit
-        self.assertEqual(window.controls[ROW].selected, 1)
+        self.assertEqual(window.controls[201].selected, 1)
         self.assertEqual(window.getProperty("jump"), "")
         self.press(window, 58 + 1)                                  # "1": 12 could follow, so it waits
         self.assertEqual(window.getProperty("jump"), "Channel 1")
-        self.assertEqual(window.controls[ROW].selected, 1)
+        self.assertEqual(window.controls[201].selected, 1)
         self.press(window, 58 + 2)                                  # "12" is in another category: All opens
-        self.assertEqual(self.shown(window), ["A", "B", "C"])
-        self.assertEqual(window.controls[ROW].selected, 1)
+        self.assertEqual([i.label for i in window.controls[201].items], ["A", "B", "C"])
+        self.assertEqual(window.controls[201].selected, 1)
         self.assertEqual(window.controls[MENU].selected, 6)         # and the menu is on TV Channels
         self.assertEqual([i.props["active"] for i in window.controls[MENU].items][6], "1")
         self.assertEqual(window.getProperty("jump"), "")
-        self.assertEqual(window.focus, ROW)
+        self.assertEqual(window.focus, 201)
         self.press(window, 58 + 7)
         self.assertEqual(window.getProperty("jump"), "No channel 7")
-        self.assertEqual(window.controls[ROW].selected, 1)
+        self.assertEqual(window.controls[201].selected, 1)
 
     def test_a_single_digit_waits_then_goes(self):
         window = self.ready(raw=answer(chan(1, "A", number=1), chan(2, "B", number=12)))
-        window.controls[ROW].selected = 1
+        window.controls[201].selected = 1
         with mock.patch.object(D, "DIGIT_WAIT", 0.03):
             self.press(window, 58 + 1)
-            self.assertTrue(wait_for(lambda: window.controls[ROW].selected == 0 and window.getProperty("jump") == ""))
+            self.assertTrue(wait_for(lambda: window.controls[201].selected == 0 and window.getProperty("jump") == ""))
 
     def test_back_clears_a_typed_number_first_then_leaves(self):
         window = self.ready(raw=answer(chan(1, "A", number=1), chan(2, "B", number=12)))
@@ -1594,7 +1596,7 @@ class Channels(WindowCase):
 
     def test_a_catalog_that_changes_keeps_the_focused_channel_and_category(self):
         window = self.ready()
-        window.onClick(404)
+        window.controls[409].selectItem(1); window.onClick(409)
         window.controls[window._grid_id()].selected = 1
         write_list(self.raw())
         window._look()
@@ -1603,7 +1605,7 @@ class Channels(WindowCase):
         write_list(answer(chan(10, "Ten", number=10)))              # the categories are gone: back to the default
         window._look()
         self.assertEqual(self.shown(window), ["Ten"])
-        self.assertEqual(window.filter_key, "all")
+        self.assertEqual(window.filter_key, "main")
 
     def test_only_the_polling_the_budget_allows(self):
         waits = []
@@ -1727,7 +1729,7 @@ class Language(WindowCase):
         self.assertEqual([i.label for i in menu], ["Поиск", "Продолжить", "Избранное", "Шоу", "Сериалы", "Фильмы", "ТВ-каналы"])
         self.assertEqual(window.getProperty("hint"),
                          W.hint_line(True, True))
-        for word in ("Смотреть", "Меню", "Избранное", "0-9", "Номер канала", "Вверх", "Программа и продолжение"):
+        for word in ("Смотреть", "Меню", "Разделы", "0-9", "Номер канала", "Вверх", "Программа и продолжение"):
             self.assertIn(word, window.getProperty("hint"))
         for word in ("Watch", "Favourite", "Channel number", "Guide and continue"):
             self.assertNotIn(word, window.getProperty("hint"))
@@ -1872,7 +1874,7 @@ class Demo(WindowCase):
         self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) > 0))
         window.controls[window._grid_id()].selected = 0
         window.focus = window._grid_id()
-        self.press(window, 117)
+        window.onClick(420)
         window.onClick(417)
         window.onClick(201)
         self.assertTrue(wait_for(lambda: len(window.controls[GUIDE].items) > 0))
@@ -1902,10 +1904,10 @@ class Demo(WindowCase):
         window.controls[MENU].selected = 6
         window.onClick(MENU)
         self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) > 0))
-        was = window.controls[ROW].items[0].props.get("fav", "")
-        window.focus = ROW
-        self.press(window, 117)
-        self.assertEqual(window.controls[ROW].items[0].props.get("fav", ""), "" if was else "1")
+        was = window.controls[window._grid_id()].items[0].props.get("fav", "")
+        window.focus = window._grid_id()
+        window.onClick(420)
+        self.assertEqual(window.controls[window._grid_id()].items[0].props.get("fav", ""), "" if was else "1")
         self.assertFalse(os.path.exists(files.state_path()))
 
     def test_demo_entry_point_through_main(self):
@@ -2110,7 +2112,7 @@ class ContinueAndFavourites(WindowCase):
         window.controls[window._grid_id()].selected = 0
         window.onClick(420)
         self.assertTrue(wait_for(lambda: "ch:10" in MR.fav_keys()))
-        self.press(window, 117)
+        window.onClick(420)
         self.assertTrue(wait_for(lambda: "ch:10" not in MR.fav_keys()))
 
 
@@ -2192,7 +2194,7 @@ class CatalogSections(WindowCase):
             window.onClick(MENU)
             self.assertTrue(wait_for(lambda: len(seen_calls) >= 1))
             m_cfg.assert_called()
-            window.onClick(402)
+            window.controls[409].selectItem(1); window.onClick(409)
             self.assertTrue(wait_for(lambda: any(c[1] != 0 or c[2] != 1 for c in seen_calls)), seen_calls)
 
     def test_infinite_pagination_loads_next_page_when_focusing_last_row(self):
@@ -2285,6 +2287,7 @@ class CatalogSections(WindowCase):
                 ("g:58", "Триллеры"),
                 ("g:60", "Фантастика"),
                 ("g:62", "Приключения"),
+                ("g:70", "Семейные"),
             ],
         )
 
@@ -2317,11 +2320,13 @@ class ChannelsSection(WindowCase):
         self.assertTrue(wait_for(lambda: window.mode == D.DATA))
         window.controls[MENU].selected = 6
         window.onClick(MENU)
-        self.assertTrue(wait_for(lambda: len(window.controls[ROW].items) == 3))
-        self.assertEqual(self.shown(window), ["Live One", "Premium Two", "24/7 Comedy"])
-        fast_chip = next((cid for cid in range(401, 409) if "24/7" in window.controls[cid].getLabel()), None)
-        self.assertIsNotNone(fast_chip, "24/7 FAST chip missing from 401..408")
-        window.onClick(fast_chip)
+        self.assertTrue(wait_for(lambda: len(window.controls[201].items) == 2))
+        self.assertEqual(self.shown(window), ["Live One", "Premium Two"])
+        window.controls[409].selectItem(len(window.controls[409].items) - 1); window.onClick(409)
+        fast_idx = next((i for i, item in enumerate(window.controls[409].items) if item.getProperty("key") == "fast"), None)
+        self.assertIsNotNone(fast_idx, "24/7 FAST chip missing from 409 list")
+        window.controls[409].selectItem(fast_idx)
+        window.onClick(409)
         self.assertEqual(self.shown(window), ["24/7 Comedy"])
 
     def test_ok_on_channel_opens_hub_and_browse_hero_417_live_418_from_start_416_guide(self):
@@ -2607,9 +2612,20 @@ class Skin(unittest.TestCase):
         self.assertEqual(types_[400], "list")
         self.assertIn(types_.get(410), ("list", "grouplist"))
         for cid in range(401, 409):
-            self.assertEqual(types_.get(cid), "togglebutton", cid)
+            self.assertNotIn(cid, types_, f"Legacy togglebutton {cid} must be removed")
         self.assertEqual(types_.get(209), "grouplist")
-        self.assertEqual(types_.get(409), "grouplist")
+        self.assertEqual(types_.get(409), "list")
+        chips_ctrl = self.control(root, 409)
+        self.assertEqual((chips_ctrl.findtext("orientation") or "").strip(), "horizontal")
+        self.assertEqual((chips_ctrl.findtext("scrolltime") or "").strip(), "180")
+        self.assertEqual((chips_ctrl.findtext("onleft") or "").strip(), "100")
+        self.assertEqual((chips_ctrl.findtext("onup") or "").strip(), "415")
+        self.assertEqual((chips_ctrl.findtext("visible") or "").strip(), "!String.IsEmpty(Window.Property(filters))")
+        self.assertEqual(
+            (int(chips_ctrl.findtext("left")), int(chips_ctrl.findtext("top")),
+             int(chips_ctrl.findtext("width")), int(chips_ctrl.findtext("height"))),
+            (96, 86, 1776, 48),
+        )
         self.assertEqual(types_.get(419), "grouplist")
         self.assertEqual(types_[201], "panel")
         panel = self.control(root, 200)
@@ -2651,14 +2667,15 @@ class Skin(unittest.TestCase):
 
     def test_visible_textures_at_most_34_in_all_states(self):
         root = self.tree()
-        chip_props = {f"chip_{cid}": f"Chip {cid}" for cid in range(401, 409)}
-        chip_props["chip_active_401"] = "1"
+        chip_items = [({"title": f"Chip {i}", "active": "1" if i == 0 else ""}, "") for i in range(8)]
         poster_items = {
             100: [({"title": f"Sec {i}"}, "") for i in range(7)],
+            409: chip_items,
             200: [({"title": f"Film {i}", "meta": "2025", "bar": ""}, f"https://img/{i}.jpg") for i in range(10)],
         }
         wide_items = {
             100: [({"title": f"Sec {i}"}, "") for i in range(7)],
+            409: chip_items,
             201: [({"title": f"Ch {i}", "now": "Live", "bar": "sweettv-bar-10.png"}, f"https://img/{i}.png") for i in range(4)],
         }
         hub_items = {
@@ -2670,13 +2687,13 @@ class Skin(unittest.TestCase):
             421: [({"title": f"Ep {i}", "now": f"E{i}", "bar": "sweettv-bar-10.png", "badge": "Soon" if i == 3 else ""}, f"https://img/ep{i}.jpg") for i in range(4)],
         }
         states = (
-            ("poster_browse", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1", **chip_props}, 200, poster_items),
+            ("poster_browse", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1"}, 200, poster_items),
             ("wide_hero_still", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1", "hero_art": "https://img/bg.jpg",
                                  "hero_is_logo": "", "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
-                                 "has_guide": "1", "has_fav": "1", **chip_props}, 201, wide_items),
+                                 "has_guide": "1", "has_fav": "1"}, 201, wide_items),
             ("wide_hero_logo", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1", "hero_art": "https://img/logo.png",
                                 "hero_is_logo": "1", "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
-                                "has_guide": "1", "has_fav": "1", **chip_props}, 201, wide_items),
+                                "has_guide": "1", "has_fav": "1"}, 201, wide_items),
             ("movie_detail_hub", {"mode": "data", "modal": "detail", "guide": "", "hero_art": "https://img/m.jpg",
                                   "hero_is_logo": "", "has_play": "1", "has_alt": "1", "has_guide": "", "has_fav": "1"}, 210, {}),
             ("show_series_hub", {"mode": "data", "modal": "show", "guide": "1", "hero_art": "https://img/s.jpg",
@@ -2770,16 +2787,35 @@ class Skin(unittest.TestCase):
         ]
         self.assertEqual(empty_collapsed_labels, [])
 
-        # 2. Filter chips 401..408 are togglebutton with chip_active_40X and sweettv-chip-active.png
-        for cid in range(401, 409):
-            chip = self.control(root, cid)
-            self.assertEqual(chip.get("type"), "togglebutton")
-            self.assertEqual(
-                (chip.findtext("usealttexture") or "").strip(),
-                f"!String.IsEmpty(Window.Property(chip_active_{cid}))",
-            )
-            alt_nf = (chip.findtext("alttexturenofocus") or chip.get("alttexturenofocus") or "").strip()
-            self.assertEqual(alt_nf, "sweettv-chip-active.png")
+        # 2. Filter chips list 409: itemlayout & focusedlayout (222x48), pill 210x48, label 14..196, mutually-exclusive textures
+        chips_list = self.control(root, 409)
+        self.assertEqual(chips_list.get("type"), "list")
+        for lname in ("itemlayout", "focusedlayout"):
+            layout = chips_list.find(lname)
+            self.assertIsNotNone(layout, lname)
+            self.assertEqual((int(layout.get("width")), int(layout.get("height"))), (222, 48), lname)
+            imgs = layout.findall("control[@type='image']")
+            self.assertGreaterEqual(len(imgs), 2, lname)
+            for im in imgs:
+                self.assertEqual((int(im.findtext("width")), int(im.findtext("height"))), (210, 48), lname)
+                tex = im.find("texture")
+                self.assertIsNotNone(tex)
+                self.assertEqual(tex.get("border"), "24", lname)
+                self.assertIn((tex.text or "").strip(), ("sweettv-chip.png", "sweettv-chip-active.png"))
+            for focus_id in (409, 200):
+                for active_val in ("", "1"):
+                    vis_imgs = [
+                        im for im in imgs
+                        if _eval_kodi_cond(im.findtext("visible") or "", {"filters": "1"}, {"active": active_val}, focus_id=focus_id)
+                    ]
+                    self.assertEqual(len(vis_imgs), 1, f"{lname} focus={focus_id} active={active_val!r} must show exactly 1 chip bg")
+            lbls = layout.findall("control[@type='label']")
+            self.assertGreaterEqual(len(lbls), 1, lname)
+            for lbl in lbls:
+                self.assertEqual(int(lbl.findtext("left")), 14, lname)
+                self.assertEqual(int(lbl.findtext("width")), 182, lname)
+                self.assertEqual((lbl.findtext("label") or "").strip(), "$INFO[ListItem.Label]", lname)
+                self.assertEqual((lbl.findtext("selectedcolor") or "").strip(), (lbl.findtext("textcolor") or "").strip(), lname)
 
         # 3. Poster Grid 200: centered 240x356 poster, concentric focus ring, <onright>415</onright>, and padded logo mode
         panel = self.control(root, 200)
@@ -2846,31 +2882,32 @@ class Skin(unittest.TestCase):
         bg_col = (rail_backdrops[0].findtext("colordiffuse") or "").strip().upper()
         self.assertEqual(bg_col, "FA080C14")
 
-        chip_props = {f"chip_{cid}": f"Chip {cid}" for cid in range(401, 409)}
-        chip_props["chip_active_401"] = "1"
+        chip_items = [({"title": f"Chip {i}", "active": "1" if i == 0 else ""}, "") for i in range(8)]
         poster_items = {
             100: [({"title": f"Sec {i}"}, "") for i in range(7)],
+            409: chip_items,
             200: [({"title": f"Film {i}", "meta": "2025", "bar": ""}, f"https://img/{i}.jpg") for i in range(10)],
         }
         wide_items = {
             100: [({"title": f"Sec {i}"}, "") for i in range(7)],
+            409: chip_items,
             201: [({"title": f"Ch {i}", "now": "Live", "bar": "sweettv-bar-10.png"}, f"https://img/{i}.jpg") for i in range(4)],
         }
         for state_name, wprops, focus_id, c_items in (
-            ("poster_rail_focused", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1", **chip_props}, 100, poster_items),
+            ("poster_rail_focused", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1"}, 100, poster_items),
             ("wide_still_rail_focused", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1",
                                          "hero_art": "https://img/bg.jpg", "hero_is_logo": "",
                                          "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
-                                         "has_guide": "1", "has_fav": "1", **chip_props}, 100, wide_items),
+                                         "has_guide": "1", "has_fav": "1"}, 100, wide_items),
             ("wide_logo_rail_focused", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1",
                                         "hero_art": "https://img/logo.png", "hero_is_logo": "1",
                                         "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
-                                        "has_guide": "1", "has_fav": "1", **chip_props}, 100, wide_items),
-            ("poster_grid_focused", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1", **chip_props}, 200, poster_items),
+                                        "has_guide": "1", "has_fav": "1"}, 100, wide_items),
+            ("poster_grid_focused", {"mode": "data", "modal": "", "wide_grid": "", "filters": "1"}, 200, poster_items),
             ("wide_grid_focused", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1",
                                    "hero_art": "https://img/bg.jpg", "hero_is_logo": "",
                                    "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
-                                   "has_guide": "1", "has_fav": "1", **chip_props}, 201, wide_items),
+                                   "has_guide": "1", "has_fav": "1"}, 201, wide_items),
         ):
             with self.subTest(state=state_name):
                 vis_count = count_visible_textures(root, wprops, focus_id, container_items=c_items)
@@ -2985,16 +3022,14 @@ class Skin(unittest.TestCase):
             btn = self.control(root, cid)
             self.assertEqual(int(btn.findtext("textoffsetx")), 18, cid)
 
-        chip_props = {f"chip_{c}": f"Chip {c}" for c in range(401, 409)}
-        chip_props["chip_active_401"] = "1"
         hero_props = {
             "mode": "data", "modal": "", "wide_grid": "1", "filters": "1", "emptycat": "",
             "hero_art": "https://img/bg.jpg", "hero_is_logo": "", "hero_pbar": "sweettv-pbar-10.png",
             "has_play": "1", "has_alt": "1", "has_guide": "1", "has_fav": "1",
-            **chip_props,
         }
         wide_items = {
             100: [({"title": f"Sec {i}"}, "") for i in range(7)],
+            409: [({"title": f"Chip {i}", "active": "1" if i == 0 else ""}, "") for i in range(8)],
             201: [({"title": f"Ch {i}", "now": "Live", "bar": "sweettv-bar-10.png"}, f"https://img/{i}.png") for i in range(4)],
         }
         vis_419 = count_visible_textures(root, hero_props, 419, container_items=wide_items)
@@ -3798,32 +3833,12 @@ class SectionSwitchWideGridAndHydrationTests(WindowCase):
             window = self.open()
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
 
-            # Adjacent positive case: normal stubbed controls still receive setLabel()
-            window._set_chips("shows", sweettv_app.sections.show_chips())
-            self.assertEqual(window.controls[401].getLabel(), "All items")
-            self.assertEqual(window.controls[408].getLabel(), "")
-
-            # Real Kodi 21.3 C++ wrapper raises RuntimeError on togglebutton 401..408
-            orig_get_control = window.getControl
-
-            def kodi_get_control(cid):
-                if 401 <= cid <= 408:
-                    raise RuntimeError("Unknown control type for python")
-                return orig_get_control(cid)
-
-            window.getControl = kodi_get_control
-
-            try:
-                window._set_chips("shows", sweettv_app.sections.show_chips())
-            except RuntimeError as exc:
-                self.fail(f"_set_chips must guard RuntimeError on togglebutton 401..408, raised: {exc!r}")
-
             rail_order = [k for k, _ in sweettv_app.sections.RAIL]
             expected_by_section = (
                 ("shows", 200, ["Holostyak", "MasterChef"], "1"),
                 ("series", 200, ["Series One"], "1"),
                 ("movies", 200, ["Film One"], "1"),
-                ("channels", 201, ["СТБ HD", "24/7 Комедия"], "1"),
+                ("channels", 201, ["СТБ HD"], "1"),
                 ("continue", 201, ["Continue Film"], ""),
                 ("favourites", 201, ["Fav Film"], ""),
                 ("search", 200, ["Top Search Hit"], "1"),
@@ -3839,20 +3854,21 @@ class SectionSwitchWideGridAndHydrationTests(WindowCase):
                     self.assertEqual(window.section, sec)
                     self.assertEqual(window.getProperty("filters"), expected_filters)
                     if expected_filters:
-                        self.assertTrue(window.getProperty("chip_401"))
-                        active_cid = "chip_active_402" if sec == "search" else "chip_active_401"
-                        self.assertEqual(window.getProperty(active_cid), "1")
+                        self.assertTrue(window.controls[409].items)
+                        active_keys = [i.getProperty("key") for i in window.controls[409].items if i.getProperty("active") == "1"]
+                        self.assertEqual(len(active_keys), 1)
                     else:
-                        self.assertEqual(window.getProperty("chip_401"), "")
-                        self.assertEqual(window.getProperty("chip_active_401"), "")
+                        self.assertEqual(window.controls[409].items, [])
 
-            # Clicking chip 403 ("24/7") on channels also succeeds when getControl(401..408) raises RuntimeError
+            # Clicking "fast" ("24/7") chip in 409 list on channels filters to 24/7 channels
             window.controls[MENU].selected = rail_order.index("channels")
             window.onClick(MENU)
-            self.assertTrue(wait_for(lambda: len(window.controls[201].items) == 2))
-            window.onClick(403)
+            self.assertTrue(wait_for(lambda: len(window.controls[201].items) == 1))
+            fast_idx = next(i for i, item in enumerate(window.controls[409].items) if item.getProperty("key") == "fast")
+            window.controls[409].selectItem(fast_idx)
+            window.onClick(409)
             self.assertEqual([i.label for i in window.controls[201].items], ["24/7 Комедия"])
-            self.assertEqual(window.getProperty("chip_active_403"), "1")
+            self.assertEqual(window.controls[409].items[fast_idx].getProperty("active"), "1")
 
     def test_channel_banner_hero_logo_mode_and_wide_vs_poster_card_props(self):
         import inspect
@@ -4191,47 +4207,29 @@ class SectionSwitchWideGridAndHydrationTests(WindowCase):
         self.assertEqual((w_items[1].art.get("icon"), w_items[1].getProperty("art_mode"), w_items[1].getProperty("now")),
                          ("https://img/dune-b.jpg", "", "Continue from 15:00"))
 
-    def test_set_chips_skips_get_control_when_window_lacks_controls_attr(self):
+    def test_set_chips_updates_list_409_in_place_without_reset_when_keys_unchanged(self):
         window = self.make()
-        # 1. Offline test harness (has .controls) still updates Control.setLabel()
-        self.assertTrue(hasattr(window, "controls"))
         window.genre_id = 4
         window._set_chips("movies", [("all", "All items"), ("sort", "Popular"), ("g:4", "Комедии")])
-        self.assertEqual(window.controls[401].getLabel(), "All items")
-        self.assertEqual(window.controls[402].getLabel(), "Popular")
-        self.assertEqual(window.controls[403].getLabel(), "Комедии")
-        self.assertEqual(window.controls[404].getLabel(), "")
+        ctrl = window.controls[409]
+        self.assertEqual([i.label for i in ctrl.items], ["All items", "Popular", "Комедии"])
+        self.assertEqual([i.getProperty("key") for i in ctrl.items], ["all", "sort", "g:4"])
+        self.assertEqual([i.getProperty("active") for i in ctrl.items], ["", "", "1"])
 
-        # 2. Real Kodi WindowXML (no .controls attr) never calls getControl(401..408)
-        saved_controls = window.controls
-        del window.controls
-        self.addCleanup(setattr, window, "controls", saved_controls)
-        self.assertFalse(hasattr(window, "controls"))
+        ctrl.selectItem(1)
+        orig_items = list(ctrl.items)
+        with mock.patch.object(ctrl, "reset", wraps=ctrl.reset) as m_reset:
+            window.genre_id = 0
+            window._set_chips("movies", [("all", "All items"), ("sort", "Newest"), ("g:4", "Комедии")])
+        m_reset.assert_not_called()
+        self.assertIs(ctrl.items[1], orig_items[1])
+        self.assertEqual(ctrl.items[1].label, "Newest")
+        self.assertEqual([i.getProperty("active") for i in ctrl.items], ["1", "", ""])
+        self.assertEqual(ctrl.getSelectedPosition(), 1)
 
-        toggle_calls = []
-
-        def spy_get_control(cid):
-            if 401 <= cid <= 408:
-                toggle_calls.append(cid)
-            return saved_controls[cid]
-
-        window.getControl = spy_get_control
-        window.genre_id = 4
-        window._set_chips("movies", [("all", "All items"), ("sort", "По умолчанию"), ("g:4", "Комедии")])
-        self.assertEqual(toggle_calls, [], "Real Kodi window without .controls must not call getControl(401..408)")
-        self.assertEqual(window.getProperty("filters"), "1")
-        self.assertEqual(window.getProperty("chip_401"), "All items")
-        self.assertEqual(window.getProperty("chip_402"), "По умолчанию")
-        self.assertEqual(window.getProperty("chip_403"), "Комедии")
-        self.assertEqual(window.getProperty("chip_404"), "")
-        self.assertEqual(window.getProperty("chip_active_401"), "")
-        self.assertEqual(window.getProperty("chip_active_403"), "1")
-
-        window._set_chips("continue", [("all", "All items")])
-        self.assertEqual(toggle_calls, [])
+        window._set_chips("continue", [])
         self.assertEqual(window.getProperty("filters"), "")
-        self.assertEqual(window.getProperty("chip_401"), "")
-        self.assertEqual(window.getProperty("chip_active_403"), "")
+        self.assertEqual(ctrl.items, [])
 
 
 
@@ -4612,6 +4610,237 @@ class Issue79HeroFavouritesEpisodesAndEpgArtTests(WindowCase):
             time.sleep(0.05)
             self.assertEqual(demo_calls, [])
 
+
+
+
+class Issue103FilterListTaxonomyDebounceAndMenuKeyTests(WindowCase):
+    """Issue #103: horizontal list 409, 9-tab curated TV taxonomy, auto-apply debounce,
+    OK-only action chips, DigitJump 201, Quick Resume v2, and 117 Menu key."""
+
+    def test_chip_items_builder_and_catalog_chips_16_genre_cap(self):
+        self.assertTrue(hasattr(IT, "chip_items"), "sweettv_items.chip_items is missing")
+        chips = [(f"k{i}", f"Label {i}") for i in range(10)]
+        items = IT.chip_items(chips, "k8")
+        self.assertEqual(len(items), 10)
+        self.assertEqual(items[8].label, "Label 8")
+        self.assertEqual(items[8].getProperty("key"), "k8")
+        self.assertEqual(items[8].getProperty("active"), "1")
+        self.assertEqual(items[0].getProperty("active"), "")
+        self.assertEqual(IT.chip_items([], "k0"), [])
+        self.assertEqual([i.getProperty("active") for i in IT.chip_items(chips[:3], "missing")], ["", "", ""])
+
+        genres = [{"id": 100 + i, "name": f"Genre {i}"} for i in range(20)]
+        cat_chips = sweettv_app.sections.catalog_chips(genres, [{"id": 1, "name": "Popular"}], 0)
+        self.assertGreaterEqual(len(cat_chips), 16)
+        self.assertLessEqual(len(cat_chips), 18)
+
+    def test_channel_card_skips_hero_skip_meta_cats_with_fallback(self):
+        import mediastick_sweetchannels as sc
+
+        cat_names = {"c:12": "Top", "c:23": "National", "c:1000": "All", "c:4": "Cinema"}
+        ch_mixed = D.parse_channel(chan(1, "Film TV", number=1, category=[12, 23, 1000, 4]), NOW)
+        card_mixed = sweettv_app.sections.channel_card(ch_mixed, cat_names, NOW)
+        self.assertIn("Cinema", card_mixed.meta)
+        for skip_id in ("12", "23", "1000"):
+            self.assertNotIn(cat_names[f"c:{skip_id}"], card_mixed.meta)
+
+        ch_only_meta = D.parse_channel(chan(2, "Meta Only", number=2, category=[23, 27]), NOW)
+        card_fallback = sweettv_app.sections.channel_card(ch_only_meta, {"c:23": "National", "c:27": "HD"}, NOW)
+        self.assertIn("National", card_fallback.meta)
+        self.assertTrue(sc.HERO_SKIP_META_CATS >= frozenset({"12", "23", "27", "40", "1000"}))
+
+    def test_shared_9_tab_taxonomy_and_demo_categories(self):
+        import mediastick_sweetchannels as sc
+
+        demo_raw_data = sweettv_demo.demo_data(NOW, "")
+        cat_ids = {c["id"] for c in demo_raw_data["categories"] if c["id"] != sweettv_demo.HIDDEN}
+        self.assertEqual(cat_ids, {8, 4, 16, 2, 6, 9})
+        all_ch_cats = {cid for ch in demo_raw_data["list"] for cid in ch.get("category", ())}
+        self.assertTrue(all_ch_cats & {20, 23, 29}, "Demo channels must tag 20/23/29 for Main tab")
+        self.assertTrue(any(ch.get("is_fast_channel") for ch in demo_raw_data["list"]))
+
+
+        write_list(demo_raw_data); window = self.open(); self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        window.controls[MENU].selected = 6
+        window.onClick(MENU)
+        self.assertTrue(wait_for(lambda: len(window.controls[409].items) >= 9))
+        keys = [i.getProperty("key") for i in window.controls[409].items]
+        self.assertEqual(
+            keys[:9],
+            ["main", "g:cinema", "g:knowledge", "g:kids", "g:sport", "g:news", "g:music", "fast", "all"],
+        )
+        self.assertEqual(window.filter_key, "main")
+
+        parsed = D.parse_catalog(demo_raw_data, NOW)
+        filtered_main = sweettv_app.sections.filter_channels(parsed.channels, "main", cat_names=parsed.categories)
+        filtered_live = sweettv_app.sections.filter_channels(parsed.channels, "live", cat_names=parsed.categories)
+        self.assertEqual([c.cid for c in filtered_main], [c.cid for c in filtered_live])
+        self.assertEqual(
+            [c.cid for c in filtered_main],
+            [c.cid for c in sc.filter_channels_for_tab(parsed.channels, "main", cat_names=parsed.categories)],
+        )
+
+    def test_shelf_constants_and_auto_apply_debounce_and_ok_only_actions(self):
+        from resources.lib import sweettv_shelf
+
+        self.assertEqual(getattr(sweettv_shelf, "CHIPS", None), 409)
+        self.assertEqual(sweettv_shelf.CHIP_LOCAL_DELAY, 0.12)
+        self.assertEqual(sweettv_shelf.CHIP_REMOTE_DELAY, 0.28)
+        self.assertEqual(sweettv_shelf.ACTION_CHIPS, frozenset(("new", "sort")))
+
+        movies_all = {"ok": True, "section": "movies", "items": [_sample_movie(501, "All Film")], "total": 1}
+        movies_drama = {"ok": True, "section": "movies", "items": [_sample_movie(502, "Drama Film")], "total": 1}
+        write_list(answer(chan(10, "Ten", number=10, category=[20]),
+                          chan(20, "Fast 24/7", number=20, category=[4], is_fast_channel=True),
+                          categories=[{"id": 20, "caption": "Main"}, {"id": 4, "caption": "Cinema"}]))
+        with mock.patch.object(API, "configuration", return_value=_sample_config()),                 mock.patch.object(API, "catalog_page", side_effect=lambda sec, genre_id=0, **kw: movies_drama if genre_id else movies_all),                 mock.patch.object(API, "top_search", return_value={"ok": True, "items": [], "count": 0}):
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            self.assertEqual(window.filter_key, "main")
+
+            # 1. Local debounce (0.12s) on channels + page_query clear
+            window.controls[MENU].selected = 6
+            window.onClick(MENU)
+            self.assertTrue(wait_for(lambda: len(window.controls[409].items) >= 2))
+            window.page_query = "old_q"
+            window.focus = 409
+            fast_idx = next(i for i, item in enumerate(window.controls[409].items) if item.getProperty("key") == "fast")
+            scheduled = []
+            orig_later = window._later
+
+            def spy_later(name, delay, fn):
+                if name == "chip":
+                    scheduled.append(delay)
+                return orig_later(name, delay, fn)
+
+            with mock.patch.object(window, "_later", side_effect=spy_later):
+                window.controls[409].selectItem(fast_idx)
+                self.press(window, 2)                               # ACTION_MOVE_RIGHT
+            self.assertEqual(scheduled, [0.12])
+            self.assertTrue(wait_for(lambda: window.filter_key == "fast"))
+            self.assertEqual(window.page_query, "")
+            self.assertEqual([i.label for i in window.controls[201].items], ["Fast 24/7"])
+
+            # Moving onto already active chip cancels/does not schedule
+            scheduled.clear()
+            with mock.patch.object(window, "_later", side_effect=spy_later):
+                self.press(window, 2)
+            self.assertEqual(scheduled, [])
+
+            # 2. Remote debounce (0.28s) on movies, idempotent g:<gid>, and "sort" is OK-only
+            window.controls[MENU].selected = 5
+            window.onClick(MENU)
+            self.assertTrue(wait_for(lambda: len(window.controls[409].items) >= 3))
+            sort_idx = next(i for i, item in enumerate(window.controls[409].items) if item.getProperty("key") == "sort")
+            g_idx = next(i for i, item in enumerate(window.controls[409].items) if item.getProperty("key").startswith("g:"))
+            g_id = int(window.controls[409].items[g_idx].getProperty("key")[2:])
+
+            window.focus = 409
+            prev_sort = window.sort_idx
+            window.controls[409].selectItem(sort_idx)
+            self.press(window, 2)
+            time.sleep(0.05)
+            self.assertEqual(window.sort_idx, prev_sort, "sort chip must NOT run on focus move")
+
+            scheduled.clear()
+            with mock.patch.object(window, "_later", side_effect=spy_later):
+                window.controls[409].selectItem(g_idx)
+                self.press(window, 2)
+            self.assertEqual(scheduled, [0.28])
+            self.assertTrue(wait_for(lambda: window.genre_id == g_id))
+            # Idempotent: clicking active g:<gid> does NOT toggle back to 0
+            window.onClick(409)
+            self.assertEqual(window.genre_id, g_id)
+
+            # OK on sort chip cycles sort_idx
+            window.controls[409].selectItem(sort_idx)
+            window.onClick(409)
+            self.assertNotEqual(window.sort_idx, prev_sort)
+
+            # 3. "new" chip on search is OK-only
+            window.controls[MENU].selected = 0
+            window.onClick(MENU)
+            self.assertTrue(wait_for(lambda: len(window.controls[409].items) >= 2))
+            window.focus = 409
+            window.controls[409].selectItem(0)
+            with mock.patch.object(window, "_ask_search") as m_ask:
+                self.press(window, 1)
+                time.sleep(0.05)
+                m_ask.assert_not_called()
+                window.onClick(409)
+                m_ask.assert_called_once()
+
+    def test_down_from_409_flushes_pending_chip_and_keeps_focus_if_empty(self):
+        write_list(answer(chan(10, "Ten", number=10, category=[20]),
+                          chan(20, "News", number=20, category=[8]),
+                          categories=[{"id": 20, "caption": "Main"}, {"id": 8, "caption": "News"}]))
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        window.controls[MENU].selected = 6
+        window.onClick(MENU)
+        self.assertTrue(wait_for(lambda: len(window.controls[409].items) >= 2))
+
+        news_idx = next(i for i, item in enumerate(window.controls[409].items) if item.getProperty("key") == "g:news")
+        window.focus = 409
+        window.controls[409].selectItem(news_idx)
+        self.press(window, 2)                                       # schedules 0.12s timer
+        # Simulate Kodi moving focus down to 201 on super().onAction -> flush runs before leave
+        with mock.patch.object(WindowXML, "onAction", lambda self_, act: setattr(self_, "focus", 201)):
+            self.press(window, KEY_DOWN)
+        self.assertEqual(window.filter_key, "g:news")
+        self.assertEqual([i.label for i in window.controls[201].items], ["News"])
+
+        # If resulting grid is empty, focus stays on 409
+        window.focus = 409
+        window.controls[409].selectItem(0)
+        with mock.patch.object(sweettv_app.sections, "filter_channels", return_value=[]),                 mock.patch.object(WindowXML, "onAction", lambda self_, act: setattr(self_, "focus", 201)):
+            self.press(window, KEY_DOWN)
+        self.assertEqual(window.focus, 409)
+
+    def test_quick_resume_v2_and_menu_key_117_toggles_menu_and_closes_modal(self):
+        from resources.lib import quick_resume as qr
+
+        write_list(answer(chan(10, "Ten", number=10, category=[20]),
+                          categories=[{"id": 20, "caption": "Main"}]))
+        # Pre-v2 snapshot with filter="all" on channels maps to "main"
+        snap_v1 = {"schema_v": 1, "section": "channels", "filter": "all", "sort": "",
+                   "search_query": "", "nav_stack": [], "focused_control": 201, "focused_index": 0,
+                   "focused_key": "", "scroll_offset": 0, "cards": [{"key": "10", "kind": "channel", "title": "Ten"}], "media_ref": None}
+        with mock.patch.object(qr, "load_snapshot", return_value=snap_v1):
+            w1 = self.open()
+            self.assertTrue(wait_for(lambda: w1.mode == D.DATA))
+            self.assertEqual(w1.filter_key, "main")
+
+        # v2 snapshot with invalid filter falls back to "main"
+        snap_bad = dict(snap_v1, schema_v=2, filter="c:999999")
+        with mock.patch.object(qr, "load_snapshot", return_value=snap_bad):
+            w2 = self.open()
+            self.assertTrue(wait_for(lambda: w2.mode == D.DATA))
+            self.assertEqual(w2.filter_key, "main")
+
+        # 117 toggles MENU <-> grid (or 415 when empty), and closes modal if open
+        w2.controls[MENU].selected = 6
+        w2.onClick(MENU)
+        self.assertTrue(wait_for(lambda: len(w2.controls[201].items) == 1))
+        w2.focus = 201
+        self.press(w2, 117)
+        self.assertEqual(w2.focus, MENU)
+        self.assertEqual(w2.controls[201].items[0].props["fav"], "", "117 must NOT toggle favourite")
+        self.press(w2, 117)
+        self.assertEqual(w2.focus, 201)
+
+        # When modal is open, 117 closes modal first and focuses MENU
+        w2._prop("modal", "detail")
+        w2.focus = 210
+        self.press(w2, 117)
+        self.assertEqual(w2.getProperty("modal"), "")
+        self.assertEqual(w2.focus, MENU)
+
+        # When cards is empty, 117 toggles MENU -> PAGE_SEARCH (415)
+        w2.cards = []
+        w2.focus = MENU
+        self.press(w2, 117)
+        self.assertEqual(w2.focus, 415)
 
 if __name__ == "__main__":
     unittest.main()

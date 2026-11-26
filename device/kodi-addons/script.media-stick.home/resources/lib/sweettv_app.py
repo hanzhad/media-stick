@@ -18,7 +18,7 @@ from resources.lib import page_cache, quick_resume, single_instance, sweettv_dat
 from resources.lib.sweettv_find import Find
 from resources.lib.sweettv_guide import GUIDE, GUIDE_BUTTON, MODAL_TABS, SHOW_EPISODES, Guide
 from resources.lib.sweettv_jump import DigitJump
-from resources.lib.sweettv_shelf import CHIP_FIRST, CHIP_LAST, PAGE_SIZE, Shelf
+from resources.lib.sweettv_shelf import ACTION_CHIPS, CHIP_LOCAL_DELAY, CHIP_REMOTE_DELAY, CHIPS, PAGE_SIZE, Shelf
 from resources.lib.sweettv_writer import StateWriter
 
 XML = "script-media-stick-sweettv.xml"
@@ -135,8 +135,11 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 snap = quick_resume.load_snapshot("sweettv", "default")
                 if snap and snap.get("section") in sections.SECTION_KEYS:
                     self.section = snap["section"]
-                    if snap.get("filter"):
-                        self.filter_key = snap["filter"]
+                    raw_filter = str(snap.get("filter") or "")
+                    if raw_filter:
+                        if int(snap.get("schema_v") or 1) < 2 and raw_filter == "all":
+                            raw_filter = "main"
+                        self.filter_key = raw_filter
                     self._qr_focus_index = max(0, int(snap.get("focused_index") or 0))
                     self._qr_focus_key = str(snap.get("focused_key") or "")
                 self.writer.start()
@@ -341,8 +344,6 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self._sync_page_search_label()
         self._fill_menu()
         if self.section == "channels":
-            if self.filter_key.startswith("c:") and self.filter_key not in self.cat_names:
-                self.filter_key = "all"
             self._show_channels(focus_cid)
         elif self.section == "continue":
             self._show_continue()
@@ -531,6 +532,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     def _open_section(self, key, focus_cid="", sync_menu=False):
         with self._lock:
+            self._cancel_chip()
             self._pre_search_pos = None
             self.section = key
             self.page_query = ""
@@ -622,8 +624,12 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def _show_channels(self, focus_cid=""):
         if not self.catalog:
             return
-        self.shown = sections.filter_channels(self.catalog.channels, self.filter_key)
-        self._set_chips("channels", sections.channel_chips(self.catalog.categories))
+        chips = sections.channel_chips(self.catalog.channels, self.catalog.categories)
+        valid_keys = {k for k, _ in chips}
+        if self.filter_key not in valid_keys:
+            self.filter_key = "main" if "main" in valid_keys else (chips[0][0] if chips else "all")
+        self.shown = sections.filter_channels(self.catalog.channels, self.filter_key, cat_names=self.catalog.categories)
+        self._set_chips("channels", chips)
         self._prop("hint", words.hint_line(self.numbered, self.archive_any))
         now = self._now()
         cards = [sections.channel_card(c, self.cat_names, now, self.resume_doc, self.fav_keys) for c in self.shown]
@@ -726,50 +732,78 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._sync_page_search_label()
                 self._restore_section_view()
             elif self.mode == data.DATA and self._focus() in (ROW, WIDE_ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV,
-                                                              HERO_PLAY, HERO_ALT, HERO_GUIDE, HERO_FAV,
-                                                              *range(CHIP_FIRST, CHIP_LAST + 1)):
+                                                              HERO_PLAY, HERO_ALT, HERO_GUIDE, HERO_FAV, CHIPS):
+                if self._focus() == CHIPS:
+                    self._cancel_chip()
                 self._focus_on(MENU)
             else:
                 self.close()
             return
+        prev_focus = self._focus()
         if self.mode == data.DATA:
             digit = data.digit_of(action_id, action.getButtonCode())
+            if action_id == ACTION_CONTEXT_MENU:
+                if self._modal_open() or self._window_props.get("modal"):
+                    self._guide_close()
+                    self._prop("modal", "")
+                    self._focus_on(MENU)
+                elif prev_focus == MENU:
+                    self._cancel("menu")
+                    self._apply_menu()
+                    self._focus_on(self._grid_id() if self.cards else PAGE_SEARCH)
+                else:
+                    if prev_focus == CHIPS:
+                        self._cancel_chip()
+                    self._focus_on(MENU)
+                return
             if self._modal_open():
-                if self.modal_kind == "guide" and self._focus() == GUIDE and action_id in (ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT) and self.modal_tabs:
+                if self.modal_kind == "guide" and prev_focus == GUIDE and action_id in (ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT) and self.modal_tabs:
                     step = -1 if action_id == ACTION_MOVE_LEFT else 1
                     target = max(0, min(len(self.modal_tabs) - 1, self.modal_tab_idx + step))
                     if target != self.modal_tab_idx:
                         self._modal_select_tab(target, keep_focus=True)
                     return
-                if digit is not None or action_id == ACTION_CONTEXT_MENU:
+                if digit is not None:
                     return
             else:
-                if action_id == ACTION_CONTEXT_MENU:
-                    if self._focus() in (ROW, WIDE_ROW, RESUME, BTN_ALT, GUIDE_BUTTON, BTN_FAV,
-                                         HERO_PLAY, HERO_ALT, HERO_GUIDE, HERO_FAV):
-                        self._toggle_favourite()
-                    return
                 if digit is not None:
                     if self.numbered and self.section == "channels":
                         self._digit(digit)
                     return
-                if action_id == ACTION_MOVE_RIGHT and self._focus() == MENU:
+                if prev_focus == CHIPS and action_id in (ACTION_MOVE_UP, ACTION_MOVE_DOWN):
+                    self._flush_chip()
+                    if action_id == ACTION_MOVE_DOWN and not self.cards:
+                        return
+                elif action_id == ACTION_MOVE_RIGHT and prev_focus == MENU:
                     self._cancel("menu")
                     self._apply_menu()
-                elif action_id == ACTION_MOVE_RIGHT and self._focus() == ROW:
+                elif action_id == ACTION_MOVE_RIGHT and prev_focus == ROW:
                     pos = self._active_grid_pos()
                     if self.cards and (pos % 5 == 4 or pos == len(self.cards) - 1):
                         self._pre_search_pos = pos
                         self._focus_on(PAGE_SEARCH)
                         return
         super().onAction(action)
-        if not self._modal_open() and self._focus() in (ROW, WIDE_ROW):
+        cur_focus = self._focus()
+        if self.mode == data.DATA and not self._modal_open():
+            if prev_focus == CHIPS and cur_focus != CHIPS:
+                self._cancel_chip()
+            if cur_focus == CHIPS and action_id in (ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT):
+                key = self._selected_chip_key()
+                if not key or key in ACTION_CHIPS or key == self._active_chip_key():
+                    self._cancel_chip()
+                else:
+                    delay = CHIP_REMOTE_DELAY if self.section in ("movies", "series") else CHIP_LOCAL_DELAY
+                    expected_sec = self.section
+                    self._pending_chip_key = key
+                    self._later("chip", delay, lambda s=expected_sec, k=key: self._on_chip_timer(s, k))
+        if not self._modal_open() and cur_focus in (ROW, WIDE_ROW):
             self._sync_hero()
             if action_id in (ACTION_MOVE_RIGHT, ACTION_MOVE_DOWN):
                 self._maybe_paginate()
             if PREVIEW_VIDEO:
                 self._later("preview", PREVIEW_DELAY, self._preview_start)
-        elif action_id in (ACTION_MOVE_UP, ACTION_MOVE_DOWN) and self._focus() == MENU:
+        elif action_id in (ACTION_MOVE_UP, ACTION_MOVE_DOWN) and cur_focus == MENU:
             self._later("menu", MENU_DELAY, self._apply_menu)
 
     def onClick(self, control_id):
@@ -805,8 +839,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._guide_show()
             elif control_id in (BTN_FAV, HERO_FAV):
                 self._toggle_favourite()
-            elif CHIP_FIRST <= control_id <= CHIP_LAST:
-                self._chip_click(control_id)
+            elif control_id == CHIPS:
+                self._chip_click()
             elif control_id == MODAL_TABS:
                 self._modal_select_tab(self.getControl(MODAL_TABS).getSelectedPosition())
             elif control_id in (GUIDE, SHOW_EPISODES):

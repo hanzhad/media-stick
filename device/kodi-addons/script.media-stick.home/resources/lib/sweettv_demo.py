@@ -14,25 +14,27 @@ import zlib
 LOGOS = 12                      # logo-1.png .. logo-12.png
 SLOT = 300                      # s: schedules start on a five-minute mark
 
-FILM, KIDS = 4, 2               # SWEET.TV's "Film" category is 4: a long programme on a
+NEWS, FILM, SPORT, KIDS, MUSIC, KNOWLEDGE = 8, 4, 16, 2, 6, 9
+                                # SWEET.TV's "Film" category is 4: a long programme on a
                                 # channel in it that is not a series is a film in the demo guide
-CATEGORIES = [(1, "News"), (FILM, "Movies & Series"), (3, "Sport"), (KIDS, "Kids"), (5, "Music & Lifestyle"), (6, "Documentary")]
+CATEGORIES = [(NEWS, "News"), (FILM, "Movies & Series"), (SPORT, "Sport"), (KIDS, "Kids"), (MUSIC, "Music & Lifestyle"), (KNOWLEDGE, "Documentary")]
+MAIN_TAGS = (20, 23, 29)
 HIDDEN = 1000                   # every real channel is in this one too; the app leaves it out
 
 # (name, category id); the order is the channel number. Every third channel has no logo.
 CHANNELS = [
-    ("Aurora News 24", 1), ("Capital Report", 1), ("Новини Країни", 1), ("World Desk", 1),
-    ("Business Hour", 1), ("Weather Centre", 1), ("Daybreak Live", 1), ("Перший Міський", 1),
+    ("Aurora News 24", NEWS), ("Capital Report", NEWS), ("Новини Країни", NEWS), ("World Desk", NEWS),
+    ("Business Hour", NEWS), ("Weather Centre", NEWS), ("Daybreak Live", NEWS), ("Перший Міський", NEWS),
     ("Cinema Nova", FILM), ("Premiere Classics", FILM), ("Серіал Плюс", FILM), ("Night Shift Films", FILM),
     ("Crime Files", FILM), ("Laugh Track", FILM), ("Frontier Westerns", FILM), ("Sci-Fi Orbit and Beyond Network", FILM),
-    ("Arena Sport 1", 3), ("Arena Sport 2", 3), ("Harbor Football", 3), ("Мотор ТБ", 3),
-    ("Court & Field", 3), ("Fight Night", 3), ("Race Control", 3), ("Snow Peaks Live", 3),
+    ("Arena Sport 1", SPORT), ("Arena Sport 2", SPORT), ("Harbor Football", SPORT), ("Мотор ТБ", SPORT),
+    ("Court & Field", SPORT), ("Fight Night", SPORT), ("Race Control", SPORT), ("Snow Peaks Live", SPORT),
     ("Tiny Tales", KIDS), ("Cartoon Cove", KIDS), ("Малюк", KIDS), ("Adventure Kids", KIDS),
     ("Puzzle Planet", KIDS), ("Bedtime Stories", KIDS), ("Hero Squad", KIDS), ("Playground TV", KIDS),
-    ("Hit Parade", 5), ("Музика Плюс", 5), ("Acoustic Hour", 5), ("Club Mix", 5),
-    ("Home & Garden", 5), ("Tasty Table", 5), ("Travel Journal", 5), ("Wellness Now", 5),
-    ("Deep Planet", 6), ("Ancient Worlds", 6), ("Wild Frontier", 6), ("Science Lab", 6),
-    ("History Vault", 6), ("Ocean Eye", 6), ("Мандрівник", 6), ("Engineering Now", 6),
+    ("Hit Parade", MUSIC), ("Музика Плюс", MUSIC), ("Acoustic Hour", MUSIC), ("Club Mix", MUSIC),
+    ("Home & Garden", MUSIC), ("Tasty Table", MUSIC), ("Travel Journal", MUSIC), ("Wellness Now", MUSIC),
+    ("Deep Planet", KNOWLEDGE), ("Ancient Worlds", KNOWLEDGE), ("Wild Frontier", KNOWLEDGE), ("Science Lab", KNOWLEDGE),
+    ("History Vault", KNOWLEDGE), ("Ocean Eye", KNOWLEDGE), ("Мандрівник", KNOWLEDGE), ("Engineering Now", KNOWLEDGE),
 ]
 NO_CATEGORY = ("Open Window", None)       # in All only
 NO_EPG = "Test Pattern"                   # a channel the service sent no programmes for
@@ -44,7 +46,7 @@ DAYS = 3                                  # days of archive on a catch-up channe
 
 # (title, description) per category; a few programmes get no description, as in real data
 SHOWS = {
-    1: [("Morning Briefing", "The night's news, the weather for the day and the traffic on the way to work."),
+    NEWS: [("Morning Briefing", "The night's news, the weather for the day and the traffic on the way to work."),
         ("World Report", "Correspondents on three continents report on the stories that will move markets and borders."),
         ("Business Today", "Prices, rates and the people who set them: a half hour with the economy."),
         ("The Evening Desk", "The day in review: the main stories, the analysis and one long interview."),
@@ -61,7 +63,7 @@ SHOWS = {
         ("The Last Lighthouse", "A keeper, a storm and a radio that starts picking up tomorrow's weather."),
         ("Under a Copper Sky", "A western about a surveyor, a railway and the town that would rather not be found."),
         ("Small Hours", "")],
-    3: [("Live: League Round-up", "All the goals of the round with the commentators who were there."),
+    SPORT: [("Live: League Round-up", "All the goals of the round with the commentators who were there."),
         ("Match of the Day", "Two teams, one trophy and a very loud crowd."),
         ("Highlights Show", "The best saves, the worst misses and the one tackle everybody is still talking about."),
         ("The Training Ground", "A coach walks through one set piece, step by step, with the players who scored it."),
@@ -77,7 +79,7 @@ SHOWS = {
         ("Robot Friends", "A robot that is afraid of the dark meets one that is afraid of the light."),
         ("Paint Along", "A new picture every day, three colours at a time. Bring paper."),
         ("Dino Detectives", "Who ate the leaves of the tallest tree? The detectives follow the footprints.")],
-    5: [("Top 20 This Week", "The twenty songs the country played most, counted down with the videos."),
+    MUSIC: [("Top 20 This Week", "The twenty songs the country played most, counted down with the videos."),
         ("Unplugged Sessions", "Bands in a small room, no cables, one microphone and a lot of quiet."),
         ("Sunday Brunch", "A table, four guests and a menu nobody planned. Recipes on the screen."),
         ("Garden Makeover", "A yard the size of a parking space becomes a garden in five days."),
@@ -85,7 +87,7 @@ SHOWS = {
         ("Night Drive Mix", "An hour of slow beats for an empty road."),
         ("Mind and Body", "Ten minutes of stretching and ten of talk with people who sleep well."),
         ("Coast to Coast", "A travel show on a bicycle, with all the hills left in.")],
-    6: [("Deep Planet", "Cameras go down to where the light stops and find a city of animals no one has named."),
+    KNOWLEDGE: [("Deep Planet", "Cameras go down to where the light stops and find a city of animals no one has named."),
         ("Ancient Worlds", "How the first towns fed themselves, and the wall that was built to keep them from being fed on."),
         ("Wild Frontier", "A year in the life of a wolf pack on the edge of a growing town."),
         ("Science Lab", "Three experiments you can do at the kitchen table, and the physics behind each."),
@@ -94,7 +96,7 @@ SHOWS = {
         ("Engineering Now", "The longest bridge, the deepest tunnel and the small bolt that holds them both."),
         ("Big Questions", "")],
 }
-DURATIONS = {1: (30, 30, 60), FILM: (90, 105, 120), 3: (60, 90, 105, 120), KIDS: (20, 25, 30), 5: (30, 45, 60), 6: (45, 50, 60)}
+DURATIONS = {NEWS: (30, 30, 60), FILM: (90, 105, 120), SPORT: (60, 90, 105, 120), KIDS: (20, 25, 30), MUSIC: (30, 45, 60), KNOWLEDGE: (45, 50, 60)}
 
 # The programmes that are episodes of a series: the service marks them with tv_show_id, season_number and episode_number.
 # The rest of the programmes of a film channel are its films.
@@ -107,7 +109,7 @@ PAST_MINUTES = (180, 420)       # a schedule starts this long before `now`: thre
 
 
 def names() -> list:
-    return CHANNELS + [NO_CATEGORY, (NO_EPG, 1)]
+    return CHANNELS + [NO_CATEGORY, (NO_EPG, NEWS)]
 
 
 def cid_of(name) -> int:
@@ -147,12 +149,17 @@ def demo_data(now, logo_dir) -> dict:
         cid = 101 + i
         rng = random.Random(cid)
         logo = os.path.join(logo_dir, f"logo-{(i - i // 3) % LOGOS + 1}.png") if i % 3 != 2 else ""
+        is_fast = i % 5 == 4
+        cats = [category] if category else []
+        if category and not is_fast and i % 7 != 6:
+            cats.append(MAIN_TAGS[i % len(MAIN_TAGS)])
+        cats.append(HIDDEN)
         channel = {"id": cid, "name": name, "number": i + 1, "slug": f"demo-{cid}", "available": True,
-                   "category": [category, HIDDEN] if category else [HIDDEN],
+                   "category": cats,
                    "catchup": i % 4 != 3, "catchup_duration": DAYS, "icon_v2_url": logo,
-                   "is_fast_channel": i % 5 == 4, "live_blackout": False}
+                   "is_fast_channel": is_fast, "live_blackout": False}
         if name != NO_EPG:
-            channel["epg"] = _schedule(cid, category or 5, now, rng, gap=name == GAP)
+            channel["epg"] = _schedule(cid, category or MUSIC, now, rng, gap=name == GAP)
         channels.append(channel)
     return {"status": "OK", "categories": [{"id": c, "caption": n} for c, n in CATEGORIES + [(HIDDEN, "All")]],
             "list": channels}

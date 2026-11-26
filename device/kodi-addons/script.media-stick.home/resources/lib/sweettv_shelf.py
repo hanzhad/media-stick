@@ -1,23 +1,28 @@
-"""SWEET.TV app: section switching, filter chips (401..408), Shows, paginated Movies/Series, and infinite scroll."""
+"""SWEET.TV app: section switching, filter chips list (409), Shows, paginated Movies/Series, and infinite scroll."""
 import threading
 
 import mediastick_sweetapi as sweetapi
-from resources.lib import page_cache, prefetch, sweettv_demo, sweettv_pages as pages, sweettv_sections as sections, \
-    sweettv_text as words, ui
+from resources.lib import page_cache, prefetch, sweettv_demo, sweettv_items as items, sweettv_pages as pages, \
+    sweettv_sections as sections, sweettv_text as words, ui
 
 PAGE_SIZE = 30
-CHIP_FIRST, CHIP_LAST = 401, 408
+CHIPS = 409
+CHIP_LOCAL_DELAY = 0.12
+CHIP_REMOTE_DELAY = 0.28
+ACTION_CHIPS = frozenset(("new", "sort"))
 
 
 class Shelf:
     def _shelf_setup(self):
         self.section = ""
-        self.filter_key = "all"
+        self.filter_key = "main"
         self.genre_id = 0
         self.sort_idx = 0
         self.sort_modes = list(sections.SORT_MODES_DEFAULT)
         self.genres = []
         self.chips = []
+        self._chip_sig = None
+        self._pending_chip_key = ""
         self.cat_items = []
         self.cat_total = 0
         self.cat_loading = False
@@ -34,50 +39,95 @@ class Shelf:
             self._warm_handle.cancel()
             self._warm_handle = None
 
+    def _active_chip_key(self, section=None) -> str:
+        sec = self.section if section is None else section
+        if sec == "search":
+            return getattr(self, "search_filter", "all")
+        if sec == "shows":
+            return self.show_filter
+        if sec == "channels":
+            return self.filter_key
+        if sec in ("movies", "series"):
+            return "all" if self.genre_id == 0 else f"g:{self.genre_id}"
+        return ""
+
+    def _selected_chip_key(self) -> str:
+        try:
+            pos = self.getControl(CHIPS).getSelectedPosition()
+        except RuntimeError:
+            return ""
+        return self.chips[pos][0] if 0 <= pos < len(self.chips) else ""
+
     def _set_chips(self, section, chips):
         self.chips = list(chips)
-        visible = section in sections.FILTERED_SECTIONS
+        visible = section in sections.FILTERED_SECTIONS and bool(self.chips)
         self._prop("filters", "1" if visible else "")
-        has_controls = hasattr(self, "controls")
-        for idx, cid in enumerate(range(CHIP_FIRST, CHIP_LAST + 1)):
-            label = chips[idx][1] if (visible and idx < len(chips)) else ""
-            if has_controls:
-                try:
-                    self.getControl(cid).setLabel(label)
-                except RuntimeError:
-                    pass
-            self._prop(f"chip_{cid}", label)
-            if visible and idx < len(chips):
-                key = chips[idx][0]
-                active = (
-                    (section == "search" and key == getattr(self, "search_filter", "all")) or (section == "shows" and key == self.show_filter)
-                    or (section == "channels" and key == self.filter_key)
-                    or (section in ("movies", "series") and (
-                        (key == "all" and self.genre_id == 0) or key == f"g:{self.genre_id}"))
-                )
-                self._prop(f"chip_active_{cid}", "1" if active else "")
-            else:
-                self._prop(f"chip_active_{cid}", "")
+        try:
+            ctrl = self.getControl(CHIPS)
+        except RuntimeError:
+            return
+        if not visible:
+            self._chip_sig = None
+            ctrl.reset()
+            return
+        active_key = self._active_chip_key(section)
+        sig = (section, tuple(k for k, _ in self.chips))
+        size = ctrl.size() if hasattr(ctrl, "size") else len(ctrl.items)
+        if self._chip_sig == sig and size == len(self.chips):
+            for idx, (key, label) in enumerate(self.chips):
+                li = ctrl.getListItem(idx) if hasattr(ctrl, "getListItem") else ctrl.items[idx]
+                li.setLabel(str(label))
+                li.setProperty("active", "1" if key == active_key else "")
+            return
+        self._chip_sig = sig
+        ctrl.reset()
+        ctrl.addItems(items.chip_items(self.chips, active_key))
+        sel = next((i for i, (k, _) in enumerate(self.chips) if k == active_key), 0)
+        ctrl.selectItem(sel)
 
-    def _chip_click(self, cid):
-        idx = cid - CHIP_FIRST
+    def _cancel_chip(self):
+        self._pending_chip_key = ""
+        self._cancel("chip")
+
+    def _on_chip_timer(self, expected_sec, key):
+        if self._stop.is_set() or self.section != expected_sec:
+            return
+        self._apply_chip_key(key, allow_action=False)
+
+    def _flush_chip(self):
         with self._lock:
-            if idx < 0 or idx >= len(self.chips):
-                return
-            key, _ = self.chips[idx]
+            pending = self._pending_chip_key
+            had_timer = self._timers.get("chip") is not None
+            self._cancel_chip()
+            key = pending if had_timer else self._selected_chip_key()
+            active = self._active_chip_key()
+        if key and key not in ACTION_CHIPS and key != active:
+            self._apply_chip_key(key, allow_action=False)
+
+    def _apply_chip_key(self, key, allow_action=False):
+        if not key or (not allow_action and key in ACTION_CHIPS):
+            return
+        with self._lock:
+            self._pending_chip_key = ""
             sec = self.section
         if sec == "search":
             if key == "new":
                 self._ask_search()
-            else:
-                with self._lock:
-                    self.search_filter = key
-                    self._set_chips("search", sections.search_chips())
-                    self._apply_cards(sections.filter_search(self.search_cards, self.search_filter),
-                                      empty_msg=words.tr("Press OK to type what to look for."))
+                return
+            with self._lock:
+                if self.search_filter != key:
+                    self.page_query = ""
+                    self._sync_page_search_label()
+                self.search_filter = key
+                self._set_chips("search", sections.search_chips())
+                self._apply_cards(sections.filter_search(self.search_cards, self.search_filter),
+                                  empty_msg=words.tr("Press OK to type what to look for."))
             return
         if sec == "shows":
             with self._lock:
+                if self.show_filter != key:
+                    self.page_query = ""
+                    self._sync_page_search_label()
                 self.show_filter = key
                 self._set_chips("shows", sections.show_chips())
                 filtered = sections.filter_shows(self.shows_raw, self.show_filter)
@@ -88,21 +138,38 @@ class Shelf:
             return
         if sec == "channels":
             with self._lock:
+                if self.filter_key != key:
+                    self.page_query = ""
+                    self._sync_page_search_label()
                 self.filter_key = key
             self._show_channels()
             return
         if sec in ("movies", "series"):
             with self._lock:
-                if key == "all":
-                    self.genre_id = 0
-                elif key == "sort":
+                if key == "sort":
                     self.sort_idx = (self.sort_idx + 1) % max(1, len(self.sort_modes))
-                elif key.startswith("g:"):
-                    gid = int(key[2:])
-                    self.genre_id = 0 if self.genre_id == gid else gid
-                self.cat_items = []
-                self.cat_total = 0
+                    self.page_query = ""
+                    self._sync_page_search_label()
+                    self.cat_items = []
+                    self.cat_total = 0
+                    self._set_chips(sec, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
+                elif key == "all" or key.startswith("g:"):
+                    gid = 0 if key == "all" else int(key[2:])
+                    if self.genre_id == gid and not self.page_query:
+                        return
+                    self.genre_id = gid
+                    self.page_query = ""
+                    self._sync_page_search_label()
+                    self.cat_items = []
+                    self.cat_total = 0
+                    self._set_chips(sec, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
+                else:
+                    return
             self._load_catalog(sec, offset=0)
+
+    def _chip_click(self):
+        self._cancel_chip()
+        self._apply_chip_key(self._selected_chip_key(), allow_action=True)
 
     def _load_shows(self):
         with self._lock:

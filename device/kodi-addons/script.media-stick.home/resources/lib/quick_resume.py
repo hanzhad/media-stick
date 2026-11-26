@@ -120,7 +120,7 @@ def build_sweettv_snapshot(
 ) -> dict:
     compact_cards = [_compact_sweettv_card(c) for c in (cards or ())]
     raw = {
-        "schema_v": 1,
+        "schema_v": 2,
         "section": str(section or ""),
         "filter": str(filter or ""),
         "sort": str(sort or ""),

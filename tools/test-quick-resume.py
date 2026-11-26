@@ -93,10 +93,9 @@ class WindowXML:
     def __init__(self, *a):
         self._props, self.focus = {}, 0
         self.controls = {
-            100: Control(), 200: Control(), 209: Control(), 210: Control(),
+            100: Control(), 200: Control(), 201: Control(), 209: Control(), 210: Control(),
             211: Control(), 212: Control(), 213: Control(),
-            300: Control(), 301: Control(), 400: Control(), 410: Control(),
-            **{i: Control() for i in range(401, 409)},
+            300: Control(), 301: Control(), 400: Control(), 409: Control(), 410: Control(),
         }
         self.closed = False
 
@@ -316,6 +315,7 @@ class QuickResumeTests(unittest.TestCase):
         qr = self._import_quick_resume()
         cards = [{"key": f"sw:vod:{i}", "title": f"Film {i}", "thumb": f"https://img/{i}.jpg"} for i in range(10)]
         snap = qr.build_sweettv_snapshot(section="movies", filter="all", focused_index=4, cards=cards)
+        self.assertEqual(snap["schema_v"], 2)
         validated = ms.validate_snapshot(snap)
         self.assertEqual(validated["section"], "movies")
         self.assertEqual(validated["filter"], "all")

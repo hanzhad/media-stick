@@ -14,7 +14,7 @@ ACCENT, RED, DIM = "FFFFC857", "FFFF6B5E", "99FFFFFF"      # the skin's amber, a
 def hint_line(numbered, archive=False) -> str:
     """The key hints at the top: each key in the accent colour, then what it does. The number keys are left out
     when no channel has a number (they would do nothing), the archive keys when no channel has an archive."""
-    keys = [("OK", tr("Watch")), (tr("Menu"), tr("Favourite"))] + ([("0-9", tr("Channel number"))] if numbered else [])
+    keys = [("OK", tr("Watch")), (tr("Menu"), tr("Sections"))] + ([("0-9", tr("Channel number"))] if numbered else [])
     keys += [(tr("Up"), tr("Guide and continue"))] if archive else []
     return "        ".join(f"[COLOR {ACCENT}]{key}[/COLOR]  {what}" for key, what in keys)
 
@@ -210,6 +210,7 @@ TEXT = {
     "Genres": {"ru": "Жанры", "uk": "Жанри"},
     "{n} channels": {"ru": "{n} канал|{n} канала|{n} каналов", "uk": "{n} канал|{n} канали|{n} каналів"},   # one|few|many
     "Menu": {"ru": "Меню", "uk": "Меню"},
+    "Sections": {"ru": "Разделы", "uk": "Розділи"},
     "Up": {"ru": "Вверх", "uk": "Вгору"},
     "Favourite": {"ru": "Избранное", "uk": "Обране"},
     "Channel number": {"ru": "Номер канала", "uk": "Номер каналу"},
@@ -228,8 +229,8 @@ TEXT = {
     "OK plays the programme. Back closes the guide.": {"ru": "OK смотреть передачу. Назад закрыть программу.",
                                                        "uk": "OK дивитися передачу. Назад закрити програму."},
     "No favourites yet. Press the menu key on a channel to add it.": {
-        "ru": "Избранного пока нет. Нажмите кнопку меню на канале, чтобы добавить его.",
-        "uk": "Обраного поки немає. Натисніть кнопку меню на каналі, щоб додати його."},
+        "ru": "Избранного пока нет. Откройте карточку, чтобы добавить в избранное.",
+        "uk": "Обраного поки немає. Відкрийте картку, щоб додати в обране."},
     "Nothing watched yet. The channels you play show up here.": {
         "ru": "Вы пока ничего не смотрели. Включённые каналы появятся здесь.",
         "uk": "Ви поки нічого не дивилися. Увімкнені канали з'являться тут."},

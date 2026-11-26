@@ -3,7 +3,20 @@
 Ready data in -> pure dicts/tuples out. Nothing here imports xbmc or touches disk/network.
 """
 from datetime import date, timedelta
+import os
+import sys
 from typing import NamedTuple, Optional, Tuple
+
+try:
+    import mediastick_sweetchannels as sc
+except ImportError:
+    for _cand in (
+        "/usr/local/lib/media-stick",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "files", "usr", "local", "lib", "media-stick")),
+    ):
+        if os.path.isdir(_cand) and _cand not in sys.path:
+            sys.path.insert(0, _cand)
+    import mediastick_sweetchannels as sc
 
 from resources.lib import sweettv_data as data, sweettv_text as words, sweettv_view as view
 
@@ -120,7 +133,12 @@ def channel_card(ch, cat_names, now, resume_doc=None, favs=()) -> Card:
     step = data.progress_step(current, now) if current else 0
     bar = data.bar_name(step) if current else ""
     pbar = data.bar_name(step, wide=True) if current else ""
-    cats = [cat_names[f"c:{k}"] for k in ch.cats if f"c:{k}" in cat_names][:2]
+    raw_cats = [cat_names[f"c:{k}"] for k in ch.cats if f"c:{k}" in cat_names]
+    clean_cats = [
+        cat_names[f"c:{k}"] for k in ch.cats
+        if f"c:{k}" in cat_names and str(k) not in sc.HERO_SKIP_META_CATS
+    ]
+    cats = (clean_cats or raw_cats)[:2]
     meta_parts = ([words.tr("Channel {n}").format(n=ch.number)] if ch.number else []) + cats
     if ch.fast:
         meta_parts.append(words.tr("24/7"))
@@ -521,15 +539,8 @@ def favourites_cards(favs_doc, catalog, cat_names, now, resume_doc=None, recall_
     return out
 
 
-def filter_channels(channels, filter_key) -> list:
-    if filter_key == "live":
-        return [ch for ch in channels if not ch.fast]
-    if filter_key == "fast":
-        return [ch for ch in channels if ch.fast]
-    if isinstance(filter_key, str) and filter_key.startswith("c:"):
-        cid = filter_key[2:]
-        return [ch for ch in channels if cid in ch.cats]
-    return list(channels)
+def filter_channels(channels, filter_key, cat_names=None) -> list:
+    return sc.filter_channels_for_tab(channels, filter_key, cat_names=cat_names)
 
 
 def search_chips() -> list:
@@ -564,11 +575,8 @@ def filter_shows(rows, filter_key) -> list:
     return list(rows)
 
 
-def channel_chips(categories) -> list:
-    chips = [("all", words.tr("All items")), ("live", words.tr("Live TV")), ("fast", words.tr("24/7"))]
-    for key, name in (categories or ())[:5]:
-        chips.append((key, name))
-    return chips[:8]
+def channel_chips(channels, cat_names=None) -> list:
+    return sc.channel_tabs(channels, cat_names=cat_names, lang=words.LANG)
 
 
 UMBRELLA_GENRE_IDS = frozenset((1, 3, 57, 61))
@@ -598,9 +606,9 @@ def catalog_chips(genres, sort_modes, sort_idx) -> list:
         name = str(g.get("name") or "").strip()
         if gid_num and gid_num not in UMBRELLA_GENRE_IDS and name:
             chips.append((f"g:{gid_num}", name))
-            if len(chips) >= 8:
+            if len(chips) >= 18:
                 break
-    return chips[:8]
+    return chips[:18]
 
 
 def day_tabs(archive_days, future_days, now) -> list:
