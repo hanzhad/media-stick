@@ -11,6 +11,7 @@ Recorder is plain Python (it is fed samples, the tests feed it directly); Watche
 import time
 
 import xbmc
+import xbmcgui
 
 from resources.lib import store
 
@@ -133,8 +134,18 @@ class Watcher(xbmc.Player):
                 return lib.url(known[0], known[1])   # no place in it: one string for the whole item, whatever its start was
         return ""
 
+    @staticmethod
+    def _is_tv_preview() -> bool:
+        try:
+            return xbmcgui.Window(10000).getProperty("ms.tv_preview") == "1"
+        except Exception:
+            return False
+
     def tick(self):
         try:
+            if self._is_tv_preview():
+                self.recorder.flush()
+                return
             if not self.isPlayingVideo():
                 return
             self.recorder.sample(self._file(), self.getTime(), self.getTotalTime())

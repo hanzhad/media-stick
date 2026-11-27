@@ -673,7 +673,7 @@ class Watching(Base):
             State.file, State.time, State.total = LIVE, 15.0, 0.0
             w.tick()
             self.assertEqual(mr.seconds_for(mr.load(), VID), 120)
-            self.assertNotIn("live", mr.load())
+            self.assertEqual(mr.load().get("live"), {})
 
             # 2. Clearing ms.tv_preview resumes normal recording
             home_props["ms.tv_preview"] = ""

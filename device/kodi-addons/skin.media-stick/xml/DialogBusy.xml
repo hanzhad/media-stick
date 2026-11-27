@@ -2,6 +2,7 @@
 <window>
 	<controls>
 		<control type="group">
+			<visible>String.IsEmpty(Window(home).Property(ms.tv_preview))</visible>
 			<include>DialogAnimation</include>
 			<centerleft>50%</centerleft>
 			<centertop>50%</centertop>

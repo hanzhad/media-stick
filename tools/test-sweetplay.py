@@ -1697,14 +1697,14 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
             self.pos[0], self.total[0] = 20.0, 0.0
             self.mono[0] += 10.0
             ctrl.tick()
-            self.assertIsNone(self.state_store.get_kv("sweettv:live"))
+            self.assertIsNone(self.state_store.get_pref("sweettv:live"))
 
             # Error/ended during preview cleans up without failover
             ctrl.onPlayBackError()
             self.assertEqual(len(self.open_calls), 1)
             self.assertEqual(self.win_props.get("ms.tv_preview"), "")
             self.assertIsNone(ctrl._session)
-            self.assertIsNone(self.state_store.get_kv("sweettv:live"))
+            self.assertIsNone(self.state_store.get_pref("sweettv:live"))
 
     def test_stop_preview_cleans_preview_ignores_fullscreen_and_aborts_inflight(self):
         import mediastick_signin as signin

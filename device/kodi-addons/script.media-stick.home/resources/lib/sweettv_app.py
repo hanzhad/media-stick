@@ -36,8 +36,8 @@ RUNNING = "media-stick.sweettv"
 DEMO_LOGOS = os.path.join(ui.ADDON_PATH, "resources", "media", "demo")
 STALE_NOTICE = "The channel list is out of date. Refreshing…"
 
-PREVIEW_VIDEO = False
-PREVIEW_DELAY = 1.5
+PREVIEW_DELAY = 1.0
+_PREVIEW_FOCUS = (WIDE_ROW, HERO_PLAY, HERO_ALT, HERO_GUIDE, HERO_FAV)
 _UNSET = object()
 
 
@@ -106,7 +106,9 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self.digits = ""
         self.play_at = 0.0
         self.session = None
+        self.preview_video = bool(mr.read_preview_video())
         self.previewing = ""
+        self._last_hover_cid = ""
         self._qr_focus_index = 0
         self._qr_focus_key = ""
         self._qr_dirty = False
@@ -123,7 +125,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         for key, value in words.labels().items():
             self._prop(key, value)
         self._prop("demo", "1" if self.demo else "")
-        self._prop("preview_video", "1" if PREVIEW_VIDEO else "")
+        self.preview_video = bool(mr.read_preview_video())
+        self._prop("preview_video", "1" if self.preview_video else "")
         if not self.started:
             self.started = True
             if not self.demo:
@@ -154,6 +157,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if self._qr_dirty:
             self._save_quick_resume(immediate=True)
         self._stop.set()
+        self._preview_stop(send_stop=True, sync=True)
         self._cancel_warm()
         for timer in list(self._timers.values()):
             timer.cancel()
@@ -389,6 +393,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self.mode, self.kind = mode, kind
         self._prop("mode", mode)
         self._prop("msg_kind", kind)
+        if mode != data.DATA:
+            self._preview_stop()
         if changed or (mode == data.DATA and self._focus() == 0):
             self._focus_mode()
 
@@ -551,6 +557,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     def _open_section(self, key, focus_cid="", sync_menu=False):
         with self._lock:
+            self._preview_stop()
             self._cancel_chip()
             self._pre_search_pos = None
             self.section = key
@@ -735,6 +742,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if action_id in ui.BACK_ACTIONS:
             if self._cancel_autoplay():
                 return
+            self._preview_stop()
             if self._modal_open():
                 self._guide_close()
             elif self.digits:
@@ -761,6 +769,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if self.mode == data.DATA:
             digit = data.digit_of(action_id, action.getButtonCode())
             if action_id == ACTION_CONTEXT_MENU:
+                self._preview_stop()
                 if self._modal_open() or self._window_props.get("modal"):
                     self._guide_close()
                     self._prop("modal", "")
@@ -786,6 +795,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             else:
                 if digit is not None:
                     if self.numbered and self.section == "channels":
+                        self._preview_stop()
                         self._digit(digit)
                     return
                 if prev_focus == CHIPS and action_id in (ACTION_MOVE_UP, ACTION_MOVE_DOWN):
@@ -819,10 +829,9 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self._sync_hero()
             if action_id in (ACTION_MOVE_RIGHT, ACTION_MOVE_DOWN):
                 self._maybe_paginate()
-            if PREVIEW_VIDEO:
-                self._later("preview", PREVIEW_DELAY, self._preview_start)
         elif action_id in (ACTION_MOVE_UP, ACTION_MOVE_DOWN) and cur_focus == MENU:
             self._later("menu", MENU_DELAY, self._apply_menu)
+        self._sync_preview_dwell()
 
     def onClick(self, control_id):
         try:
@@ -965,10 +974,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if not url and not notify_spec:
             return
         now = self._now()
-        if PREVIEW_VIDEO and cid and session is None and self.previewing == cid and playing():
-            xbmc.executebuiltin("Action(FullScreen)")
-            self.play_at = now
-            return
+        self._preview_stop(send_stop=False)
         spec = dict(notify_spec) if notify_spec else {
             "url": url,
             "start_offset": seek_to,
@@ -1081,8 +1087,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def _after_player(self):
         if self.play_at and clock() - self.play_at > RETURN_GRACE:
             self.play_at = 0.0
-            if not PREVIEW_VIDEO:
-                self._in_worker(self._stop_stream)
+            self._in_worker(self._stop_stream)
             self._in_worker(self._focus_back)
 
     def _stop_stream(self):
@@ -1111,12 +1116,68 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             target = (SHOW_EPISODES if self.modal_kind == "show" else GUIDE) if self._modal_open() else self._grid_id()
             self._focus_on(target)
 
+    def _can_preview(self, card) -> bool:
+        return (
+            bool(self.preview_video)
+            and not self.demo
+            and not self._stop.is_set()
+            and self.mode == data.DATA
+            and self.section == "channels"
+            and not self._modal_open()
+            and self._focus() in _PREVIEW_FOCUS
+            and card is not None
+            and card.kind == "channel"
+            and bool(card.playable)
+            and bool(card.cid)
+        )
+
+    def _sync_preview_dwell(self):
+        with self._lock:
+            card = self._focused_card()
+            if not self._can_preview(card):
+                if self.previewing or self._window_props.get("preview_active") or self._timers.get("preview"):
+                    self._preview_stop()
+                else:
+                    self._last_hover_cid = ""
+                return
+            cid = card.cid
+            if cid == self._last_hover_cid:
+                return
+            self._preview_stop()
+            self._last_hover_cid = cid
+            self._later("preview", PREVIEW_DELAY, self._preview_start)
+
     def _preview_start(self):
-        card = self._focused_card()
-        url = card.play_url if (card and card.kind == "channel" and not self.demo) else ""
-        if url and self.mode == data.DATA and not self._modal_open():
-            self.previewing = card.cid
-            xbmc.Player().play(url, None, True)
+        with self._lock:
+            card = self._focused_card()
+            if not self._can_preview(card):
+                return
+            cid = card.cid
+            if self.previewing == cid:
+                return
+            self.previewing = cid
+            self._prop("preview_active", "1")
+            payload_json = play.notify_request(
+                kind="live",
+                cid=cid,
+                title=card.title,
+                preview=True,
+            )
+            xbmc.executeJSONRPC(payload_json)
+
+    def _preview_stop(self, send_stop=True, sync=False):
+        with self._lock:
+            self._cancel("preview")
+            self._last_hover_cid = ""
+            was_previewing = bool(self.previewing or self._window_props.get("preview_active"))
+            self.previewing = ""
+            self._prop("preview_active", "")
+            if send_stop and was_previewing and not self.demo:
+                req = play.stop_preview_request()
+                if sync:
+                    xbmc.executeJSONRPC(req)
+                else:
+                    self._in_worker(xbmc.executeJSONRPC, req)
 
     def _toggle_favourite(self):
         in_modal = self._modal_open()

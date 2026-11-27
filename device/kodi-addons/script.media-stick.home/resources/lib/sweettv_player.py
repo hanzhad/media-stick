@@ -75,6 +75,8 @@ class SweetPlayerController(_PlayerBase):
         self._last_pos = 0.0
         self._last_total = 0.0
         self._last_checkpoint_mono = 0.0
+        self._play_gen = 0
+        self._cancelled_preview_gen = 0
 
     # ---- dependencies & OSD helpers -------------------------------------------
 
@@ -107,6 +109,15 @@ class SweetPlayerController(_PlayerBase):
         except Exception:
             return None
 
+    def _set_preview_prop(self, active: bool) -> None:
+        win = self._home_window()
+        if win is None:
+            return
+        try:
+            win.setProperty("ms.tv_preview", "1" if active else "")
+        except Exception:
+            pass
+
     def _clear_osd(self) -> None:
         win = self._home_window()
         if win is None:
@@ -119,7 +130,7 @@ class SweetPlayerController(_PlayerBase):
 
     def _update_osd(self, pos: float | None = None) -> None:
         sess = self._session
-        if not sess or sess.get("kind") not in ("live", "epg"):
+        if not sess or sess.get("preview") or sess.get("kind") not in ("live", "epg"):
             self._clear_osd()
             return
         win = self._home_window()
@@ -138,7 +149,7 @@ class SweetPlayerController(_PlayerBase):
     def poll_hint(self) -> float | None:
         """Return desired service loop sleep interval when active, or None when idle."""
         with self._lock:
-            if self._session is None:
+            if self._session is None or self._session.get("preview"):
                 return None
             if self._coalescer.has_pending() or not self._initial_seek_done:
                 return 0.2
@@ -212,7 +223,7 @@ class SweetPlayerController(_PlayerBase):
     def _persist_resume(self, force_done: bool = False, allow_done: bool = True) -> None:
         sess = self._session
         st = self._get_state_store()
-        if sess is None or st is None:
+        if sess is None or sess.get("preview") or st is None:
             return
         now = float(self._clock())
         kind = sess.get("kind")
@@ -313,6 +324,7 @@ class SweetPlayerController(_PlayerBase):
         self._watchdog_exhausted = False
         sp.clear_active_session(self._session_path)
         self._clear_osd()
+        self._set_preview_prop(False)
 
     # ---- opening, seeking, rollover, and failover -----------------------------
 
@@ -327,7 +339,12 @@ class SweetPlayerController(_PlayerBase):
         now_i = int(self._clock())
         mono = float(self._mono())
         st = self._get_store()
-        quality = ms_resume.read_quality()
+        is_preview = bool(spec.get("preview", False))
+        self._play_gen += 1
+        my_gen = self._play_gen
+        quality = "720p" if is_preview else ms_resume.read_quality()
+        if not is_preview:
+            self._set_preview_prop(False)
 
         kind = spec["kind"]
         cid = spec.get("cid", "")
@@ -388,7 +405,7 @@ class SweetPlayerController(_PlayerBase):
             return False
 
         thumbs = None
-        if res.get("thumbnails_playlist_url"):
+        if not is_preview and res.get("thumbnails_playlist_url"):
             thumbs = sp.fetch_thumbnails_spec(res["thumbnails_playlist_url"], send=self._send)
 
         if sp.is_finished_hls_archive(res, kind=kind, slot_stop=slot_stop, now=now_i):
@@ -449,8 +466,13 @@ class SweetPlayerController(_PlayerBase):
             "thumbnails": thumbs,
             "duration": duration,
             "host": str(res.get("host") or ""),
+            "preview": is_preview,
             "updated_at": now_i,
         }
+
+        if is_preview and (self._play_gen != my_gen or not (self._play_gen > self._cancelled_preview_gen)):
+            self._set_preview_prop(False)
+            return False
 
         self._session = session_doc
         self._prev_meta = prev_meta
@@ -477,12 +499,21 @@ class SweetPlayerController(_PlayerBase):
         self._last_total = float(duration) if duration > 0 else 0.0
         self._last_checkpoint_mono = mono
 
-        sp.write_active_session(session_doc, path=self._session_path)
-        self._update_osd(pos=self._last_pos)
+        if is_preview:
+            self._clear_osd()
+            self._set_preview_prop(True)
+        else:
+            sp.write_active_session(session_doc, path=self._session_path)
+            self._update_osd(pos=self._last_pos)
+            self._set_preview_prop(False)
 
         self._reopening = True
         try:
-            self.play(sel["play_url"], li)
+            if is_preview:
+                if self._play_gen > self._cancelled_preview_gen:
+                    self.play(sel["play_url"], li, windowed=True)
+            else:
+                self.play(sel["play_url"], li)
         finally:
             self._reopening = False
         return True
@@ -495,7 +526,7 @@ class SweetPlayerController(_PlayerBase):
             except (TypeError, ValueError) as exc:
                 xbmc.log(f"{LOG} invalid sweettv.play payload: {exc!r}", xbmc.LOGWARNING)
                 return False
-            if self._session is not None:
+            if self._session is not None and not self._session.get("preview"):
                 self._persist_resume(force_done=False, allow_done=True)
             return self._start_session(spec)
 
@@ -585,10 +616,24 @@ class SweetPlayerController(_PlayerBase):
             except (TypeError, ValueError) as exc:
                 xbmc.log(f"{LOG} invalid sweettv.ctl payload: {exc!r}", xbmc.LOGWARNING)
                 return False
-            if self._session is None:
-                return False
 
             op = ctl["op"]
+            if op == "stop_preview":
+                self._cancelled_preview_gen = self._play_gen
+                if self._session is not None and self._session.get("preview"):
+                    self._reopening = True
+                    try:
+                        self.stop()
+                    except Exception:
+                        pass
+                    finally:
+                        self._reopening = False
+                    self._cleanup_session()
+                return True
+
+            if self._session is None or self._session.get("preview"):
+                return False
+
             mono = float(self._mono())
             if op == "seek_by":
                 self._coalescer.push_seconds(ctl["seconds"], mono)
@@ -642,7 +687,7 @@ class SweetPlayerController(_PlayerBase):
     def tick(self) -> None:
         """Advance initial seek, 0.6s seek coalescer, 8s stall watchdog, OSD, and resume."""
         with self._lock:
-            if self._session is None:
+            if self._session is None or self._session.get("preview"):
                 return
             mono = float(self._mono())
             now_i = int(self._clock())
@@ -714,7 +759,7 @@ class SweetPlayerController(_PlayerBase):
 
     def onAVStarted(self) -> None:
         with self._lock:
-            if self._session is None:
+            if self._session is None or self._session.get("preview"):
                 return
             mono = float(self._mono())
             self._av_started = True
@@ -759,6 +804,9 @@ class SweetPlayerController(_PlayerBase):
         # Never call getPlayingFile() here: Kodi has already torn down player state on EOF.
         with self._lock:
             if self._reopening or self._session is None:
+                return
+            if self._session.get("preview"):
+                self._cleanup_session()
                 return
             sess = self._session
             pos = self._last_pos
@@ -806,12 +854,18 @@ class SweetPlayerController(_PlayerBase):
         with self._lock:
             if self._reopening or self._session is None:
                 return
+            if self._session.get("preview"):
+                self._cleanup_session()
+                return
             self._persist_resume(force_done=False, allow_done=True)
             self._cleanup_session()
 
     def onPlayBackError(self) -> None:
         with self._lock:
             if self._reopening or self._session is None:
+                return
+            if self._session.get("preview"):
+                self._cleanup_session()
                 return
             wd = sp.evaluate_watchdog(
                 self._watchdog_state,

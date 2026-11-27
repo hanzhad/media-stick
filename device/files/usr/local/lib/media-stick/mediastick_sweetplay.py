@@ -39,7 +39,7 @@ PLAY_MESSAGE = "sweettv.play"
 CTL_MESSAGE = "sweettv.ctl"
 
 VALID_PLAY_KINDS = ("live", "epg", "vod")
-VALID_CTL_OPS = ("seek_by", "seek_wall", "from_start", "live", "prev_prog", "next_prog")
+VALID_CTL_OPS = ("seek_by", "seek_wall", "from_start", "live", "prev_prog", "next_prog", "stop_preview")
 
 MIN_TOTAL = 30
 SEEK_TOLERANCE = 8
@@ -168,6 +168,9 @@ def validate_play_data(data: dict) -> dict:
     wall_int = _nonneg_int(data.get("wall_ts", 0), "wall_ts", default=0)
     title_raw = data.get("title", "")
     title_s = str(title_raw)[:200] if isinstance(title_raw, (str, int, float)) and not isinstance(title_raw, bool) else ""
+    preview_flag = bool(data.get("preview", False))
+    if preview_flag and kind != "live":
+        raise ValueError(f"preview is only supported for live playback, got {kind!r}")
 
     out = {
         "kind": kind,
@@ -181,6 +184,7 @@ def validate_play_data(data: dict) -> dict:
         "wall_ts": wall_int,
         "title": title_s,
         "episode_mode": bool(data.get("episode_mode", False)),
+        "preview": preview_flag,
     }
     if data.get("anchor_start"):
         out["anchor_start"] = _nonneg_int(data.get("anchor_start"), "anchor_start", default=0)
@@ -203,6 +207,7 @@ def build_play_notify(
     wall_ts=0,
     title="",
     episode_mode=False,
+    preview=False,
 ) -> dict:
     """Build a JSONRPC.NotifyAll request for sweettv.play."""
     payload = validate_play_data(
@@ -218,6 +223,7 @@ def build_play_notify(
             "wall_ts": wall_ts,
             "title": title,
             "episode_mode": episode_mode,
+            "preview": preview,
         }
     )
     return {

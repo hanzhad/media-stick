@@ -850,10 +850,6 @@ class Small(unittest.TestCase):
         self.assertEqual(D.poll_interval(False), D.POLL_EMPTY)
         self.assertEqual(D.poll_interval(True), 60)
 
-    def test_live_video_in_the_preview_is_off(self):
-        self.assertIs(sweettv_app.PREVIEW_VIDEO, False)
-
-
 class PhonePage(unittest.TestCase):
     def setUp(self):
         files.QR_FAILED.clear()
@@ -2053,9 +2049,9 @@ class PreviewVideo(WindowCase):
 
             # 4. Opening any modal
             self._start_preview_on(window, 0)
-            window._open_channel_hub(window.cards[0])
+            window._open_channel_hub(window.cards[0].cid)
             assert_stopped("open channel hub modal")
-            window._close_modal()
+            window._guide_close()
 
             # 5. Typing channel digits
             self._start_preview_on(window, 0)
@@ -2847,9 +2843,13 @@ class Skin(unittest.TestCase):
 
     def test_hero_videowindow_bounds_order_visibility_and_single_bracket_depth(self):
         root = self.tree()
-        controls = list(root.findall("./controls/control"))
+        self.assertEqual(len(root.findall(".//control[@type='videowindow']")), 1,
+                         "Expected exactly one <control type='videowindow'>")
+        main_group = root.find("./controls/control[@type='group']")
+        self.assertIsNotNone(main_group)
+        controls = list(main_group.findall("./control"))
         vw_indices = [i for i, c in enumerate(controls) if c.attrib.get("type") == "videowindow"]
-        self.assertEqual(len(vw_indices), 1, "Expected exactly one top-level <control type='videowindow'>")
+        self.assertEqual(len(vw_indices), 1, "Expected <control type='videowindow'> in main data group")
         vw_idx = vw_indices[0]
         vw = controls[vw_idx]
         self.assertNotIn("id", vw.attrib, "videowindow must have no numeric id")
