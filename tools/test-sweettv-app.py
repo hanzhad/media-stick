@@ -236,6 +236,8 @@ import mediastick_sweetlive as ML  # noqa: E402
 import mediastick_sweetapi as API  # noqa: E402
 import mediastick_sweetplay as SP  # noqa: E402
 import mediastick_sweetstore as sweetstore  # noqa: E402
+import mediastick_ui_context  # noqa: E402
+import panel_ui_context  # noqa: E402
 
 W.set_language("en")                     # the pure parts of the screen (the windows set it from the file above)
 REAL_WARM = prefetch.warm                # the start-up run itself; a test case replaces the module's by one that does nothing
@@ -5364,6 +5366,251 @@ class Issue108PaginationWarmEmptyShowAndHeroArtTests(WindowCase):
         })
         self.assertEqual(sc.banner, "https://img/ch_banner10.jpg")
         self.assertEqual(sc.wide_art, "https://img/ch_wide10.jpg")
+
+
+class Issue111UiContextAndCmdTests(WindowCase):
+    """Issue #111: live ui-context.json publishing and Other.mediastick.ui_cmd handling."""
+
+    def setUp(self):
+        super().setUp()
+        self.ctx_path = os.path.join(TMP, "ui-context.json")
+        if os.path.exists(self.ctx_path):
+            os.unlink(self.ctx_path)
+        real_write = panel_ui_context.write_context
+        p = mock.patch.object(
+            panel_ui_context,
+            "write_context",
+            side_effect=lambda doc, path=None: real_write(doc, path=self.ctx_path),
+        )
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _read_ctx(self):
+        self.assertTrue(os.path.exists(self.ctx_path), "ui-context.json was not written")
+        with open(self.ctx_path, "rb") as f:
+            raw = f.read()
+        self.assertLess(len(raw), 8192, f"ui-context.json exceeded 8192 bytes ({len(raw)})")
+        return panel_ui_context.read_context(path=self.ctx_path)
+
+    def _send_cmd(self, window, payload, method="Other.mediastick.ui_cmd", sender="media-stick.panel"):
+        self.assertTrue(hasattr(window, "_cmd_monitor"), "SweetTV must attach _cmd_monitor")
+        self.assertIsNotNone(window._cmd_monitor)
+        window._cmd_monitor.onNotification(sender, method, json.dumps(payload))
+
+    def test_ui_context_published_on_section_chips_sort_and_search(self):
+        write_list(answer(chan(10, "Ten", number=10, catchup=True)))
+        genres = [{"id": 100 + i, "name": f"Genre {i}"} for i in range(14)]
+        cfg = {"ok": True, "genres": genres, "sort_modes": _sample_config()["sort_modes"]}
+        movies = [_sample_movie(500 + i, f"Movie {i}", genres=(100,)) for i in range(5)]
+
+        with mock.patch.object(API, "configuration", return_value=cfg), \
+             mock.patch.object(API, "catalog_page", return_value={"ok": True, "section": "movies", "items": movies, "total": 5}):
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            self.assertEqual(Fake.rpc, [])
+
+            ctx = self._read_ctx()
+            self.assertEqual(ctx["v"], 1)
+            self.assertEqual(ctx["app"], "sweettv")
+            self.assertEqual(ctx["view"], "section")
+            self.assertEqual(ctx["section"], "channels")
+            self.assertIs(ctx["can_search"], True)
+            self.assertEqual([s["id"] for s in ctx["sections"]], [k for k, _ in sweettv_app.sections.RAIL])
+            self.assertTrue(ctx["search_hint"])
+
+            window._open_section("movies", sync_menu=True)
+            self.assertTrue(wait_for(lambda: self._read_ctx()["section"] == "movies" and len(self._read_ctx()["chips"]) > 2))
+            ctx = self._read_ctx()
+            self.assertIsNotNone(ctx["sort"])
+            self.assertEqual(ctx["sort"]["id"], "1")
+
+            W.set_language("ru")
+            window._publish_ui_context()
+            ctx_ru = self._read_ctx()
+            self.assertIn("Поиск в", ctx_ru["search_hint"])
+
+    def test_ui_context_modals_demo_vs_live_and_restore_section_view(self):
+        ep_list = [{"id": f"e{i}", "number": i + 1, "title": f"Ep {i + 1}", "vod_url": f"plugin://plugin.video.sweettv/playvod/701|e{i}|10"} for i in range(32)]
+        detail = {
+            "ok": True, "id": "vod:701", "movie_id": "701", "title": "Long Show",
+            "seasons": [
+                {"id": 1, "number": 1, "title": "Season 1", "episodes": ep_list},
+                {"id": 2, "number": 2, "title": "Season 2", "episodes": ep_list[:3]},
+            ],
+        }
+        write_list(answer(chan(10, "Ten", number=10, catchup=True, epg=[
+            prog(NOW - 3600 * i, NOW - 3600 * (i - 1), text=f"Prog {i}", pid=100 + i) for i in range(1, 32)
+        ])))
+        s_card = sweettv_app.sections.vod_card({"id": 701, "title": "Long Show"}, "series")
+
+        with mock.patch.object(API, "vod_detail", return_value=detail):
+            window = self.open(demo=False)
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            window._open_show_modal(s_card)
+            self.assertTrue(wait_for(lambda: self._read_ctx()["view"] == "show"))
+            ctx = self._read_ctx()
+            self.assertIsNotNone(ctx["modal"])
+            self.assertEqual(ctx["modal"]["kind"], "show")
+            self.assertFalse(ctx["modal"].get("demo"))
+            self.assertFalse(ctx["modal"].get("episodes"))
+            self.assertTrue(ctx["modal"].get("seasons"))
+
+            window._modal_select_tab(1)
+            self.assertTrue(wait_for(lambda: self._read_ctx()["modal"].get("selected_season") in (1, 2, "Season 2")))
+            window._toggle_favourite()
+            self.assertTrue(wait_for(lambda: self._read_ctx()["modal"].get("fav") is True))
+
+            window._restore_section_view()
+            ctx_restored = self._read_ctx()
+            self.assertEqual(ctx_restored["view"], "section")
+            self.assertIsNone(ctx_restored["modal"])
+            self.assertEqual(Fake.rpc, [])
+
+        demo_w = self.open(demo=True)
+        self.assertTrue(wait_for(lambda: demo_w.mode == D.DATA))
+        with mock.patch.object(API, "vod_detail", return_value=detail):
+            demo_w._open_show_modal(s_card)
+            self.assertTrue(wait_for(lambda: self._read_ctx()["view"] == "show"))
+            dctx = self._read_ctx()
+            self.assertTrue(dctx["modal"]["demo"])
+            self.assertLessEqual(len(dctx["modal"].get("episodes", [])), 25)
+            self.assertGreater(len(dctx["modal"].get("episodes", [])), 0)
+
+        demo_w._guide_close()
+        demo_w._open_channel_hub(demo_w.catalog.channels[0].cid)
+        self.assertTrue(wait_for(lambda: self._read_ctx()["view"] == "guide"))
+        gctx = self._read_ctx()
+        self.assertEqual(gctx["modal"]["kind"], "guide")
+        self.assertTrue(gctx["modal"]["demo"])
+        self.assertLessEqual(len(gctx["modal"].get("programs", [])), 25)
+        self.assertEqual(Fake.rpc, [])
+
+    def test_ui_context_notify_only_when_xbmc_monitor_present(self):
+        class FakeMonitor:
+            def __init__(self):
+                pass
+
+        write_list(answer(chan(10, "Ten", number=10)))
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        self.assertEqual(Fake.rpc, [])
+
+        with mock.patch.object(xbmc, "Monitor", FakeMonitor, create=True):
+            window._open_section("movies", sync_menu=True)
+            self.assertTrue(wait_for(lambda: any("mediastick.ui_context" in r for r in Fake.rpc)))
+            req = json.loads(next(r for r in Fake.rpc if "mediastick.ui_context" in r))
+            self.assertEqual(req["method"], "JSONRPC.NotifyAll")
+            self.assertEqual(req["params"]["sender"], "script.media-stick.home")
+            self.assertEqual(req["params"]["message"], "mediastick.ui_context")
+
+    def test_main_clears_ui_context_on_exit(self):
+        write_list(answer(chan(10, "Ten", number=10)))
+        with mock.patch.object(sweettv_app.ui, "load", side_effect=lambda cls, xml: self.make(demo=True)), \
+             mock.patch.object(sweettv_app.SweetTV, "doModal", lambda s: s._publish_ui_context()):
+            ok = sweettv_app.main(["demo"])
+            self.assertTrue(ok)
+        ctx = self._read_ctx()
+        self.assertEqual(ctx, mediastick_ui_context.empty_context())
+
+    def test_ui_cmd_ignores_other_apps_and_invalid_payloads(self):
+        write_list(answer(chan(10, "Ten", number=10)))
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+        self.assertEqual(window.section, "channels")
+
+        self._send_cmd(window, {"app": "youtube", "cmd": "set_section", "section": "movies"})
+        self._send_cmd(window, {"app": "sweettv", "cmd": "unknown_cmd"})
+        self._send_cmd(window, {"app": "sweettv", "cmd": "set_section", "section": "movies"}, method="Other.unrelated")
+        window._cmd_monitor.onNotification("media-stick.panel", "Other.mediastick.ui_cmd", "{not-json")
+        time.sleep(0.05)
+        self.assertEqual(window.section, "channels")
+
+    def test_ui_cmd_set_section_set_filter_beyond_7_sort_and_search_no_dialog(self):
+        write_list(answer(chan(10, "Ten", number=10)))
+        genres = [{"id": 100 + i, "name": f"Genre {i}"} for i in range(14)]
+        cfg = {"ok": True, "genres": genres, "sort_modes": _sample_config()["sort_modes"]}
+        movies = [_sample_movie(500 + i, f"Matrix {i}", genres=(110,)) for i in range(3)]
+        search_res = {"ok": True, "items": [{"kind": "movie", "id": "500", "title": "Matrix 0", "vod_url": "plugin://plugin.video.sweettv/playvod/500|null|10"}]}
+
+        with mock.patch.object(API, "configuration", return_value=cfg), \
+             mock.patch.object(API, "catalog_page", return_value={"ok": True, "section": "movies", "items": movies, "total": 3}), \
+             mock.patch.object(API, "search", return_value=search_res) as m_search:
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+
+            m_card = sweettv_app.sections.vod_card(_sample_movie(500, "Matrix 0"), "movie")
+            with mock.patch.object(API, "vod_detail", return_value={"ok": True, "id": "vod:500", "title": "Matrix 0", "vod_url": "plugin://plugin.video.sweettv/playvod/500|null|10"}):
+                window._open_detail_modal(m_card)
+                self.assertTrue(wait_for(lambda: window._modal_open()))
+
+            self._send_cmd(window, {"app": "sweettv", "cmd": "set_section", "section": "movies"})
+            self.assertTrue(wait_for(lambda: window.section == "movies" and not window._modal_open()))
+            self.assertTrue(wait_for(lambda: len(window.chips) > 10))
+
+            target_chip = window.chips[10][0]
+            self._send_cmd(window, {"app": "sweettv", "cmd": "set_filter", "id": target_chip})
+            self.assertTrue(wait_for(lambda: window._active_chip_key() == target_chip))
+
+            self._send_cmd(window, {"app": "sweettv", "cmd": "sort", "sort": "3"})
+            self.assertTrue(wait_for(lambda: window.sort_idx == 1))
+
+            self._send_cmd(window, {"app": "sweettv", "cmd": "search", "query": "Matrix"})
+            self.assertTrue(wait_for(lambda: self._read_ctx()["search_query"] == "Matrix"))
+            self.assertEqual(Fake.asked, [])
+            m_search.assert_called()
+
+    def test_ui_cmd_play_from_start_toggle_fav_select_tab_play_episode_and_play_epg(self):
+        ep_list = [
+            {"id": "e1", "number": 1, "title": "Ep 1", "vod_url": "plugin://plugin.video.sweettv/playvod/701|e1|10"},
+            {"id": "e2", "number": 2, "title": "Ep 2", "vod_url": "plugin://plugin.video.sweettv/playvod/701|e2|10"},
+        ]
+        detail = {
+            "ok": True, "id": "vod:701", "movie_id": "701", "title": "Test Series",
+            "seasons": [
+                {"id": 1, "number": 1, "title": "S1", "episodes": ep_list},
+                {"id": 2, "number": 2, "title": "S2", "episodes": ep_list},
+            ],
+        }
+        write_list(answer(chan(10, "Ten", number=10, catchup=True, epg=[
+            prog(NOW - 3600, NOW - 1800, text="Past Show", pid=901),
+            prog(NOW - 600, NOW + 600, text="Live Show", pid=902),
+        ])))
+
+        window = self.open()
+        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+
+        with mock.patch.object(window, "_start_playback", wraps=window._start_playback) as m_play:
+            self._send_cmd(window, {"app": "sweettv", "cmd": "play"})
+            self.assertTrue(wait_for(lambda: m_play.call_count >= 1))
+            self._send_cmd(window, {"app": "sweettv", "cmd": "play_from_start"})
+            self.assertTrue(wait_for(lambda: m_play.call_count >= 2))
+
+            self._send_cmd(window, {"app": "sweettv", "cmd": "toggle_fav"})
+            self.assertTrue(wait_for(lambda: "ch:10" in window.fav_keys))
+
+            s_card = sweettv_app.sections.vod_card({"id": 701, "title": "Test Series"}, "series")
+            with mock.patch.object(API, "vod_detail", return_value=detail):
+                window._open_show_modal(s_card)
+                self.assertTrue(wait_for(lambda: window.modal_kind == "show" and len(window.modal_tabs) == 2))
+
+            self._send_cmd(window, {"app": "sweettv", "cmd": "select_tab", "idx": 1})
+            self.assertTrue(wait_for(lambda: window.modal_tab_idx == 1))
+
+            before = m_play.call_count
+            self._send_cmd(window, {"app": "sweettv", "cmd": "play_episode", "idx": 1})
+            self.assertTrue(wait_for(lambda: m_play.call_count > before))
+            self.assertIsNotNone(window.session)
+            self.assertGreater(window.play_at, 0)
+
+            window._guide_close()
+            window._open_channel_hub("10")
+            self.assertTrue(wait_for(lambda: window.modal_kind == "guide" and len(window.modal_rows) >= 1))
+            before_epg = m_play.call_count
+            self._send_cmd(window, {"app": "sweettv", "cmd": "play_epg", "idx": 0})
+            self.assertTrue(wait_for(lambda: m_play.call_count > before_epg))
+            self.assertIsNotNone(window.session)
+            self.assertGreater(window.play_at, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
