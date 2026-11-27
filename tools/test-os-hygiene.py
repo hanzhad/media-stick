@@ -30,6 +30,7 @@ SUDOERS_FILE = os.path.join(FILES_DIR, "etc", "sudoers.d", "media-stick")
 WEBAPP_STOP_BIN = os.path.join(FILES_DIR, "usr", "local", "sbin", "media-stick-webapp-stop")
 WEBAPP_BIN = os.path.join(FILES_DIR, "usr", "local", "bin", "web-app")
 TMPFILES_CONF = os.path.join(FILES_DIR, "etc", "tmpfiles.d", "media-stick.conf")
+PAM_KODI_CONF = os.path.join(FILES_DIR, "etc", "pam.d", "mediastick-kodi")
 
 SYSTEMD_DIR = os.path.join(FILES_DIR, "etc", "systemd", "system")
 KODI_SERVICE = os.path.join(SYSTEMD_DIR, "kodi.service")
@@ -184,9 +185,48 @@ class TestSystemdGuardrailsAndWebApp(unittest.TestCase):
     def test_kodi_service_boot_and_cgroup_guardrails(self):
         text = _strip_comments(_read_text(KODI_SERVICE))
         self.assertNotIn("network-online.target", text, "kodi.service must not wait for network-online.target")
+        self.assertNotIn("systemd-user-sessions.service", text, "kodi.service must not wait behind systemd-user-sessions.service")
+        after_tokens = set()
+        for line in re.findall(r"(?m)^After=(.+)$", text):
+            after_tokens.update(line.split())
+        for wanted in (
+            "systemd-logind.service",
+            "sound.target",
+            "mediastick-displayd.service",
+            "plymouth-start.service",
+            "plymouth-quit.service",
+        ):
+            with self.subTest(after=wanted):
+                self.assertIn(wanted, after_tokens)
+        self.assertNotIn("network.target", after_tokens)
+        self.assertRegex(text, r"(?m)^PAMName=mediastick-kodi\b")
+        self.assertNotRegex(text, r"(?m)^PAMName=login\b")
+        self.assertRegex(text, r"(?m)^Conflicts=.*getty@tty1\.service\b")
+        self.assertRegex(text, r"(?m)^Conflicts=.*plymouth-quit\.service\b")
+        self.assertRegex(text, r"(?m)^TTYPath=/dev/tty1\b")
         self.assertRegex(text, r"(?m)^MemoryHigh=380M\b")
         self.assertRegex(text, r"(?m)^MemoryMax=480M\b")
         self.assertRegex(text, r"(?m)^OOMScoreAdjust=200\b")
+
+    def test_mediastick_kodi_pam_profile_has_no_nologin_or_nottys(self):
+        self.assertTrue(os.path.isfile(PAM_KODI_CONF), f"missing {PAM_KODI_CONF}")
+        text = _strip_comments(_read_text(PAM_KODI_CONF))
+        required_lines = (
+            "@include common-account",
+            "session [success=ok ignore=ignore module_unknown=ignore default=bad] pam_selinux.so close",
+            "session required pam_loginuid.so",
+            "session required pam_limits.so",
+            "session optional pam_keyinit.so force revoke",
+            "@include common-session-noninteractive",
+            "-session optional pam_systemd.so",
+            "session [success=ok ignore=ignore module_unknown=ignore default=bad] pam_selinux.so open",
+        )
+        norm_lines = [" ".join(ln.split()) for ln in text.splitlines() if ln.strip()]
+        for req in required_lines:
+            with self.subTest(directive=req):
+                self.assertIn(req, norm_lines)
+        self.assertNotIn("pam_nologin", text, "mediastick-kodi PAM must omit pam_nologin.so to prevent 224/PAM")
+        self.assertNotIn("nottys", text, "mediastick-kodi PAM must omit nottys since TTYPath=/dev/tty1 is set")
 
     def test_webapp_service_cgroup_guardrails(self):
         text = _strip_comments(_read_text(WEBAPP_SERVICE))
@@ -203,6 +243,7 @@ class TestSystemdGuardrailsAndWebApp(unittest.TestCase):
     def test_panel_service_has_systemd_journal_group(self):
         text = _strip_comments(_read_text(PANEL_SERVICE))
         self.assertRegex(text, r"(?m)^SupplementaryGroups=systemd-journal\b")
+        self.assertRegex(text, r"(?m)^Environment=XDG_RUNTIME_DIR=/run/user/1000\b")
 
     def test_webapp_script_chromium_cache_and_no_cage_debug(self):
         text = _strip_comments(_read_text(WEBAPP_BIN))
@@ -344,6 +385,12 @@ class TestOsApplyPureCore(unittest.TestCase):
         self.assertNotIn("web-app", units)
         self.assertEqual(mod.extract_changed_units([], existing), [])
 
+        # PAM profile updates must mark kodi.service affected (and respect existing_services / prefix boundary)
+        self.assertEqual(mod.extract_changed_units(["etc/pam.d/mediastick-kodi"], existing), ["kodi.service"])
+        self.assertEqual(mod.extract_changed_units(["/etc/pam.d/mediastick-kodi"], existing), ["kodi.service"])
+        self.assertEqual(mod.extract_changed_units(["etc/pam.d/mediastick-kodi"], {"panel.service"}), [])
+        self.assertEqual(mod.extract_changed_units(["etc/pam.d.bak/mediastick-kodi"], existing), [])
+
 
 class TestOsApplyThinShell(unittest.TestCase):
     """Thin I/O shell tests for device/os_apply.py using temporary --root and --repo."""
@@ -469,6 +516,22 @@ class TestBootstrapIntegration(unittest.TestCase):
         self.assertIn("/run/media-stick/airplay.log", text)
         self.assertIn("chown media:media /run/media-stick/airplay.log", text)
         self.assertIn("airplay.service", text)
+
+    def test_bootstrap_enables_linger_disables_cloud_init_and_boot_hogs(self):
+        text = _strip_comments(_read_text(BOOTSTRAP_SH))
+        self.assertIn("/var/lib/systemd/linger/media", text)
+        self.assertRegex(text, r"loginctl\s+enable-linger\s+media\b")
+        self.assertIn("/etc/cloud/cloud-init.disabled", text)
+        for hog in (
+            "dphys-swapfile",
+            "rpi-resize-swap-file",
+            "bluetooth",
+            "hciuart",
+            "udisks2",
+            "ModemManager",
+        ):
+            with self.subTest(boot_hog=hog):
+                self.assertIn(hog, text)
 
 
 if __name__ == "__main__":

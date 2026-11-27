@@ -445,12 +445,40 @@ class TestStreamResolutionAndDemuxer(unittest.TestCase):
                     self.assertIn("Referer=", sel["play_url"])
                     self.assertIn("sweet.tv", sel["play_url"])
                     self.assertNotIn("inputstream", props)
+                    for cap_key in (
+                        "inputstream.adaptive.chooser_resolution_max",
+                        "inputstream.adaptive.chooser_resolution_secure_max",
+                        "inputstream.adaptive.max_resolution",
+                    ):
+                        self.assertNotIn(cap_key, props)
                 else:
                     self.assertEqual(props.get("inputstream"), "inputstream.adaptive")
                     if quality in ("720p", "1080p"):
+                        self.assertEqual(props.get("inputstream.adaptive.chooser_resolution_max"), quality)
+                        self.assertEqual(props.get("inputstream.adaptive.chooser_resolution_secure_max"), quality)
                         self.assertEqual(props.get("inputstream.adaptive.max_resolution"), quality)
                     else:
-                        self.assertNotIn("inputstream.adaptive.max_resolution", props)
+                        for cap_key in (
+                            "inputstream.adaptive.chooser_resolution_max",
+                            "inputstream.adaptive.chooser_resolution_secure_max",
+                            "inputstream.adaptive.max_resolution",
+                        ):
+                            self.assertNotIn(cap_key, props)
+
+        # Full combinatoric matrix across stream types x ("720p", "1080p", "unlimited")
+        for stream_label, s_info in (("hls", hls_stream), ("dash", dash_stream), ("wv", wv_stream)):
+            for q in ("720p", "1080p", "unlimited"):
+                with self.subTest(stream=stream_label, quality=q):
+                    props = sp.select_demuxer(s_info, kind="live", slot_stop=0, now=DAY1_23_00, quality=q)["properties"]
+                    for cap_key in (
+                        "inputstream.adaptive.chooser_resolution_max",
+                        "inputstream.adaptive.chooser_resolution_secure_max",
+                        "inputstream.adaptive.max_resolution",
+                    ):
+                        if q in ("720p", "1080p"):
+                            self.assertEqual(props.get(cap_key), q)
+                        else:
+                            self.assertNotIn(cap_key, props)
 
     def test_is_finished_hls_archive_rules(self):
         sp = _require_sweetplay(self)
@@ -1688,7 +1716,11 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
             req = sp.build_play_notify("live", cid="5", title="Первый канал", preview=True)
             self.assertTrue(ctrl.handle_play(req["params"]["data"]))
             self.assertEqual(self.played_windowed, [True])
-            self.assertEqual(self.played[-1][1].props.get("inputstream.adaptive.max_resolution"), "720p")
+            self.assertEqual(self.m3u8_calls, [], "live preview must not add extra .m3u8 HTTP round-trips")
+            preview_props = self.played[-1][1].props
+            self.assertEqual(preview_props.get("inputstream.adaptive.chooser_resolution_max"), "720p")
+            self.assertEqual(preview_props.get("inputstream.adaptive.chooser_resolution_secure_max"), "720p")
+            self.assertEqual(preview_props.get("inputstream.adaptive.max_resolution"), "720p")
             self.assertEqual(self.win_props.get("ms.tv_preview"), "1")
             self.assertEqual(self.win_props.get("ms.tv_osd"), "")
             self.assertFalse(os.path.exists(self.session_path))
@@ -1759,9 +1791,25 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
 
             ctrl.handle_play(sp.build_play_notify("live", cid="5", title="Первый канал", preview=False)["params"]["data"])
             self.assertEqual(self.played_windowed[-1], False)
-            self.assertEqual(self.played[-1][1].props.get("inputstream.adaptive.max_resolution"), "1080p")
+            full_props = self.played[-1][1].props
+            self.assertEqual(full_props.get("inputstream.adaptive.chooser_resolution_max"), "1080p")
+            self.assertEqual(full_props.get("inputstream.adaptive.chooser_resolution_secure_max"), "1080p")
+            self.assertEqual(full_props.get("inputstream.adaptive.max_resolution"), "1080p")
             self.assertEqual(self.win_props.get("ms.tv_preview"), "")
             self.assertTrue(os.path.exists(self.session_path))
+
+        with (
+            mock.patch.object(signin, "sweettv_setting", return_value="Bearer test-tok"),
+            mock.patch.object(ms_resume, "read_quality", return_value="unlimited"),
+        ):
+            ctrl.handle_play(sp.build_play_notify("live", cid="5", title="Первый канал", preview=False)["params"]["data"])
+            unlim_props = self.played[-1][1].props
+            for cap_key in (
+                "inputstream.adaptive.chooser_resolution_max",
+                "inputstream.adaptive.chooser_resolution_secure_max",
+                "inputstream.adaptive.max_resolution",
+            ):
+                self.assertNotIn(cap_key, unlim_props)
 
 
 class TestKodi21TuningConfig(unittest.TestCase):
