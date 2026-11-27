@@ -457,6 +457,7 @@ input,select{width:100%;min-height:52px;padding:0 14px;border-radius:14px;border
 label{display:block;margin:14px 0 6px;color:var(--dim);font-size:14px}
 .msg{padding:12px 14px;border-radius:14px;background:var(--bg);border:1px solid var(--line);margin:12px 0;color:var(--dim)}
 .row{display:flex;gap:8px}.row>*{flex:1}.row>.fit{flex:0 0 auto}
+.row.wrap{flex-wrap:wrap}.row.wrap>*{flex:1 1 130px;min-width:0}.row.wrap .btn{padding:8px 12px;text-align:center}
 .gap{margin-top:12px}
 /* remote */
 .dpad{display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;user-select:none;-webkit-user-select:none}
@@ -844,9 +845,9 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   <section id="t-act" data-tab="settings" data-spage="act" class="hide">
     <div class="card"><h2>Обслуживание</h2>
       <p class="dsub" id="act-last"></p>
-      <div class="row"><button class="btn" onclick="act('update')">Обновить сейчас</button>
-      <button id="rk-btn" class="btn" onclick="if(armed('rk-btn','Нажмите ещё раз, чтобы перезапустить плеер'))act('restart-kodi')">Перезапустить плеер</button><button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз, чтобы перезагрузить'))act('reboot')">Перезагрузить</button></div>
-      <div class="row gap"><button id="cec-standby" class="btn" type="button">ТВ Standby</button><button id="cec-wake" class="btn" type="button">ТВ Wake</button></div>
+      <button class="btn wide" onclick="act('update')">Обновить сейчас</button>
+      <div class="row wrap gap"><button id="rk-btn" class="btn" onclick="if(armed('rk-btn','Нажмите ещё раз, чтобы перезапустить плеер'))act('restart-kodi')">Перезапустить плеер</button><button id="r-btn" class="btn" onclick="if(armed('r-btn','Нажмите ещё раз, чтобы перезагрузить'))act('reboot')">Перезагрузить</button></div>
+      <div class="row wrap gap"><button id="cec-standby" class="btn" type="button">ТВ Standby</button><button id="cec-wake" class="btn" type="button">ТВ Wake</button></div>
       <button id="shot-save-act" class="btn wide gap" type="button"><svg class="i"><use href="#i-cam"/></svg>Скриншот экрана</button>
       <div id="pin-box" class="gap" style="padding-top:12px;border-top:1px solid var(--line)">
         <div class="head" style="margin-bottom:6px"><h2>LAN PIN-код</h2><span id="pin-state" class="cap" style="margin:0">Выключен</span></div>

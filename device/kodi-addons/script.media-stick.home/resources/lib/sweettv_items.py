@@ -1,4 +1,6 @@
 """SWEET.TV app: building Kodi ListItems for the 7-section rail, 4x2 card grid, and modals."""
+import time
+
 import xbmcgui
 
 from resources.lib import sweettv_data as data, sweettv_sections as sections, sweettv_text as words
@@ -158,7 +160,8 @@ def episode_items(episodes, fallback_art="") -> list:
     return out
 
 
-def guide_items(rows) -> list:
+def guide_items(rows, now=None) -> list:
+    ref_now = time.time() if now is None else now
     out = []
     for r in rows:
         title = str(r.get("title") or "")
@@ -169,8 +172,14 @@ def guide_items(rows) -> list:
             badge = words.tr("Archive")
             kind = "archive"
         else:
-            badge = words.tr("Soon") if r.get("start", 0) > 0 else ""
-            kind = "future"
+            raw_start = r.get("start")
+            start = 0 if isinstance(raw_start, bool) or not isinstance(raw_start, (int, float)) else raw_start
+            if start > ref_now:
+                badge = words.tr("Soon")
+                kind = "future"
+            else:
+                badge = words.tr("Not in the archive") if start > 0 else ""
+                kind = "past"
         li = xbmcgui.ListItem(title, badge, offscreen=True)
         li.setProperty("when", str(r.get("when") or ""))
         li.setProperty("kind", kind)

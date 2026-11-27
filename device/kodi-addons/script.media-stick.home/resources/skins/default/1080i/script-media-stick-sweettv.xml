@@ -1380,6 +1380,19 @@
                         <selectedcolor>FF14E0C8</selectedcolor>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Property(when)]</label>
+                        <visible>!String.IsEqual(ListItem.Property(kind),past)</visible>
+                    </control>
+                    <control type="label">
+                        <left>16</left>
+                        <top>0</top>
+                        <width>220</width>
+                        <height>64</height>
+                        <font>Reg22</font>
+                        <textcolor>FF64748B</textcolor>
+                        <selectedcolor>FF64748B</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Property(when)]</label>
+                        <visible>String.IsEqual(ListItem.Property(kind),past)</visible>
                     </control>
                     <control type="label">
                         <left>248</left>
@@ -1391,6 +1404,19 @@
                         <selectedcolor>FFFFFFFF</selectedcolor>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Label]</label>
+                        <visible>!String.IsEqual(ListItem.Property(kind),past)</visible>
+                    </control>
+                    <control type="label">
+                        <left>248</left>
+                        <top>0</top>
+                        <width>1180</width>
+                        <height>64</height>
+                        <font>Reg25</font>
+                        <textcolor>FF8594AB</textcolor>
+                        <selectedcolor>FF8594AB</selectedcolor>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>String.IsEqual(ListItem.Property(kind),past)</visible>
                     </control>
                     <control type="label">
                         <left>1440</left>
@@ -1403,6 +1429,20 @@
                         <align>right</align>
                         <aligny>center</aligny>
                         <label>$INFO[ListItem.Label2]</label>
+                        <visible>!String.IsEqual(ListItem.Property(kind),past)</visible>
+                    </control>
+                    <control type="label">
+                        <left>1440</left>
+                        <top>0</top>
+                        <width>272</width>
+                        <height>64</height>
+                        <font>Reg22</font>
+                        <textcolor>FF64748B</textcolor>
+                        <selectedcolor>FF64748B</selectedcolor>
+                        <align>right</align>
+                        <aligny>center</aligny>
+                        <label>$INFO[ListItem.Label2]</label>
+                        <visible>String.IsEqual(ListItem.Property(kind),past)</visible>
                     </control>
                 </itemlayout>
                 <focusedlayout width="1728" height="64">
@@ -1503,7 +1543,7 @@
 
             <control type="label">
                 <left>96</left>
-                <top>972</top>
+                <top>1026</top>
                 <width>1728</width>
                 <height>30</height>
                 <font>Reg22</font>
