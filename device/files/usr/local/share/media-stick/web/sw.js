@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ms-panel-v2-4';
+const CACHE_NAME = 'ms-panel-v2-5';
 const PRECACHE = [
   '/manifest.webmanifest',
   '/icon-192.png',

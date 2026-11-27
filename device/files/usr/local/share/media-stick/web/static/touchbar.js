@@ -1,14 +1,14 @@
 const TB_CSS = `
-.tb{background:var(--card);border-radius:18px;padding:6px 8px;border:1px solid var(--line)}
-.tb-row{display:flex;align-items:center;gap:6px;min-height:40px}
-.tb-pill,.tb-chip,.tb-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:36px;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:var(--card2);color:#fff;font-size:13px;font-weight:500;white-space:nowrap;flex:none;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.tb{background:var(--card);border-radius:18px;padding:5px 6px;border:1px solid var(--line)}
+.tb-row{display:flex;align-items:center;gap:5px;min-height:36px}
+.tb-pill,.tb-chip,.tb-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:34px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--card2);color:#fff;font-size:13px;font-weight:500;white-space:nowrap;flex:none;touch-action:manipulation;user-select:none;-webkit-user-select:none}
 .tb-pill:disabled{opacity:.85;cursor:default}
-.tb-chips{display:flex;align-items:center;gap:6px;flex:1 1 0;min-width:0;overflow-x:auto;touch-action:pan-x;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.tb-chips{display:flex;align-items:center;gap:5px;flex:1 1 0;min-width:0;overflow-x:auto;touch-action:pan-x;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .tb-chips::-webkit-scrollbar{display:none}
-.tb-chip.on,.tb-fav.on{background:#fff;color:var(--bg);font-weight:600;border-color:#fff}
+.tb-chip.on,.tb-btn.on,.tb-fav.on{background:#fff;color:var(--bg);font-weight:600;border-color:#fff}
 .tb-fav.on{color:#d9384a}
 .tb-acts{display:flex;align-items:center;gap:6px;flex:none}
-.tb-btn.tb-ico{width:36px;min-width:36px;padding:0}
+.tb-btn.tb-ico{width:34px;min-width:34px;padding:0}
 .tb-btn.tb-pri{background:#fff;color:var(--bg);border-color:#fff;font-weight:600}
 .tb-btn:active,.tb-chip:active,.tb-pill:active{opacity:.75}
 .tb-sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
@@ -73,7 +73,6 @@ export function initTouchBar(opts = {}) {
   const toast = typeof opts.toast === 'function' ? opts.toast : () => {};
   const buzz = typeof opts.buzz === 'function' ? opts.buzz : () => {};
   const onContext = typeof opts.onContext === 'function' ? opts.onContext : () => {};
-  const onSearch = typeof opts.onSearch === 'function' ? opts.onSearch : null;
 
   let currentCtx = null;
   let sheet = null;
@@ -283,9 +282,14 @@ export function initTouchBar(opts = {}) {
     const acts = el('div', 'tb-acts');
     if (ctx.sort && typeof ctx.sort === 'object') {
       const optsList = Array.isArray(ctx.sort.options) ? ctx.sort.options : [];
-      const sortBtn = el('button', 'tb-btn', ctx.sort.label || '↕');
+      const sortLabel = ctx.sort.label ? 'Сортировка: ' + ctx.sort.label : 'Сортировка';
+      const sortBtn = el('button', 'tb-btn tb-ico', '↕');
       sortBtn.type = 'button';
-      sortBtn.setAttribute('aria-label', 'Сортировка');
+      if (optsList.length > 0 && ctx.sort.id && ctx.sort.id !== optsList[0].id) {
+        sortBtn.classList.add('on');
+      }
+      sortBtn.setAttribute('aria-label', sortLabel);
+      sortBtn.setAttribute('title', sortLabel);
       sortBtn.addEventListener('click', () => {
         buzz();
         if (optsList.length > 1) {
@@ -298,21 +302,6 @@ export function initTouchBar(opts = {}) {
       });
       acts.appendChild(sortBtn);
     }
-    if (ctx.can_search) {
-      const searchBtn = el('button', 'tb-btn tb-ico');
-      searchBtn.type = 'button';
-      searchBtn.setAttribute('aria-label', 'Поиск');
-      searchBtn.appendChild(svgIcon('#i-search'));
-      searchBtn.addEventListener('click', () => {
-        buzz();
-        if (onSearch) onSearch(ctx);
-        else {
-          const rcSearch = document.getElementById('btn-search-rc');
-          if (rcSearch) rcSearch.click();
-        }
-      });
-      acts.appendChild(searchBtn);
-    }
     if (acts.childElementCount > 0) row.appendChild(acts);
     root.replaceChildren(row);
   }
@@ -323,9 +312,11 @@ export function initTouchBar(opts = {}) {
     const fields = modalPlayFields(modal);
 
     if (modal.can_play !== false) {
-      const playBtn = el('button', 'tb-btn tb-pri');
+      const playLabel = modal.play_label || 'Смотреть';
+      const playBtn = el('button', 'tb-btn tb-pri tb-ico');
       playBtn.type = 'button';
-      playBtn.setAttribute('aria-label', modal.play_label || 'Смотреть');
+      playBtn.setAttribute('aria-label', playLabel);
+      playBtn.setAttribute('title', playLabel);
       playBtn.appendChild(svgIcon('#i-play'));
       playBtn.addEventListener('click', () => {
         buzz();
@@ -335,9 +326,11 @@ export function initTouchBar(opts = {}) {
     }
 
     if (modal.can_archive || modal.alt_label) {
-      const altBtn = el('button', 'tb-btn', modal.alt_label || 'Сначала');
+      const altLabel = modal.alt_label || 'Сначала';
+      const altBtn = el('button', 'tb-btn tb-ico', '↺');
       altBtn.type = 'button';
-      altBtn.setAttribute('aria-label', modal.alt_label || 'Сначала');
+      altBtn.setAttribute('aria-label', altLabel);
+      altBtn.setAttribute('title', altLabel);
       altBtn.addEventListener('click', () => {
         buzz();
         sendCmd({ cmd: 'play_from_start', app: ctx.app, ...fields });
@@ -345,9 +338,10 @@ export function initTouchBar(opts = {}) {
       row.appendChild(altBtn);
     }
 
-    const favBtn = el('button', `tb-btn tb-fav${modal.fav ? ' on' : ''}`, '♥');
+    const favBtn = el('button', `tb-btn tb-ico tb-fav${modal.fav ? ' on' : ''}`, '♥');
     favBtn.type = 'button';
     favBtn.setAttribute('aria-label', 'Избранное');
+    favBtn.setAttribute('title', 'Избранное');
     favBtn.addEventListener('click', () => {
       buzz();
       const payload = { cmd: 'toggle_fav', app: ctx.app };
