@@ -269,6 +269,48 @@ class TestRpcNotifyBuilders(unittest.TestCase):
                 with self.assertRaises((ValueError, TypeError)):
                     sp.build_ctl_notify(bad_op, **bad_kw)
 
+    def test_preview_flag_only_allowed_for_live_and_stop_preview_ctl_op(self):
+        sp = _require_sweetplay(self)
+        self.assertIn("stop_preview", sp.VALID_CTL_OPS)
+        self.assertEqual(sp.validate_ctl_data({"op": "stop_preview"}), {"op": "stop_preview", "seconds": 0, "wall_ts": 0})
+        stop_req = sp.build_ctl_notify("stop_preview")
+        self.assertEqual(stop_req["params"]["message"], "sweettv.ctl")
+        self.assertEqual(stop_req["params"]["data"]["op"], "stop_preview")
+
+        self.assertFalse(sp.validate_play_data({"kind": "live", "cid": "5"})["preview"])
+        self.assertTrue(sp.validate_play_data({"kind": "live", "cid": "5", "preview": True})["preview"])
+        self.assertTrue(sp.build_play_notify("live", cid="5", preview=True)["params"]["data"]["preview"])
+        self.assertFalse(sp.build_play_notify("live", cid="5", preview=False)["params"]["data"]["preview"])
+        self.assertFalse(sp.validate_play_data({"kind": "epg", "cid": "5", "epg_id": "50", "preview": False})["preview"])
+        self.assertFalse(sp.validate_play_data({"kind": "vod", "movie_id": "9558", "preview": False})["preview"])
+
+        for kind, kw in (
+            ("epg", {"cid": "5", "epg_id": "50", "preview": True}),
+            ("vod", {"movie_id": "9558", "preview": True}),
+        ):
+            with self.subTest(kind=kind):
+                with self.assertRaises(ValueError):
+                    sp.validate_play_data({"kind": kind, **kw})
+                with self.assertRaises(ValueError):
+                    sp.build_play_notify(kind, **kw)
+
+    def test_sweettv_play_notify_preview_and_stop_preview_request(self):
+        _require_sweetplay(self)
+        fake_xbmc = types.ModuleType("xbmc")
+        with (
+            mock.patch.dict(sys.modules, {"xbmc": fake_xbmc}),
+            mock.patch.object(sys, "path", [HOME_ADDON, LIB, *sys.path]),
+        ):
+            sys.modules.pop("resources.lib.sweettv_play", None)
+            sw_play = importlib.import_module("resources.lib.sweettv_play")
+            req_preview = json.loads(sw_play.notify_request(kind="live", cid="5", title="Первый канал", preview=True))
+            self.assertTrue(req_preview["params"]["data"]["preview"])
+            req_full = json.loads(sw_play.notify_request(kind="live", cid="5", title="Первый канал"))
+            self.assertFalse(req_full["params"]["data"]["preview"])
+            stop_req = json.loads(sw_play.stop_preview_request())
+            self.assertEqual(stop_req["params"]["message"], "sweettv.ctl")
+            self.assertEqual(stop_req["params"]["data"]["op"], "stop_preview")
+
 
 class TestStreamResolutionAndDemuxer(unittest.TestCase):
     """Uncached open_stream / open_vod, exclude_hosts rotation, and demuxer rules."""
@@ -1060,6 +1102,7 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
         self.mono = [100.0]
         self.win_props = {}
         self.played = []
+        self.played_windowed = []
         self.seeks = []
         self.pos = [0.0]
         self.total = [0.0]
@@ -1119,6 +1162,7 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
 
             def play(self, item="", listitem=None, windowed=False, startpos=-1):
                 test.played.append((item, listitem))
+                test.played_windowed.append(bool(windowed))
                 test.is_playing[0] = True
 
             def stop(self):
@@ -1630,6 +1674,94 @@ class TestResidentSweetPlayerControllerAndHomeService(unittest.TestCase):
             self.assertEqual(len(self.open_calls), 2)
             self.assertEqual(len(self.m3u8_calls), 1)
             self.assertEqual(self.played[-1][1].props.get("inputstream"), "inputstream.adaptive")
+
+    def test_preview_mode_caps_720p_windowed_suppresses_session_osd_resume_and_failover(self):
+        import mediastick_resume as ms_resume
+        import mediastick_signin as signin
+
+        sp, ctrl = self._make_controller()
+        self.win_props["ms.tv_osd"] = "1"
+        with (
+            mock.patch.object(signin, "sweettv_setting", return_value="Bearer test-tok"),
+            mock.patch.object(ms_resume, "read_quality", return_value="1080p"),
+        ):
+            req = sp.build_play_notify("live", cid="5", title="Первый канал", preview=True)
+            self.assertTrue(ctrl.handle_play(req["params"]["data"]))
+            self.assertEqual(self.played_windowed, [True])
+            self.assertEqual(self.played[-1][1].props.get("inputstream.adaptive.max_resolution"), "720p")
+            self.assertEqual(self.win_props.get("ms.tv_preview"), "1")
+            self.assertEqual(self.win_props.get("ms.tv_osd"), "")
+            self.assertFalse(os.path.exists(self.session_path))
+            self.assertIsNone(ctrl.poll_hint())
+
+            self.pos[0], self.total[0] = 20.0, 0.0
+            self.mono[0] += 10.0
+            ctrl.tick()
+            self.assertIsNone(self.state_store.get_kv("sweettv:live"))
+
+            # Error/ended during preview cleans up without failover
+            ctrl.onPlayBackError()
+            self.assertEqual(len(self.open_calls), 1)
+            self.assertEqual(self.win_props.get("ms.tv_preview"), "")
+            self.assertIsNone(ctrl._session)
+            self.assertIsNone(self.state_store.get_kv("sweettv:live"))
+
+    def test_stop_preview_cleans_preview_ignores_fullscreen_and_aborts_inflight(self):
+        import mediastick_signin as signin
+
+        sp, ctrl = self._make_controller()
+        with mock.patch.object(signin, "sweettv_setting", return_value="Bearer test-tok"):
+            # 1. Active preview session is stopped & cleaned up by stop_preview
+            ctrl.handle_play(sp.build_play_notify("live", cid="5", title="Первый канал", preview=True)["params"]["data"])
+            self.assertTrue(self.is_playing[0])
+            self.assertEqual(self.win_props.get("ms.tv_preview"), "1")
+            ctrl.handle_ctl({"op": "stop_preview"})
+            self.assertFalse(self.is_playing[0])
+            self.assertEqual(self.win_props.get("ms.tv_preview"), "")
+            self.assertIsNone(ctrl._session)
+
+            # 2. Active non-preview session is NEVER stopped by stop_preview
+            ctrl.handle_play(sp.build_play_notify("live", cid="5", title="Первый канал", preview=False)["params"]["data"])
+            self.assertTrue(self.is_playing[0])
+            self.assertEqual(self.win_props.get("ms.tv_preview"), "")
+            ctrl.handle_ctl({"op": "stop_preview"})
+            self.assertTrue(self.is_playing[0])
+            self.assertIsNotNone(ctrl._session)
+            ctrl.onPlayBackStopped()
+
+            # 3. In-flight preview open is aborted if stop_preview arrives before play()
+            self.played.clear()
+            self.played_windowed.clear()
+
+            def aborting_send(url, headers, payload, timeout):
+                res = self._fake_send(url, headers, payload, timeout)
+                ctrl.handle_ctl({"op": "stop_preview"})
+                return res
+
+            ctrl._send = aborting_send
+            ctrl.handle_play(sp.build_play_notify("live", cid="5", title="Первый канал", preview=True)["params"]["data"])
+            self.assertEqual(self.played, [])
+            self.assertEqual(self.win_props.get("ms.tv_preview"), "")
+
+    def test_preview_promotion_to_fullscreen_clears_tv_preview_and_writes_session(self):
+        import mediastick_resume as ms_resume
+        import mediastick_signin as signin
+
+        sp, ctrl = self._make_controller()
+        with (
+            mock.patch.object(signin, "sweettv_setting", return_value="Bearer test-tok"),
+            mock.patch.object(ms_resume, "read_quality", return_value="1080p"),
+        ):
+            ctrl.handle_play(sp.build_play_notify("live", cid="5", title="Первый канал", preview=True)["params"]["data"])
+            self.assertEqual(self.played_windowed[-1], True)
+            self.assertEqual(self.win_props.get("ms.tv_preview"), "1")
+            self.assertFalse(os.path.exists(self.session_path))
+
+            ctrl.handle_play(sp.build_play_notify("live", cid="5", title="Первый канал", preview=False)["params"]["data"])
+            self.assertEqual(self.played_windowed[-1], False)
+            self.assertEqual(self.played[-1][1].props.get("inputstream.adaptive.max_resolution"), "1080p")
+            self.assertEqual(self.win_props.get("ms.tv_preview"), "")
+            self.assertTrue(os.path.exists(self.session_path))
 
 
 class TestKodi21TuningConfig(unittest.TestCase):

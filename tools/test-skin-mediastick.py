@@ -1107,6 +1107,16 @@ class TestSkinMediaStick(unittest.TestCase):
                 want_hide,
             )
 
+    def test_dialog_busy_hides_during_tv_preview(self):
+        busy_path = os.path.join(SKIN_XML_DIR, "DialogBusy.xml")
+        root = ET.parse(busy_path).getroot()
+        groups = root.findall("./controls/control[@type='group']")
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(
+            (groups[0].findtext("visible") or "").strip(),
+            "String.IsEmpty(Window(home).Property(ms.tv_preview))",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
