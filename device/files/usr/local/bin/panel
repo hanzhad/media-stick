@@ -439,6 +439,7 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 /* a remote, not a document: no double-tap zoom, no rubber-band bounce */
 html{touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:#fff;font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body::before{content:"";position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);background:var(--bg);z-index:45;pointer-events:none}
 button,input,select{font:inherit;color:inherit}
 button{cursor:pointer}
 .i{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none;pointer-events:none}
@@ -501,6 +502,7 @@ body.rotm .fbar{top:calc(12px + env(safe-area-inset-top));bottom:auto}
 body.rot .fhint{display:none}
 #f-flip{display:none}body.rot #f-flip{display:inline-flex}
 body.fs{overflow:hidden}
+body.fs::before{display:none}
 .kb{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;justify-content:center;gap:12px;padding:16px;border-radius:20px;background:var(--card)}
 .kb input{min-height:58px;font-size:18px;-webkit-appearance:none;appearance:none}
 .kbh{display:flex;align-items:center;gap:8px;font-size:17px;font-weight:600}
@@ -532,7 +534,7 @@ dt:nth-last-child(2),dd:last-child{border-bottom:0}
 .top b{font-size:20px;font-weight:600;flex:none}
 .pill{display:inline-flex;align-items:center;min-width:0;padding:8px 14px;border-radius:999px;background:rgba(255,255,255,.08);color:var(--dim);font-size:14px;white-space:nowrap}
 .pill span{overflow:hidden;text-overflow:ellipsis}
-.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:4px;background:var(--bg);border-top:1px solid var(--line);padding:8px 8px calc(8px + env(safe-area-inset-bottom))}
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;justify-content:center;gap:4px;background:var(--bg);border-top:1px solid var(--line);padding:8px 8px calc(8px + env(safe-area-inset-bottom))}
 .tabs button{flex:1;max-width:110px;display:flex;flex-direction:column;align-items:center;gap:4px;background:none;border:0;color:var(--faint);padding:2px 0;font-size:12px}
 .tabs .pb{display:flex;padding:4px 18px;border-radius:999px}
 .tabs button.on{color:#fff}.tabs button.on .pb{background:rgba(255,255,255,.14)}

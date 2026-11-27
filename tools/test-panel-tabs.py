@@ -486,6 +486,58 @@ class Settings(unittest.TestCase):
         self.assertTrue(any("100vh" in l and "env(safe-area-inset-top)" in l for l in np_lines))
         self.assertTrue(any("100svh" in l and "env(safe-area-inset-top)" in l for l in np_lines))
 
+        def css_props(rule_body):
+            return {k.strip(): v.strip() for part in rule_body.split(";") if ":" in part
+                    for k, v in [part.split(":", 1)]}
+
+        m_before = re.search(r"body::before\{([^}]+)\}", p)
+        self.assertIsNotNone(m_before, "missing body::before safe-area mask rule")
+        before = css_props(m_before.group(1))
+        self.assertIn(before.get("content"), ('""', "''"))
+        self.assertEqual(before.get("position"), "fixed")
+        self.assertEqual(before.get("top"), "0")
+        self.assertEqual(before.get("left"), "0")
+        self.assertEqual(before.get("right"), "0")
+        self.assertEqual(before.get("height"), "env(safe-area-inset-top)")
+        self.assertEqual(before.get("background"), "var(--bg)")
+        self.assertEqual(before.get("z-index"), "45")
+        self.assertEqual(before.get("pointer-events"), "none")
+
+        m_fs_before = re.search(r"body\.fs::before\{([^}]+)\}", p)
+        self.assertIsNotNone(m_fs_before, "missing body.fs::before fullscreen bypass rule")
+        self.assertEqual(css_props(m_fs_before.group(1)).get("display"), "none")
+
+        m_tabs = re.search(r"\.tabs\{([^}]+)\}", p)
+        self.assertIsNotNone(m_tabs, "missing .tabs rule")
+        tabs = css_props(m_tabs.group(1))
+        self.assertEqual(tabs.get("position"), "fixed")
+        self.assertEqual(tabs.get("bottom"), "0")
+        self.assertEqual(tabs.get("z-index"), "40")
+
+        # .sw-top stays top:0 (iOS WebKit obscuredContentInsets handles sticky offset)
+        m_sw_top = re.search(r"\.sw-top\{([^}]+)\}", p)
+        self.assertIsNotNone(m_sw_top, "missing .sw-top rule")
+        sw_top = css_props(m_sw_top.group(1))
+        self.assertEqual(sw_top.get("top"), "0")
+
+        # Stacking order: .sw-top (5) < .wt-bubble (8) < .tabs (40) < body::before (45) < .shotbox.full (50) < .fbar (51) < --z-sheet (60) < --z-toast (80)
+        z_sw_top = int(sw_top["z-index"])
+        z_wt_bubble = int(css_props(re.search(r"\.wt-bubble\{([^}]+)\}", p).group(1))["z-index"])
+        z_tabs = int(tabs["z-index"])
+        z_before = int(before["z-index"])
+        z_shot_full = int(css_props(re.search(r"\.shotbox\.full\{([^}]+)\}", p).group(1))["z-index"])
+        z_fbar = int(css_props(re.search(r"(?m)^\.fbar\{([^}]+)\}", p).group(1))["z-index"])
+        root = css_props(re.search(r":root\{([^}]+)\}", p).group(1))
+        z_sheet = int(root["--z-sheet"])
+        z_toast = int(root["--z-toast"])
+        self.assertLess(z_sw_top, z_tabs)
+        self.assertLess(z_wt_bubble, z_tabs)
+        self.assertLess(z_tabs, z_before)
+        self.assertLess(z_before, z_shot_full)
+        self.assertLess(z_shot_full, z_fbar)
+        self.assertLess(z_fbar, z_sheet)
+        self.assertLess(z_sheet, z_toast)
+
     def test_dead_leftovers_are_gone(self):
         for gone in ("AIR_SMOOTH", "show('a-msg'", 'id="a-msg"'):
             self.assertNotIn(gone, self.page)
