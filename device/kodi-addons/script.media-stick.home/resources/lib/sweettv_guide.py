@@ -370,17 +370,20 @@ class Guide:
         self._prop("has_alt", "1" if alt_label else "")
         self._prop("has_guide", "")
 
-    def _apply_guide_rows(self, rows, target_epg=""):
+    def _apply_guide_rows(self, rows, target_epg="", now=None):
+        ref_now = self._now() if now is None else now
         self.modal_rows = list(rows)
         list_ctl = self.getControl(GUIDE)
         list_ctl.reset()
-        list_ctl.addItems(items.guide_items(rows))
+        list_ctl.addItems(items.guide_items(rows, now=ref_now))
         if rows:
             idx = None
             if target_epg:
                 idx = next((i for i, r in enumerate(rows) if str(r.get("epg") or "") == str(target_epg)), None)
             if idx is None:
-                idx = next((i for i, r in enumerate(rows) if r.get("live")), 0)
+                idx = next((i for i, r in enumerate(rows) if r.get("live")), None)
+            if idx is None:
+                idx = next((i for i, r in enumerate(rows) if r.get("can_archive")), 0)
             list_ctl.selectItem(idx)
 
     def _open_channel_hub(self, cid, target_day=None, target_epg=""):
@@ -427,7 +430,7 @@ class Guide:
             if not demo:
                 day_key = date.fromtimestamp(int(day_unix)).isoformat()
                 cached_rows = files.channel_day(ch.cid, day_key, now=now, tr=words.tr)
-                self._apply_guide_rows(cached_rows, target_epg=self.modal_target_epg)
+                self._apply_guide_rows(cached_rows, target_epg=self.modal_target_epg, now=now)
             else:
                 self.getControl(GUIDE).reset()
         threading.Thread(
@@ -462,7 +465,7 @@ class Guide:
             if self._stop.is_set() or gen != self.modal_gen or self.modal_kind != "guide":
                 return
             if ok or not self.modal_rows:
-                self._apply_guide_rows(rows, target_epg=target_epg)
+                self._apply_guide_rows(rows, target_epg=target_epg, now=now)
         if focus_list and self.modal_kind == "guide":
             self._focus_on(GUIDE)
         self._publish_ui_context()
@@ -492,7 +495,7 @@ class Guide:
                 if not demo:
                     day_key = date.fromtimestamp(int(day_unix)).isoformat()
                     cached_rows = files.channel_day(ch.cid, day_key, now=now, tr=words.tr)
-                    self._apply_guide_rows(cached_rows)
+                    self._apply_guide_rows(cached_rows, now=now)
                 self._publish_ui_context()
                 threading.Thread(
                     target=self._load_guide_day,
@@ -580,7 +583,11 @@ class Guide:
                 },
             )
         else:
-            ui.notify(words.tr("This programme has not aired yet."))
+            start = _safe_int(row.get("start"), 0)
+            if start > self._now():
+                ui.notify(words.tr("This programme has not aired yet."))
+            else:
+                ui.notify(words.tr("This programme is not in the archive."))
 
     def _play_episode_at(self, idx, season=None):
         with self._lock:
