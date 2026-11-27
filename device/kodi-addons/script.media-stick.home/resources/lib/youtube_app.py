@@ -578,7 +578,9 @@ class YouTube(xbmcgui.WindowXML):
             return
         views = [data.section_view(key, self.routes) for key in pages.warm_keys(self.view.key)]
         jobs = [(pages.key_of(v), lambda v=v: self._warm_page(v, pid)) for v in views]
-        self.warming = prefetch.warm(ns, jobs, ttl=pages.PAGE_TTL, idle=self._idle)
+        self.warming = prefetch.warm(
+            ns, jobs, ttl=pages.PAGE_TTL, idle=self._idle, delay=prefetch.INITIAL_DELAY
+        )
 
     def _cancel_warm(self):
         warming, self.warming = self.warming, None

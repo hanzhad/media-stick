@@ -33,6 +33,7 @@ sys.path.insert(0, "/usr/local/lib/media-stick")
 import panel_accounts   # the Accounts tab and its API
 import panel_watch      # the Смотреть tab and its API
 import panel_lang       # the device's language: its settings page and API
+import panel_audio      # audio output switcher: HDMI vs 3.5mm
 import panel_sweettv    # the SWEET.TV part of that API
 import panel_ui_context   # TV UI context tmpfs watcher + command dispatcher
 import panel_onboarding_ui   # the sheet of the shared TV <-> phone onboarding
@@ -405,6 +406,7 @@ def sd_minutes(ts, now=None):
 def _status():
     s = STATE_HUB.collect(refresh_timers=True)
     s["lang"] = panel_lang.current()
+    s["audio_out"] = panel_audio.current()
     return s
 
 PIN_AUTH = auth_pin.PinAuth(state_dir=STATE_DIR)
@@ -625,7 +627,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
 /* wide screen, no tab bar, everything at once: Смотреть across the top, the picture beside the remote
    (the mode switch is no use here), then the settings cards */
 @media (min-width:900px){
-  #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act" "lang lang";gap:20px;padding:28px}
+  #app{max-width:1360px;display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-areas:"top top" "watch watch" "screen remote" "acc acc" "https wifi" "info act" "lang audio";gap:20px;padding:28px}
   .top{grid-area:top;margin-bottom:0}
   .tabs,.mode-corners,.sp-head,#t-setlist{display:none!important}
   .toast{bottom:28px}
@@ -791,7 +793,7 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
       <button class="srow" data-sp="acc"><svg class="i"><use href="#i-user"/></svg><span class="sname">Приложения</span><span class="sval" id="sv-acc"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="wifi"><svg class="i"><use href="#i-wifi"/></svg><span class="sname">Wi-Fi</span><span class="sval" id="sv-wifi"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="https"><svg class="i"><use href="#i-lock"/></svg><span class="sname">Пульт как приложение</span><span class="sval" id="sv-https"></span><span class="chev" aria-hidden="true">›</span></button>
-      @@LANG_ROW@@<button class="srow" data-sp="info"><svg class="i"><use href="#i-info"/></svg><span class="sname">О приставке</span><span class="sval" id="sv-info"></span><span class="chev" aria-hidden="true">›</span></button>
+      @@LANG_ROW@@@@AUDIO_ROW@@<button class="srow" data-sp="info"><svg class="i"><use href="#i-info"/></svg><span class="sname">О приставке</span><span class="sval" id="sv-info"></span><span class="chev" aria-hidden="true">›</span></button>
       <button class="srow" data-sp="act"><svg class="i"><use href="#i-rot"/></svg><span class="sname">Обслуживание</span><span class="sval" id="sv-act"></span><span class="chev" aria-hidden="true">›</span></button>
     </div>
   </section>
@@ -799,6 +801,8 @@ input[type=range]{padding:0;min-height:36px;border:0;background:transparent;acce
   @@ACC_SECTION@@
 
   @@LANG_SECTION@@
+
+  @@AUDIO_SECTION@@
 
   <section id="t-wifi" data-tab="settings" data-spage="wifi" class="hide">
     <div class="card"><h2>Wi-Fi</h2>
@@ -1034,7 +1038,7 @@ function setMode(m){
 }
 document.querySelectorAll('[data-mode-go]').forEach(b=>b.addEventListener('click',()=>{buzz();setMode(b.dataset.modeGo)}));
 // Settings on a phone: the list, or one page of it (spage; '' = the list). A page has a hash, so the back button works.
-const SP_HASH={acc:'accounts',lang:'language',wifi:'wifi',https:'https',info:'device',act:'maintenance'}, SP_OF={}, SP_ID={acc:'t-acc',lang:'t-lang',wifi:'t-wifi',https:'t-https',info:'t-info',act:'t-act'};
+const SP_HASH={acc:'accounts',lang:'language',audio:'audio',wifi:'wifi',https:'https',info:'device',act:'maintenance'}, SP_OF={}, SP_ID={acc:'t-acc',lang:'t-lang',audio:'t-audio',wifi:'t-wifi',https:'t-https',info:'t-info',act:'t-act'};
 Object.keys(SP_HASH).forEach(k=>{SP_OF[SP_HASH[k]]=k});
 SP_OF.apps='acc';
 let spage='', spPushed=false;
@@ -1176,6 +1180,7 @@ function setRows(s){
   v('sv-acc',window.accRowText?accRowText():'');
   v('sv-wifi',s.wifi.ssid||'кабель');
   v('sv-lang',window.langRowText?langRowText(s):'');
+  v('sv-audio',window.audioRowText?audioRowText(s):'');
   v('sv-https',HTTPS_RE.test(httpsUrl)?'включено':'выключено');
   v('sv-act',s.last_check_min==null?'—':'проверено '+ruAgo(s.last_check_min));
   v('act-last','Автообновление: '+(s.last_check_min==null?'ещё не проверяло с включения':'проверено '+ruAgo(s.last_check_min))+'. '+(s.next_update_min==null?'':ruNextCheck(s.next_update,s.next_update_min)==='сейчас'?'Следующая проверка сейчас.':'Следующая проверка '+ruNextCheck(s.next_update,s.next_update_min)+'.'));
@@ -1729,10 +1734,11 @@ setMode(lsGet('mode'));
 setPage('');
 if(!wide()){const t=lsGet('tab');if(TABS.includes(t)&&t!=='watch')document.querySelector('[data-go='+t+']').click()}
 hashGo();
-</script><script type="module" src="/static/v2-boot.js?v=dev"></script>@@ACC_TAIL@@@@WATCH_TAIL@@@@LANG_TAIL@@</body></html>"""
+</script><script type="module" src="/static/v2-boot.js?v=dev"></script>@@ACC_TAIL@@@@WATCH_TAIL@@@@LANG_TAIL@@@@AUDIO_TAIL@@</body></html>"""
 PAGE = panel_accounts.inject(PAGE)
 PAGE = panel_watch.inject(PAGE)
 PAGE = panel_lang.inject(PAGE)
+PAGE = panel_audio.inject(PAGE)
 PAGE = panel_onboarding_ui.inject(PAGE)
 BOOT_VER = STATIC_ASSETS.asset_version("static/v2-boot.js")
 if BOOT_VER:
@@ -2102,6 +2108,10 @@ class H(BaseHTTPRequestHandler):
             return self.send(body, code=code)
         if p == panel_lang.PATH:
             body, code = panel_lang.post(p, b, kodi)
+            return self.send(body, code=code)
+        if p == panel_audio.PATH:
+            body, code = panel_audio.post(p, b)
+            status_cache["t"] = 0.0
             return self.send(body, code=code)
         if p.startswith(panel_sweettv.PREFIX):
             body, code = panel_sweettv.post(p, b, kodi)

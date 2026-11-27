@@ -783,6 +783,8 @@ def select_demuxer(
         if license_url:
             props["inputstream.adaptive.license_key"] = license_url
     if isinstance(quality, str) and quality in ("720p", "1080p"):
+        props["inputstream.adaptive.chooser_resolution_max"] = quality
+        props["inputstream.adaptive.chooser_resolution_secure_max"] = quality
         props["inputstream.adaptive.max_resolution"] = quality
 
     return {

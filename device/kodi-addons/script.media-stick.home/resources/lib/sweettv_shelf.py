@@ -502,7 +502,9 @@ class Shelf:
             jobs.append((top_key, _fetch_top))
 
         if jobs:
-            self._warm_handle = prefetch.warm(ns, jobs, ttl=pages.PAGE_TTL, idle=self._shelf_idle)
+            self._warm_handle = prefetch.warm(
+                ns, jobs, ttl=pages.PAGE_TTL, idle=self._shelf_idle, delay=prefetch.INITIAL_DELAY
+            )
 
     def _maybe_paginate(self):
         with self._lock:

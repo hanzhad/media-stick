@@ -17,6 +17,7 @@ import time
 
 from resources.lib import page_cache
 
+INITIAL_DELAY = 4.0            # s to wait before starting background warm-up after boot/open
 JOB_TIMEOUT = 30.0               # s: a job that took longer ends the run and its answer is dropped
 IDLE_TIMEOUT = 60.0              # s the run waits for the screen to be idle before it gives up
 IDLE_POLL = 0.2
@@ -143,10 +144,14 @@ def _job(handle, key, fetch, job_timeout):
     return True
 
 
-def _run(handle, jobs, job_timeout, idle, idle_timeout, pause, nice, log, ttl):
+def _run(handle, jobs, job_timeout, idle, idle_timeout, pause, nice, log, ttl, delay=0.0):
     began = time.monotonic()
     try:
         _lower_priority(nice)
+        if delay and delay > 0:
+            if handle._cancel.wait(delay):
+                handle.note = "cancelled"
+                return
         if not _acquire(handle):
             handle.note = "cancelled"
             return
@@ -184,7 +189,7 @@ def _run(handle, jobs, job_timeout, idle, idle_timeout, pause, nice, log, ttl):
 
 
 def warm(namespace, jobs, ttl=page_cache.DEFAULT_TTL, job_timeout=JOB_TIMEOUT, idle=None, idle_timeout=IDLE_TIMEOUT,
-         pause=PAUSE, nice=NICE, log=None):
+         pause=PAUSE, nice=NICE, log=None, delay=0.0):
     """Run jobs ([(key, fetch), ...]) for namespace in the background; the Handle at once. Never raises."""
     handle = Handle(namespace)
     try:
@@ -195,7 +200,7 @@ def warm(namespace, jobs, ttl=page_cache.DEFAULT_TTL, job_timeout=JOB_TIMEOUT, i
                 return running
             _running[namespace] = handle
         threading.Thread(target=_run, name="prefetch", daemon=True,
-                         args=(handle, jobs, job_timeout, idle, idle_timeout, pause, nice, log, ttl)).start()
+                         args=(handle, jobs, job_timeout, idle, idle_timeout, pause, nice, log, ttl, delay)).start()
         return handle
     except Exception:
         with _lock:

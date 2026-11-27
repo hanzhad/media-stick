@@ -2290,7 +2290,7 @@ class DiskCache(WindowCase):
     def warming(self):
         """Turn the start-up fetch on, without its pauses."""
         self.no_warm.stop()
-        patch = mock.patch.object(prefetch, "warm", side_effect=lambda ns, jobs, **k: self.real_warm(ns, jobs, **{**k, "pause": 0, "nice": 0}))
+        patch = mock.patch.object(prefetch, "warm", side_effect=lambda ns, jobs, **k: self.real_warm(ns, jobs, **{**k, "pause": 0, "nice": 0, "delay": 0}))
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -2636,7 +2636,7 @@ class Splash(WindowCase):
         self.real_warm = prefetch.warm
         for patch in (mock.patch.object(youtube_app, "PAGES", True),
                       mock.patch.object(prefetch, "warm", side_effect=lambda ns, jobs, **k: self.real_warm(
-                          ns, jobs, **{**k, "pause": 0, "nice": 0}))):
+                          ns, jobs, **{**k, "pause": 0, "nice": 0, "delay": 0}))):
             patch.start()
             self.addCleanup(patch.stop)
         page_cache.drop(P.namespace("p1"))
