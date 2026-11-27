@@ -526,7 +526,7 @@ class Settings(unittest.TestCase):
         z_tabs = int(tabs["z-index"])
         z_before = int(before["z-index"])
         z_shot_full = int(css_props(re.search(r"\.shotbox\.full\{([^}]+)\}", p).group(1))["z-index"])
-        z_fbar = int(css_props(re.search(r"\.fbar\{([^}]+)\}", p).group(1))["z-index"])
+        z_fbar = int(css_props(re.search(r"(?m)^\.fbar\{([^}]+)\}", p).group(1))["z-index"])
         root = css_props(re.search(r":root\{([^}]+)\}", p).group(1))
         z_sheet = int(root["--z-sheet"])
         z_toast = int(root["--z-toast"])
