@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ms-panel-v2-5';
+const CACHE_NAME = 'ms-panel-v2-6';
 const PRECACHE = [
   '/manifest.webmanifest',
   '/icon-192.png',
@@ -28,7 +28,11 @@ setInterval(()=>{fetch('/api/status',{cache:'no-store'}).then(r=>{if(r.ok)locati
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE))
+      .then((cache) => Promise.all(
+        PRECACHE.map((u) => fetch(new Request(u, { cache: 'reload' }))
+          .then((resp) => (resp && resp.ok ? cache.put(u, resp) : undefined))
+          .catch(() => {}))
+      ))
       .catch(() => {})
       .finally(() => self.skipWaiting())
   );
@@ -48,6 +52,13 @@ function isCacheableStatic(url) {
   return url.pathname === '/manifest.webmanifest' || url.pathname === '/icon-192.png' || url.pathname === '/icon-512.png';
 }
 
+function cachePut(req, resp) {
+  if (!resp || !resp.ok) return resp;
+  const copy = resp.clone();
+  caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {});
+  return resp;
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -57,17 +68,20 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  if (url.pathname.startsWith('/static/') && !url.searchParams.has('v')) {
+    event.respondWith(
+      fetch(new Request(req, { cache: 'no-cache' }))
+        .then((resp) => cachePut(req, resp))
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
+
   if (isCacheableStatic(url)) {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached;
-        return fetch(req).then((resp) => {
-          if (resp && resp.ok) {
-            const copy = resp.clone();
-            caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {});
-          }
-          return resp;
-        });
+        return fetch(req).then((resp) => cachePut(req, resp));
       })
     );
     return;
