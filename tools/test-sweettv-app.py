@@ -5560,9 +5560,10 @@ class Issue111UiContextAndCmdTests(WindowCase):
             m_search.assert_called()
 
     def test_ui_cmd_play_from_start_toggle_fav_select_tab_play_episode_and_play_epg(self):
+        Fake.now = NOW
         ep_list = [
-            {"id": "e1", "number": 1, "title": "Ep 1", "vod_url": "plugin://plugin.video.sweettv/playvod/701|e1|10"},
-            {"id": "e2", "number": 2, "title": "Ep 2", "vod_url": "plugin://plugin.video.sweettv/playvod/701|e2|10"},
+            {"id": "e1", "number": 1, "title": "Ep 1", "vod_url": "plugin://plugin.video.sweettv/playvod/701|101|10"},
+            {"id": "e2", "number": 2, "title": "Ep 2", "vod_url": "plugin://plugin.video.sweettv/playvod/701|102|10"},
         ]
         detail = {
             "ok": True, "id": "vod:701", "movie_id": "701", "title": "Test Series",
@@ -5571,7 +5572,7 @@ class Issue111UiContextAndCmdTests(WindowCase):
                 {"id": 2, "number": 2, "title": "S2", "episodes": ep_list},
             ],
         }
-        write_list(answer(chan(10, "Ten", number=10, catchup=True, epg=[
+        write_list(answer(chan(10, "Ten", number=10, catchup=True, catchup_duration=3, epg=[
             prog(NOW - 3600, NOW - 1800, text="Past Show", pid=901),
             prog(NOW - 600, NOW + 600, text="Live Show", pid=902),
         ])))

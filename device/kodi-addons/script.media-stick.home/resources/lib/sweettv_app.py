@@ -1,4 +1,6 @@
 """SWEET.TV app window: Netflix-style TV UI with 7-section left rail, hero banner, 4x2 card grid, and modals."""
+from datetime import date
+import json
 import os
 import sys
 import threading
@@ -8,8 +10,15 @@ import xbmc
 import xbmcgui
 
 LIB_DIR = "/usr/local/lib/media-stick"
-if LIB_DIR not in sys.path:
+if os.path.isdir(LIB_DIR) and LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
+
+try:
+    import mediastick_ui_context  # noqa: E402
+    import panel_ui_context  # noqa: E402
+except ImportError:
+    mediastick_ui_context = None
+    panel_ui_context = None
 
 import mediastick_resume as mr
 from resources.lib import page_cache, quick_resume, single_instance, sweettv_data as data, sweettv_demo, \
@@ -39,6 +48,274 @@ STALE_NOTICE = "The channel list is out of date. Refreshing…"
 PREVIEW_DELAY = 1.0
 _PREVIEW_FOCUS = (WIDE_ROW, HERO_PLAY, HERO_ALT, HERO_GUIDE, HERO_FAV)
 _UNSET = object()
+_UI_CMD_METHOD = "Other.mediastick.ui_cmd"
+_MonitorBase = getattr(xbmc, "Monitor", object)
+_DEMO_ITEM_CAP = 25
+
+
+def _search_hint(section: str) -> str:
+    """Build localized contextual search hint for the Phone Touch Bar."""
+    sec_title = words.section_title(section) if section and section != "search" else "SWEET.TV"
+    if words.LANG == "ru":
+        return f"Поиск в {sec_title}"
+    if words.LANG == "uk":
+        return f"Пошук у {sec_title}"
+    return words.page_search_prompt(section) if section else "Search in SWEET.TV"
+
+
+def _demo_episodes(rows) -> list:
+    cap = mediastick_ui_context.MAX_DEMO_ITEMS if mediastick_ui_context else _DEMO_ITEM_CAP
+    out = []
+    for idx, ep in enumerate(list(rows or ())[:cap]):
+        if not isinstance(ep, dict):
+            continue
+        title = str(ep.get("title") or "").strip()
+        try:
+            num = int(ep.get("number") or 0)
+        except (TypeError, ValueError):
+            num = 0
+        if not title:
+            title = words.tr("{n} episode").format(n=num or (idx + 1))
+        entry = {
+            "id": str(ep.get("episode_id") or ep.get("id") or ep.get("epg") or idx),
+            "title": title,
+            "can_play": bool(
+                not ep.get("coming_soon")
+                and ep.get("playable") is not False
+                and (ep.get("vod_url") or ep.get("url"))
+            ),
+        }
+        if num > 0:
+            entry["number"] = num
+        dur = int(ep.get("duration") or 0)
+        if dur >= 60:
+            entry["duration"] = words.tr("{n} min").format(n=dur // 60)
+        if ep.get("when"):
+            entry["time"] = str(ep["when"])
+        out.append(entry)
+    return out
+
+
+def _demo_programs(rows) -> list:
+    cap = mediastick_ui_context.MAX_DEMO_ITEMS if mediastick_ui_context else _DEMO_ITEM_CAP
+    out = []
+    for r in list(rows or ())[:cap]:
+        if not isinstance(r, dict):
+            continue
+        entry = {
+            "id": str(r.get("epg") or r.get("id") or ""),
+            "title": str(r.get("title") or ""),
+            "live": bool(r.get("live")),
+            "can_play": bool(r.get("live") or r.get("can_archive")),
+        }
+        if r.get("when"):
+            entry["time"] = str(r["when"])
+        out.append(entry)
+    return out
+
+
+def _build_modal_context(
+    modal_kind, modal_card, modal_channel, modal_seasons, modal_tabs, modal_tab_idx,
+    modal_rows, modal_movie_id, fav_keys, play_label, alt_label, demo,
+) -> dict:
+    fav_key = modal_card.fav_key if modal_card else (f"ch:{modal_channel.cid}" if modal_channel else "")
+    is_fav = bool((modal_card and modal_card.fav) or (fav_key and fav_key in fav_keys))
+    title = (modal_card.title if modal_card else "") or (modal_channel.name if modal_channel else "")
+    modal = {
+        "kind": modal_kind,
+        "title": title,
+        "fav": is_fav,
+        "can_play": False,
+        "can_archive": False,
+        "demo": bool(demo),
+    }
+    if fav_key:
+        modal["fav_key"] = fav_key
+    if play_label:
+        modal["play_label"] = play_label
+    if alt_label:
+        modal["alt_label"] = alt_label
+
+    if modal_kind == "show":
+        if modal_card:
+            raw_key = str(modal_card.key or "")
+            show_id = f"vod:{raw_key}" if (modal_card.kind == "series" and raw_key and not raw_key.startswith("vod:")) else raw_key
+        else:
+            show_id = f"vod:{modal_movie_id}" if modal_movie_id else ""
+        if show_id:
+            modal["show_id"] = show_id
+        modal["can_play"] = bool(modal_seasons or (modal_card and modal_card.playable))
+        seasons_list = []
+        for i, s in enumerate(modal_seasons or ()):
+            try:
+                num = int(s.get("number") or (i + 1))
+            except (TypeError, ValueError):
+                num = i + 1
+            seasons_list.append(num)
+        if seasons_list:
+            modal["seasons"] = seasons_list
+            if 0 <= modal_tab_idx < len(seasons_list):
+                modal["selected_season"] = seasons_list[modal_tab_idx]
+        if demo and modal_rows:
+            modal["episodes"] = _demo_episodes(modal_rows)
+    elif modal_kind == "guide":
+        cid = modal_channel.cid if modal_channel else (modal_card.cid if modal_card else "")
+        if cid:
+            modal["cid"] = cid
+        modal["can_play"] = True
+        modal["can_archive"] = bool(modal_channel and modal_channel.catchup and modal_card and modal_card.alt_url)
+        days_list = [date.fromtimestamp(int(ts)).isoformat() for ts, _ in (modal_tabs or ())]
+        if days_list:
+            modal["days"] = days_list
+            if 0 <= modal_tab_idx < len(days_list):
+                modal["selected_day"] = days_list[modal_tab_idx]
+        if demo and modal_rows:
+            modal["programs"] = _demo_programs(modal_rows)
+    elif modal_kind == "detail":
+        if modal_card and modal_card.key:
+            modal["show_id"] = str(modal_card.key)
+        modal["can_play"] = bool(modal_card and modal_card.playable and modal_card.play_url)
+        modal["can_archive"] = bool(modal_card and modal_card.alt_url)
+    return modal
+
+
+def _build_ui_context(
+    section, chips, active_chip, sort_modes, sort_idx, search_query,
+    modal_kind, modal_card, modal_channel, modal_seasons, modal_tabs, modal_tab_idx,
+    modal_rows, modal_movie_id, fav_keys, play_label, alt_label, demo,
+) -> dict:
+    """Build the Pure Core v1 UI context document for SWEET.TV."""
+    sec_list = [{"id": k, "label": words.section_title(k)} for k, _ in sections.RAIL]
+    chips_list = (
+        [{"id": k, "label": str(label), "active": k == active_chip} for k, label in chips if k not in ACTION_CHIPS]
+        if section in sections.FILTERED_SECTIONS
+        else []
+    )
+    sort_doc = None
+    if section in ("movies", "series"):
+        modes = sections.valid_sort_modes(sort_modes)
+        cur = modes[sort_idx % len(modes)]
+        sort_doc = {
+            "id": str(cur["id"]),
+            "label": words.tr(cur["name"]),
+            "options": [{"id": str(m["id"]), "label": words.tr(m["name"])} for m in modes],
+        }
+    if modal_kind in ("show", "guide", "detail"):
+        view = modal_kind
+        modal_doc = _build_modal_context(
+            modal_kind, modal_card, modal_channel, modal_seasons, modal_tabs, modal_tab_idx,
+            modal_rows, modal_movie_id, fav_keys, play_label, alt_label, demo,
+        )
+    else:
+        view = "section"
+        modal_doc = None
+    return {
+        "v": 1,
+        "app": "sweettv",
+        "view": view,
+        "section": section,
+        "sections": sec_list,
+        "chips": chips_list,
+        "sort": sort_doc,
+        "can_search": True,
+        "search_query": search_query,
+        "search_hint": _search_hint(section),
+        "modal": modal_doc,
+    }
+
+
+def _decode_ui_cmd(raw_data):
+    """Parse and validate a Phone -> TV `ui_cmd` payload for SWEET.TV; None when ignored or invalid."""
+    if mediastick_ui_context is None:
+        return None
+    try:
+        if isinstance(raw_data, str):
+            if not raw_data.strip():
+                return None
+            payload = json.loads(raw_data)
+            if isinstance(payload, str) and payload.strip():
+                payload = json.loads(payload)
+        elif isinstance(raw_data, dict):
+            payload = raw_data
+        else:
+            return None
+        cmd = mediastick_ui_context.validate_cmd(payload)
+    except (ValueError, TypeError):
+        return None
+    return cmd if cmd.get("app") == "sweettv" else None
+
+
+def _notify_ui_context():
+    """Emit optional wakeup JSONRPC.NotifyAll on a daemon thread only when xbmc.Monitor exists."""
+    if getattr(xbmc, "Monitor", None) is None:
+        return
+    req = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "JSONRPC.NotifyAll",
+        "params": {
+            "sender": "script.media-stick.home",
+            "message": "mediastick.ui_context",
+            "data": {},
+        },
+    })
+
+    def _send():
+        try:
+            xbmc.executeJSONRPC(req)
+        except Exception:
+            pass
+
+    threading.Thread(target=_send, daemon=True).start()
+
+
+def _write_ui_context(doc: dict) -> None:
+    """Write `doc` to ui-context.json guarding missing module/directory/OSError, waking panel when changed."""
+    if panel_ui_context is None or mediastick_ui_context is None:
+        return
+    try:
+        changed = panel_ui_context.write_context(doc)
+    except (OSError, ValueError, TypeError) as e:
+        ui.log(f"ui-context write failed: {e!r}", xbmc.LOGWARNING)
+        return
+    if changed:
+        _notify_ui_context()
+
+
+def _clear_ui_context() -> None:
+    if mediastick_ui_context is None:
+        return
+    _write_ui_context(mediastick_ui_context.empty_context())
+
+
+class _UiCmdMonitor(_MonitorBase):
+    """Persistent Monitor listener for Phone -> TV `Other.mediastick.ui_cmd` notifications."""
+
+    def __init__(self, window):
+        super().__init__()
+        self._window = window
+
+    def onNotification(self, sender, method, data):
+        window = self._window
+        if window is not None and method == _UI_CMD_METHOD:
+            window._on_ui_cmd(data)
+
+
+def _make_cmd_monitor(window):
+    base = getattr(xbmc, "Monitor", None)
+    if base is not None and base is not _MonitorBase:
+        class _BoundUiCmdMonitor(base):
+            def __init__(self, target):
+                super().__init__()
+                self._window = target
+
+            def onNotification(self, sender, method, data):
+                target = self._window
+                if target is not None and method == _UI_CMD_METHOD:
+                    target._on_ui_cmd(data)
+
+        return _BoundUiCmdMonitor(window)
+    return _UiCmdMonitor(window)
 
 
 def clock():
@@ -115,6 +392,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self._pre_search_pos = None
         self._autoplay_candidate = None
         self._enriched_epg_ids = set()
+        self._cmd_monitor = None
         self._shelf_setup()
         self._find_setup()
         self._guide_setup()
@@ -122,6 +400,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
     def onInit(self):
         if self.instance is not None:
             self.instance.bind(xbmcgui.getCurrentWindowId())
+        if self._cmd_monitor is None:
+            self._cmd_monitor = _make_cmd_monitor(self)
         for key, value in words.labels().items():
             self._prop(key, value)
         self._prop("demo", "1" if self.demo else "")
@@ -150,6 +430,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 self._show_mode(data.EMPTY, self._status_props(words.status("", False, False, 0)))
         else:
             self._after_player()
+            self._publish_ui_context()
         self._start_watch()
         threading.Thread(target=self._look, daemon=True).start()
 
@@ -157,6 +438,9 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         if self._qr_dirty:
             self._save_quick_resume(immediate=True)
         self._stop.set()
+        if self._cmd_monitor is not None:
+            self._cmd_monitor._window = None
+            self._cmd_monitor = None
         self._preview_stop(send_stop=True, sync=True)
         self._cancel_warm()
         for timer in list(self._timers.values()):
@@ -395,6 +679,10 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
         self._prop("msg_kind", kind)
         if mode != data.DATA:
             self._preview_stop()
+            if changed:
+                _clear_ui_context()
+        elif changed:
+            self._publish_ui_context()
         if changed or (mode == data.DATA and self._focus() == 0):
             self._focus_mode()
 
@@ -480,6 +768,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 pass
         self._prop("emptycat", "" if self.cards else empty_msg)
         self._sync_hero()
+        if not self._modal_open():
+            self._publish_ui_context()
 
     def _append_cards(self, new_cards):
         if not new_cards:
@@ -538,6 +828,8 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
 
     def _restore_section_view(self):
         with self._lock:
+            if self._modal_open():
+                self._guide_close()
             sec = self.section
             if sec == "channels":
                 self._show_channels()
@@ -554,6 +846,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 cards = [sections.vod_card(r, kind="series" if sec == "series" else "movie",
                                           resume_doc=self.resume_doc, favs=self.fav_keys) for r in self.cat_items]
                 self._apply_cards(cards, empty_msg=words.tr("Nothing here yet."))
+        self._publish_ui_context()
 
     def _open_section(self, key, focus_cid="", sync_menu=False):
         with self._lock:
@@ -596,6 +889,7 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
             self._focus_on(self._grid_id())
         self._qr_dirty = True
         self._save_quick_resume()
+        self._publish_ui_context()
 
     def _save_quick_resume(self, immediate=False):
         if self.demo or not self.started or not self.signed or not self.section:
@@ -1235,6 +1529,104 @@ class SweetTV(Guide, DigitJump, Shelf, Find, xbmcgui.WindowXML):
                 if not in_modal:
                     self._sync_hero()
             self._update_menu()
+        self._publish_ui_context()
+
+    # -- UI context & Phone Touch Bar commands --
+
+    def _publish_ui_context(self):
+        if self._stop.is_set() or panel_ui_context is None or mediastick_ui_context is None:
+            return
+        with self._lock:
+            if self._stop.is_set():
+                return
+            sec = self.section
+            active_chip = self._active_chip_key(sec)
+            search_q = self.search_query if sec == "search" else getattr(self, "page_query", "")
+            doc = _build_ui_context(
+                section=sec,
+                chips=list(self.chips),
+                active_chip=active_chip,
+                sort_modes=list(self.sort_modes),
+                sort_idx=self.sort_idx,
+                search_query=search_q,
+                modal_kind=getattr(self, "modal_kind", ""),
+                modal_card=getattr(self, "modal_card", None),
+                modal_channel=getattr(self, "modal_channel", None),
+                modal_seasons=list(getattr(self, "modal_seasons", ()) or ()),
+                modal_tabs=list(getattr(self, "modal_tabs", ()) or ()),
+                modal_tab_idx=int(getattr(self, "modal_tab_idx", 0) or 0),
+                modal_rows=list(getattr(self, "modal_rows", ()) or ()),
+                modal_movie_id=str(getattr(self, "modal_movie_id", "") or ""),
+                fav_keys=set(self.fav_keys),
+                play_label=self._window_props.get("hero_play", ""),
+                alt_label=self._window_props.get("hero_alt", ""),
+                demo=self.demo,
+            )
+        _write_ui_context(doc)
+
+    def _on_ui_cmd(self, raw_data):
+        if self._stop.is_set():
+            return
+        cmd = _decode_ui_cmd(raw_data)
+        if cmd is None:
+            return
+        threading.Thread(target=self._dispatch_ui_cmd, args=(cmd,), daemon=True).start()
+
+    def _dispatch_ui_cmd(self, cmd):
+        with self._lock:
+            if self._stop.is_set():
+                return
+            action = cmd.get("cmd")
+            if action == "set_section":
+                section = cmd.get("section", "")
+                if section not in sections.SECTION_KEYS:
+                    return
+                self._preview_stop()
+                if self._modal_open():
+                    self._guide_close()
+                self._open_section(section, sync_menu=True)
+            elif action == "set_filter":
+                self._preview_stop()
+                if self._modal_open():
+                    self._guide_close()
+                self._apply_chip_key(cmd.get("id", ""), allow_action=False)
+            elif action == "sort":
+                self._preview_stop()
+                self._sort_by_id(cmd.get("sort", ""))
+            elif action == "search":
+                self._preview_stop()
+                if self._modal_open():
+                    self._guide_close()
+                query = cmd.get("query", "")
+                if self.section == "search":
+                    self._execute_search(query, allow_empty=True)
+                else:
+                    self._execute_page_search(query)
+            elif action == "play":
+                self._preview_stop()
+                mk = getattr(self, "modal_kind", "")
+                if mk == "show":
+                    self._play_next_up()
+                elif mk == "guide":
+                    self._play_card(self.modal_card)
+                elif mk == "detail":
+                    self._play_card(self.modal_card, close_detail=True)
+                else:
+                    self._play_focused_card()
+            elif action == "play_from_start":
+                self._preview_stop()
+                self._alt_action()
+            elif action == "toggle_fav":
+                self._toggle_favourite()
+            elif action == "select_tab":
+                if self._modal_open():
+                    self._modal_select_tab(cmd["idx"])
+            elif action == "play_episode":
+                self._preview_stop(send_stop=False)
+                self._play_episode_at(cmd["idx"], cmd.get("season"))
+            elif action == "play_epg":
+                self._preview_stop(send_stop=False)
+                self._play_epg_at(cmd["idx"])
 
     # -- timers & workers --
 
@@ -1276,13 +1668,18 @@ def main(args):
     instance = single_instance.claim(xbmcgui.Window(ui.HOME), RUNNING)
     if instance is None:
         return False
+    window = None
     try:
         window = ui.load(SweetTV, XML)
         window.instance = instance
         window.setup(demo=bool(args) and args[0] == "demo")
         window.doModal()
-        window.stop()
-        del window
     finally:
+        if window is not None:
+            try:
+                window.stop()
+            finally:
+                window._cmd_monitor = None
+        _clear_ui_context()
         instance.release()
     return True
