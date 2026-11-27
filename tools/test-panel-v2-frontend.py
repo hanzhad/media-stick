@@ -247,13 +247,27 @@ class TestStaticRoutesServed(_PanelServerMixin, unittest.TestCase):
         code, _, raw = self._get("/sw.js")
         self.assertEqual(code, 200)
         src = raw.decode("utf-8")
-        self.assertIn("ms-panel-v2-5", src)
-        self.assertNotIn("ms-panel-v2-4", src)
+        self.assertIn("ms-panel-v2-6", src)
+        self.assertNotIn("ms-panel-v2-5", src)
         self.assertIn("/static/touchbar.js", src)
         self.assertIn("apple-mobile-web-app-capable", src)
         self.assertIn("black-translucent", src)
         self.assertIn("env(safe-area-inset-", src)
         self.assertIn("100svh", src)
+
+    def test_service_worker_bypasses_http_cache_on_install_and_static_fetch(self):
+        code, _, raw = self._get("/sw.js")
+        self.assertEqual(code, 200)
+        src = raw.decode("utf-8")
+        # install: bypass Safari's max-age=3600 HTTP cache instead of cache.addAll(PRECACHE)
+        self.assertNotIn("cache.addAll", src)
+        self.assertRegex(src, r"new\s+Request\([^,]+,\s*\{\s*cache:\s*['\"]reload['\"]\s*\}\)")
+        self.assertIn("cache.put(", src)
+        # fetch: network-first with cache:'no-cache' for unversioned /static/*, cache-first kept for ?v= / icons
+        self.assertRegex(src, r"url\.pathname\.startsWith\(['\"]/static/['\"]\)\s*&&\s*!url\.searchParams\.has\(['\"]v['\"]\)")
+        self.assertRegex(src, r"new\s+Request\(req,\s*\{\s*cache:\s*['\"]no-cache['\"]\s*\}\)")
+        self.assertIn("caches.match(req)", src)
+        self.assertIn("isCacheableStatic(url)", src)
 
     def test_gzip_etag_304_and_immutable_cache_headers(self):
         code, hdrs, raw = self._get("/static/ws-client.js?v=test123", headers={"Accept-Encoding": "gzip"})
@@ -419,6 +433,7 @@ class TestStaticEsModules(_PanelServerMixin, unittest.TestCase):
         for mod in ("ws-client.js", "trackpad.js", "power-banner.js", "screen-v2.js", "diagnostics.js", "touchbar.js"):
             self.assertIn(mod, src, f"v2-boot.js must import {mod}")
         self.assertIn("initTouchBar", src)
+        self.assertNotIn("onSearch", src)
         self.assertIn("ui_context", src)
         self.assertIn("serviceWorker", src)
         self.assertIn("/sw.js", src)
