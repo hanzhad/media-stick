@@ -91,6 +91,9 @@ class ListItem:
     def setLabel(self, value):
         self.label = value
 
+    def getLabel2(self):
+        return self.label2
+
     def setLabel2(self, value):
         self.label2 = value
 
