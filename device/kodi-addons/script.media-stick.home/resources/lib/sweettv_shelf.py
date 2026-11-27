@@ -119,6 +119,7 @@ class Shelf:
         if not key or (not allow_action and key in ACTION_CHIPS):
             return
         with self._lock:
+            self._preview_stop()
             self._pending_chip_key = ""
             sec = self.section
         if sec == "search":

@@ -63,6 +63,7 @@ class Guide:
 
     def _open_detail_modal(self, card: sections.Card):
         with self._lock:
+            self._preview_stop()
             self._cancel_autoplay()
             if not self.demo:
                 self.resume_doc = mr.load()
@@ -241,6 +242,7 @@ class Guide:
 
     def _open_show_modal(self, card: sections.Card):
         with self._lock:
+            self._preview_stop()
             self._cancel_autoplay()
             if not self.demo:
                 self.resume_doc = mr.load()
@@ -368,6 +370,7 @@ class Guide:
         if ch is None:
             return
         with self._lock:
+            self._preview_stop()
             self._cancel_autoplay()
             self.modal_gen += 1
             gen = self.modal_gen

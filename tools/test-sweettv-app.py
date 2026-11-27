@@ -850,10 +850,6 @@ class Small(unittest.TestCase):
         self.assertEqual(D.poll_interval(False), D.POLL_EMPTY)
         self.assertEqual(D.poll_interval(True), 60)
 
-    def test_live_video_in_the_preview_is_off(self):
-        self.assertIs(sweettv_app.PREVIEW_VIDEO, False)
-
-
 class PhonePage(unittest.TestCase):
     def setUp(self):
         files.QR_FAILED.clear()
@@ -1921,37 +1917,162 @@ class Demo(WindowCase):
 
 
 class PreviewVideo(WindowCase):
-    """The switch is off; with it on the pieces are there (unverified on the device)."""
+    """Live TV hover preview in Hero via resident SweetPlayerController and videowindow."""
 
     def setUp(self):
         super().setUp()
         Fake.now = NOW
         write_list(answer(chan(10, "Ten", number=10), chan(20, "Twenty", number=20)))
 
+    def _rpc_messages(self):
+        out = []
+        for raw in Fake.rpc:
+            req = json.loads(raw) if isinstance(raw, str) else raw
+            params = req.get("params") or {}
+            out.append((params.get("message"), params.get("data") or {}))
+        return out
+
+    def _start_preview_on(self, window, idx=0):
+        window.setFocusId(sweettv_app.WIDE_ROW)
+        window.controls[sweettv_app.WIDE_ROW].selected = idx
+        window._last_hover_cid = ""
+        self.press(window, 107)
+        self.assertTrue(wait_for(lambda: any(m == "sweettv.play" and d.get("preview") for m, d in self._rpc_messages())))
+        Fake.rpc.clear()
+
     def test_off_nothing_plays_in_the_preview_and_the_skin_has_no_video_window_to_show(self):
-        window = self.open()
-        self.assertTrue(wait_for(lambda: window.mode == D.DATA))
-        self.press(window, 2)
-        time.sleep(0.05)
-        self.assertEqual((window.getProperty("preview_video"), Fake.played), ("", []))
+        self.assertEqual(sweettv_app.PREVIEW_DELAY, 1.0)
+        self.assertFalse(hasattr(sweettv_app, "PREVIEW_VIDEO"))
+        MR.write_preview_video(False)
+        with mock.patch.object(sweettv_app, "PREVIEW_DELAY", 0.01):
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            self.press(window, KEY_RIGHT)
+            time.sleep(0.05)
+            self.assertEqual((window.getProperty("preview_video"), Fake.played, Fake.rpc), ("", [], []))
 
     def test_on_the_focused_channel_plays_in_the_window_and_ok_makes_it_big(self):
-        with mock.patch.object(sweettv_app, "PREVIEW_VIDEO", True), mock.patch.object(sweettv_app, "PREVIEW_DELAY", 0.01):
+        MR.write_preview_video(True)
+        with mock.patch.object(sweettv_app, "PREVIEW_DELAY", 0.01):
             window = self.open()
             self.assertTrue(wait_for(lambda: window.mode == D.DATA))
             self.assertEqual(window.getProperty("preview_video"), "1")
-            window.controls[window._grid_id()].selected = 1
+            window.setFocusId(sweettv_app.WIDE_ROW)
+            window.controls[sweettv_app.WIDE_ROW].selected = 1
             self.press(window, KEY_RIGHT)
-            self.assertTrue(wait_for(lambda: Fake.played))
-            self.assertEqual(Fake.played[-1], (("plugin://plugin.video.sweettv/playvid/20|null", None, True), {}))
+            self.assertTrue(wait_for(lambda: any(m == "sweettv.play" for m, _ in self._rpc_messages())))
+            self.assertEqual(Fake.played, [])
+            msg, payload = self._rpc_messages()[-1]
+            self.assertEqual((msg, payload["kind"], payload["cid"], payload["preview"]), ("sweettv.play", "live", "20", True))
+            self.assertEqual(window.getProperty("preview_active"), "1")
+
+            # Non-nav event (e.g. mouse move) on same channel does not restart preview
+            count_before = len(Fake.rpc)
+            self.press(window, 107)
+            time.sleep(0.03)
+            self.assertEqual(len(Fake.rpc), count_before)
+
+            # Promotion on Play: no Action(FullScreen), no stop_preview, dispatches preview=False
+            Fake.rpc.clear()
             Fake.playing = True
             window.onClick(417)
-            self.assertEqual(Fake.builtins, ["Action(FullScreen)"])
+            self.assertEqual(Fake.builtins, [])
+            msgs = self._rpc_messages()
+            self.assertFalse(any(m == "sweettv.ctl" and d.get("op") == "stop_preview" for m, d in msgs))
+            self.assertEqual(msgs[-1][0], "sweettv.play")
+            self.assertEqual((msgs[-1][1]["cid"], msgs[-1][1]["preview"]), ("20", False))
+            self.assertEqual(window.getProperty("preview_active"), "")
+
+    def test_preview_dwell_gates_focus_section_demo_mode_and_hero_ctas(self):
+        MR.write_preview_video(True)
+        with mock.patch.object(sweettv_app, "PREVIEW_DELAY", 0.01):
+            # Demo mode suppresses preview
+            demo_win = self.open(demo=True)
+            self.assertTrue(wait_for(lambda: demo_win.mode == D.DATA))
+            demo_win.setFocusId(sweettv_app.WIDE_ROW)
+            self.press(demo_win, 107)
+            time.sleep(0.03)
             self.assertEqual(Fake.rpc, [])
-            window.play_at -= 10
-            window.onInit()
-            time.sleep(0.05)
-            self.assertEqual(Fake.stopped, 0)                        # coming back leaves the preview running
+            demo_win.stop()
+
+            # Non-channels section or non-channel focus suppresses preview
+            Fake.rpc.clear()
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+            window.setFocusId(sweettv_app.MENU)
+            self.press(window, 107)
+            time.sleep(0.03)
+            self.assertEqual(Fake.rpc, [])
+
+            # Hero CTA focus on channels starts preview
+            for hero_id in (sweettv_app.HERO_PLAY, sweettv_app.HERO_ALT, sweettv_app.HERO_GUIDE, sweettv_app.HERO_FAV):
+                Fake.rpc.clear()
+                window._preview_stop(send_stop=False)
+                window.setFocusId(hero_id)
+                window._last_hover_cid = ""
+                self.press(window, 107)
+                self.assertTrue(
+                    wait_for(lambda: any(m == "sweettv.play" and d.get("preview") for m, d in self._rpc_messages())),
+                    f"Expected preview start on hero focus {hero_id}",
+                )
+
+    def test_preview_stop_all_eight_triggers(self):
+        MR.write_preview_video(True)
+        with mock.patch.object(sweettv_app, "PREVIEW_DELAY", 0.01):
+            window = self.open()
+            self.assertTrue(wait_for(lambda: window.mode == D.DATA))
+
+            def assert_stopped(label):
+                self.assertTrue(
+                    any(m == "sweettv.ctl" and d.get("op") == "stop_preview" for m, d in self._rpc_messages()),
+                    f"Expected stop_preview on {label}, got {self._rpc_messages()}",
+                )
+                self.assertEqual(window.getProperty("preview_active"), "")
+                self.assertEqual(window.previewing, "")
+
+            # 1. Channel change
+            self._start_preview_on(window, 0)
+            window.controls[sweettv_app.WIDE_ROW].selected = 1
+            self.press(window, KEY_RIGHT)
+            assert_stopped("channel change")
+
+            # 2. Focus leaving channel row / hero CTA
+            self._start_preview_on(window, 0)
+            window.setFocusId(sweettv_app.MENU)
+            self.press(window, 1)
+            assert_stopped("focus leaving channel row")
+
+            # 3. Switching section / filter chip / scoped search
+            self._start_preview_on(window, 0)
+            window.onClick(sweettv_app.PAGE_SEARCH)
+            assert_stopped("scoped search")
+
+            # 4. Opening any modal
+            self._start_preview_on(window, 0)
+            window._open_channel_hub(window.cards[0].cid)
+            assert_stopped("open channel hub modal")
+            window._guide_close()
+
+            # 5. Typing channel digits
+            self._start_preview_on(window, 0)
+            self.press(window, 59)
+            assert_stopped("typing channel digits")
+
+            # 6. Pressing Back / exit
+            self._start_preview_on(window, 0)
+            self.press(window, BACK)
+            assert_stopped("pressing Back")
+
+            # 7. Mode leaving data
+            self._start_preview_on(window, 0)
+            window._show_mode(D.EMPTY, {})
+            assert_stopped("mode leaving data")
+
+            # 8. Window teardown
+            window._show_mode(D.DATA, {})
+            self._start_preview_on(window, 0)
+            window.stop()
+            assert_stopped("window teardown")
 
 
 # ---- the sections: channels, shows and series, films -----------------------------------------
@@ -2511,6 +2632,8 @@ def _eval_kodi_cond(expr: str, win_props: dict, item_props: dict = None, focus_i
         return True
     if low == "false":
         return False
+    if s == "Player.HasVideo":
+        return bool(win_props.get("_player_has_video", False))
     m = re.fullmatch(r"Control\.HasFocus\((\d+)\)", s)
     if m:
         return int(m.group(1)) == int(focus_id)
@@ -2694,6 +2817,10 @@ class Skin(unittest.TestCase):
             ("wide_hero_logo", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1", "hero_art": "https://img/logo.png",
                                 "hero_is_logo": "1", "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
                                 "has_guide": "1", "has_fav": "1"}, 201, wide_items),
+            ("wide_hero_preview", {"mode": "data", "modal": "", "wide_grid": "1", "filters": "1", "preview_video": "1",
+                                   "preview_active": "1", "_player_has_video": True, "hero_art": "https://img/bg.jpg",
+                                   "hero_is_logo": "", "hero_pbar": "sweettv-pbar-10.png", "has_play": "1", "has_alt": "1",
+                                   "has_guide": "1", "has_fav": "1"}, 201, wide_items),
             ("movie_detail_hub", {"mode": "data", "modal": "detail", "guide": "", "hero_art": "https://img/m.jpg",
                                   "hero_is_logo": "", "has_play": "1", "has_alt": "1", "has_guide": "", "has_fav": "1"}, 210, {}),
             ("show_series_hub", {"mode": "data", "modal": "show", "guide": "1", "hero_art": "https://img/s.jpg",
@@ -2713,6 +2840,55 @@ class Skin(unittest.TestCase):
                 vis_count = count_visible_textures(root, wprops, focus_id, container_items=c_items)
                 self.assertGreater(vis_count, 0, f"{state_name} rendered 0 textures")
                 self.assertLessEqual(vis_count, 34, f"{state_name} exceeded 34 GPU textures: {vis_count}")
+
+    def test_hero_videowindow_bounds_order_visibility_and_single_bracket_depth(self):
+        root = self.tree()
+        self.assertEqual(len(root.findall(".//control[@type='videowindow']")), 1,
+                         "Expected exactly one <control type='videowindow'>")
+        main_group = root.find("./controls/control[@type='group']")
+        self.assertIsNotNone(main_group)
+        controls = list(main_group.findall("./control"))
+        vw_indices = [i for i, c in enumerate(controls) if c.attrib.get("type") == "videowindow"]
+        self.assertEqual(len(vw_indices), 1, "Expected <control type='videowindow'> in main data group")
+        vw_idx = vw_indices[0]
+        vw = controls[vw_idx]
+        self.assertNotIn("id", vw.attrib, "videowindow must have no numeric id")
+        self.assertEqual(
+            (vw.findtext("left"), vw.findtext("top"), vw.findtext("width"), vw.findtext("height")),
+            ("520", "0", "1400", "788"),
+        )
+        self.assertGreater(vw_idx, 0)
+        self.assertIn("hero_art", controls[vw_idx - 1].findtext("texture") or "")
+        self.assertEqual(controls[vw_idx + 1].attrib.get("type"), "image")
+
+        vw_vis = vw.findtext("visible") or ""
+        base_props = {"wide_grid": "1", "emptycat": "", "preview_video": "1", "preview_active": "1", "_player_has_video": True}
+        self.assertTrue(_eval_kodi_cond(vw_vis, base_props))
+        for key, bad_val in (("wide_grid", ""), ("emptycat", "1"), ("preview_video", ""), ("preview_active", ""), ("_player_has_video", False)):
+            p_copy = dict(base_props)
+            p_copy[key] = bad_val
+            self.assertFalse(_eval_kodi_cond(vw_vis, p_copy), f"videowindow must hide when {key}={bad_val!r}")
+
+        preview_props = {
+            "wide_grid": "1", "emptycat": "", "preview_video": "1", "preview_active": "1",
+            "_player_has_video": True, "hero_art": "https://img/bg.jpg", "hero_is_logo": "",
+        }
+        hero_art_ctrl = controls[vw_idx - 1]
+        self.assertFalse(_eval_kodi_cond(hero_art_ctrl.findtext("visible") or "", preview_props))
+        fade_ctrl = controls[vw_idx + 1]
+        self.assertTrue(_eval_kodi_cond(fade_ctrl.findtext("visible") or "", preview_props))
+
+        for elem in root.iter():
+            for expr in (elem.text if elem.tag == "visible" else None, elem.attrib.get("condition")):
+                if not expr:
+                    continue
+                depth = 0
+                for ch in expr:
+                    if ch == "[":
+                        depth += 1
+                        self.assertLessEqual(depth, 1, f"Nested '[' in expression: {expr}")
+                    elif ch == "]":
+                        depth = max(0, depth - 1)
 
     def test_art_assets_poster_mask_240x356_burger_menu_64x64_and_chip_active_48x48(self):
         from PIL import Image

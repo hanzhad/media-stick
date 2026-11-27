@@ -660,6 +660,27 @@ class Watching(Base):
         item = mr.load()["items"]["sw:vod:9558|5678"]
         self.assertEqual((item["pos"], item["total"], item["done"]), (400, 1800, False))
 
+    def test_preview_property_flushes_open_item_and_skips_recording_live(self):
+        home_props = {}
+        fake_win = types.SimpleNamespace(getProperty=lambda k: home_props.get(k, ""))
+        with mock.patch.object(resume_recorder, "xbmcgui", create=True) as mock_gui:
+            mock_gui.Window.return_value = fake_win
+            w = self.make()
+            # 1. Start a normal VOD item, then ms.tv_preview becomes "1" -> flushes open item and does not record live
+            State.file, State.time, State.total = VID, 120.0, 600.0
+            w.tick()
+            home_props["ms.tv_preview"] = "1"
+            State.file, State.time, State.total = LIVE, 15.0, 0.0
+            w.tick()
+            self.assertEqual(mr.seconds_for(mr.load(), VID), 120)
+            self.assertEqual(mr.load().get("live"), {})
+
+            # 2. Clearing ms.tv_preview resumes normal recording
+            home_props["ms.tv_preview"] = ""
+            State.file, State.time, State.total = LIVE, 25.0, 0.0
+            w.tick()
+            self.assertEqual(mr.load()["live"]["cid"], "5")
+
 
 class SweetState(Base):
     def state(self, **resume):

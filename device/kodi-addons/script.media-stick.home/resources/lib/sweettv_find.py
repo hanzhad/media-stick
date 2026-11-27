@@ -75,6 +75,7 @@ class Find:
             self._apply_cards(sections.filter_search(cards, self.search_filter), empty_msg=words.tr("Press OK to type what to look for."))
 
     def _ask_search(self):
+        self._preview_stop()
         with self._lock:
             default = self.search_query
         typed = xbmcgui.Dialog().input(words.tr("Search programmes and channels"), default)
@@ -119,6 +120,7 @@ class Find:
             self._apply_cards(sections.filter_search(cards, self.search_filter), empty_msg=msg)
 
     def _ask_page_search(self):
+        self._preview_stop()
         if self.section == "search":
             self._ask_search()
             return

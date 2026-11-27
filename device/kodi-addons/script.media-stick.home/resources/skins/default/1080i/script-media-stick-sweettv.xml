@@ -21,7 +21,14 @@
                 <height>788</height>
                 <aspectratio align="center" aligny="center">scale</aspectratio>
                 <texture background="true">$INFO[Window.Property(hero_art)]</texture>
-                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo)) + [String.IsEmpty(Window.Property(preview_active)) | !Player.HasVideo]</visible>
+            </control>
+            <control type="videowindow">
+                <left>520</left>
+                <top>0</top>
+                <width>1400</width>
+                <height>788</height>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(preview_video)) + !String.IsEmpty(Window.Property(preview_active)) + Player.HasVideo</visible>
             </control>
             <control type="image">
                 <left>520</left>
@@ -30,7 +37,7 @@
                 <height>788</height>
                 <texture>white.png</texture>
                 <colordiffuse>330C111B</colordiffuse>
-                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + [!String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo)) | !String.IsEmpty(Window.Property(preview_video)) + !String.IsEmpty(Window.Property(preview_active)) + Player.HasVideo]</visible>
             </control>
             <control type="image">
                 <left>520</left>
@@ -39,7 +46,7 @@
                 <height>788</height>
                 <texture>sweettv-fade-left.png</texture>
                 <colordiffuse>FF0C111B</colordiffuse>
-                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + [!String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo)) | !String.IsEmpty(Window.Property(preview_video)) + !String.IsEmpty(Window.Property(preview_active)) + Player.HasVideo]</visible>
             </control>
             <control type="image">
                 <left>520</left>
@@ -48,7 +55,7 @@
                 <height>468</height>
                 <texture>sweettv-fade-bottom.png</texture>
                 <colordiffuse>FF0C111B</colordiffuse>
-                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + [!String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo)) | !String.IsEmpty(Window.Property(preview_video)) + !String.IsEmpty(Window.Property(preview_active)) + Player.HasVideo]</visible>
             </control>
             <control type="image">
                 <left>520</left>
@@ -57,7 +64,7 @@
                 <height>160</height>
                 <texture>sweettv-fade-top.png</texture>
                 <colordiffuse>FF0C111B</colordiffuse>
-                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + !String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo))</visible>
+                <visible>!String.IsEmpty(Window.Property(wide_grid)) + String.IsEmpty(Window.Property(emptycat)) + [!String.IsEmpty(Window.Property(hero_art)) + String.IsEmpty(Window.Property(hero_is_logo)) | !String.IsEmpty(Window.Property(preview_video)) + !String.IsEmpty(Window.Property(preview_active)) + Player.HasVideo]</visible>
             </control>
 
             <!-- Compact Top Header: section title + DEMO/notice + Top-of-page scoped Search (415) -->
@@ -552,7 +559,7 @@
                     <height>280</height>
                     <aspectratio align="center" aligny="center">keep</aspectratio>
                     <texture background="true">$INFO[Window.Property(hero_art)]</texture>
-                    <visible>!String.IsEmpty(Window.Property(hero_art)) + !String.IsEmpty(Window.Property(hero_is_logo))</visible>
+                    <visible>!String.IsEmpty(Window.Property(hero_art)) + !String.IsEmpty(Window.Property(hero_is_logo)) + [String.IsEmpty(Window.Property(preview_active)) | !Player.HasVideo]</visible>
                 </control>
                 <control type="label">
                     <left>1240</left>
@@ -564,7 +571,7 @@
                     <align>center</align>
                     <aligny>center</aligny>
                     <label>$INFO[Window.Property(hero_initials)]</label>
-                    <visible>String.IsEmpty(Window.Property(hero_art))</visible>
+                    <visible>String.IsEmpty(Window.Property(hero_art)) + [String.IsEmpty(Window.Property(preview_active)) | !Player.HasVideo]</visible>
                 </control>
             </control>
 

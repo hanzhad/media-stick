@@ -117,6 +117,7 @@ def notify_request(
     title="",
     episode_mode=False,
     url="",
+    preview=False,
 ) -> str:
     """Build JSON-RPC JSON string for `JSONRPC.NotifyAll` (`sweettv.play`)."""
     parsed = parse_play_url(url) if url else {}
@@ -139,8 +140,14 @@ def notify_request(
         wall_ts=wall_ts,
         title=title,
         episode_mode=bool(episode_mode),
+        preview=bool(preview),
     )
     return json.dumps(payload)
+
+
+def stop_preview_request() -> str:
+    """Build JSON-RPC JSON string for `JSONRPC.NotifyAll` (`sweettv.ctl` stop_preview)."""
+    return json.dumps(sweetplay.build_ctl_notify("stop_preview"))
 
 
 def follow(session, io, stopped, report, seek_to=0, poll=None):
