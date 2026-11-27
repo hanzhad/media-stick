@@ -126,9 +126,6 @@ function boot() {
     api,
     toast,
     buzz,
-    onSearch: () => {
-      if (typeof window.openCtxSearch === 'function') window.openCtxSearch();
-    },
     onContext: (ctx) => {
       window.__uiCtx = ctx;
     },
