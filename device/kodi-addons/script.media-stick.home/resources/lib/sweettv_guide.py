@@ -16,6 +16,20 @@ ALT_BUTTON = 211
 BTN_FAV = 213
 
 
+def _safe_int(val, default=0) -> int:
+    if isinstance(val, bool) or val is None:
+        return default
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _ep_sort_key(ep) -> tuple:
+    raw_id = ep.get("episode_id") or ep.get("id") or 0
+    return (_safe_int(ep.get("number"), 0), _safe_int(raw_id, 0), str(raw_id))
+
+
 class Guide:
     def _guide_setup(self):
         self.modal_kind = ""        # "" | "show" | "guide" | "detail"
@@ -60,6 +74,7 @@ class Guide:
             self.getControl(MODAL_TABS).reset()
         self._select_grid(pos)
         self._focus_on(self._grid_id())
+        self._publish_ui_context()
 
     def _open_detail_modal(self, card: sections.Card):
         with self._lock:
@@ -90,6 +105,7 @@ class Guide:
             resume_doc = self.resume_doc
             favs = self.fav_keys
         self._focus_on(RESUME_BUTTON)
+        self._publish_ui_context()
         if not demo and card.key:
             threading.Thread(
                 target=self._load_detail_modal,
@@ -139,6 +155,7 @@ class Guide:
                 self._prop("has_guide", "")
         if promote:
             self._focus_on(SHOW_EPISODES if focus_eps else BTN_FAV)
+        self._publish_ui_context()
 
     def _apply_show_detail(self, card: sections.Card, detail: dict) -> bool:
         self.modal_kind = "show"
@@ -157,7 +174,7 @@ class Guide:
                 s_title = raw_title if raw_title else words.tr("{n} season").format(n=s_num)
                 eps = sorted(
                     list(s.get("episodes") or ()),
-                    key=lambda ep: (int(ep.get("number") or 0), int(ep.get("episode_id") or ep.get("id") or 0)),
+                    key=_ep_sort_key,
                 )
                 capped, seen_soon = [], False
                 for ep in eps:
@@ -296,9 +313,11 @@ class Guide:
                 return
             if not detail.get("ok"):
                 self._prop("guide_title", f"{card.title}  ·  {words.tr('This show has no episodes to show.')}")
+                self._publish_ui_context()
                 return
             focus_eps = self._apply_show_detail(card, detail)
         self._focus_on(SHOW_EPISODES if focus_eps else BTN_FAV)
+        self._publish_ui_context()
 
     def _render_show_tab(self, idx, select_ep=0):
         if not self.modal_seasons:
@@ -335,6 +354,7 @@ class Guide:
                 self._render_show_tab(int(nu["season_index"]), select_ep=int(nu["episode_index"]))
             else:
                 self._render_show_tab(self.modal_tab_idx)
+        self._publish_ui_context()
 
     def _sync_channel_hub_ctas(self, ch, card: sections.Card):
         play_label = words.tr("Watch live")
@@ -416,6 +436,8 @@ class Guide:
             daemon=True,
         ).start()
         self._focus_on(GUIDE)
+        if not demo:
+            self._publish_ui_context()
 
     def _guide_show(self):
         card = self._focused_card()
@@ -431,16 +453,19 @@ class Guide:
         try:
             res = sweettv_demo.demo_day(ch.cid, day_unix, raw or {}, now) if demo else sweetapi.day(
                 ch.cid, day_unix, raw or {}, now=now, tr=words.tr)
-            rows = res.get("items") or [] if res.get("ok") else []
+            ok = bool(res.get("ok"))
+            rows = res.get("items") or [] if ok else []
         except Exception as e:
             ui.log(f"SWEET.TV guide day failed: {e!r}")
-            rows = []
+            ok, rows = False, []
         with self._lock:
             if self._stop.is_set() or gen != self.modal_gen or self.modal_kind != "guide":
                 return
-            self._apply_guide_rows(rows, target_epg=target_epg)
-        if focus_list:
+            if ok or not self.modal_rows:
+                self._apply_guide_rows(rows, target_epg=target_epg)
+        if focus_list and self.modal_kind == "guide":
             self._focus_on(GUIDE)
+        self._publish_ui_context()
 
     def _modal_select_tab(self, idx, keep_focus=False):
         with self._lock:
@@ -448,6 +473,7 @@ class Guide:
                 return
             if self.modal_kind == "show":
                 self._render_show_tab(idx)
+                self._publish_ui_context()
                 return
             if self.modal_kind == "guide" and self.modal_channel:
                 self.modal_gen += 1
@@ -467,6 +493,7 @@ class Guide:
                     day_key = date.fromtimestamp(int(day_unix)).isoformat()
                     cached_rows = files.channel_day(ch.cid, day_key, now=now, tr=words.tr)
                     self._apply_guide_rows(cached_rows)
+                self._publish_ui_context()
                 threading.Thread(
                     target=self._load_guide_day,
                     args=(gen, ch, day_unix, demo, raw, now, "", not keep_focus),
@@ -530,6 +557,66 @@ class Guide:
             s_num = int(nu.get("season_number") or self.modal_seasons[si].get("number") or (si + 1))
         self._play_modal_row(row, season_num=s_num)
 
+    def _play_guide_row(self, row, ch):
+        if row.get("live"):
+            url = data.play_url(ch.cid)
+            self._start_playback(url, cid=ch.cid, notify_spec={"kind": "live", "cid": ch.cid, "title": ch.name})
+        elif row.get("can_archive") and row.get("epg"):
+            url = data.play_url(ch.cid, row["epg"])
+            title = str(row.get("title") or "")
+            session = play.Session(ch.cid, str(row["epg"]), title,
+                                   int(row.get("start") or 0), int(row.get("stop") or 0), url=url)
+            self._start_playback(
+                url,
+                cid=ch.cid,
+                session=session,
+                notify_spec={
+                    "kind": "epg",
+                    "cid": ch.cid,
+                    "epg_id": str(row["epg"]),
+                    "start_offset": 0,
+                    "from_start": True,
+                    "title": title,
+                },
+            )
+        else:
+            ui.notify(words.tr("This programme has not aired yet."))
+
+    def _play_episode_at(self, idx, season=None):
+        with self._lock:
+            if self.modal_kind != "show" or not self.modal_seasons:
+                return
+            tab_idx = self.modal_tab_idx
+            if season is not None and isinstance(season, int) and not isinstance(season, bool):
+                if 0 <= season < len(self.modal_seasons):
+                    tab_idx = season
+                else:
+                    found_s = next(
+                        (i for i, s in enumerate(self.modal_seasons) if _safe_int(s.get("number"), 0) == season),
+                        None,
+                    )
+                    if found_s is None:
+                        return
+                    tab_idx = found_s
+            if not (0 <= tab_idx < len(self.modal_seasons)):
+                return
+            eps = self.modal_seasons[tab_idx].get("episodes") or ()
+            if not isinstance(idx, int) or isinstance(idx, bool) or idx < 0 or idx >= len(eps):
+                return
+            row = eps[idx]
+            s_num = _safe_int(self.modal_seasons[tab_idx].get("number"), tab_idx + 1)
+        self._play_modal_row(row, season_num=s_num)
+
+    def _play_epg_at(self, idx):
+        with self._lock:
+            if self.modal_kind != "guide" or self.modal_channel is None:
+                return
+            if not isinstance(idx, int) or isinstance(idx, bool) or idx < 0 or idx >= len(self.modal_rows):
+                return
+            row = self.modal_rows[idx]
+            ch = self.modal_channel
+        self._play_guide_row(row, ch)
+
     def _modal_click(self):
         with self._lock:
             ctl_id = SHOW_EPISODES if self.modal_kind == "show" else GUIDE
@@ -545,26 +632,4 @@ class Guide:
         if kind == "show":
             self._play_modal_row(row, season_num=s_num)
         elif kind == "guide" and ch is not None:
-            if row.get("live"):
-                url = data.play_url(ch.cid)
-                self._start_playback(url, cid=ch.cid, notify_spec={"kind": "live", "cid": ch.cid, "title": ch.name})
-            elif row.get("can_archive") and row.get("epg"):
-                url = data.play_url(ch.cid, row["epg"])
-                title = str(row.get("title") or "")
-                session = play.Session(ch.cid, str(row["epg"]), title,
-                                       int(row.get("start") or 0), int(row.get("stop") or 0), url=url)
-                self._start_playback(
-                    url,
-                    cid=ch.cid,
-                    session=session,
-                    notify_spec={
-                        "kind": "epg",
-                        "cid": ch.cid,
-                        "epg_id": str(row["epg"]),
-                        "start_offset": 0,
-                        "from_start": True,
-                        "title": title,
-                    },
-                )
-            else:
-                ui.notify(words.tr("This programme has not aired yet."))
+            self._play_guide_row(row, ch)

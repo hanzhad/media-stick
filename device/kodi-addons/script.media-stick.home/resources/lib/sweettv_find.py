@@ -81,8 +81,17 @@ class Find:
         typed = xbmcgui.Dialog().input(words.tr("Search programmes and channels"), default)
         if typed is None:
             return
-        query = typed.strip()
+        self._execute_search(typed)
+
+    def _execute_search(self, raw_query, allow_empty=False):
+        query = (raw_query or "").strip()
         if not query:
+            if allow_empty:
+                with self._lock:
+                    self.search_query = ""
+                    self._sync_page_search_label()
+                self._load_top_search()
+                self._publish_ui_context()
             return
         with self._lock:
             self.search_query = query
@@ -130,7 +139,13 @@ class Find:
         typed = xbmcgui.Dialog().input(words.page_search_prompt(sec), default)
         if typed is None:
             return
-        query = typed.strip()
+        self._execute_page_search(typed)
+
+    def _execute_page_search(self, raw_query):
+        if self.section == "search":
+            self._execute_search(raw_query, allow_empty=True)
+            return
+        query = (raw_query or "").strip()
         if not query:
             with self._lock:
                 self.page_query = ""
@@ -138,6 +153,7 @@ class Find:
             self._restore_section_view()
             return
         with self._lock:
+            sec = self.section
             self.page_query = query
             self._sync_page_search_label()
             if sec == "channels" and self.catalog:

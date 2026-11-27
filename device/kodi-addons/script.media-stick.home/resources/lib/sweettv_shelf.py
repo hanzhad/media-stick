@@ -134,6 +134,7 @@ class Shelf:
                 self._set_chips("search", sections.search_chips())
                 self._apply_cards(sections.filter_search(self.search_cards, self.search_filter),
                                   empty_msg=words.tr("Press OK to type what to look for."))
+            self._publish_ui_context()
             return
         if sec == "shows":
             with self._lock:
@@ -147,6 +148,7 @@ class Shelf:
                 self.shows_all = cards
                 msg = words.tr("No shows with episodes in the archive yet.") if not cards else ""
                 self._apply_cards(cards[:PAGE_SIZE], empty_msg=msg)
+            self._publish_ui_context()
             return
         if sec == "channels":
             with self._lock:
@@ -155,18 +157,14 @@ class Shelf:
                     self._sync_page_search_label()
                 self.filter_key = key
             self._show_channels()
+            self._publish_ui_context()
             return
         if sec in ("movies", "series"):
             with self._lock:
                 if key == "sort":
-                    self.sort_idx = (self.sort_idx + 1) % max(1, len(self.sort_modes))
-                    self.page_query = ""
-                    self._sync_page_search_label()
-                    self.cat_items = []
-                    self.cat_total = 0
-                    self.cat_next_offset = 0
-                    self.cat_has_more = False
-                    self._set_chips(sec, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
+                    modes = sections.valid_sort_modes(self.sort_modes)
+                    self._set_sort_index(sec, (self.sort_idx + 1) % max(1, len(modes)))
+                    return
                 elif key == "all" or key.startswith("g:"):
                     gid = 0 if key == "all" else int(key[2:])
                     if self.genre_id == gid and not self.page_query:
@@ -181,7 +179,33 @@ class Shelf:
                     self._set_chips(sec, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
                 else:
                     return
+            self._publish_ui_context()
             self._load_catalog(sec, offset=0)
+
+    def _set_sort_index(self, sec, idx):
+        with self._lock:
+            modes = sections.valid_sort_modes(self.sort_modes)
+            self.sort_idx = idx % max(1, len(modes))
+            self.page_query = ""
+            self._sync_page_search_label()
+            self.cat_items = []
+            self.cat_total = 0
+            self.cat_next_offset = 0
+            self.cat_has_more = False
+            self._set_chips(sec, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
+        self._publish_ui_context()
+        self._load_catalog(sec, offset=0)
+
+    def _sort_by_id(self, sort_id):
+        with self._lock:
+            sec = self.section
+            if sec not in ("movies", "series"):
+                return
+            modes = sections.valid_sort_modes(self.sort_modes)
+            idx = next((i for i, m in enumerate(modes) if str(m.get("id")) == str(sort_id)), None)
+            if idx is None:
+                return
+        self._set_sort_index(sec, idx)
 
     def _chip_click(self):
         self._cancel_chip()
@@ -517,3 +541,4 @@ class Shelf:
             self.genres = cfg_genres
             self.sort_modes = cfg_modes
             self._set_chips(section, sections.catalog_chips(self.genres, self.sort_modes, self.sort_idx))
+        self._publish_ui_context()
