@@ -1,0 +1,9 @@
+#%PAM-1.0
+@include common-account
+session [success=ok ignore=ignore module_unknown=ignore default=bad] pam_selinux.so close
+session required pam_loginuid.so
+session required pam_limits.so
+session optional pam_keyinit.so force revoke
+@include common-session-noninteractive
+-session optional pam_systemd.so
+session [success=ok ignore=ignore module_unknown=ignore default=bad] pam_selinux.so open

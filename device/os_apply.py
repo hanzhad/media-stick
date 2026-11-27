@@ -128,6 +128,8 @@ def extract_changed_units(updated_rel_paths: list[str], existing_services: set[s
         elif rel == "etc/asound.conf":
             for unit in ("kodi.service", "airplay.service", "miracast.service"):
                 _add(unit)
+        elif rel == "etc/pam.d/mediastick-kodi":
+            _add("kodi.service")
         elif rel.startswith("usr/local/lib/media-stick/"):
             _add("panel.service")
         elif parent == "usr/local/bin":

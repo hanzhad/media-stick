@@ -1,6 +1,6 @@
 [Unit]
 Description=Kodi on the TV (GBM, no desktop)
-After=systemd-user-sessions.service sound.target
+After=systemd-logind.service sound.target mediastick-displayd.service
 Conflicts=getty@tty1.service
 # The boot splash (Plymouth) stays until Kodi takes the screen, its picture kept on it until
 # Kodi draws its own splash, the same picture: as display managers do it, not plymouth-quit.
@@ -11,7 +11,7 @@ Conflicts=plymouth-quit.service
 User=media
 Group=media
 SupplementaryGroups=video render audio input
-PAMName=login
+PAMName=mediastick-kodi
 TTYPath=/dev/tty1
 StandardInput=tty
 StandardOutput=journal

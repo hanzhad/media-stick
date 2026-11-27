@@ -162,6 +162,15 @@ def apply_language():
         xbmc.log(f"{LOG} language not applied: {type(e).__name__}", xbmc.LOGERROR)
 
 
+def apply_audio():
+    """Reconcile saved HDMI / 3.5mm audio output preference via PipeWire."""
+    try:
+        import mediastick_audio
+        mediastick_audio.apply_output()
+    except Exception as e:
+        xbmc.log(f"{LOG} audio not applied: {type(e).__name__}: {e}", xbmc.LOGERROR)
+
+
 def start_recorder():
     """Remembers where the person stopped (resume_recorder); None when the device has no library for it."""
     try:
@@ -192,6 +201,7 @@ def sample(watcher):
 def main():
     xbmc.log(f"{LOG} service started", xbmc.LOGINFO)
     apply_language()
+    apply_audio()
     watcher = start_recorder()
     lock = threading.RLock()
     player = PlaybackNotifier()

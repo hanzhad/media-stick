@@ -27,7 +27,7 @@ pkgs=(kodi kodi-inputstream-adaptive kodi-inputstream-ffmpegdirect kodi-peripher
       fonts-noto-core fonts-noto-mono fonts-roboto-unhinted
       python3-evdev lego
       uxplay gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-alsa gstreamer1.0-tools
-      pipewire wireplumber pipewire-alsa v4l-utils
+      pipewire wireplumber pipewire-alsa rtkit v4l-utils
       plymouth systemd-zram-generator)
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
@@ -85,6 +85,8 @@ while IFS= read -r line; do
   [[ $rel == home/media/.kodi/* ]] && changed_units+=(kodi.service)   # keymaps load at start
   # the sound device: Kodi picks its output at start, UxPlay at its first stream
   [[ $rel == etc/asound.conf ]] && changed_units+=(kodi.service airplay.service miracast.service)
+  [[ $rel == etc/pam.d/mediastick-kodi ]] && changed_units+=(kodi.service)
+  [[ $rel == etc/pipewire/* || $rel == etc/wireplumber/* ]] && audio_conf_changed=1
   # a library the panel imports at start: restart the panel (Kodi loads it afresh at each sign-in)
   [[ $rel == usr/local/lib/media-stick/* ]] && changed_units+=("panel.service")
   # the boot picture is read from the initramfs: rebuilt below
@@ -101,11 +103,25 @@ if [ -e /run/media-stick/airplay.log ] && [ "$(stat -c %U /run/media-stick/airpl
   chown media:media /run/media-stick/airplay.log
   changed_units+=(airplay.service)
 fi
+if [ "${audio_conf_changed:-0}" = 1 ]; then
+  rm -f /home/media/.local/state/wireplumber/default-routes
+  systemctl --machine=media@ --user restart wireplumber.service 2>/dev/null || true
+  XDG_RUNTIME_DIR=/run/user/1000 PYTHONPATH=/usr/local/lib/media-stick \
+    setpriv --reuid=media --regid=media --init-groups \
+    python3 -c 'import mediastick_audio; mediastick_audio.apply_output(ensure_full_volume=True)' \
+    2>/dev/null || true
+fi
 [ "${sysctl_changed:-0}" = 1 ] && { sysctl --system >/dev/null || true; }
 [ "${journald_changed:-0}" = 1 ] && { systemctl restart systemd-journald || true; }
-if systemctl list-unit-files dphys-swapfile.service >/dev/null 2>&1; then
-  systemctl disable --now dphys-swapfile.service 2>/dev/null || true
+[ -f /var/lib/systemd/linger/media ] || loginctl enable-linger media 2>/dev/null || true
+if [ -d /etc/cloud ] && [ ! -f /etc/cloud/cloud-init.disabled ]; then
+  touch /etc/cloud/cloud-init.disabled
 fi
+for hog in dphys-swapfile.service rpi-resize-swap-file.service bluetooth.service hciuart.service udisks2.service ModemManager.service; do
+  if systemctl list-unit-files "$hog" >/dev/null 2>&1; then
+    systemctl is-enabled -q "$hog" 2>/dev/null && systemctl disable --now "$hog" 2>/dev/null || true
+  fi
+done
 if [ "${zram_changed:-0}" = 1 ] || ! swapon --show=NAME --noheadings 2>/dev/null | grep -q zram0; then
   systemctl daemon-reload
   systemctl restart systemd-zram-setup@zram0.service 2>/dev/null || true
@@ -237,12 +253,10 @@ kodi_wanted=("${on_settings[@]/%/=true}" services.airplay=false services.webserv
   lookandfeel.startupwindow=10000 input.enablemouse=true
   # 1080p60 explicitly; left alone Kodi picks the 1024x768 "DESKTOP" mode on the TV
   videoscreen.screenmode=0192001080060.00000pstd
-  # sound to the TV over HDMI, by name; "Default" became the 3.5 mm jack (card 0), which
-  # nobody listens to, and Kodi does not list /etc/asound.conf's default (it has no hint).
-  # Spelled as Kodi saves it, " (vc4hdmi)" included: anything else differs at every run and
-  # Kodi was restarted by every update for it.
-  "audiooutput.audiodevice=ALSA:hdmi:CARD=vc4hdmi,DEV=0|vc4-hdmi (vc4hdmi)"
-  "audiooutput.passthroughdevice=ALSA:hdmi:CARD=vc4hdmi,DEV=0|vc4-hdmi (vc4hdmi)"
+  # Route Kodi audio through PipeWire Default so HDMI / 3.5mm switching via WirePlumber
+  # works live and Kodi stops rewriting guisettings.xml on exit.
+  "audiooutput.audiodevice=PIPEWIRE:Default|Default Output Device (PIPEWIRE)"
+  audiooutput.passthrough=false
   videoplayer.primeallowhwdeinterlace=false
   videoplayer.seekdelay=1250
   filecache.buffermode=2

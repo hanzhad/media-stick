@@ -268,6 +268,141 @@ class TimeBound(Case):
             handle = self.warm([self.job("a")], nice=10)
             self.assertTrue(handle.wait(3))                                      # refused: the run goes on
 
+    def test_initial_delay_constant_and_default_zero_delay(self):
+        import inspect
+
+        self.assertTrue(hasattr(prefetch, "INITIAL_DELAY"), "prefetch.INITIAL_DELAY is not defined")
+        self.assertEqual(prefetch.INITIAL_DELAY, 4.0)
+        sig = inspect.signature(prefetch.warm)
+        self.assertIn("delay", sig.parameters)
+        self.assertEqual(sig.parameters["delay"].default, 0.0)
+
+        events = []
+        orig_acquire = prefetch._acquire
+        orig_wait = threading.Event.wait
+
+        def spy_acquire(h):
+            events.append(("acquire",))
+            return orig_acquire(h)
+
+        def spy_wait(ev, timeout=None):
+            if timeout == 0.02:
+                events.append(("delay_wait", timeout))
+            return orig_wait(ev, timeout)
+
+        with (
+            mock.patch.object(prefetch, "_acquire", side_effect=spy_acquire),
+            mock.patch.object(threading.Event, "wait", spy_wait),
+        ):
+            # Default delay=0.0 skips initial wait before _acquire
+            h0 = self.warm([self.job("a")])
+            self.assertTrue(h0.wait(3))
+            self.assertEqual(events, [("acquire",)])
+
+            # Positive delay waits BEFORE _acquire(handle) and then runs jobs
+            events.clear()
+            h_delayed = self.warm([self.job("b")], delay=0.02)
+            self.assertTrue(h_delayed.wait(3))
+            self.assertEqual(events, [("delay_wait", 0.02), ("acquire",)])
+            self.assertEqual(h_delayed.stored, ["b"])
+            self.assertEqual(h_delayed.note, "")
+
+    def test_cancelling_during_delay_exits_immediately_with_zero_jobs_and_no_acquire(self):
+        import inspect
+
+        self.assertIn("delay", inspect.signature(prefetch.warm).parameters, "prefetch.warm must accept delay=")
+        acquire_calls = []
+        orig_acquire = prefetch._acquire
+
+        def spy_acquire(h):
+            acquire_calls.append(h)
+            return orig_acquire(h)
+
+        with mock.patch.object(prefetch, "_acquire", side_effect=spy_acquire):
+            handle = self.warm([self.job("a"), self.job("b")], delay=0.5)
+            handle.cancel()
+            self.assertTrue(handle.wait(3))
+
+        self.assertEqual(self.order, [])
+        self.assertEqual(handle.stored, [])
+        self.assertTrue(handle.cancelled)
+        self.assertEqual(handle.note, "cancelled")
+        self.assertEqual(acquire_calls, [], "cancel during delay must return before _acquire(handle)")
+        self.assertEqual(prefetch._running, {})
+
+    def test_sweettv_shelf_and_youtube_app_pass_initial_delay_to_warm(self):
+        import importlib
+        import types
+
+        lib_dir = os.path.join(ROOT, "device", "files", "usr", "local", "lib", "media-stick")
+        fake_xbmc = types.ModuleType("xbmc")
+        fake_xbmc.LOGINFO, fake_xbmc.LOGWARNING, fake_xbmc.LOGERROR = 1, 2, 3
+        fake_xbmc.log = lambda *a, **k: None
+        fake_xbmc.Monitor = object
+        fake_xbmc.Player = lambda: types.SimpleNamespace(isPlaying=lambda: False)
+        fake_xbmc.getCondVisibility = lambda _c: False
+
+        fake_xbmcaddon = types.ModuleType("xbmcaddon")
+        fake_xbmcaddon.Addon = lambda *_a: types.SimpleNamespace(
+            getAddonInfo=lambda _k: ADDON,
+            getSettingString=lambda _s: "",
+        )
+
+        fake_xbmcgui = types.ModuleType("xbmcgui")
+        fake_xbmcgui.WindowXML = object
+        fake_xbmcgui.WindowXMLDialog = object
+        fake_xbmcgui.Window = lambda *_a: types.SimpleNamespace(getProperty=lambda _k: "", setProperty=lambda *_x: None)
+        fake_xbmcgui.Dialog = lambda: types.SimpleNamespace(notification=lambda *a, **k: None)
+        fake_xbmcgui.ListItem = object
+        fake_xbmcgui.NOTIFICATION_INFO = "info"
+
+        fake_xbmcvfs = types.ModuleType("xbmcvfs")
+        fake_xbmcvfs.translatePath = lambda _p: self.dir + "/"
+
+        with (
+            mock.patch.dict(
+                sys.modules,
+                {
+                    "xbmc": fake_xbmc,
+                    "xbmcaddon": fake_xbmcaddon,
+                    "xbmcgui": fake_xbmcgui,
+                    "xbmcvfs": fake_xbmcvfs,
+                },
+            ),
+            mock.patch.object(sys, "path", [ADDON, lib_dir, *sys.path]),
+        ):
+            sw_shelf = importlib.import_module("resources.lib.sweettv_shelf")
+            yt_app = importlib.import_module("resources.lib.youtube_app")
+            yt_data = importlib.import_module("resources.lib.youtube_data")
+
+            with mock.patch.object(prefetch, "warm", return_value=prefetch.Handle("sweettv:main")) as mock_sw_warm:
+                shelf_dummy = types.SimpleNamespace(
+                    demo=False,
+                    signed=True,
+                    _warm_started=False,
+                    raw_catalog={},
+                    _now=lambda: 1000,
+                    _shelf_idle=lambda: True,
+                    _warm_handle=None,
+                )
+                sw_shelf.Shelf._start_warm(shelf_dummy)
+                mock_sw_warm.assert_called_once()
+                self.assertEqual(mock_sw_warm.call_args.kwargs.get("delay"), getattr(prefetch, "INITIAL_DELAY", 4.0))
+
+            with mock.patch.object(prefetch, "warm", return_value=prefetch.Handle("youtube:default")) as mock_yt_warm:
+                yt_dummy = types.SimpleNamespace(
+                    profile="default",
+                    _ns=lambda _p: "youtube:default",
+                    view=yt_data.section_view("home", {}),
+                    routes={},
+                    _warm_page=lambda _v, _p: None,
+                    _idle=lambda: True,
+                    warming=None,
+                )
+                yt_app.YouTube._start_warm(yt_dummy)
+                mock_yt_warm.assert_called_once()
+                self.assertEqual(mock_yt_warm.call_args.kwargs.get("delay"), getattr(prefetch, "INITIAL_DELAY", 4.0))
+
 
 if __name__ == "__main__":
     unittest.main()

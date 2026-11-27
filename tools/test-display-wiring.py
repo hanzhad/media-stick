@@ -36,6 +36,9 @@ PIPEWIRE_CONF = os.path.join(ROOT, "device", "files", "etc", "pipewire", "pipewi
 WIREPLUMBER_CONF = os.path.join(
     ROOT, "device", "files", "etc", "wireplumber", "wireplumber.conf.d", "50-media-stick-no-bt.conf"
 )
+WIREPLUMBER_AUDIO_CONF = os.path.join(
+    ROOT, "device", "files", "etc", "wireplumber", "wireplumber.conf.d", "51-media-stick-audio.conf"
+)
 ASOUND_CONF = os.path.join(ROOT, "device", "files", "etc", "asound.conf")
 BOOTSTRAP_SH = os.path.join(ROOT, "device", "bootstrap.sh")
 
@@ -568,9 +571,43 @@ class PipeWireAudioConfigTests(unittest.TestCase):
         m = re.search(r"^pkgs=\(([^)]+)\)", text, re.MULTILINE)
         self.assertIsNotNone(m, "pkgs=(...) not found in device/bootstrap.sh")
         pkgs = m.group(1).split()
-        for pkg in ("pipewire", "wireplumber", "pipewire-alsa", "v4l-utils"):
+        for pkg in ("pipewire", "wireplumber", "pipewire-alsa", "rtkit", "v4l-utils"):
             with self.subTest(pkg=pkg):
                 self.assertIn(pkg, pkgs)
+
+    def test_wireplumber_51_audio_priority_volume_and_alsa_headroom_conf(self):
+        self.assertTrue(os.path.isfile(WIREPLUMBER_AUDIO_CONF), f"missing {WIREPLUMBER_AUDIO_CONF}")
+        raw = _read_text(WIREPLUMBER_AUDIO_CONF)
+        code = "\n".join(ln for ln in raw.splitlines() if not ln.lstrip().startswith("#"))
+        self.assertEqual(code.count("{"), code.count("}"), "unbalanced braces in SPA-JSON")
+        self.assertEqual(code.count("["), code.count("]"), "unbalanced brackets in SPA-JSON")
+
+        self.assertIn("wireplumber.settings", code)
+        self.assertRegex(code, r'["\']?device\.routes\.default-sink-volume["\']?\s*=\s*1\.0\b')
+        self.assertIn("monitor.alsa.rules", code)
+        self.assertIn("~alsa_output.*hdmi*", code)
+        self.assertRegex(code, r'["\']?priority\.driver["\']?\s*=\s*2000\b')
+        self.assertRegex(code, r'["\']?priority\.session["\']?\s*=\s*2000\b')
+        self.assertIn("~alsa_output.*mailbox*|~alsa_output.*headphones*", code)
+        self.assertRegex(code, r'["\']?priority\.driver["\']?\s*=\s*900\b')
+        self.assertRegex(code, r'["\']?priority\.session["\']?\s*=\s*900\b')
+        self.assertRegex(code, r'["\']?api\.alsa\.period-size["\']?\s*=\s*1024\b')
+        self.assertRegex(code, r'["\']?api\.alsa\.headroom["\']?\s*=\s*1024\b')
+
+    def test_bootstrap_kodi_pipewire_audiodevice_and_wireplumber_reconcile(self):
+        raw = _read_text(BOOTSTRAP_SH)
+        code = "\n".join(ln for ln in raw.splitlines() if not ln.lstrip().startswith("#"))
+        self.assertNotIn("audiooutput.audiodevice=ALSA:hdmi:CARD=vc4hdmi", code)
+        self.assertNotIn("audiooutput.passthroughdevice=ALSA:hdmi:CARD=vc4hdmi", code)
+        self.assertIn("audiooutput.audiodevice=PIPEWIRE:Default|Default Output Device (PIPEWIRE)", code)
+        self.assertIn("audiooutput.passthrough=false", code)
+
+        self.assertIn("etc/pipewire/*", code)
+        self.assertIn("etc/wireplumber/*", code)
+        self.assertIn("/home/media/.local/state/wireplumber/default-routes", code)
+        self.assertIn("wireplumber.service", code)
+        self.assertIn("mediastick_audio", code)
+        self.assertIn("ensure_full_volume=True", code)
 
 
 if __name__ == "__main__":

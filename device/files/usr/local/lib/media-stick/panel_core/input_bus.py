@@ -481,7 +481,7 @@ class InputBus:
     def set_volume(self, action: str) -> None:
         """Adjust system volume via PipeWire `wpctl`."""
         cmd = build_volume_cmd(action)
-        self._run_cmd(cmd)
+        self._run_cmd(cmd, env=self._env_fn())
 
     def send_key(self, key: str) -> None:
         """Send a navigation/browser key via uinput keyboard, falling back to wtype."""

@@ -43,6 +43,7 @@ PANEL = os.path.join(ROOT, "device", "files", "usr", "local", "bin", "panel")
 CERT_SCRIPT = os.path.join(ROOT, "device", "files", "usr", "local", "bin", "media-stick-cert")
 
 TMP = tempfile.mkdtemp(prefix="test-panel-v2-")
+os.environ["MEDIASTICK_PREFS_DIR"] = os.path.join(TMP, "prefs")
 os.environ["MEDIASTICK_SIGNIN_DIR"] = os.path.join(TMP, "signin")
 os.environ["MEDIASTICK_ONBOARDING_DIR"] = os.path.join(TMP, "onboarding")
 os.environ["MEDIASTICK_YTCHANNEL_OFF"] = "1"
@@ -399,15 +400,19 @@ class TestInputBus(unittest.TestCase):
         ib_mod = _require_module(self, "panel_core.input_bus")
         sleep_calls = []
         cmds = []
+        envs = []
+        expected_env = {"XDG_RUNTIME_DIR": "/run/user/1000", "WAYLAND_DISPLAY": "wayland-0"}
 
-        def fake_run(cmd, **_kw):
+        def fake_run(cmd, **kw):
             cmds.append(list(cmd))
+            envs.append(kw.get("env"))
             return 0, ""
 
         bus = ib_mod.InputBus(
             uinput_path="/dev/null",
             run_cmd=fake_run,
             sleep_fn=lambda d: sleep_calls.append(d),
+            env_fn=lambda: dict(expected_env),
         )
         # Inject an in-memory event sink so move_by exercises event emission without /dev/uinput
         sink = io.BytesIO()
@@ -420,11 +425,13 @@ class TestInputBus(unittest.TestCase):
 
         for action, expected_arg in (("volumeup", "5%+"), ("volumedown", "5%-"), ("mute", "toggle")):
             cmds.clear()
+            envs.clear()
             bus.set_volume(action)
             self.assertEqual(len(cmds), 1)
             self.assertEqual(cmds[0][0], "wpctl")
             self.assertIn("@DEFAULT_AUDIO_SINK@", cmds[0])
             self.assertTrue(any(expected_arg in part for part in cmds[0]))
+            self.assertEqual(envs, [expected_env], "set_volume must pass env=self._env_fn() to _run_cmd")
 
         with self.assertRaises(ValueError):
             bus.set_volume("invalid")
@@ -1259,6 +1266,74 @@ class TestPanelV2Routes(unittest.TestCase):
             mock_notify.assert_not_called()
             panel._on_kodi_push("Other.mediastick.ui_context", {})
             mock_notify.assert_called_once()
+
+    def test_api_audio_and_status_audio_out_with_csrf_host_and_pin_guards(self):
+        ma = _require_module(self, "mediastick_audio")
+        _require_module(self, "panel_audio")
+
+        panel.status_cache.update(t=0.0, s=None)
+        code, _, raw = self._req("GET", "/api/status")
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(raw.decode("utf-8")).get("audio_out"), "hdmi")
+
+        # Missing X-Panel rejected with 403
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request(
+            "POST",
+            "/api/audio",
+            json.dumps({"output": "headphones"}),
+            {"Host": f"localhost:{self.port}", "Content-Type": "application/json"},
+        )
+        r = c.getresponse()
+        r.read()
+        c.close()
+        self.assertEqual(r.status, 403)
+
+        # Bad Host rejected
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request(
+            "POST",
+            "/api/audio",
+            json.dumps({"output": "headphones"}),
+            {"Host": "evil.example", "X-Panel": "1", "Content-Type": "application/json"},
+        )
+        r = c.getresponse()
+        r.read()
+        c.close()
+        self.assertIn(r.status, (403, 421))
+
+        # Invalid outputs return 400
+        for bad in ({}, {"output": "bluetooth"}, {"output": ""}):
+            code, _, raw = self._req("POST", "/api/audio", bad)
+            self.assertEqual(code, 400, bad)
+            self.assertEqual(json.loads(raw.decode("utf-8")), {"ok": False, "error": "bad output"})
+
+        with mock.patch.object(
+            ma,
+            "apply_output",
+            side_effect=lambda out=None, **kw: {"ok": True, "output": out, "applied": True, "sink_id": 47},
+        ):
+            code, _, raw = self._req("POST", "/api/audio", {"output": "headphones"})
+            self.assertEqual(code, 200)
+            self.assertEqual(json.loads(raw.decode("utf-8")), {"ok": True, "output": "headphones", "applied": True})
+
+            panel.status_cache.update(t=0.0, s=None)
+            code, _, raw_st = self._req("GET", "/api/status")
+            self.assertEqual(code, 200)
+            self.assertEqual(json.loads(raw_st.decode("utf-8")).get("audio_out"), "headphones")
+
+            # PIN_AUTH guard on /api/audio
+            code, hdrs, _ = self._req("POST", "/api/pin", {"pin": "1234"})
+            self.assertEqual(code, 200)
+            cookie_kv = hdrs.get("Set-Cookie", "").split(";", 1)[0]
+            try:
+                code, _, _ = self._req("POST", "/api/audio", {"output": "hdmi"})
+                self.assertEqual(code, 401)
+                code, _, raw_ok = self._req("POST", "/api/audio", {"output": "hdmi"}, headers={"Cookie": cookie_kv})
+                self.assertEqual(code, 200)
+                self.assertEqual(json.loads(raw_ok.decode("utf-8")), {"ok": True, "output": "hdmi", "applied": True})
+            finally:
+                self._req("POST", "/api/pin", {"action": "disable"}, headers={"Cookie": cookie_kv})
 
 
 if __name__ == "__main__":
