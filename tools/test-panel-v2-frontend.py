@@ -247,8 +247,8 @@ class TestStaticRoutesServed(_PanelServerMixin, unittest.TestCase):
         code, _, raw = self._get("/sw.js")
         self.assertEqual(code, 200)
         src = raw.decode("utf-8")
-        self.assertIn("ms-panel-v2-4", src)
-        self.assertNotIn("ms-panel-v2-3", src)
+        self.assertIn("ms-panel-v2-5", src)
+        self.assertNotIn("ms-panel-v2-4", src)
         self.assertIn("/static/touchbar.js", src)
         self.assertIn("apple-mobile-web-app-capable", src)
         self.assertIn("black-translucent", src)
@@ -331,9 +331,14 @@ class TestStaticEsModules(_PanelServerMixin, unittest.TestCase):
     def test_touchbar_module_contract(self):
         src = self._fetch_js("touchbar.js")
         self.assertIn("export function initTouchBar", src)
+        self.assertNotIn("#i-search", src)
+        self.assertNotIn("can_search", src)
         for token in (
             "tb-on",
             "tb-chips",
+            "tb-btn tb-ico",
+            "tb-btn tb-pri tb-ico",
+            "tb-btn tb-ico tb-fav",
             "ui_cmd",
             "play_episode",
             "play_epg",
@@ -345,6 +350,25 @@ class TestStaticEsModules(_PanelServerMixin, unittest.TestCase):
             "/api/sweettv/day",
         ):
             self.assertIn(token, src, f"touchbar.js missing {token!r}")
+
+    def test_touchbar_icon_compact_sort_modal_and_css(self):
+        src = self._fetch_js("touchbar.js")
+        # Icon-only sort button with dynamic title/aria-label and non-default .on state
+        self.assertRegex(src, r"tb-btn tb-ico[^'\"]*['\"],\s*['\"]↕['\"]")
+        self.assertIn("Сортировка: ", src)
+        self.assertRegex(src, r"sortBtn\.setAttribute\(['\"]aria-label['\"]")
+        self.assertRegex(src, r"sortBtn\.setAttribute\(['\"]title['\"]")
+        self.assertIn("optsList[0].id", src)
+        self.assertIn("openPickerSheet('Сортировка'", src)
+        # Compact icon-only modal buttons
+        self.assertRegex(src, r"['\"]tb-btn tb-ico['\"],\s*['\"]↺['\"]")
+        self.assertIn("modal.alt_label || 'Сначала'", src)
+        # Tighter 375-390px pill/button spacing in TB_CSS
+        self.assertIn("padding:5px 6px", src)
+        self.assertIn("gap:5px;min-height:36px", src)
+        self.assertIn("min-height:34px;padding:0 10px", src)
+        self.assertIn("width:34px;min-width:34px;padding:0", src)
+        self.assertRegex(src, r"\.tb-chips\{[^}]*gap:5px")
 
     def test_trackpad_gestures_and_rest_fallback_without_https(self):
         src = self._fetch_js("trackpad.js")
