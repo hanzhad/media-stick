@@ -3648,14 +3648,36 @@ class ResidentPlayerAndAutoplayTests(WindowCase):
             with open(path, encoding="utf-8") as f:
                 self.assertNotIn("playable_in_archive", f.read(), f"{fname} must use canonical can_archive")
 
+        Fake.home["media-stick.lang"] = "en"
+        W.set_language("en")
+
         # Pure table check on guide_items & search_card with ONLY can_archive present
         g_items = IT.guide_items([
             {"title": "OnAir", "live": True, "can_archive": True, "start": NOW - 300, "when": "07:55"},
             {"title": "Archived", "live": False, "can_archive": True, "start": NOW - 3600, "when": "07:00"},
-            {"title": "NoCatchupPast", "live": False, "can_archive": False, "start": NOW - 3600, "when": "07:00"},
+            {"title": "ExpiredArchive", "live": False, "can_archive": False, "start": NOW - 7 * 86400 - 3600, "when": "07:00"},
             {"title": "Upcoming", "live": False, "can_archive": False, "start": NOW + 3600, "when": "09:00"},
+        ], now=NOW)
+        self.assertEqual([li.getProperty("kind") for li in g_items], ["live", "archive", "past", "future"])
+        self.assertEqual([li.getLabel2() for li in g_items], ["Live", "Archive", "Not in the archive", "Soon"])
+
+        # Boundary & negative normalization cases for guide_items
+        boundary_items = IT.guide_items([
+            {"title": "AtNow", "live": False, "can_archive": False, "start": NOW},
+            {"title": "JustFuture", "live": False, "can_archive": False, "start": NOW + 1},
+            {"title": "ZeroStart", "live": False, "can_archive": False, "start": 0},
+            {"title": "BoolStart", "live": False, "can_archive": False, "start": True},
+            {"title": "BadStart", "live": False, "can_archive": False, "start": "bad"},
+        ], now=NOW)
+        self.assertEqual([li.getProperty("kind") for li in boundary_items], ["past", "future", "past", "past", "past"])
+        self.assertEqual([li.getLabel2() for li in boundary_items], ["Not in the archive", "Soon", "", "", ""])
+
+        default_now_items = IT.guide_items([
+            {"title": "Old", "live": False, "can_archive": False, "start": 1000},
+            {"title": "FarFuture", "live": False, "can_archive": False, "start": 9999999999},
         ])
-        self.assertEqual([li.getProperty("kind") for li in g_items], ["live", "archive", "future", "future"])
+        self.assertEqual([li.getProperty("kind") for li in default_now_items], ["past", "future"])
+        self.assertEqual([li.getLabel2() for li in default_now_items], ["Not in the archive", "Soon"])
 
         s_yes = sweettv_app.sections.search_card({
             "kind": "programme", "id": "8", "title": "Past ten", "cid": "10", "epg": "8",
@@ -3673,6 +3695,8 @@ class ResidentPlayerAndAutoplayTests(WindowCase):
         # Guide row click with ONLY can_archive
         window = self._boot_in_memory()
         day_rows = [
+            {"epg": "7", "cid": "10", "title": "Expired ten", "start": NOW - 7 * 86400 - 3600, "stop": NOW - 7 * 86400 - 1800,
+             "when": "06:00", "live": False, "can_archive": False, "available": False},
             {"epg": "8", "cid": "10", "title": "Past ten", "start": NOW - 1800, "stop": NOW - 600,
              "when": "07:30", "live": False, "can_archive": True, "available": True},
             {"epg": "22", "cid": "10", "title": "Future ten", "start": NOW + 1800, "stop": NOW + 3600,
@@ -3682,18 +3706,95 @@ class ResidentPlayerAndAutoplayTests(WindowCase):
             window._open_section("channels")
             window.controls[201].selected = 0
             window.onClick(201)
-            self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 2))
+            self.assertTrue(wait_for(lambda: len(window.controls[400].items) == 3))
             Fake.rpc.clear()
             Fake.notes.clear()
-            window.controls[400].selected = 0
+            window.controls[400].selected = 1
             window.onClick(400)
             self.assertTrue(wait_for(lambda: len(Fake.rpc) == 1))
             self.assertEqual(json.loads(Fake.rpc[-1])["params"]["data"]["epg_id"], "8")
 
-            window.controls[400].selected = 1
+            window.controls[400].selected = 0
             window.onClick(400)
             self.assertEqual(len(Fake.rpc), 1)
-            self.assertTrue(Fake.notes)
+            self.assertEqual(Fake.notes[-1], "This programme is not in the archive.")
+
+            window.controls[400].selected = 2
+            window.onClick(400)
+            self.assertEqual(len(Fake.rpc), 1)
+            self.assertEqual(Fake.notes[-1], "This programme has not aired yet.")
+
+    def test_guide_expired_archive_selection_notifications_and_xml_layout(self):
+        Fake.home["media-stick.lang"] = "en"
+        W.set_language("en")
+        window = self._boot_in_memory()
+        ch = next(c for c in window.catalog.channels if c.cid == "10")
+
+        # Day -7 with leading expired rows selects the first playable can_archive row
+        day7_rows = [
+            {"epg": "1", "title": "Midnight expired", "start": NOW - 7 * 86400 - 3600, "live": False, "can_archive": False},
+            {"epg": "2", "title": "Early expired", "start": NOW - 7 * 86400 - 1800, "live": False, "can_archive": False},
+            {"epg": "3", "title": "First archived", "start": NOW - 7 * 86400 + 600, "live": False, "can_archive": True},
+            {"epg": "4", "title": "Later archived", "start": NOW - 7 * 86400 + 3600, "live": False, "can_archive": True},
+        ]
+        window._apply_guide_rows(day7_rows, now=NOW)
+        self.assertEqual(window.controls[400].selected, 2)
+        self.assertEqual([li.getProperty("kind") for li in window.controls[400].items], ["past", "past", "archive", "archive"])
+
+        # Live row takes precedence over archive rows; all-past falls back to 0; target_epg wins
+        live_rows = [
+            {"epg": "1", "title": "Archived", "start": NOW - 3600, "live": False, "can_archive": True},
+            {"epg": "2", "title": "Live", "start": NOW - 300, "live": True, "can_archive": True},
+        ]
+        window._apply_guide_rows(live_rows, now=NOW)
+        self.assertEqual(window.controls[400].selected, 1)
+        window._apply_guide_rows(live_rows, target_epg="1", now=NOW)
+        self.assertEqual(window.controls[400].selected, 0)
+        window._apply_guide_rows([{"epg": "9", "title": "Only past", "start": NOW - 3600, "live": False, "can_archive": False}], now=NOW)
+        self.assertEqual(window.controls[400].selected, 0)
+
+        # _play_guide_row boundary & invalid start notifications
+        for bad_row in (
+            {"title": "AtNow", "start": NOW, "live": False, "can_archive": False},
+            {"title": "BadStart", "start": "bad", "live": False, "can_archive": False},
+            {"title": "BoolStart", "start": True, "live": False, "can_archive": False},
+            {"title": "NoEpgArchive", "start": NOW - 600, "live": False, "can_archive": True, "epg": ""},
+        ):
+            Fake.notes.clear()
+            window._play_guide_row(bad_row, ch)
+            self.assertEqual(Fake.notes[-1], "This programme is not in the archive.", bad_row)
+
+        Fake.notes.clear()
+        window._play_guide_row({"title": "Next", "start": NOW + 1, "live": False, "can_archive": False}, ch)
+        self.assertEqual(Fake.notes[-1], "This programme has not aired yet.")
+
+        # XML: l_guide_help below list 400 (504+512=1016) and past dimming with selectedcolor == textcolor
+        root = ET.parse(os.path.join(SKIN, "script-media-stick-sweettv.xml")).getroot()
+        guide_list = next(c for c in root.iter("control") if c.get("type") == "list" and c.get("id") == "400")
+        list_bottom = int(guide_list.findtext("top")) + int(guide_list.findtext("height"))
+        help_lbl = next(
+            c for c in root.iter("control")
+            if c.get("type") == "label" and c.findtext("label") == "$INFO[Window.Property(l_guide_help)]"
+        )
+        help_top = int(help_lbl.findtext("top"))
+        help_height = int(help_lbl.findtext("height"))
+        self.assertGreaterEqual(help_top, list_bottom)
+        self.assertLessEqual(help_top + help_height, 1080)
+
+        item_layout = guide_list.find("itemlayout")
+        self.assertIsNotNone(item_layout)
+        labels = [c for c in item_layout.iter("control") if c.get("type") == "label"]
+        bright_colors = []
+        past_colors = []
+        for lbl in labels:
+            self.assertEqual(lbl.findtext("selectedcolor"), lbl.findtext("textcolor"))
+            vis = (lbl.findtext("visible") or "").strip()
+            if vis == "!String.IsEqual(ListItem.Property(kind),past)":
+                bright_colors.append(lbl.findtext("textcolor"))
+            elif vis == "String.IsEqual(ListItem.Property(kind),past)":
+                past_colors.append(lbl.findtext("textcolor"))
+        self.assertEqual(bright_colors, ["FF14E0C8", "FFFFFFFF", "FF8594AB"])
+        self.assertEqual(past_colors, ["FF64748B", "FF8594AB", "FF64748B"])
 
 
 class HubsNavigationAndFixesTests(WindowCase):

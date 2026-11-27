@@ -519,6 +519,19 @@ class Settings(unittest.TestCase):
             st = self.panel._status()
         self.assertIsNone(st["last_check_min"])
 
+    def test_maintenance_buttons_wrap_and_update_is_wide(self):
+        self.assertIn(".row.wrap{flex-wrap:wrap}", self.page)
+        self.assertIn(".row.wrap>*{flex:1 1 130px;min-width:0}", self.page)
+        self.assertIn(".row.wrap .btn{padding:8px 12px;text-align:center}", self.page)
+
+        act = self.page.split('<section id="t-act"', 1)[1].split("</section>", 1)[0]
+        self.assertRegex(act, r'<p class="dsub" id="act-last"></p>\s*<button class="btn wide" onclick="act\(\'update\'\)">Обновить сейчас</button>')
+        self.assertNotRegex(act, r'<div class="row[^"]*">[^<]*act\(\'update\'\)')
+        self.assertRegex(act, r'<div class="row wrap gap">\s*<button id="rk-btn"[^>]*>Перезапустить плеер</button>\s*<button id="r-btn"[^>]*>Перезагрузить</button>\s*</div>')
+        self.assertRegex(act, r'<div class="row wrap gap">\s*<button id="cec-standby"[^>]*>ТВ Standby</button>\s*<button id="cec-wake"[^>]*>ТВ Wake</button>\s*</div>')
+        self.assertIn("armed('rk-btn','Нажмите ещё раз, чтобы перезапустить плеер')", act)
+        self.assertIn("armed('r-btn','Нажмите ещё раз, чтобы перезагрузить')", act)
+
 
 class Screen(unittest.TestCase):
     @classmethod
